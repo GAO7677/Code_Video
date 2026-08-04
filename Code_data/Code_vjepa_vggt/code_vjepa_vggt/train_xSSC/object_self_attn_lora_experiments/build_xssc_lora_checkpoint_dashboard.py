@@ -1150,6 +1150,11 @@ MERGED_METHODS = [
         "label": "Full-SA + Object + Slot-Dedup",
         "color": "#1F77B4",
     },
+    {
+        "key": "slot_dedup_merge_xssc_step050000",
+        "label": "Full-SA + Object + Slot-Dedup (xSSC-50k)",
+        "color": "#8C564B",
+    },
 ]
 
 METHOD_KEY_ALIASES = {

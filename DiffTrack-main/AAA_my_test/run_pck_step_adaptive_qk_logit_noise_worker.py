@@ -25,8 +25,10 @@ SIGMA = 0.30
 QUERY_CHUNK = 128
 NOISE_MODE = os.environ.get("ATTENTION_NOISE_MODE", "logit").strip().lower()
 ATTENTION_ALPHA = float(os.environ.get("ATTENTION_NOISE_ALPHA", "0.30"))
-if NOISE_MODE not in {"logit", "probability_additive"}:
+if NOISE_MODE not in {"logit", "probability_additive", "probability_mono_scale"}:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
+if NOISE_MODE == "probability_mono_scale" and ATTENTION_ALPHA < 0:
+    raise ValueError("probability_mono_scale requires ATTENTION_NOISE_ALPHA >= 0")
 
 _CAPTURE_PROMPT_CASES: dict[str, list[str]] = {}
 _CAPTURE_PROMPT_POSITIONS: dict[str, int] = {}
@@ -123,6 +125,15 @@ class AdaptiveQKLogitNoise:
         self.capture_case = os.environ.get("QK_ATTENTION_CAPTURE_CASE", "case")
         self.noise_mode = NOISE_MODE
         self.attention_alpha = ATTENTION_ALPHA
+        self.capture_per_head = os.environ.get(
+            "QK_ATTENTION_CAPTURE_PER_HEAD", "0"
+        ).strip().lower() in {"1", "true", "yes", "y"}
+        self.capture_small_size = int(
+            os.environ.get("QK_ATTENTION_CAPTURE_SMALL_SIZE", "512")
+        )
+        self.capture_latent_frames = int(
+            os.environ.get("QK_ATTENTION_CAPTURE_LATENT_FRAMES", "7")
+        )
         self.capture_groups: dict[str, dict[str, Any]] = {}
         self.original_model_fn = pipe.model_fn
         self.original_forwards: list[tuple[Any, Any]] = []
@@ -204,30 +215,39 @@ class AdaptiveQKLogitNoise:
             capture_entry = self.capture_groups.setdefault(
                 capture_prefix,
                 {
-                    "before": torch.zeros((sequence, sequence), dtype=torch.float32),
-                    "after": torch.zeros((sequence, sequence), dtype=torch.float32),
-                    "abs_delta": torch.zeros((sequence, sequence), dtype=torch.float32),
+                    "before": None
+                    if self.capture_per_head
+                    else torch.zeros((sequence, sequence), dtype=torch.float32),
+                    "after": None
+                    if self.capture_per_head
+                    else torch.zeros((sequence, sequence), dtype=torch.float32),
                     "head_instances": 0,
                     "selected": set(),
                     "forward_calls": 0,
                     "clipped_elements": 0,
                     "total_elements": 0,
                     "max_row_sum_error": 0.0,
+                    "per_head": self.capture_per_head,
+                    "sequence_tokens": sequence,
+                    "heads": {},
                 },
             )
         for start in range(0, sequence, QUERY_CHUNK):
             end = min(start + QUERY_CHUNK, sequence)
             logits = torch.matmul(selected_q[:, :, start:end], key_t).float() * scale
             before_probabilities = torch.softmax(logits, dim=-1)
-            row_std = logits.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-6)
-            generator = torch.Generator(device=logits.device)
-            generator.manual_seed(self._seed(block, heads, start))
-            noise = torch.randn(
-                logits.shape,
-                generator=generator,
-                device=logits.device,
-                dtype=torch.float32,
-            )
+            row_std = None
+            noise = None
+            if self.noise_mode != "probability_mono_scale":
+                row_std = logits.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-6)
+                generator = torch.Generator(device=logits.device)
+                generator.manual_seed(self._seed(block, heads, start))
+                noise = torch.randn(
+                    logits.shape,
+                    generator=generator,
+                    device=logits.device,
+                    dtype=torch.float32,
+                )
             if self.noise_mode == "probability_additive":
                 perturbed = before_probabilities + (self.attention_alpha / sequence) * noise
                 clipped = perturbed.clamp_min(0.0)
@@ -244,24 +264,214 @@ class AdaptiveQKLogitNoise:
                         capture_entry["max_row_sum_error"],
                         float((probabilities.sum(dim=-1) - 1.0).abs().max().item()),
                     )
+            elif self.noise_mode == "probability_mono_scale":
+                exponent = 1.0 + float(self.attention_alpha)
+                probs = before_probabilities.clamp_min(1e-12)
+                if exponent != 1.0:
+                    probs = torch.pow(probs, exponent)
+                    probabilities = probs / probs.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+                else:
+                    probabilities = before_probabilities
             else:
                 noise = noise - noise.mean(dim=-1, keepdim=True)
                 noise = noise / noise.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-6)
                 probabilities = torch.softmax(logits + SIGMA * row_std * noise, dim=-1)
             if capture_entry is not None:
-                capture_entry["before"][start:end] += (
-                    before_probabilities.sum(dim=(0, 1)).detach().cpu()
+                capture_entry["max_row_sum_error"] = max(
+                    capture_entry["max_row_sum_error"],
+                    float((probabilities.sum(dim=-1) - 1.0).abs().max().item()),
                 )
-                capture_entry["after"][start:end] += (
-                    probabilities.sum(dim=(0, 1)).detach().cpu()
-                )
-                capture_entry["abs_delta"][start:end] += (
-                    (probabilities - before_probabilities).abs().sum(dim=(0, 1)).detach().cpu()
-                )
+                if self.capture_per_head:
+                    for local_head_idx, head in enumerate(heads):
+                        key = f"b{block:02d}_h{head:02d}"
+                        head_entry = capture_entry["heads"].setdefault(
+                            key,
+                            {
+                                "before_small": torch.zeros(
+                                    (self.capture_small_size, self.capture_small_size),
+                                    dtype=torch.float32,
+                                ),
+                                "after_small": torch.zeros(
+                                    (self.capture_small_size, self.capture_small_size),
+                                    dtype=torch.float32,
+                                ),
+                                "small_query_counts": torch.zeros(
+                                    self.capture_small_size, dtype=torch.float32
+                                ),
+                                "before_frame": torch.zeros(
+                                    (self.capture_latent_frames, self.capture_latent_frames),
+                                    dtype=torch.float32,
+                                ),
+                                "after_frame": torch.zeros(
+                                    (self.capture_latent_frames, self.capture_latent_frames),
+                                    dtype=torch.float32,
+                                ),
+                                "frame_query_counts": torch.zeros(
+                                    self.capture_latent_frames, dtype=torch.float32
+                                ),
+                                "before_entropy_sum": 0.0,
+                                "after_entropy_sum": 0.0,
+                                "entropy_count": 0,
+                                "abs_delta_sum": 0.0,
+                                "signed_delta_sum": 0.0,
+                                "delta_elements": 0,
+                                "max_abs_delta": 0.0,
+                                "head_instances": 0,
+                                "clipped_elements": 0,
+                                "total_elements": 0,
+                                "max_row_sum_error": 0.0,
+                            },
+                        )
+                        if sequence % self.capture_small_size:
+                            raise RuntimeError(
+                                f"sequence {sequence} is not divisible by capture size "
+                                f"{self.capture_small_size}"
+                            )
+                        if sequence % self.capture_latent_frames:
+                            raise RuntimeError(
+                                f"sequence {sequence} is not divisible by latent frames "
+                                f"{self.capture_latent_frames}"
+                            )
+                        before_head = before_probabilities[:, local_head_idx]
+                        after_head = probabilities[:, local_head_idx]
+                        delta_head = after_head - before_head
+                        query_count = end - start
+                        token_bin = sequence // self.capture_small_size
+                        query_bins = torch.arange(start, end, dtype=torch.long) // token_bin
+                        before_small_rows = (
+                            before_head.reshape(
+                                batch,
+                                query_count,
+                                self.capture_small_size,
+                                token_bin,
+                            )
+                            .mean(dim=-1)
+                            .sum(dim=0)
+                            .detach()
+                            .cpu()
+                        )
+                        after_small_rows = (
+                            after_head.reshape(
+                                batch,
+                                query_count,
+                                self.capture_small_size,
+                                token_bin,
+                            )
+                            .mean(dim=-1)
+                            .sum(dim=0)
+                            .detach()
+                            .cpu()
+                        )
+                        head_entry["before_small"].index_add_(
+                            0, query_bins, before_small_rows
+                        )
+                        head_entry["after_small"].index_add_(
+                            0, query_bins, after_small_rows
+                        )
+                        head_entry["small_query_counts"].index_add_(
+                            0,
+                            query_bins,
+                            torch.full((query_count,), float(batch)),
+                        )
+                        spatial_tokens = sequence // self.capture_latent_frames
+                        query_frames = (
+                            torch.arange(start, end, dtype=torch.long) // spatial_tokens
+                        )
+                        before_frame_rows = (
+                            before_head.reshape(
+                                batch,
+                                query_count,
+                                self.capture_latent_frames,
+                                spatial_tokens,
+                            )
+                            .sum(dim=-1)
+                            .sum(dim=0)
+                            .detach()
+                            .cpu()
+                        )
+                        after_frame_rows = (
+                            after_head.reshape(
+                                batch,
+                                query_count,
+                                self.capture_latent_frames,
+                                spatial_tokens,
+                            )
+                            .sum(dim=-1)
+                            .sum(dim=0)
+                            .detach()
+                            .cpu()
+                        )
+                        head_entry["before_frame"].index_add_(
+                            0, query_frames, before_frame_rows
+                        )
+                        head_entry["after_frame"].index_add_(
+                            0, query_frames, after_frame_rows
+                        )
+                        head_entry["frame_query_counts"].index_add_(
+                            0,
+                            query_frames,
+                            torch.full((query_count,), float(batch)),
+                        )
+                        head_entry["before_entropy_sum"] += float(
+                            (-(before_head * before_head.clamp_min(1e-12).log()).sum(dim=-1))
+                            .sum()
+                            .item()
+                        )
+                        head_entry["after_entropy_sum"] += float(
+                            (-(after_head * after_head.clamp_min(1e-12).log()).sum(dim=-1))
+                            .sum()
+                            .item()
+                        )
+                        head_entry["entropy_count"] += batch * query_count
+                        head_entry["abs_delta_sum"] += float(delta_head.abs().sum().item())
+                        head_entry["signed_delta_sum"] += float(delta_head.sum().item())
+                        head_entry["delta_elements"] += delta_head.numel()
+                        head_entry["max_abs_delta"] = max(
+                            head_entry["max_abs_delta"], float(delta_head.abs().max().item())
+                        )
+                        head_entry["max_row_sum_error"] = max(
+                            head_entry["max_row_sum_error"],
+                            float(
+                                (probabilities[:, local_head_idx].sum(dim=-1) - 1.0)
+                                .abs()
+                                .max()
+                                .item()
+                            ),
+                        )
+                        if self.noise_mode == "probability_additive":
+                            perturbed_head = (
+                                before_probabilities[:, local_head_idx]
+                                + (self.attention_alpha / sequence) * noise[:, local_head_idx]
+                            )
+                            clipped_head = perturbed_head.clamp_min(0.0)
+                            row_sum_head = clipped_head.sum(dim=-1, keepdim=True)
+                            probabilities_head = torch.where(
+                                row_sum_head > 0,
+                                clipped_head / row_sum_head.clamp_min(1e-12),
+                                before_probabilities[:, local_head_idx],
+                            )
+                            head_entry["clipped_elements"] += int((perturbed_head < 0).sum().item())
+                            head_entry["total_elements"] += perturbed_head.numel()
+                            head_entry["max_row_sum_error"] = max(
+                                head_entry["max_row_sum_error"],
+                                float((probabilities_head.sum(dim=-1) - 1.0).abs().max().item()),
+                            )
+                else:
+                    capture_entry["before"][start:end] += (
+                        before_probabilities.sum(dim=(0, 1)).detach().cpu()
+                    )
+                    capture_entry["after"][start:end] += (
+                        probabilities.sum(dim=(0, 1)).detach().cpu()
+                    )
             selected_output[:, :, start:end] = torch.matmul(
                 probabilities.to(dtype=selected_v.dtype), selected_v
             )
         if capture_entry is not None:
+            if self.capture_per_head:
+                for head in heads:
+                    capture_entry["heads"][f"b{block:02d}_h{head:02d}"][
+                        "head_instances"
+                    ] += batch
             capture_entry["head_instances"] += batch * len(heads)
             capture_entry["selected"].update((block, head) for head in heads)
             capture_entry["forward_calls"] += 1
@@ -277,8 +487,8 @@ class AdaptiveQKLogitNoise:
             matrix[None, None], (size, size)
         )[0, 0].numpy()
 
-    @staticmethod
-    def _frame_matrix(matrix: torch.Tensor, frame_count: int = 7):
+    def _frame_matrix(self, matrix: torch.Tensor):
+        frame_count = self.capture_latent_frames
         sequence = matrix.shape[0]
         if sequence % frame_count:
             return None
@@ -300,116 +510,240 @@ class AdaptiveQKLogitNoise:
         import numpy as np
 
         entry = self.capture_groups.pop(group)
-        count = max(1, int(entry["head_instances"]))
-        before = entry["before"] / count
-        after = entry["after"] / count
-        delta = after - before
-        mean_abs_delta = entry["abs_delta"] / count
-        prefix = (
-            f"{self.capture_model}__{self.capture_case}__{group}"
-            f"__step{self.capture_step:02d}"
-        )
         self.capture_root.mkdir(parents=True, exist_ok=True)
 
-        before_small = self._downsample(before)
-        after_small = self._downsample(after)
-        log_before = np.log10(before_small + 1e-9)
-        log_after = np.log10(after_small + 1e-9)
-        color_values = np.concatenate((log_before.ravel(), log_after.ravel()))
-        vmin, vmax = np.percentile(color_values, [1.0, 99.5])
-        delta_small = self._downsample(mean_abs_delta).astype(np.float32)
-        delta_limit = float(np.percentile(delta_small, 99.5)) or 1e-9
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5.4), constrained_layout=True)
-        panels = (
-            (log_before, "Before: log10 attention", "magma", vmin, vmax),
-            (log_after, "After: log10 attention", "magma", vmin, vmax),
-            (delta_small, "Mean per-head |After - Before|", "viridis", 0.0, delta_limit),
-        )
-        for axis, (values, title, cmap, low, high) in zip(axes, panels):
-            image = axis.imshow(values, cmap=cmap, vmin=low, vmax=high, aspect="auto")
-            axis.set_title(title)
-            axis.set_xlabel("Key token index (downsampled)")
-            axis.set_ylabel("Query token index (downsampled)")
-            fig.colorbar(image, ax=axis, fraction=0.046, pad=0.03)
-        strength_label = (
-            f"alpha={self.attention_alpha:.2f}"
-            if self.noise_mode == "probability_additive"
-            else f"sigma={SIGMA:.2f}"
-        )
-        fig.suptitle(
-            f"{group.upper()} | S{self.capture_step:03d} | "
-            f"{self.noise_mode} | {strength_label}"
-        )
-        fig.savefig(self.capture_root / f"{prefix}__all_token.png", dpi=160)
-        plt.close(fig)
-
-        frame_before = self._frame_matrix(before)
-        frame_after = self._frame_matrix(after)
-        if frame_before is not None and frame_after is not None:
-            frame_delta = frame_after - frame_before
-            frame_limit = float(np.max(np.abs(frame_delta))) or 1e-9
-            fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.3), constrained_layout=True)
-            frame_panels = (
-                (frame_before, "Before", "magma", 0.0, 1.0),
-                (frame_after, "After", "magma", 0.0, 1.0),
-                (frame_delta, "After - Before", "coolwarm", -frame_limit, frame_limit),
+        def _write_one(
+            prefix: str,
+            before_tensor: torch.Tensor,
+            after_tensor: torch.Tensor,
+            head_label: str | None = None,
+            frame_before_override=None,
+            frame_after_override=None,
+            already_downsampled: bool = False,
+        ):
+            before_mat = before_tensor
+            after_mat = after_tensor
+            delta = after_mat - before_mat
+            before_small = (
+                before_mat.numpy() if already_downsampled else self._downsample(before_mat)
             )
-            for axis, (values, title, cmap, low, high) in zip(axes, frame_panels):
-                image = axis.imshow(values, cmap=cmap, vmin=low, vmax=high)
+            after_small = (
+                after_mat.numpy() if already_downsampled else self._downsample(after_mat)
+            )
+            log_before = np.log10(before_small + 1e-9)
+            log_after = np.log10(after_small + 1e-9)
+            color_values = np.concatenate((log_before.ravel(), log_after.ravel()))
+            vmin, vmax = np.percentile(color_values, [1.0, 99.5])
+            delta_small = (
+                delta.abs().numpy()
+                if already_downsampled
+                else self._downsample(delta.abs())
+            ).astype(np.float32)
+            delta_limit = float(np.percentile(delta_small, 99.5)) or 1e-9
+            fig, axes = plt.subplots(1, 3, figsize=(18, 5.4), constrained_layout=True)
+            panels = (
+                (log_before, "Before: log10 attention", "magma", vmin, vmax),
+                (log_after, "After: log10 attention", "magma", vmin, vmax),
+                (delta_small, "Mean |After - Before|", "viridis", 0.0, delta_limit),
+            )
+            for axis, (values, title, cmap, low, high) in zip(axes, panels):
+                image = axis.imshow(values, cmap=cmap, vmin=low, vmax=high, aspect="auto")
                 axis.set_title(title)
-                axis.set_xlabel("Key latent frame")
-                axis.set_ylabel("Query latent frame")
-                axis.set_xticks(range(7))
-                axis.set_yticks(range(7))
+                axis.set_xlabel("Key token index (downsampled)")
+                axis.set_ylabel("Query token index (downsampled)")
                 fig.colorbar(image, ax=axis, fraction=0.046, pad=0.03)
-            fig.suptitle(f"Frame-level attention mass | {group.upper()} | S{self.capture_step:03d}")
-            fig.savefig(self.capture_root / f"{prefix}__frame.png", dpi=180)
+            strength_label = (
+                f"alpha={self.attention_alpha:.2f}"
+                if self.noise_mode == "probability_additive"
+                else f"mono_scale_alpha={self.attention_alpha:.2f}"
+                if self.noise_mode == "probability_mono_scale"
+                else f"sigma={SIGMA:.2f}"
+            )
+            tag = f" {head_label}" if head_label else ""
+            fig.suptitle(
+                f"{group.upper()}{tag} | S{self.capture_step:03d} | "
+                f"{self.noise_mode} | {strength_label}"
+            )
+            fig.savefig(self.capture_root / f"{prefix}__all_token.png", dpi=160)
             plt.close(fig)
 
-        before_entropy = float((-(before * (before + 1e-12).log()).sum(dim=-1)).mean())
-        after_entropy = float((-(after * (after + 1e-12).log()).sum(dim=-1)).mean())
-        metadata = {
-            "model": self.capture_model,
-            "case": self.capture_case,
-            "group": group,
-            "step": self.capture_step,
-            "intervention": self.noise_mode,
-            "sigma": SIGMA if self.noise_mode == "logit" else None,
-            "alpha": self.attention_alpha if self.noise_mode == "probability_additive" else None,
-            "noise_scale_per_attention_element": (
-                self.attention_alpha / int(before.shape[0])
-                if self.noise_mode == "probability_additive"
-                else None
-            ),
-            "qkv_modified": False,
-            "sequence_tokens": int(before.shape[0]),
-            "latent_frames": 7 if before.shape[0] % 7 == 0 else None,
-            "unique_block_heads": len(entry["selected"]),
-            "head_instances": entry["head_instances"],
-            "forward_calls": entry["forward_calls"],
-            "selected_block_heads": [
-                {"block": block, "head": head}
-                for block, head in sorted(entry["selected"])
-            ],
-            "mean_abs_attention_delta": float(mean_abs_delta.mean()),
-            "max_mean_abs_attention_delta": float(mean_abs_delta.max()),
-            "signed_aggregate_mean_abs_delta": float(delta.abs().mean()),
-            "clipped_fraction": (
-                entry["clipped_elements"] / entry["total_elements"]
-                if entry["total_elements"]
-                else None
-            ),
-            "max_row_sum_error": entry["max_row_sum_error"],
-            "before_mean_row_entropy": before_entropy,
-            "after_mean_row_entropy": after_entropy,
-            "entropy_change": after_entropy - before_entropy,
-            "all_token_image": f"{prefix}__all_token.png",
-            "frame_image": f"{prefix}__frame.png",
-        }
-        (self.capture_root / f"{prefix}.json").write_text(
-            json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8"
-        )
-        print(f"[qk-capture] wrote {group} attention comparison to {self.capture_root}", flush=True)
+            frame_before = (
+                frame_before_override
+                if frame_before_override is not None
+                else self._frame_matrix(before_mat)
+            )
+            frame_after = (
+                frame_after_override
+                if frame_after_override is not None
+                else self._frame_matrix(after_mat)
+            )
+            if frame_before is not None and frame_after is not None:
+                frame_delta = frame_after - frame_before
+                frame_limit = float(np.max(np.abs(frame_delta))) or 1e-9
+                fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.3), constrained_layout=True)
+                frame_panels = (
+                    (frame_before, "Before", "magma", 0.0, 1.0),
+                    (frame_after, "After", "magma", 0.0, 1.0),
+                    (frame_delta, "After - Before", "coolwarm", -frame_limit, frame_limit),
+                )
+                for axis, (values, title, cmap, low, high) in zip(axes, frame_panels):
+                    image = axis.imshow(values, cmap=cmap, vmin=low, vmax=high)
+                    axis.set_title(title)
+                    axis.set_xlabel("Key latent frame")
+                    axis.set_ylabel("Query latent frame")
+                    axis.set_xticks(range(self.capture_latent_frames))
+                    axis.set_yticks(range(self.capture_latent_frames))
+                    fig.colorbar(image, ax=axis, fraction=0.046, pad=0.03)
+                fig.suptitle(
+                    f"Frame-level attention mass | {group.upper()}{tag} | S{self.capture_step:03d}"
+                )
+                fig.savefig(self.capture_root / f"{prefix}__frame.png", dpi=180)
+                plt.close(fig)
+        if not entry.get("per_head", False):
+            before = entry["before"] / max(1, int(entry["head_instances"]))
+            after = entry["after"] / max(1, int(entry["head_instances"]))
+            prefix = (
+                f"{self.capture_model}__{self.capture_case}__{group}"
+                f"__{self.noise_mode}"
+                f"__step{self.capture_step:02d}"
+            )
+            _write_one(prefix, before, after)
+            delta = after - before
+            before_entropy = float((-(before * (before + 1e-12).log()).sum(dim=-1)).mean())
+            after_entropy = float((-(after * (after + 1e-12).log()).sum(dim=-1)).mean())
+            mean_abs = float(delta.abs().mean())
+            mean_delta = float(delta.mean())
+            max_delta = float(delta.abs().max())
+            metadata = {
+                "model": self.capture_model,
+                "case": self.capture_case,
+                "group": group,
+                "step": self.capture_step,
+                "intervention": self.noise_mode,
+                "sigma": SIGMA if self.noise_mode == "logit" else None,
+                "alpha": (
+                    self.attention_alpha
+                    if self.noise_mode in {"probability_additive", "probability_mono_scale"}
+                    else None
+                ),
+                "noise_scale_per_attention_element": (
+                    self.attention_alpha / int(before.shape[0])
+                    if self.noise_mode == "probability_additive"
+                    else None
+                ),
+                "qkv_modified": False,
+                "sequence_tokens": int(before.shape[0]),
+                "latent_frames": self.capture_latent_frames,
+                "unique_block_heads": len(entry["selected"]),
+                "head_instances": entry["head_instances"],
+                "forward_calls": entry["forward_calls"],
+                "selected_block_heads": [
+                    {"block": block, "head": head}
+                    for block, head in sorted(entry["selected"])
+                ],
+                "mean_abs_attention_delta": float(mean_abs),
+                "max_mean_abs_attention_delta": float(max_delta),
+                "signed_aggregate_mean_abs_delta": float(mean_delta),
+                "clipped_fraction": (
+                    entry["clipped_elements"] / entry["total_elements"]
+                    if entry["total_elements"]
+                    else 0.0
+                ),
+                "max_row_sum_error": entry["max_row_sum_error"],
+                "before_mean_row_entropy": before_entropy,
+                "after_mean_row_entropy": after_entropy,
+                "entropy_change": after_entropy - before_entropy,
+                "all_token_image": f"{prefix}__all_token.png",
+                "frame_image": f"{prefix}__frame.png",
+            }
+            (self.capture_root / f"{prefix}.json").write_text(
+                json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8"
+            )
+            print(
+                f"[qk-capture] wrote {group} attention comparison to {self.capture_root}",
+                flush=True,
+            )
+            return
+
+        for key, head_entry in sorted(entry["heads"].items()):
+            parts = key.split("_")
+            block = int(parts[0][1:])
+            head = int(parts[1][1:])
+            label = f"{key.replace('_', ' ').upper()}"
+            small_counts = head_entry["small_query_counts"].clamp_min(1.0)[:, None]
+            frame_counts = head_entry["frame_query_counts"].clamp_min(1.0)[:, None]
+            before = head_entry["before_small"] / small_counts
+            after = head_entry["after_small"] / small_counts
+            frame_before = (head_entry["before_frame"] / frame_counts).numpy()
+            frame_after = (head_entry["after_frame"] / frame_counts).numpy()
+            prefix = (
+                f"{self.capture_model}__{self.capture_case}__{group}_{key}"
+                f"__{self.noise_mode}"
+                f"__step{self.capture_step:02d}"
+            )
+            _write_one(
+                prefix,
+                before,
+                after,
+                label,
+                frame_before_override=frame_before,
+                frame_after_override=frame_after,
+                already_downsampled=True,
+            )
+            entropy_count = max(1, int(head_entry["entropy_count"]))
+            delta_elements = max(1, int(head_entry["delta_elements"]))
+            before_entropy = head_entry["before_entropy_sum"] / entropy_count
+            after_entropy = head_entry["after_entropy_sum"] / entropy_count
+            mean_abs = head_entry["abs_delta_sum"] / delta_elements
+            mean_delta = head_entry["signed_delta_sum"] / delta_elements
+            max_delta = head_entry["max_abs_delta"]
+            metadata = {
+                "model": self.capture_model,
+                "case": self.capture_case,
+                "group": f"{group}_{key}",
+                "step": self.capture_step,
+                "intervention": self.noise_mode,
+                "sigma": SIGMA if self.noise_mode == "logit" else None,
+                "alpha": (
+                    self.attention_alpha
+                    if self.noise_mode in {"probability_additive", "probability_mono_scale"}
+                    else None
+                ),
+                "noise_scale_per_attention_element": (
+                    self.attention_alpha / int(before.shape[0])
+                    if self.noise_mode == "probability_additive"
+                    else None
+                ),
+                "qkv_modified": False,
+                "sequence_tokens": int(entry["sequence_tokens"]),
+                "heatmap_tokens": self.capture_small_size,
+                "latent_frames": self.capture_latent_frames,
+                "unique_block_heads": 1,
+                "head_instances": head_entry["head_instances"],
+                "forward_calls": entry["forward_calls"],
+                "selected_block_heads": [{"block": block, "head": head}],
+                "mean_abs_attention_delta": float(mean_abs),
+                "max_mean_abs_attention_delta": float(max_delta),
+                "signed_aggregate_mean_abs_delta": float(mean_delta),
+                "clipped_fraction": (
+                    head_entry["clipped_elements"] / head_entry["total_elements"]
+                    if head_entry["total_elements"]
+                    else 0.0
+                ),
+                "max_row_sum_error": head_entry["max_row_sum_error"],
+                "before_mean_row_entropy": before_entropy,
+                "after_mean_row_entropy": after_entropy,
+                "entropy_change": after_entropy - before_entropy,
+                "all_token_image": f"{prefix}__all_token.png",
+                "frame_image": f"{prefix}__frame.png",
+            }
+            (self.capture_root / f"{prefix}.json").write_text(
+                json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8"
+            )
+            print(
+                f"[qk-capture] wrote {group}/{key} attention comparison to {self.capture_root}",
+                flush=True,
+            )
 
     def remove(self) -> None:
         self.pipe.model_fn = self.original_model_fn
@@ -450,27 +784,37 @@ def write_experiment_metadata() -> None:
                 "intervention": (
                     "direct_attention_probability_additive_noise"
                     if NOISE_MODE == "probability_additive"
-                    else "direct_qk_logit_noise"
+                    else (
+                        "direct_attention_probability_mono_scale"
+                        if NOISE_MODE == "probability_mono_scale"
+                        else "direct_qk_logit_noise"
+                    )
                 ),
                 "qkv_modified": False,
                 "sigma_relative_to_per_query_logit_std": (
                     SIGMA if NOISE_MODE == "logit" else None
                 ),
                 "attention_alpha": (
-                    ATTENTION_ALPHA if NOISE_MODE == "probability_additive" else None
+                    ATTENTION_ALPHA
+                    if NOISE_MODE in {"probability_additive", "probability_mono_scale"}
+                    else None
                 ),
                 "attention_noise_scale": (
                     "alpha / num_key_tokens"
                     if NOISE_MODE == "probability_additive"
-                    else None
+                    else ("probability power transformation" if NOISE_MODE == "probability_mono_scale" else None)
                 ),
                 "probability_postprocess": (
                     "clamp_min_0_then_row_normalize"
                     if NOISE_MODE == "probability_additive"
-                    else None
+                    else (
+                        "power_transform_then_renormalize"
+                        if NOISE_MODE == "probability_mono_scale"
+                        else None
+                    )
                 ),
                 "query_chunk": QUERY_CHUNK,
-                "selection": "per-step three-model combined object PCK@32 adaptive top30/bottom30",
+                "selection": "per-step three-model combined object PCK@32 adaptive top/bottom extremes",
                 "denoising_steps": list(range(NUM_STEPS)),
             },
             ensure_ascii=False,

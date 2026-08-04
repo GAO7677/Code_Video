@@ -31,6 +31,12 @@ QK_NOISE30_ROOT = Path(
 QK_ATTENTION_COMPARE_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_additive_noise_alpha030_pilot"
 )
+QK_ATTENTION_MONO_SCALE_COMPARE_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_probability_mono_scale_steps40_frames49_test5"
+)
+QK_ATTENTION_MONO_SCALE_HEAD_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_probability_mono_scale_steps40_frames49_case001460"
+)
 ATTENTION_LORA_CASE_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_probability_noise_unified_steps40_frames49_test5/lora"
 )
@@ -329,13 +335,19 @@ VIDEOS_PORTAL_CARD = r'''
 <a class="card new" href="/pck-ablation-case-videos?v=1"><div><span>11 / CASE 视频矩阵</span><h2>每个 Case 的全部消融</h2><p>按 case 汇总两个模型的 Original、静态 Top/Bottom30、Top/Bottom100 和 step-adaptive Top/Bottom30。</p></div><span class="go">打开 CASE 消融视频矩阵</span></a>
 '''
 QK_ATTENTION_PORTAL_CARD = r'''
-<a class="card new" href="/qk-noise-attention-compare?v=2"><div><span>12 / Attention 扰动对比</span><h2>Probability Noise Before / After</h2><p>对比 α=0.30 概率空间加噪前后的全 token 与潜变量帧注意力，Q/K/V 保持不变。</p></div><span class="go">打开注意力对比</span></a>
+<a class="card new" href="/qk-noise-attention-compare?v=2"><div><span>12 / Attention 扰动对比</span><h2>Attention Before / After</h2><p>对比不同 Q@K 干预（概率加噪 / 幂次放大）前后的全 token 与潜变量帧注意力，Q/K/V 保持不变。</p></div><span class="go">打开注意力对比</span></a>
 '''
 ATTENTION_LORA_PORTAL_CARD = r'''
 <a class="card new" href="/attention-additive-lora-case?v=3"><div><span>13 / LORA ATTENTION 消融</span><h2>Top/Bottom 30/100 × α</h2><p>单页汇总 001460 case 的 Baseline、LoRA Original、16 组概率空间 attention 扰动视频与热力图。</p></div><span class="go">打开 LoRA Attention 对比</span></a>
 '''
+MONO_SCALE_HEAD_PORTAL_CARD = r'''
+<a class="card new" href="/qk-mono-scale-heads?case=0613pybullet_sample_001460_w002&alpha=0.9"><div><span>14 / MONO-SCALE 逐 HEAD</span><h2>Attention 幂次拉伸逐 Head 热力图</h2><p>按模型和 Top/Bottom 组查看每个 block/head 在 S039 调整前、调整后与差值热力图。</p></div><span class="go">打开逐 Head 对比</span></a>
+'''
+MONO_SCALE_LORA_VIDEO_PORTAL_CARD = r'''
+<a class="card new" href="/qk-mono-scale-lora-videos?case=0613pybullet_sample_001460_w002"><div><span>15 / MONO-SCALE LORA 视频</span><h2>Top/Bottom100 × α&lt;0.9</h2><p>统一对比 Wan2.2 Original、Wan+LoRA Original 与 α=0.3/0.6 的 Top100、Bottom100 生成视频。</p></div><span class="go">打开视频对比</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -401,6 +413,69 @@ class MetricsHandler(viewer.Handler):
                 raise FileNotFoundError("unknown Q@K attention image")
             viewer.send_file_with_range(self, image_path, "image/png")
             return
+        if path == "/qk-mono-scale-heads":
+            self.send_payload(
+                qk_mono_scale_heads_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/qk-mono-scale-heads/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                qk_mono_scale_heads_catalog(
+                    params.get("case", [""])[0], params.get("alpha", ["0.9"])[0]
+                ),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/qk-mono-scale-heads/image":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            image_path = qk_mono_scale_head_asset(params.get("name", [""])[0])
+            if image_path is None:
+                raise FileNotFoundError("unknown mono-scale per-head image")
+            viewer.send_file_with_range(self, image_path, "image/png")
+            return
+        if path == "/qk-mono-scale-lora-videos":
+            self.send_payload(
+                qk_mono_scale_lora_videos_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/qk-mono-scale-lora-videos/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                qk_mono_scale_lora_video_catalog(params.get("case", [""])[0]),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/qk-mono-scale-lora-videos/video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            video_path = qk_mono_scale_lora_video_asset(
+                params.get("id", [""])[0], params.get("case", [""])[0]
+            )
+            if video_path is None or not video_path.is_file():
+                raise FileNotFoundError("unknown mono-scale LoRA video")
+            viewer.send_file_with_range(self, video_path, "video/mp4")
+            return
+        if path == "/api/qk-mono-scale-lora-videos/image":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            image_path = qk_mono_scale_head_asset(params.get("name", [""])[0])
+            if image_path is None:
+                raise FileNotFoundError("unknown mono-scale LoRA heatmap")
+            viewer.send_file_with_range(self, image_path, "image/png")
+            return
         if path == "/attention-additive-lora-case":
             self.send_payload(
                 attention_lora_case_page().encode("utf-8"),
@@ -440,19 +515,27 @@ viewer.Handler = MetricsHandler
 
 def qk_noise_attention_compare_catalog():
     records = []
-    if QK_ATTENTION_COMPARE_ROOT.exists():
-        for path in sorted(QK_ATTENTION_COMPARE_ROOT.glob("*.json")):
-            try:
-                records.append(json.loads(path.read_text(encoding="utf-8")))
-            except (OSError, json.JSONDecodeError):
-                continue
+    for root in (QK_ATTENTION_COMPARE_ROOT, QK_ATTENTION_MONO_SCALE_COMPARE_ROOT):
+        if root.exists():
+            for path in sorted(root.glob("*.json")):
+                try:
+                    records.append(json.loads(path.read_text(encoding="utf-8")))
+                except (OSError, json.JSONDecodeError):
+                    continue
     return {"records": records}
 
 
 def qk_noise_attention_compare_file(requested_name: str):
     name = Path(requested_name).name
-    path = QK_ATTENTION_COMPARE_ROOT / name
-    if not name or not path.is_file():
+    if not name:
+        return None
+    path = None
+    for root in (QK_ATTENTION_COMPARE_ROOT, QK_ATTENTION_MONO_SCALE_COMPARE_ROOT):
+        candidate = root / name
+        if candidate.is_file():
+            path = candidate
+            break
+    if path is None:
         return None
     return path
 
@@ -470,11 +553,225 @@ h1{margin:0;font-size:clamp(22px,3vw,38px);letter-spacing:.02em}header p{margin:
 .title{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.title h2{margin:0;font-size:25px}.meta{color:var(--muted);font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px}
 .images{display:grid;grid-template-columns:1.25fr 1fr;gap:16px;margin-top:14px}.images figure{margin:0}.images img{width:100%;display:block;border:1px solid var(--line);background:#fff}.images figcaption{margin-top:7px;color:var(--muted)}
 .stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.pill{padding:7px 10px;border-radius:999px;background:#ebe5d6;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px}@media(max-width:900px){.images{grid-template-columns:1fr}header{position:static}main{padding:12px}}
-</style></head><body><header><h1>Attention Probability Noise α=0.30</h1><p>A′ = normalize(clamp(A + α/K · ε, 0))；Q/K/V 不变；S039，Baseline pilot case。</p></header><main id="main"><div class="status">正在等待注意力捕获结果，页面会自动刷新。</div></main>
+</style></head><body><header><h1>Attention Noise Compare</h1><p>对比不同 Q@K 干预前后（含逐组 α/指数参数）在 Baseline / LoRA 的 attention 汇总热力图；Q/K/V 不变。</p></header><main id="main"><div class="status">正在等待注意力捕获结果，页面会自动刷新。</div></main>
 <script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const fmt=x=>Number(x).toExponential(4);
-async function load(){const data=await fetch('/api/qk-noise-attention-compare/catalog',{cache:'no-store'}).then(r=>r.json());const root=document.getElementById('main');if(!data.records.length)return;data.records.sort((a,b)=>a.group==='top30'?-1:b.group==='top30'?1:0);root.innerHTML=data.records.map(r=>`<section class="row ${r.group==='top30'?'top':'bottom'}"><div class="title"><h2>${esc(r.group.toUpperCase())}</h2><span class="meta">${esc(r.case)} · S${String(r.step).padStart(3,'0')} · ${r.unique_block_heads} block-heads</span></div><div class="images"><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.all_token_image)}"><figcaption>全 token：Before / After / 逐 head 平均 |ΔA|</figcaption></figure><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.frame_image)}"><figcaption>7×7 潜变量帧注意力质量</figcaption></figure></div><div class="stats"><span class="pill">mean per-head |ΔA| ${fmt(r.mean_abs_attention_delta)}</span><span class="pill">clipped ${(100*r.clipped_fraction).toFixed(2)}%</span><span class="pill">row-sum error ${fmt(r.max_row_sum_error)}</span><span class="pill">entropy ${r.before_mean_row_entropy.toFixed(4)} → ${r.after_mean_row_entropy.toFixed(4)}</span><span class="pill">Q/K/V modified: ${r.qkv_modified}</span></div></section>`).join('');}
+async function load(){const data=await fetch('/api/qk-noise-attention-compare/catalog',{cache:'no-store'}).then(r=>r.json());const root=document.getElementById('main');if(!data.records.length){return;}data.records.sort((a,b)=>a.group===b.group?(String(a.intervention||'').localeCompare(String(b.intervention||''))):(a.group==='top30'?-1:b.group==='top30'?1:0));root.innerHTML=data.records.map(r=>`<section class=\"row ${r.group==='top30'?'top':'bottom'}\"><div class=\"title\"><h2>${esc(r.group.toUpperCase())}</h2><span class=\"meta\">${esc(r.case)} · ${esc(r.intervention || '')} · S${String(r.step).padStart(3,'0')} · ${r.unique_block_heads} block-heads</span></div><div class=\"images\"><figure><img src=\"/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.all_token_image)}\"><figcaption>全 token：Before / After / 逐 head 平均 |ΔA|</figcaption></figure><figure><img src=\"/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.frame_image)}\"><figcaption>7×7 潜变量帧注意力质量</figcaption></figure></div><div class=\"stats\"><span class=\"pill\">mean per-head |ΔA| ${fmt(r.mean_abs_attention_delta)}</span><span class=\"pill\">intervention ${esc(r.intervention || '-')}</span><span class=\"pill\">clipped ${r.clipped_fraction===null?'-':(100*r.clipped_fraction).toFixed(2)+'%'}</span><span class=\"pill\">row-sum error ${fmt(r.max_row_sum_error)}</span><span class=\"pill\">entropy ${r.before_mean_row_entropy.toFixed(4)} → ${r.after_mean_row_entropy.toFixed(4)}</span><span class=\"pill\">Q/K/V modified: ${r.qkv_modified}</span></div></section>`).join('');}
 load().catch(e=>document.getElementById('main').textContent=e);setInterval(load,5000);
+</script></body></html>'''
+
+
+def qk_mono_scale_heads_catalog(case_key: str, alpha_text: str):
+    try:
+        requested_alpha = float(alpha_text)
+    except ValueError:
+        requested_alpha = 0.9
+    records = []
+    root = QK_ATTENTION_MONO_SCALE_HEAD_ROOT
+    if root.exists():
+        for metadata_path in sorted(root.rglob("*.json")):
+            try:
+                record = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            selected = record.get("selected_block_heads") or []
+            recorded_case = str(record.get("case", ""))
+            if (
+                record.get("intervention") != "probability_mono_scale"
+                or len(selected) != 1
+                or (case_key and recorded_case not in {case_key, "case"})
+                or not math.isclose(float(record.get("alpha", -1)), requested_alpha)
+            ):
+                continue
+            group = str(record.get("group", ""))
+            if "_b" not in group or "_h" not in group:
+                continue
+            base_group = group.split("_b", 1)[0]
+            block_head = selected[0]
+            all_token_path = metadata_path.parent / str(record.get("all_token_image", ""))
+            frame_path = metadata_path.parent / str(record.get("frame_image", ""))
+            records.append(
+                {
+                    **record,
+                    "case": case_key if recorded_case == "case" else recorded_case,
+                    "base_group": base_group,
+                    "block": int(block_head["block"]),
+                    "head": int(block_head["head"]),
+                    "all_token_asset": str(all_token_path.relative_to(root)),
+                    "frame_asset": str(frame_path.relative_to(root)),
+                    "ready": all_token_path.is_file() and frame_path.is_file(),
+                }
+            )
+    records.sort(
+        key=lambda r: (
+            str(r.get("model", "")),
+            0 if str(r["base_group"]).startswith("top") else 1,
+            int(str(r["base_group"]).replace("top", "").replace("bottom", "")),
+            r["block"],
+            r["head"],
+        )
+    )
+    return {
+        "case": case_key or "0613pybullet_sample_001460_w002",
+        "alpha": requested_alpha,
+        "records": records,
+    }
+
+
+def qk_mono_scale_head_asset(requested_name: str):
+    if not requested_name:
+        return None
+    root = QK_ATTENTION_MONO_SCALE_HEAD_ROOT.resolve()
+    candidate = (root / requested_name).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() and candidate.suffix.lower() == ".png" else None
+
+
+def qk_mono_scale_heads_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mono-scale 逐 Head Attention</title><style>
+:root{--ink:#1d2924;--paper:#ece6d8;--card:#fffdf8;--line:#c4b9a4;--red:#b74631;--green:#17685d}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 0,#efb77f55,transparent 34rem),radial-gradient(circle at 95% 5%,#6aa18b55,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:5;padding:16px 22px;background:#ece6d8ee;border-bottom:1px solid var(--line);backdrop-filter:blur(10px)}h1{margin:0 0 6px;font-size:clamp(25px,4vw,45px)}p{margin:5px 0}.tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:11px}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:800}main{max-width:1900px;margin:auto;padding:18px}.status{font-family:ui-monospace,monospace;color:#5c6962}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:4px 19px 4px 4px;padding:12px;box-shadow:0 10px 27px #4a453920}.card.top{border-left:7px solid var(--red)}.card.bottom{border-left:7px solid var(--green)}.title{display:flex;justify-content:space-between;gap:12px;align-items:center}.title h2{margin:0;font:900 18px "Trebuchet MS",sans-serif}.pill{padding:5px 8px;border-radius:99px;background:#e9e2d4;font:12px ui-monospace,monospace}.images{display:grid;grid-template-columns:1.3fr 1fr;gap:9px;margin-top:10px}.images img{display:block;width:100%;border:1px solid var(--line);background:#161916}.stats{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}.empty{padding:40px;border:1px dashed var(--line);background:var(--card)}@media(max-width:1050px){.grid,.images{grid-template-columns:1fr}header{position:static}main{padding:10px}}
+</style></head><body><header><h1>Q@K Probability Mono-scale · 逐 Head</h1><p id="subtitle">A′ = A<sup>1+α</sup> / ΣA<sup>1+α</sup>；Q/K/V 不变，S039 捕获。</p><div class="tools"><label>模型 <select id="model"></select></label><label>组 <select id="group"></select></label><button id="refresh">手动刷新</button><span id="status" class="status">等待结果</span></div></header><main><section id="grid" class="grid"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const q=new URL(location.href).searchParams,caseKey=q.get('case')||'0613pybullet_sample_001460_w002',alpha=q.get('alpha')||'0.9',image=n=>`/api/qk-mono-scale-heads/image?name=${encodeURIComponent(n)}`,fmt=x=>Number(x).toExponential(3);let records=[];
+function options(id,values){const node=document.getElementById(id),old=node.value;node.innerHTML=values.map(x=>`<option value="${e(x)}">${e(x)}</option>`).join('');if(values.includes(old))node.value=old}
+function render(){const model=document.getElementById('model').value,group=document.getElementById('group').value,shown=records.filter(r=>r.model===model&&r.base_group===group);document.getElementById('status').textContent=`${shown.length} heads ready · Case ${caseKey} · α=${alpha}`;document.getElementById('grid').innerHTML=shown.length?shown.map(r=>`<article class="card ${r.base_group.startsWith('top')?'top':'bottom'}"><div class="title"><h2>Block ${String(r.block).padStart(2,'0')} / Head ${String(r.head).padStart(2,'0')}</h2><span class="pill">${e(r.model)} · ${e(r.base_group.toUpperCase())}</span></div><div class="images"><img loading="lazy" src="${image(r.all_token_asset)}" alt="all-token before after delta"><img loading="lazy" src="${image(r.frame_asset)}" alt="frame attention before after delta"></div><div class="stats"><span class="pill">mean |ΔA| ${fmt(r.mean_abs_attention_delta)}</span><span class="pill">entropy ${Number(r.before_mean_row_entropy).toFixed(4)} → ${Number(r.after_mean_row_entropy).toFixed(4)}</span><span class="pill">row error ${fmt(r.max_row_sum_error)}</span></div></article>`).join(''):`<div class="empty">该模型/组的逐-head 热力图尚未生成。</div>`}
+async function load(){const data=await fetch(`/api/qk-mono-scale-heads/catalog?case=${encodeURIComponent(caseKey)}&alpha=${encodeURIComponent(alpha)}`,{cache:'no-store'}).then(r=>r.json());records=data.records;options('model',[...new Set(records.map(r=>r.model))]);options('group',[...new Set(records.filter(r=>r.model===document.getElementById('model').value).map(r=>r.base_group))]);render()}
+document.getElementById('model').addEventListener('change',()=>{options('group',[...new Set(records.filter(r=>r.model===document.getElementById('model').value).map(r=>r.base_group))]);render()});document.getElementById('group').addEventListener('change',render);document.getElementById('refresh').addEventListener('click',load);load().catch(err=>document.getElementById('status').textContent=err);
+</script></body></html>'''
+
+
+def qk_mono_scale_lora_video_asset(asset_id: str, case_key: str):
+    if Path(case_key).name != case_key or not case_key:
+        return None
+    root = QK_ATTENTION_MONO_SCALE_HEAD_ROOT
+    if asset_id == "wan_original":
+        return (
+            root
+            / "baseline/alpha090_count30/videos/baseline/cases"
+            / case_key
+            / "original.mp4"
+        )
+    if asset_id == "lora_original":
+        return (
+            root
+            / "lora/alpha090_count30/videos/lora/cases"
+            / case_key
+            / "original.mp4"
+        )
+    variants = {
+        "alpha030_top100": ("alpha030_count100", "top100_steps_00_40.mp4"),
+        "alpha030_bottom100": ("alpha030_count100", "bottom100_steps_00_40.mp4"),
+        "alpha060_top100": ("alpha060_count100", "top100_steps_00_40.mp4"),
+        "alpha060_bottom100": ("alpha060_count100", "bottom100_steps_00_40.mp4"),
+        "alpha090_top100": ("alpha090_count100", "top100_steps_00_40.mp4"),
+        "alpha090_bottom100": ("alpha090_count100", "bottom100_steps_00_40.mp4"),
+    }
+    variant = variants.get(asset_id)
+    if variant is None:
+        return None
+    run_key, video_name = variant
+    return root / "lora" / run_key / "videos/lora/cases" / case_key / video_name
+
+
+def qk_mono_scale_lora_video_catalog(case_key: str):
+    if not case_key or Path(case_key).name != case_key:
+        case_key = "0613pybullet_sample_001460_w002"
+    controls = []
+    for asset_id, label in (
+        ("wan_original", "Wan2.2 Original"),
+        ("lora_original", "Wan+LoRA Original"),
+    ):
+        path = qk_mono_scale_lora_video_asset(asset_id, case_key)
+        controls.append({"id": asset_id, "label": label, "ready": bool(path and path.is_file())})
+    records = []
+    for alpha_tag, alpha in (("030", 0.3), ("060", 0.6), ("090", 0.9)):
+        run_root = QK_ATTENTION_MONO_SCALE_HEAD_ROOT / "lora" / f"alpha{alpha_tag}_count100"
+        for direction in ("top", "bottom"):
+            asset_id = f"alpha{alpha_tag}_{direction}100"
+            path = qk_mono_scale_lora_video_asset(asset_id, case_key)
+            group = f"{direction}100"
+            heatmaps = []
+            if run_root.exists():
+                for metadata_path in sorted(run_root.glob("*.json")):
+                    try:
+                        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                    metadata_group = str(metadata.get("group", ""))
+                    if (
+                        metadata.get("intervention") != "probability_mono_scale"
+                        or not (
+                            metadata_group == group
+                            or metadata_group.startswith(f"{group}_b")
+                        )
+                    ):
+                        continue
+                    selected = metadata.get("selected_block_heads") or []
+                    head = selected[0] if len(selected) == 1 else None
+                    all_token_path = metadata_path.parent / str(
+                        metadata.get("all_token_image", "")
+                    )
+                    frame_path = metadata_path.parent / str(metadata.get("frame_image", ""))
+                    heatmaps.append(
+                        {
+                            "label": (
+                                f"Block {int(head['block']):02d} / Head {int(head['head']):02d}"
+                                if head
+                                else f"{group.upper()} aggregate ({len(selected)} heads)"
+                            ),
+                            "block": int(head["block"]) if head else None,
+                            "head": int(head["head"]) if head else None,
+                            "all_token_asset": str(
+                                all_token_path.relative_to(QK_ATTENTION_MONO_SCALE_HEAD_ROOT)
+                            ),
+                            "frame_asset": str(
+                                frame_path.relative_to(QK_ATTENTION_MONO_SCALE_HEAD_ROOT)
+                            ),
+                            "ready": all_token_path.is_file() and frame_path.is_file(),
+                            "mean_abs_attention_delta": metadata.get(
+                                "mean_abs_attention_delta"
+                            ),
+                            "before_mean_row_entropy": metadata.get(
+                                "before_mean_row_entropy"
+                            ),
+                            "after_mean_row_entropy": metadata.get(
+                                "after_mean_row_entropy"
+                            ),
+                            "max_row_sum_error": metadata.get("max_row_sum_error"),
+                        }
+                    )
+            heatmaps.sort(
+                key=lambda item: (
+                    item["block"] is None,
+                    item["block"] if item["block"] is not None else -1,
+                    item["head"] if item["head"] is not None else -1,
+                )
+            )
+            records.append(
+                {
+                    "id": asset_id,
+                    "model": "Wan+LoRA",
+                    "alpha": alpha,
+                    "group": group,
+                    "ready": bool(path and path.is_file()),
+                    "heatmaps": heatmaps,
+                }
+            )
+    return {"case": case_key, "controls": controls, "records": records}
+
+
+def qk_mono_scale_lora_videos_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LoRA Mono-scale Top/Bottom100</title><style>
+:root{--ink:#17251f;--paper:#e9e2d3;--card:#fffdf7;--line:#bdb19b;--red:#b94731;--green:#17695d;--dark:#16352b}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 6% 0,#e6a66455,transparent 34rem),radial-gradient(circle at 96% 3%,#51957c55,transparent 36rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:5;padding:17px 23px;background:#e9e2d3ed;border-bottom:1px solid var(--line);backdrop-filter:blur(10px)}h1{margin:0;font-size:clamp(27px,4vw,48px)}header p{margin:6px 0}.status{font:13px ui-monospace,monospace;color:#5c6962}button{padding:9px 14px;border:1px solid var(--line);background:#fff;font-weight:900;cursor:pointer}main{max-width:1900px;margin:auto;padding:20px}.matrix{display:grid;grid-template-columns:190px repeat(5,minmax(260px,1fr));gap:10px;min-width:1550px}.wrap{overflow:auto}.head,.label,.cell{background:var(--card);border:1px solid var(--line);padding:11px}.head{font-weight:900;text-align:center;background:#ddd3c0}.label{display:flex;flex-direction:column;justify-content:center;font:900 20px "Trebuchet MS",sans-serif}.label.top{border-left:8px solid var(--red)}.label.bottom{border-left:8px solid var(--green)}video{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#141816}.pending{display:grid;place-items:center;aspect-ratio:16/9;background:repeating-linear-gradient(135deg,#e5dece,#e5dece 10px,#f5f0e6 10px,#f5f0e6 20px);color:#746b5d}.meta{margin:8px 0 0;font:12px ui-monospace,monospace}.replay{position:fixed;right:20px;bottom:20px;z-index:10;border:0;border-radius:99px;padding:14px 20px;background:var(--dark);color:white;box-shadow:0 12px 30px #17352b55}.heat-section{margin:30px 0;padding:16px;border:1px solid var(--line);background:#f6f1e7cc}.heat-section h2{margin:0 0 12px}.heat-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.heat-card{padding:11px;background:var(--card);border:1px solid var(--line)}.heat-card h3{margin:0 0 8px;font:900 16px "Trebuchet MS",sans-serif}.heat-images{display:grid;grid-template-columns:1.35fr 1fr;gap:8px}.heat-images img{display:block;width:100%;background:#151816;border:1px solid var(--line)}.heat-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.pill{padding:4px 7px;border-radius:99px;background:#e7dfcf;font:11px ui-monospace,monospace}@media(max-width:1000px){.heat-grid,.heat-images{grid-template-columns:1fr}}@media(max-width:800px){header{position:static}main{padding:9px}}
+</style></head><body><button id="replay" class="replay">重新播放全部</button><header><h1>Wan+LoRA · Top/Bottom100 Mono-scale</h1><p>A′ = Normalize(A<sup>1+α</sup>)，统一配置：40 denoising steps、49 frames、全时间步应用。</p><button id="refresh">手动刷新结果</button> <span id="status" class="status">加载中</span></header><main><div class="wrap"><section id="matrix" class="matrix"></section></div><section id="heatmaps"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const caseKey=new URL(location.href).searchParams.get('case')||'0613pybullet_sample_001460_w002',src=id=>`/api/qk-mono-scale-lora-videos/video?id=${encodeURIComponent(id)}&case=${encodeURIComponent(caseKey)}`,image=name=>`/api/qk-mono-scale-lora-videos/image?name=${encodeURIComponent(name)}`,video=x=>x&&x.ready?`<video controls preload="metadata" playsinline src="${src(x.id)}"></video>`:`<div class="pending">视频生成中</div>`,fmt=x=>x==null?'-':Number(x).toExponential(3);
+function renderHeatmaps(records){document.getElementById('heatmaps').innerHTML='<h1>调整前后 Attention 热力图</h1><p>全 token 图包含 Before / After / |ΔA|；帧级图包含 13×13 Before / After / Delta。</p>'+records.map(r=>`<section class="heat-section"><h2>${e(r.group.toUpperCase())} · α=${r.alpha.toFixed(1)} · ${r.heatmaps.length} heatmaps</h2><div class="heat-grid">${r.heatmaps.length?r.heatmaps.map(h=>`<article class="heat-card"><h3>${e(h.label)}</h3><div class="heat-images"><img loading="lazy" src="${image(h.all_token_asset)}" alt="all-token before after delta"><img loading="lazy" src="${image(h.frame_asset)}" alt="frame before after delta"></div><div class="heat-meta"><span class="pill">mean |ΔA| ${fmt(h.mean_abs_attention_delta)}</span><span class="pill">entropy ${h.before_mean_row_entropy==null?'-':Number(h.before_mean_row_entropy).toFixed(4)} → ${h.after_mean_row_entropy==null?'-':Number(h.after_mean_row_entropy).toFixed(4)}</span><span class="pill">row error ${fmt(h.max_row_sum_error)}</span></div></article>`).join(''):'<div class="pending">热力图生成中</div>'}</div></section>`).join('')}
+async function load(){const d=await fetch(`/api/qk-mono-scale-lora-videos/catalog?case=${encodeURIComponent(caseKey)}`,{cache:'no-store'}).then(r=>r.json()),controls=Object.fromEntries(d.controls.map(x=>[x.id,x])),by=Object.fromEntries(d.records.map(x=>[x.group+'_'+x.alpha.toFixed(1),x]));document.getElementById('status').textContent=`${d.records.filter(x=>x.ready).length}/${d.records.length} intervention videos ready · ${d.records.reduce((n,x)=>n+x.heatmaps.length,0)} heatmaps · Case ${d.case}`;document.getElementById('matrix').innerHTML=`<div class="head">组</div><div class="head">Wan2.2 Original</div><div class="head">Wan+LoRA Original</div><div class="head">α = 0.3</div><div class="head">α = 0.6</div><div class="head">α = 0.9</div>`+['top100','bottom100'].map(g=>`<div class="label ${g.startsWith('top')?'top':'bottom'}">${g.toUpperCase()}<small>全时间步</small></div><div class="cell">${video(controls.wan_original)}<div class="meta">参考模型</div></div><div class="cell">${video(controls.lora_original)}<div class="meta">同模型未干预</div></div><div class="cell">${video(by[g+'_0.3'])}<div class="meta">Wan+LoRA · α=0.3</div></div><div class="cell">${video(by[g+'_0.6'])}<div class="meta">Wan+LoRA · α=0.6</div></div><div class="cell">${video(by[g+'_0.9'])}<div class="meta">Wan+LoRA · α=0.9</div></div>`).join('');renderHeatmaps(d.records)}
+document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load().catch(err=>document.getElementById('status').textContent=err);
 </script></body></html>'''
 
 
@@ -844,17 +1141,17 @@ def attention_lora_case_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wan+LoRA Attention Probability Noise</title><style>
 :root{--ink:#18211e;--paper:#eee9dc;--card:#fffdf7;--line:#c8bda7;--red:#b94332;--green:#176b61}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 4%,#f6cf9c,transparent 25%),linear-gradient(145deg,#ece5d4,#d9e8df);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:5;padding:17px 24px;background:rgba(238,233,220,.94);border-bottom:1px solid var(--line);backdrop-filter:blur(9px)}h1{margin:0;font-size:clamp(23px,3vw,39px)}header p{margin:5px 0;color:#5e6c65}.status{font-family:ui-monospace,monospace;font-size:13px}main{max-width:1800px;margin:auto;padding:20px}.controls,.control-grid,.matrix-head,.row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.control,.cell,.row-head,.alpha-title,.card{background:rgba(255,253,247,.94);border:1px solid var(--line);border-radius:16px;padding:15px;box-shadow:0 10px 28px rgba(39,48,42,.08)}h2{margin:7px 0 12px}.card.top{border-left:7px solid var(--red)}.card.bottom{border-left:7px solid var(--green)}video,img{display:block;width:100%;background:#151816;border:1px solid var(--line)}.heatmaps{display:grid;grid-template-columns:1.25fr 1fr;gap:10px;margin-top:11px}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);color:#68736d}.meta{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.pill{padding:5px 8px;border-radius:999px;background:#e9e2d2;font:12px ui-monospace,monospace}.section-title{margin:28px 0 13px}
-.matrix{display:flex;flex-direction:column;gap:10px;min-width:4020px}.matrix-head{display:grid;grid-template-columns:260px repeat(6,minmax(620px,1fr));gap:10px;min-width:4020px;font-weight:700;color:#5e6c65}
-.row{display:grid;grid-template-columns:260px repeat(6,minmax(620px,1fr));gap:10px;min-width:4020px}.row-head{padding:12px}.row-head .title{margin:4px 0;font-size:19px;font-family:"Trebuchet MS","Noto Serif CJK SC",sans-serif;font-weight:900}.row-head .sub{color:#5e6c65;font-size:12px}.alpha-title,.cell-inner{text-align:center}.alpha-title{padding:10px;font-size:17px}.cell{padding:8px}.cell.paired{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;align-items:start}.cell.paired>.card{margin:0}
+.matrix{display:flex;flex-direction:column;gap:10px}.matrix-head{display:grid;grid-template-columns:220px repeat(6,minmax(0,1fr));gap:10px;font-weight:700;color:#5e6c65}
+.row{display:grid;grid-template-columns:220px repeat(6,minmax(0,1fr));gap:10px}.row-head{padding:12px}.row-head .title{margin:4px 0;font-size:19px;font-family:"Trebuchet MS","Noto Serif CJK SC",sans-serif;font-weight:900}.row-head .sub{color:#5e6c65;font-size:12px}.alpha-title,.cell-inner{text-align:center}.alpha-title{padding:10px;font-size:17px}.cell{padding:8px}
 .replay-all{position:fixed;right:22px;bottom:22px;z-index:20;border:0;border-radius:999px;padding:13px 20px;background:#172e27;color:#fff;font:700 14px ui-monospace,monospace;box-shadow:0 10px 28px rgba(20,35,29,.3);cursor:pointer}.replay-all:hover{background:#b94332}.replay-all:active{transform:translateY(1px)}.manual-refresh{margin-left:10px;border:1px solid #748078;border-radius:999px;padding:8px 14px;background:#fff;color:#172e27;font-weight:800;cursor:pointer}.manual-refresh:hover{border-color:#b94332;color:#b94332}
-@media(max-width:980px){.controls,.control-grid,.heatmaps,.matrix-head,.row,.cell.paired{grid-template-columns:1fr}header{position:static}main{padding:11px}.row,.matrix-head{grid-template-columns:1fr}}
+@media(max-width:980px){.controls,.control-grid,.heatmaps,.matrix-head,.row{grid-template-columns:1fr}header{position:static}main{padding:11px}.row,.matrix-head{grid-template-columns:1fr}}
 </style></head><body><button id="replayAll" class="replay-all" type="button">重新播放全部</button><header><h1>Attention Probability Noise Ablation</h1><p><strong>消融模型：Wan+LoRA、Full-SA no-object step-002500</strong> · 参考模型：Wan2.2 Baseline</p><p><label for="caseSelect">Case：</label><select id="caseSelect"></select><button id="manualRefresh" class="manual-refresh" type="button">手动刷新结果</button></p><p id="case"></p><div id="status" class="status">加载中</div></header><main><h2 class="section-title">Original controls（参考模型 vs 消融模型）</h2><section id="controls" class="controls"></section><h2 class="section-title">Adaptive Top/Bottom 30/100 · Additive Noise 与 Attention Replacement</h2><p>A=0：选中 head 输出归零；A=1：按行归一化为均匀注意力 A=1/N<sub>K</sub>。</p><section id="matrix-head" class="matrix-head"></section><section id="grid" class="matrix"></section></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let currentCase=new URL(location.href).searchParams.get('case')||'';const v=id=>`/api/attention-additive-lora-case/video?id=${encodeURIComponent(id)}&case=${encodeURIComponent(currentCase)}`;const im=id=>`/api/attention-additive-lora-case/image?id=${encodeURIComponent(id)}&case=${encodeURIComponent(currentCase)}`;const f=x=>Number(x).toExponential(3);
 function renderCell(r,expectedGroup){const m=r?r.metrics||{}:{ },intervention=r&&r.experiment==='replacement'?(r.intervention==='zero'?'A=0':r.intervention==='uniform'?'A=1/N_K':'Temporal Causal Mask'):r?'α='+r.alpha.toFixed(1):'';const label=r?(r.group||'').toUpperCase()+' · '+intervention:expectedGroup.toUpperCase()+' · 未完成';if(!r){return `<article class="card ${expectedGroup.startsWith('top')?'top':'bottom'}"><div class="alpha-title"><strong>${e(label)}</strong></div><div class="pending">该实验的新结果尚未生成</div></article>`;}const heatmaps=r.heatmap_ready?`<div class="heatmaps"><img loading="lazy" src="${im(r.all_token_id)}"><img loading="lazy" src="${im(r.frame_id)}"></div>`:r.heatmap_expected?`<div class="heatmaps"><div class="pending">S039 全 token 热力图生成中</div><div class="pending">帧级热力图生成中</div></div>`:`<div class="pending">新统一推理结果尚未采集热力图</div>`;return `<article class="card ${r.group&&r.group.startsWith('top')?'top':'bottom'}"><div class="alpha-title"><strong>${e(label)}</strong></div><div class="meta"><span class="pill">消融模型：${e(r.model)}</span><span class="pill">统一配置：40步 · 49帧 · 热力图S039</span></div>${r.video_ready?`<video controls preload="metadata" playsinline src="${v(r.video_id)}"></video>`:`<div class="pending">${e(r.model)} 新视频生成中</div>`}${heatmaps}${r.heatmap_ready?`<div class="meta"><span class="pill">mean |ΔA| ${f(m.mean_abs_attention_delta)}</span><span class="pill">row error ${f(m.max_row_sum_error)}</span></div>`:''}</article>`}
 function controlIdForModel(model){if(model.includes('Wan+LoRA'))return'control_lora';if(model.includes('Full-SA'))return'control_full_sa';return'control_baseline'}
 function renderBaselineCell(model,controlsById){const control=controlsById[controlIdForModel(model)];if(!control||!control.ready){return `<article class="card"><div class="alpha-title"><strong>Baseline Original</strong></div><div class="pending">基线视频尚未就绪</div></article>`;}return `<article class="card"><div class="alpha-title"><strong>Baseline Original</strong></div><div class="meta"><span class="pill">基线：${e(control.label)}</span></div><video controls preload="metadata" playsinline src="${v(control.id)}"></video></article>`}
-function makeRowMeta(r){return {name:`${r.model.startsWith('Wan+LoRA')?'Wan+LoRA':r.model.includes('Full-SA')?'Full-SA':'消融模型'} · Top/Bottom${r.count}`,sub:'同数量 Top 与 Bottom 并排 · 统一配置：40步 · 49帧'}}
-function renderRows(records,columns,headId,gridId,controlsById){document.getElementById(headId).innerHTML=`<div class="row-head"><div class="title">模型 × Top/Bottom 数量</div></div><div class="alpha-title">Baseline Original</div>`+columns.map(c=>`<div class="alpha-title">${e(c.label)}</div>`).join('');const rows=new Map();for(const r of records){const count=String(r.count),key=`${r.model}::${count}`,column=r.experiment==='replacement'?r.intervention:Number(r.alpha).toFixed(1),direction=r.group.toLowerCase().startsWith('top')?'top':'bottom';if(!rows.has(key)){rows.set(key,{model:r.model,count,items:{}})}if(!rows.get(key).items[column])rows.get(key).items[column]={};rows.get(key).items[column][direction]=r}const ordered=Array.from(rows.values()).sort((a,b)=>a.model.localeCompare(b.model)||Number(a.count)-Number(b.count));document.getElementById(gridId).innerHTML=ordered.map(row=>{const meta=makeRowMeta(row);return `<article class="row"><div class="row-head"><div class="title">${e(meta.name)}</div><div class="sub">${e(meta.sub)}</div></div><div class="cell">${renderBaselineCell(row.model,controlsById)}</div>`+columns.map(c=>{const pair=row.items[c.key]||{};return `<div class="cell paired">${renderCell(pair.top,`top${row.count}`)}${renderCell(pair.bottom,`bottom${row.count}`)}</div>`}).join('')+`</article>`}).join('')}
+function makeRowMeta(r){return {name:`${r.model.startsWith('Wan+LoRA')?'Wan+LoRA':r.model.includes('Full-SA')?'Full-SA':'消融模型'} · ${r.direction==='top'?'Top':'Bottom'}${r.count}`,sub:`统一配置：40步 · 49帧`}}
+function renderRows(records,columns,headId,gridId,controlsById){document.getElementById(headId).innerHTML=`<div class="row-head"><div class="title">模型 × Head 组</div></div><div class="alpha-title">Baseline</div>`+columns.map(c=>`<div class="alpha-title">${e(c.label)}</div>`).join('');const rows=new Map();for(const r of records){const count=String(r.count),direction=r.group.toLowerCase().startsWith('top')?'top':'bottom',key=`${r.model}::${direction}::${count}`,column=r.experiment==='replacement'?r.intervention:Number(r.alpha).toFixed(1);if(!rows.has(key)){rows.set(key,{model:r.model,count,direction,items:{}})}rows.get(key).items[column]=r}const ordered=Array.from(rows.values()).sort((a,b)=>a.model.localeCompare(b.model)||Number(a.count)-Number(b.count)||b.direction.localeCompare(a.direction));document.getElementById(gridId).innerHTML=ordered.map(row=>`<article class="row"><div class="row-head"><div class="title">${e(makeRowMeta(row).name)}</div><div class="sub">${e(makeRowMeta(row).sub)}</div></div><div class="cell">${renderBaselineCell(row.model,controlsById)}</div>`+columns.map(c=>`<div class="cell">${renderCell(row.items[c.key],`${row.direction}${row.count}`)}</div>`).join('')+`</article>`).join('')}
 async function load(){const d=await fetch(`/api/attention-additive-lora-case/catalog?case=${encodeURIComponent(currentCase)}`,{cache:'no-store'}).then(r=>r.json());currentCase=d.case;const select=document.getElementById('caseSelect');if(select.options.length!==d.cases.length){select.innerHTML=d.cases.map(x=>`<option value="${e(x)}">${e(x)}</option>`).join('')}select.value=currentCase;document.getElementById('case').textContent=`Case: ${d.case} · additive noise、normalized replacement 与 temporal causal mask`;const controlsById=Object.fromEntries(d.controls.map(x=>[x.id,x])),alphaKeys=new Set(['0.9','1.5']),additive=d.records.filter(r=>r.experiment!=='replacement'&&alphaKeys.has(Number(r.alpha).toFixed(1))),replacement=d.records.filter(r=>r.experiment==='replacement'),visible=[...additive,...replacement],columns=[{key:'0.9',label:'α = 0.9'},{key:'1.5',label:'α = 1.5'},{key:'zero',label:'A = 0'},{key:'uniform',label:'A = 1（归一化为 1/N_K）'},{key:'temporal_causal',label:'Temporal Causal Mask'}];document.getElementById('status').textContent=`${visible.filter(r=>r.video_ready).length}/${visible.length} visible videos ready · 点击按钮手动刷新`;document.getElementById('controls').innerHTML=d.controls.map(x=>`<article class="control"><h2>${e(x.label)}</h2>${x.ready?`<video controls preload="metadata" playsinline src="${v(x.id)}"></video>`:'<div class="pending">等待 Original 视频</div>'}</article>`).join('');renderRows(visible,columns,'matrix-head','grid',controlsById)}
 document.getElementById('caseSelect').addEventListener('change',event=>{currentCase=event.target.value;const url=new URL(location.href);url.searchParams.set('case',currentCase);history.replaceState(null,'',url);load()});document.getElementById('manualRefresh').addEventListener('click',()=>load());document.getElementById('replayAll').addEventListener('click',()=>{document.querySelectorAll('video').forEach(video=>{video.pause();video.currentTime=0;video.loop=false;video.play().catch(()=>{})})});load();
 </script></body></html>'''
