@@ -1,0 +1,30 @@
+{
+  "extends": "full_sa_no_object.json",
+  "experiment": {
+    "name": "full_sa_no_object_pybullet100_gpu67_1000steps",
+    "description": "Two-GPU Full-SA No-Object dataset ablation trained on 100% 0717 PyBullet"
+  },
+  "launch": {
+    "gpu_set": "6,7",
+    "num_processes": 2,
+    "main_process_port": 29567
+  },
+  "data": {
+    "mixture_pybullet_ratio": 1.0,
+    "mixture_kubric_ratio": 0.0,
+    "mixture_openvid_ratio": 0.0
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4,
+    "max_train_steps": 1000
+  },
+  "checkpointing": {
+    "save_steps": 500,
+    "max_checkpoints_keep": 2,
+    "resume_from": null
+  },
+  "logging": {
+    "wandb_name": "full_sa_no_object_pybullet100_gpu67_1000steps"
+  }
+}

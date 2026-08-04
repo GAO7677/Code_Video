@@ -62,6 +62,8 @@
       "slot_dedup_merge_xssc_step050000",
       "t_head70",
       "full_sa_no_object",
+      "full_sa_no_object_pybullet100",
+      "full_sa_no_object_kubric100",
       "t_head70_no_object"
     ],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
@@ -221,6 +223,24 @@
       ],
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu27_formal/formal_20260801T162400Z/checkpoints"
+      ]
+    },
+    {
+      "key": "full_sa_no_object_pybullet100",
+      "label": "Full-SA + No-Object (PyBullet 100%)",
+      "color": "#00A6A6",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_pybullet100_gpu6_1000steps/formal_20260804T114334Z/checkpoints",
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_pybullet100_gpu67_1000steps/serial_20260804T115337Z/checkpoints"
+      ]
+    },
+    {
+      "key": "full_sa_no_object_kubric100",
+      "label": "Full-SA + No-Object (Kubric 100%)",
+      "color": "#BC5090",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_kubric100_gpu7_1000steps/formal_20260804T114334Z/checkpoints",
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_kubric100_gpu67_1000steps/serial_20260804T115337Z/checkpoints"
       ]
     },
     {

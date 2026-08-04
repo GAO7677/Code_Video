@@ -25,7 +25,12 @@ SIGMA = 0.30
 QUERY_CHUNK = 128
 NOISE_MODE = os.environ.get("ATTENTION_NOISE_MODE", "logit").strip().lower()
 ATTENTION_ALPHA = float(os.environ.get("ATTENTION_NOISE_ALPHA", "0.30"))
-if NOISE_MODE not in {"logit", "probability_additive"}:
+if NOISE_MODE not in {
+    "logit",
+    "probability_additive",
+    "probability_zero",
+    "probability_uniform",
+}:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
 
 _CAPTURE_PROMPT_CASES: dict[str, list[str]] = {}
@@ -228,7 +233,18 @@ class AdaptiveQKLogitNoise:
                 device=logits.device,
                 dtype=torch.float32,
             )
-            if self.noise_mode == "probability_additive":
+            if self.noise_mode == "probability_zero":
+                probabilities = torch.zeros_like(before_probabilities)
+                if capture_entry is not None:
+                    capture_entry["max_row_sum_error"] = 1.0
+            elif self.noise_mode == "probability_uniform":
+                probabilities = torch.full_like(before_probabilities, 1.0 / sequence)
+                if capture_entry is not None:
+                    capture_entry["max_row_sum_error"] = max(
+                        capture_entry["max_row_sum_error"],
+                        float((probabilities.sum(dim=-1) - 1.0).abs().max().item()),
+                    )
+            elif self.noise_mode == "probability_additive":
                 perturbed = before_probabilities + (self.attention_alpha / sequence) * noise
                 clipped = perturbed.clamp_min(0.0)
                 row_sum = clipped.sum(dim=-1, keepdim=True)
@@ -331,11 +347,14 @@ class AdaptiveQKLogitNoise:
             axis.set_xlabel("Key token index (downsampled)")
             axis.set_ylabel("Query token index (downsampled)")
             fig.colorbar(image, ax=axis, fraction=0.046, pad=0.03)
-        strength_label = (
-            f"alpha={self.attention_alpha:.2f}"
-            if self.noise_mode == "probability_additive"
-            else f"sigma={SIGMA:.2f}"
-        )
+        if self.noise_mode == "probability_zero":
+            strength_label = "A'=0"
+        elif self.noise_mode == "probability_uniform":
+            strength_label = "A'=1/N_K"
+        elif self.noise_mode == "probability_additive":
+            strength_label = f"alpha={self.attention_alpha:.2f}"
+        else:
+            strength_label = f"sigma={SIGMA:.2f}"
         fig.suptitle(
             f"{group.upper()} | S{self.capture_step:03d} | "
             f"{self.noise_mode} | {strength_label}"
@@ -444,14 +463,15 @@ def write_experiment_metadata() -> None:
         return
     root = Path(sys.argv[sys.argv.index("--output-root") + 1]).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
-    (root / "QK_LOGIT_NOISE_EXPERIMENT.json").write_text(
+    (root / "ATTENTION_PROBABILITY_REPLACEMENT_EXPERIMENT.json").write_text(
         json.dumps(
             {
-                "intervention": (
-                    "direct_attention_probability_additive_noise"
-                    if NOISE_MODE == "probability_additive"
-                    else "direct_qk_logit_noise"
-                ),
+                "intervention": {
+                    "probability_zero": "direct_attention_probability_zero",
+                    "probability_uniform": "direct_attention_probability_uniform",
+                    "probability_additive": "direct_attention_probability_additive_noise",
+                    "logit": "direct_qk_logit_noise",
+                }[NOISE_MODE],
                 "qkv_modified": False,
                 "sigma_relative_to_per_query_logit_std": (
                     SIGMA if NOISE_MODE == "logit" else None
@@ -470,7 +490,7 @@ def write_experiment_metadata() -> None:
                     else None
                 ),
                 "query_chunk": QUERY_CHUNK,
-                "selection": "per-step three-model combined object PCK@32 adaptive top30/bottom30",
+                "selection": "per-step three-model combined object PCK@32 adaptive extremes",
                 "denoising_steps": list(range(NUM_STEPS)),
             },
             ensure_ascii=False,
