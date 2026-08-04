@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live dashboard for the 27-condition attention-noise benchmark."""
+"""Combined dashboard for head-zero and attention-noise benchmarks."""
 
 from __future__ import annotations
 
@@ -14,6 +14,15 @@ from urllib.parse import urlparse
 
 BENCH_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_probability_noise_metrics_test5"
+)
+UNIFIED_BENCH_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_probability_noise_unified_steps40_frames49_metrics_test5"
+)
+UNIFIED_OUTPUT_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_probability_noise_unified_steps40_frames49_test5"
+)
+HEAD_ZERO_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/pck_extreme_benchmark_test5_ready"
 )
 GEN_LOG_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_probability_noise_complete_logs"
@@ -59,13 +68,38 @@ MODEL_LABELS = {
 
 def expected_methods() -> list[dict[str, object]]:
     methods: list[dict[str, object]] = []
-    for model in MODEL_LABELS:
+    for model in ("wan22_baseline", "wan_lora"):
         methods.append(
             {
                 "name": f"{model}_original",
                 "model": model,
                 "variant": "Original",
                 "alpha": None,
+                "experiment": "Head Zero Ablation",
+                "benchmark_root": str(HEAD_ZERO_ROOT),
+            }
+        )
+        for count in (30, 100):
+            for rank in ("top", "bottom"):
+                methods.append(
+                    {
+                        "name": f"{model}_{rank}{count}_steps_00_40",
+                        "model": model,
+                        "variant": f"{rank.title()}{count}",
+                        "alpha": None,
+                        "experiment": "Head Zero Ablation",
+                        "benchmark_root": str(HEAD_ZERO_ROOT),
+                    }
+                )
+    for model in ("wan22_baseline", "wan_lora"):
+        methods.append(
+            {
+                "name": f"{model}_original",
+                "model": model,
+                "variant": "Original",
+                "alpha": None,
+                "experiment": "Legacy Attention Noise (40-step/25-frame)",
+                "benchmark_root": str(BENCH_ROOT),
             }
         )
         for count in (30, 100):
@@ -77,6 +111,32 @@ def expected_methods() -> list[dict[str, object]]:
                             "model": model,
                             "variant": f"{rank.title()}{count}",
                             "alpha": alpha,
+                            "experiment": "Legacy Attention Noise (40-step/25-frame)",
+                            "benchmark_root": str(BENCH_ROOT),
+                        }
+                    )
+    for model in MODEL_LABELS:
+        methods.append(
+            {
+                "name": f"{model}_original",
+                "model": model,
+                "variant": "Original",
+                "alpha": None,
+                "experiment": "Unified Attention Noise (40-step/49-frame)",
+                "benchmark_root": str(UNIFIED_BENCH_ROOT),
+            }
+        )
+        for count in (30, 100):
+            for rank in ("top", "bottom"):
+                for alpha in (0.9, 1.5):
+                    methods.append(
+                        {
+                            "name": f"{model}_{rank}{count}_alpha{str(alpha).replace('.', 'p')}",
+                            "model": model,
+                            "variant": f"{rank.title()}{count}",
+                            "alpha": alpha,
+                            "experiment": "Unified Attention Noise (40-step/49-frame)",
+                            "benchmark_root": str(UNIFIED_BENCH_ROOT),
                         }
                     )
     return methods
@@ -116,15 +176,22 @@ def metric_status(metric: str) -> str:
 
 def generation_status() -> dict[str, object]:
     queues = []
-    for gpu in (0, 1, 2, 3, 5):
-        log = GEN_LOG_ROOT / f"gpu{gpu}.log"
-        complete = False
-        if log.is_file():
-            try:
-                complete = f"MATRIX_GPU{gpu}_COMPLETE" in log.read_text(errors="replace")
-            except OSError:
-                pass
-        queues.append({"gpu": gpu, "complete": complete})
+    marker_names = (
+        "gpu0.complete",
+        "gpu1.complete",
+        "gpu2.complete",
+        "gpu3.complete",
+        "gpu5.complete",
+        "fullsa_alpha09_count30_gpu0.complete",
+        "fullsa_alpha09_count100_gpu1.complete",
+    )
+    for marker_name in marker_names:
+        queues.append(
+            {
+                "gpu": marker_name,
+                "complete": (UNIFIED_OUTPUT_ROOT / "logs" / marker_name).is_file(),
+            }
+        )
     return {
         "queues": queues,
         "complete": all(bool(item["complete"]) for item in queues),
@@ -134,7 +201,7 @@ def generation_status() -> dict[str, object]:
 def build_summary() -> dict[str, object]:
     rows = []
     for spec in expected_methods():
-        method_dir = BENCH_ROOT / "methods" / str(spec["name"])
+        method_dir = Path(str(spec["benchmark_root"])) / "methods" / str(spec["name"])
         case_jsons = sorted(
             path
             for path in method_dir.glob("*.json")
@@ -171,6 +238,22 @@ def build_summary() -> dict[str, object]:
         ]
         best[metric] = max(candidates) if candidates else None
 
+    best_by_experiment: dict[str, dict[str, float | None]] = {}
+    for experiment in (
+        "Head Zero Ablation",
+        "Legacy Attention Noise (40-step/25-frame)",
+        "Unified Attention Noise (40-step/49-frame)",
+    ):
+        experiment_rows = [row for row in rows if row["experiment"] == experiment]
+        best_by_experiment[experiment] = {}
+        for metric in METRICS:
+            candidates = [
+                float(row["metrics"][metric]["mean"])
+                for row in experiment_rows
+                if row["metrics"][metric]["mean"] is not None
+            ]
+            best_by_experiment[experiment][metric] = max(candidates) if candidates else None
+
     statuses = {metric: metric_status(metric) for metric in METRICS}
     return {
         "root": str(BENCH_ROOT),
@@ -183,6 +266,7 @@ def build_summary() -> dict[str, object]:
         "completed_metrics": sum(status == "done" for status in statuses.values()),
         "rows": rows,
         "best": best,
+        "best_by_experiment": best_by_experiment,
     }
 
 
@@ -191,27 +275,27 @@ PAGE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Attention Noise Benchmark</title>
+<title>Head Ablation Benchmark</title>
 <style>
 :root{--ink:#17251f;--muted:#66736d;--paper:#f4f0e6;--card:#fffdf7;--line:#d8d2c3;--teal:#126e65;--gold:#d99d27;--red:#b74b3f}
 *{box-sizing:border-box}body{margin:0;color:var(--ink);font-family:"Avenir Next","Trebuchet MS",sans-serif;background:radial-gradient(circle at 8% 0,#d7eadf 0,transparent 34rem),linear-gradient(135deg,#f6f2e8,#e9eee7);min-height:100vh}
 header{padding:32px clamp(18px,4vw,64px) 18px}h1{font-family:"Iowan Old Style","Palatino Linotype",serif;font-size:clamp(30px,4vw,54px);line-height:1;margin:0 0 10px;letter-spacing:-.035em}.sub{color:var(--muted);max-width:900px}
 .status-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;padding:0 clamp(18px,4vw,64px) 22px}.status{background:rgba(255,253,247,.85);border:1px solid var(--line);border-radius:14px;padding:15px;box-shadow:0 10px 30px rgba(30,55,43,.06)}.status b{display:block;font-size:23px;margin-top:4px}.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .toolbar{position:sticky;top:0;z-index:8;display:flex;gap:12px;align-items:center;padding:12px clamp(18px,4vw,64px);background:rgba(244,240,230,.9);backdrop-filter:blur(12px);border-block:1px solid var(--line)}select,button{font:inherit;border:1px solid var(--line);border-radius:9px;background:var(--card);padding:8px 12px;color:var(--ink)}button{cursor:pointer;background:var(--teal);color:white;border-color:var(--teal)}#stamp{margin-left:auto;color:var(--muted);font-size:13px}
-.table-wrap{margin:22px clamp(12px,2vw,32px) 60px;border:1px solid var(--line);border-radius:16px;overflow:auto;max-height:72vh;background:var(--card);box-shadow:0 16px 45px rgba(30,55,43,.09)}table{border-collapse:separate;border-spacing:0;min-width:1900px;width:100%;font-size:13px}th,td{padding:10px 9px;border-right:1px solid #e5dfd1;border-bottom:1px solid #e5dfd1;text-align:right;white-space:nowrap}thead th{position:sticky;top:0;z-index:4;background:#e5eee8;font-size:11px;letter-spacing:.035em}.left{text-align:left}.sticky{position:sticky;left:0;z-index:3;background:var(--card)}thead .sticky{z-index:6;background:#e5eee8}.model{font-weight:700}.metric small{display:block;color:var(--muted);font-size:10px}.best{background:#fff0bb!important;color:#654508;font-weight:800;box-shadow:inset 0 0 0 1px var(--gold)}.pending{color:#999}.running{color:var(--teal)}.failed{color:var(--red)}.complete{color:var(--teal)}.legend{padding:0 clamp(18px,4vw,64px) 18px;color:var(--muted);font-size:13px}
+.table-wrap{margin:22px clamp(12px,2vw,32px) 60px;border:1px solid var(--line);border-radius:16px;overflow:auto;max-height:72vh;background:var(--card);box-shadow:0 16px 45px rgba(30,55,43,.09)}table{border-collapse:separate;border-spacing:0;min-width:2100px;width:100%;font-size:13px}th,td{padding:10px 9px;border-right:1px solid #e5dfd1;border-bottom:1px solid #e5dfd1;text-align:right;white-space:nowrap}thead th{position:sticky;top:0;z-index:4;background:#e5eee8;font-size:11px;letter-spacing:.035em}.left{text-align:left}.sticky{position:sticky;left:0;z-index:3;background:var(--card)}thead .sticky{z-index:6;background:#e5eee8}.model{font-weight:700}.metric small{display:block;color:var(--muted);font-size:10px}.best{background:#fff0bb!important;color:#654508;font-weight:800;box-shadow:inset 0 0 0 1px var(--gold)}.group-best{background:#dff1e9;color:#145a50;font-weight:700}.experiment-tag{display:inline-block;padding:4px 7px;border-radius:999px;background:#e8eee8;font-size:11px;font-weight:700}.pending{color:#999}.running{color:var(--teal)}.failed{color:var(--red)}.complete{color:var(--teal)}.legend{padding:0 clamp(18px,4vw,64px) 18px;color:var(--muted);font-size:13px}
 @media(max-width:760px){.status-grid{grid-template-columns:repeat(2,1fr)}header{padding-top:24px}.toolbar{flex-wrap:wrap}#stamp{width:100%;margin:0}.table-wrap{max-height:68vh}}
 </style>
 </head>
 <body>
-<header><div class="eyebrow">20 cases / probability-space additive attention noise</div><h1>PCK Extreme Benchmark</h1><div class="sub">Wan2.2 Baseline, Wan+LoRA, and Full-SA no-object step-002500. Original plus Top/Bottom 30/100 at alpha 0.9 and 1.5. Results refresh every 30 seconds.</div></header>
+<header><div class="eyebrow">20 cases / controlled head ablation</div><h1>PCK Extreme Ablation Benchmark</h1><div class="sub">Head Zero, comparable 40-step/25-frame Legacy Noise for Wan2.2 Baseline and Wan+LoRA, plus a pending 40-step/49-frame Unified Noise matrix for all three models. Results refresh every 30 seconds.</div></header>
 <section class="status-grid">
   <div class="status"><span class="eyebrow">Generation queues</span><b id="generation">-</b></div>
   <div class="status"><span class="eyebrow">Benchmark tree</span><b id="prepared">-</b></div>
   <div class="status"><span class="eyebrow">Metrics complete</span><b id="metricProgress">-</b></div>
   <div class="status"><span class="eyebrow">Method-case rows</span><b id="caseProgress">-</b></div>
 </section>
-<div class="toolbar"><label>Model <select id="model"><option value="all">All models</option><option value="wan22_baseline">Wan2.2 Baseline</option><option value="wan_lora">Wan+LoRA</option><option value="full_sa_no_object_step2500">Full-SA no-object</option></select></label><button id="refresh">Refresh now</button><span id="stamp"></span></div>
-<div class="legend">Gold marks the current highest mean for each metric. WMReward displays mean surprise, matching the existing 14-metric benchmark summary.</div>
+<div class="toolbar"><label>Experiment <select id="experiment"><option value="all">All experiments</option><option value="Head Zero Ablation">Head Zero Ablation</option><option value="Legacy Attention Noise (40-step/25-frame)">Legacy Attention Noise (40-step/25-frame)</option><option value="Unified Attention Noise (40-step/49-frame)">Unified Attention Noise (40-step/49-frame)</option></select></label><label>Model <select id="model"><option value="all">All models</option><option value="wan22_baseline">Wan2.2 Baseline</option><option value="wan_lora">Wan+LoRA</option><option value="full_sa_no_object_step2500">Full-SA no-object</option></select></label><button id="refresh">Refresh now</button><span id="stamp"></span></div>
+<div class="legend">Gold marks the global highest mean across both experiments; pale green marks the best result within one experiment group. WMReward displays mean surprise.</div>
 <div class="table-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
 <script>
 let DATA=null;
@@ -219,24 +303,25 @@ const fmt=v=>v==null?'-':(Math.abs(v)>=10?v.toFixed(3):v.toFixed(4));
 function render(){
   if(!DATA)return;
   const filter=document.querySelector('#model').value;
+  const experiment=document.querySelector('#experiment').value;
   const done=DATA.generation.queues.filter(x=>x.complete).length;
-  document.querySelector('#generation').textContent=`${done}/5 complete`;
-  document.querySelector('#prepared').textContent=DATA.prepare_failed?'FAILED':(DATA.prepared?'27 methods ready':'waiting');
+  document.querySelector('#generation').textContent=`${done}/${DATA.generation.queues.length} complete`;
+  document.querySelector('#prepared').textContent='55-method matrix';
   document.querySelector('#metricProgress').textContent=`${DATA.completed_metrics}/14`;
   const total=DATA.rows.reduce((n,r)=>n+r.case_count,0);
-  document.querySelector('#caseProgress').textContent=`${total}/540`;
+  document.querySelector('#caseProgress').textContent=`${total}/1100`;
   const status=m=>DATA.metric_status[m];
-  document.querySelector('#thead').innerHTML='<tr><th class="left sticky">Model / condition</th><th>Cases</th>'+DATA.metrics.map(m=>`<th title="${status(m)}">${DATA.metric_labels[m]}<br><span class="${status(m)}">${status(m)}</span></th>`).join('')+'</tr>';
-  const rows=DATA.rows.filter(r=>filter==='all'||r.model===filter);
+  document.querySelector('#thead').innerHTML='<tr><th class="left sticky">Experiment</th><th class="left">Model / condition</th><th>Cases</th>'+DATA.metrics.map(m=>`<th title="${status(m)}">${DATA.metric_labels[m]}<br><span class="${status(m)}">${status(m)}</span></th>`).join('')+'</tr>';
+  const rows=DATA.rows.filter(r=>(filter==='all'||r.model===filter)&&(experiment==='all'||r.experiment===experiment));
   document.querySelector('#tbody').innerHTML=rows.map(r=>{
     const condition=r.alpha==null?r.variant:`${r.variant} / a=${r.alpha}`;
-    const cells=DATA.metrics.map(m=>{const x=r.metrics[m];const best=DATA.best[m];const isBest=x.mean!=null&&best!=null&&Math.abs(x.mean-best)<1e-10;return `<td class="metric ${isBest?'best':''}">${fmt(x.mean)}<small>n=${x.count}</small></td>`}).join('');
-    return `<tr><td class="left sticky"><span class="model">${r.model_label}</span><br>${condition}</td><td>${r.case_count}</td>${cells}</tr>`;
+    const cells=DATA.metrics.map(m=>{const x=r.metrics[m];const best=DATA.best[m];const groupBest=DATA.best_by_experiment[r.experiment][m];const isBest=x.mean!=null&&best!=null&&Math.abs(x.mean-best)<1e-10;const isGroupBest=x.mean!=null&&groupBest!=null&&Math.abs(x.mean-groupBest)<1e-10;return `<td class="metric ${isBest?'best':(isGroupBest?'group-best':'')}">${fmt(x.mean)}<small>n=${x.count}</small></td>`}).join('');
+    return `<tr><td class="left sticky"><span class="experiment-tag">${r.experiment}</span></td><td class="left"><span class="model">${r.model_label}</span><br>${condition}</td><td>${r.case_count}</td>${cells}</tr>`;
   }).join('');
   document.querySelector('#stamp').textContent='Updated '+new Date().toLocaleTimeString();
 }
 async function load(){try{const response=await fetch('/api/pck-extreme-benchmark/summary?ts='+Date.now());DATA=await response.json();render()}catch(error){document.querySelector('#stamp').textContent='Refresh failed: '+error}}
-document.querySelector('#refresh').onclick=load;document.querySelector('#model').onchange=render;load();setInterval(load,30000);
+document.querySelector('#refresh').onclick=load;document.querySelector('#model').onchange=render;document.querySelector('#experiment').onchange=render;load();setInterval(load,30000);
 </script>
 </body></html>"""
 

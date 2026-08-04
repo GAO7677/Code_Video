@@ -32,17 +32,17 @@ QK_ATTENTION_COMPARE_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_additive_noise_alpha030_pilot"
 )
 ATTENTION_LORA_CASE_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/attention_additive_noise_lora_001460"
+    "/data/gaoya/agent-data/outputs/attention_probability_noise_unified_steps40_frames49_test5/lora"
 )
 ATTENTION_LORA_CASE = "0613pybullet_sample_001460_w002"
 ATTENTION_TEST_LIST = Path(
     "/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt"
 )
 FULL_SA_ATTENTION_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/full_sa_no_object_step2500_attention_probability_noise"
+    "/data/gaoya/agent-data/outputs/attention_probability_noise_unified_steps40_frames49_test5/full_sa"
 )
 BASELINE_ATTENTION_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/attention_additive_noise_baseline_test5"
+    "/data/gaoya/agent-data/outputs/attention_probability_noise_unified_steps40_frames49_test5/baseline"
 )
 
 VIDEO_CONDITIONS = (
@@ -332,14 +332,24 @@ viewer.PORTAL = viewer.PORTAL.replace(
 )
 
 
+from AAA_my_test import serve_attention_noise_metrics as combined_metrics
+
+
 class MetricsHandler(viewer.Handler):
     def do_GET(self) -> None:
+        if urlparse(self.path).path == "/pck-extreme-benchmark":
+            self.send_payload(
+                combined_metrics.PAGE.encode("utf-8"), "text/html; charset=utf-8"
+            )
+            return
         path = urlparse(self.path).path
         if path == "/pck-extreme-benchmark":
             self.send_payload(METRICS_PAGE.encode("utf-8"), "text/html; charset=utf-8")
             return
         if path == "/api/pck-extreme-benchmark/summary":
-            payload = json.dumps(benchmark_summary(), ensure_ascii=False).encode("utf-8")
+            payload = json.dumps(
+                combined_metrics.build_summary(), ensure_ascii=False
+            ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
             return
         if path == "/pck-ablation-case-videos":
@@ -716,8 +726,8 @@ def attention_lora_case_page():
 @media(max-width:980px){.controls,.control-grid,.heatmaps,.matrix-head,.row{grid-template-columns:1fr}header{position:static}main{padding:11px}.row,.matrix-head{grid-template-columns:1fr}}
 </style></head><body><button id="replayAll" class="replay-all" type="button">重新播放全部</button><header><h1>Attention Probability Noise Ablation</h1><p><strong>消融模型：Wan+LoRA、Full-SA no-object step-002500</strong> · 参考模型：Wan2.2 Baseline</p><p><label for="caseSelect">Case：</label><select id="caseSelect"></select></p><p id="case"></p><div id="status" class="status">加载中</div></header><main><h2 class="section-title">Original controls（参考模型 vs 消融模型）</h2><section id="controls" class="controls"></section><h2 class="section-title">Adaptive Top/Bottom 30/100 × α</h2><section id="matrix-head" class="matrix-head"></section><section id="grid" class="matrix"></section></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let currentCase=new URL(location.href).searchParams.get('case')||'';const v=id=>`/api/attention-additive-lora-case/video?id=${encodeURIComponent(id)}&case=${encodeURIComponent(currentCase)}`;const im=id=>`/api/attention-additive-lora-case/image?id=${encodeURIComponent(id)}&case=${encodeURIComponent(currentCase)}`;const f=x=>Number(x).toExponential(3);
-function renderCell(r){const m=r?r.metrics||{}:{ };const label=r?(r.group||'').toUpperCase()+' · α='+r.alpha.toFixed(1):'未完成';if(!r){return `<article class="cell"><div class="pill">暂无该组结果</div><div class="pending">该实验/α 的结果尚未生成</div></article>`;}const heatmaps=r.heatmap_ready?`<div class="heatmaps"><img loading="lazy" src="${im(r.all_token_id)}"><img loading="lazy" src="${im(r.frame_id)}"></div>`:r.heatmap_expected?`<div class="heatmaps"><div class="pending">S039 全 token 热力图生成中</div><div class="pending">帧级热力图生成中</div></div>`:`<div class="pending">该 Full-SA 推理任务仅生成视频，未采集热力图</div>`;return `<article class="card ${r.group&&r.group.startsWith('top')?'top':'bottom'}"><div class="alpha-title"><strong>${e(label)}</strong></div><div class="meta"><span class="pill">消融模型：${e(r.model)}</span><span class="pill">${r.model&&r.model.startsWith('Wan+LoRA')?'时间步：S00-S39 · 热力图：S039':'推理步数：8 · 视频自动刷新'}</span></div>${r.video_ready?`<video controls preload="metadata" playsinline src="${v(r.video_id)}"></video>`:`<div class="pending">${e(r.model)} 视频生成中</div>`}${heatmaps}${r.heatmap_ready?`<div class="meta"><span class="pill">mean |ΔA| ${f(m.mean_abs_attention_delta)}</span><span class="pill">clipped ${(100*m.clipped_fraction).toFixed(2)}%</span><span class="pill">row error ${f(m.max_row_sum_error)}</span></div>`:''}</article>`}
-function makeRowMeta(r){const count=r.group.toLowerCase().includes('30')?'30':r.group.toLowerCase().includes('100')?'100':'-';const dir=r.group.toLowerCase().startsWith('top')?'Top':'Bottom';return {name:`${r.model.startsWith('Wan+LoRA')?'Wan+LoRA':r.model.includes('Full-SA')?'Full-SA':'消融模型'} · ${dir}${count}`,sub:r.model.startsWith('Wan+LoRA')?'时间步：S00-S39':'推理步数：8'}}
+function renderCell(r){const m=r?r.metrics||{}:{ };const label=r?(r.group||'').toUpperCase()+' · α='+r.alpha.toFixed(1):'未完成';if(!r){return `<article class="cell"><div class="pill">暂无该组结果</div><div class="pending">该实验/α 的新结果尚未生成</div></article>`;}const heatmaps=r.heatmap_ready?`<div class="heatmaps"><img loading="lazy" src="${im(r.all_token_id)}"><img loading="lazy" src="${im(r.frame_id)}"></div>`:r.heatmap_expected?`<div class="heatmaps"><div class="pending">S039 全 token 热力图生成中</div><div class="pending">帧级热力图生成中</div></div>`:`<div class="pending">新统一推理结果尚未采集热力图</div>`;return `<article class="card ${r.group&&r.group.startsWith('top')?'top':'bottom'}"><div class="alpha-title"><strong>${e(label)}</strong></div><div class="meta"><span class="pill">消融模型：${e(r.model)}</span><span class="pill">统一配置：40步 · 49帧 · 热力图S039</span></div>${r.video_ready?`<video controls preload="metadata" playsinline src="${v(r.video_id)}"></video>`:`<div class="pending">${e(r.model)} 新视频生成中</div>`}${heatmaps}${r.heatmap_ready?`<div class="meta"><span class="pill">mean |ΔA| ${f(m.mean_abs_attention_delta)}</span><span class="pill">clipped ${(100*m.clipped_fraction).toFixed(2)}%</span><span class="pill">row error ${f(m.max_row_sum_error)}</span></div>`:''}</article>`}
+function makeRowMeta(r){const count=r.group.toLowerCase().includes('30')?'30':r.group.toLowerCase().includes('100')?'100':'-';const dir=r.group.toLowerCase().startsWith('top')?'Top':'Bottom';return {name:`${r.model.startsWith('Wan+LoRA')?'Wan+LoRA':r.model.includes('Full-SA')?'Full-SA':'消融模型'} · ${dir}${count}`,sub:'统一配置：40步 · 49帧'}}
 async function load(){const d=await fetch(`/api/attention-additive-lora-case/catalog?case=${encodeURIComponent(currentCase)}`,{cache:'no-store'}).then(r=>r.json());currentCase=d.case;const select=document.getElementById('caseSelect');if(select.options.length!==d.cases.length){select.innerHTML=d.cases.map(x=>`<option value="${e(x)}">${e(x)}</option>`).join('')}select.value=currentCase;document.getElementById('case').textContent=`Case: ${d.case} · A′=normalize(clamp(A+α/K·ε,0))`;document.getElementById('status').textContent=`${d.ready_records}/${d.expected_records} perturbation records ready · 自动刷新`;document.getElementById('controls').innerHTML=d.controls.map(x=>`<article class="control"><h2>${e(x.label)}</h2>${x.ready?`<video controls preload="metadata" playsinline src="${v(x.id)}"></video>`:'<div class="pending">等待 Original 视频</div>'}</article>`).join('');const alphas=[0.3,0.6,0.9,1.5];document.getElementById('matrix-head').innerHTML=`<div class="row-head"><div class="title">模型 × 实验</div></div>`+alphas.map(a=>`<div class="alpha-title">α = ${a.toFixed(1)}</div>`).join('');const rows=new Map();for(const r of d.records){const key=`${r.model}::${r.group}`;if(!rows.has(key)){rows.set(key,{model:r.model,group:r.group,items:{}})}rows.get(key).items[Number(r.alpha).toFixed(1)]=r}const groupOrder={top30:0,bottom30:1,top100:2,bottom100:3};const ordered=Array.from(rows.values()).sort((a,b)=>a.model.localeCompare(b.model)||(groupOrder[a.group]??99)-(groupOrder[b.group]??99));document.getElementById('grid').innerHTML=ordered.map(row=>{const meta=makeRowMeta(row);return `<article class="row"><div class="row-head"><div class="title">${e(meta.name)}</div><div class="sub">${e(meta.sub)}</div></div>`+alphas.map(a=>`<div class="cell">${renderCell(row.items[a.toFixed(1)])}</div>`).join('')+`</article>`}).join('')}
 document.getElementById('caseSelect').addEventListener('change',event=>{currentCase=event.target.value;const url=new URL(location.href);url.searchParams.set('case',currentCase);history.replaceState(null,'',url);load()});document.getElementById('replayAll').addEventListener('click',()=>{document.querySelectorAll('video').forEach(video=>{video.pause();video.currentTime=0;video.loop=false;video.play().catch(()=>{})})});load();setInterval(load,10000);
 </script></body></html>'''
