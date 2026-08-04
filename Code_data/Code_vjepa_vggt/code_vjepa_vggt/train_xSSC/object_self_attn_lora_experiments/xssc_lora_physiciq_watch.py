@@ -420,6 +420,23 @@ def refresh_plots(
     )
 
 
+def refresh_plots_if_complete(
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+) -> bool:
+    """Refresh curves only after every configured metric marker is committed."""
+    method_key = str(manifest["method_key"])
+    step = int(manifest["step"])
+    metrics = list(config["metrics"]["cpu"]) + list(config["metrics"]["gpu"])
+    complete = all(
+        phys_metric_marker_path(config, method_key, step, metric).is_file()
+        for metric in metrics
+    )
+    if complete:
+        refresh_plots(config, manifest)
+    return complete
+
+
 def refresh_dashboard(config: dict[str, Any]) -> None:
     """Rebuild the dashboard after one PhysicIQ metric is committed."""
     lock_path = phys_state_root(config) / "dashboard_refresh.lock"

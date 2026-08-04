@@ -47,7 +47,11 @@ ATTENTION_LORA_SEED_SWEEP_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
 )
 OBJECT_QUERY_OVERLAY_PILOT_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/object_query_attention_overlay_case001460_seed090094"
+    "/data/gaoya/agent-data/outputs/"
+    "object_query_attention_overlay_headwise_pck_case001460_seed090094"
+)
+ATTENTION_LORA_SEED_METRICS_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_metrics_case001460"
 )
 ATTENTION_LORA_CASE = "0613pybullet_sample_001460_w002"
 ATTENTION_TEST_LIST = Path(
@@ -587,6 +591,18 @@ class MetricsHandler(viewer.Handler):
             if asset is None or not asset.is_file():
                 raise FileNotFoundError("unknown object-query overlay")
             viewer.send_file_with_range(self, asset, "image/jpeg")
+            return
+        if path == "/attention-additive-lora-seed-sweep-metrics":
+            self.send_payload(
+                attention_lora_seed_sweep_metrics_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/attention-additive-lora-seed-sweep-metrics/summary":
+            payload = json.dumps(
+                attention_lora_seed_sweep_metrics_summary(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
             return
         super().do_GET()
 
@@ -1677,7 +1693,7 @@ def attention_lora_seed_sweep_catalog(requested_seed: str = ""):
 def attention_lora_seed_sweep_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wan+LoRA 50-Seed Sweep</title><style>
 :root{--ink:#1a2822;--paper:#eee8dc;--card:#fffdf8;--line:#bdb3a0;--red:#ae432f;--green:#17695d;--dark:#19362d;--gold:#bb7b28}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 0,#eaa76755,transparent 34rem),radial-gradient(circle at 96% 3%,#52977c55,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:17px 24px;background:#eee8dced;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#53635b}main{width:min(2300px,calc(100% - 20px));margin:auto;padding:20px 0 80px}.original{max-width:700px;background:var(--card);border:1px solid var(--line);border-radius:15px;padding:13px}.original video,.card video,.card img{display:block;width:100%;background:#151916;border:1px solid var(--line);border-radius:7px}.matrix-shell{overflow:auto;margin-top:20px;border:1px solid var(--line);border-radius:16px;padding:9px;background:#d8d0c1}.matrix{display:grid;grid-template-columns:230px repeat(8,330px);gap:8px;width:max-content}.head,.row-head,.cell{border:1px solid var(--line);border-radius:10px}.head{padding:12px;text-align:center;background:#f9f4e9;font-weight:900;border-top:5px solid var(--gold)}.row-head{position:sticky;left:9px;z-index:4;padding:15px;background:var(--dark);color:#fff}.row-head.top{border-left:7px solid var(--red)}.row-head.bottom{border-left:7px solid var(--green)}.row-head small{display:block;color:#cbd8d1;margin-top:8px}.cell{padding:8px;background:#f6f1e7}.card{height:100%;padding:10px;background:var(--card);border-radius:10px}.card.top{border-left:5px solid var(--red)}.card.bottom{border-left:5px solid var(--green)}.card h3{margin:0 0 7px;font-size:16px}.pill{display:inline-block;margin:3px;padding:4px 7px;border-radius:99px;background:#e9e2d4;font:10px ui-monospace,monospace}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:7px;color:#746e62}.maps{display:grid;gap:7px;margin-top:8px}.note{font-size:11px;color:#665f55}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;background:var(--dark);color:#fff;padding:13px 19px}@media(max-width:800px){header{position:static}.matrix{grid-template-columns:170px repeat(6,280px)}main{width:calc(100% - 10px)}}
-</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a><h1>Wan+LoRA · 50-Seed Sweep</h1><p>0613pybullet_sample_001460_w002 · 40步 · 49帧 · 仅 seed 改变</p><div class="tools"><label>Seed <select id="seed"></select></label><button id="refresh">手动刷新</button><span class="status" id="status">读取中</span></div></header><main><h2>Original</h2><section id="original" class="original"></section><div class="matrix-shell"><section id="matrix" class="matrix"></section></div></main><script>
+</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/attention-additive-lora-seed-sweep-metrics?v=1">指标表</a><h1>Wan+LoRA · 50-Seed Sweep</h1><p>0613pybullet_sample_001460_w002 · 40步 · 49帧 · 仅 seed 改变</p><div class="tools"><label>Seed <select id="seed"></select></label><button id="refresh">手动刷新</button><span class="status" id="status">读取中</span></div></header><main><h2>Original</h2><section id="original" class="original"></section><div class="matrix-shell"><section id="matrix" class="matrix"></section></div></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let current=q.get('seed')||'';const profiles=[['alpha090','α = 0.9'],['alpha150','α = 1.5'],['zero','A = 0'],['uniform','A = 1/N_K'],['temporal_causal','Temporal Causal'],['strict_past','Strict Past Only'],['strict_future','Strict Future Only'],['head_output_zero','Head Output Zero']];
 const video=(stage,profile,group)=>`/api/attention-additive-lora-seed-sweep/video?seed=${encodeURIComponent(current)}&stage=${stage}&profile=${profile}&group=${group}`;const image=(r,name)=>`/api/attention-additive-lora-seed-sweep/image?seed=${encodeURIComponent(current)}&stage=${r.stage}&profile=${r.profile}&group=${r.group}&name=${encodeURIComponent(name)}`;
 function card(r){const maps=r.heatmap_ready?`<div class="maps"><img loading="lazy" src="${image(r,r.all_token)}"><img loading="lazy" src="${image(r,r.frame)}"></div>`:r.heatmap_expected?'<div class="note">热力图等待生成</div>':'<div class="note">Attention 不变，仅 Head 输出置零</div>';return `<article class="card ${r.group.startsWith('top')?'top':'bottom'}"><h3>${e(r.label)}</h3><span class="pill">${e(r.group.toUpperCase())}</span><span class="pill">${r.stage==='all_steps'?'S000-S039':'S000-S009'}</span>${r.video_ready?`<video controls preload="metadata" playsinline src="${video(r.stage,r.profile,r.group)}"></video>`:'<div class="pending">视频生成中</div>'}${maps}</article>`}
@@ -1722,7 +1738,13 @@ def object_query_attention_overlay_catalog(
             for name in images.values()
         )
         records.append({**record, "ready": ready})
-    records.sort(key=lambda item: (int(item.get("block", 0)), int(item.get("head", 0))))
+    records.sort(
+        key=lambda item: (
+            int(item.get("block", 0)),
+            int(item.get("head", 0)),
+            str(item.get("region_name", "")),
+        )
+    )
     return {
         "case": ATTENTION_LORA_CASE,
         "seed": 90094,
@@ -1739,11 +1761,162 @@ def object_query_attention_overlay_catalog(
 
 def object_query_attention_overlay_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Object Query Attention Overlay</title><style>
-:root{--paper:#eee8dc;--ink:#17251f;--line:#bcb19d;--card:#fffdf8;--red:#ad422e;--green:#17685c}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 5% 0,#e99e5555,transparent 32rem),radial-gradient(circle at 98% 4%,#4b937655,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:10;padding:17px 24px;background:#eee8dced;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(27px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;flex-wrap:wrap;align-items:center}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#58675f}main{width:min(2280px,calc(100% - 18px));margin:auto;padding:20px 0 70px}.video-panel,.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:15px}.video-panel{max-width:760px}.video-panel video{display:block;width:100%;background:#131714}.panel.top{border-left:7px solid var(--red)}.panel.bottom{border-left:7px solid var(--green)}.panel h2{margin:0 0 8px}.meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}.pill{padding:5px 8px;background:#e8e1d3;border-radius:99px;font:11px ui-monospace,monospace}.images{display:grid;gap:10px}.images figure{margin:0}.images img{display:block;width:100%;min-width:1900px;border:1px solid var(--line);background:#111}.images figcaption{font-weight:900;margin:4px 0}.scroll{overflow:auto}.pending{padding:50px;border:1px dashed var(--line);background:var(--card)}@media(max-width:800px){header{position:static}}
-</style></head><body><header><a href="/attention-additive-lora-seed-sweep?v=1&seed=90094">返回 Seed Sweep</a><h1>Object Query Attention Overlay</h1><p>Seed 90094 · drop_ball GT Query tokens · 13 Query latent frames × 13 Key latent frames · RGB F000,F004,...,F048</p><div class="tools"><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><label>Experiment <select id="profile"></select></label><label>Group <select id="group"><option value="top100">Top10 Heads</option><option value="bottom100">Bottom10 Heads</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="video" class="video-panel"></section><section id="records"></section></main><script>
+:root{--paper:#eee8dc;--ink:#17251f;--line:#bcb19d;--card:#fffdf8;--red:#ad422e;--green:#17685c}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 5% 0,#e99e5555,transparent 32rem),radial-gradient(circle at 98% 4%,#4b937655,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:10;padding:17px 24px;background:#eee8dced;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(27px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;flex-wrap:wrap;align-items:center}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#58675f}main{width:min(2280px,calc(100% - 18px));margin:auto;padding:20px 0 70px}.video-panel,.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:15px}.video-panel{max-width:760px}.video-panel video{display:block;width:100%;background:#131714}.panel.top{border-left:7px solid var(--red)}.panel.bottom{border-left:7px solid var(--green)}.panel h2{margin:0 0 8px}.meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}.pill{padding:5px 8px;background:#e8e1d3;border-radius:99px;font:11px ui-monospace,monospace}.images{display:grid;gap:14px}.images figure{margin:0}.images img{display:block;width:100%;min-width:1900px;border:1px solid var(--line);background:#111}.images figcaption{font-weight:900;margin:4px 0}.compare-stack{display:grid;gap:8px;padding-bottom:5px}.compare-stack figure{min-width:1900px}.compare-stack figcaption{position:sticky;left:0;width:max-content;padding:3px 9px;background:var(--ink);color:#fff;border-radius:4px;z-index:1}.delta-row{border-top:1px dashed var(--line);padding-top:8px}.scroll{overflow:auto}.pending{padding:50px;border:1px dashed var(--line);background:var(--card)}@media(max-width:800px){header{position:static}}
+</style></head><body><header><a href="/attention-additive-lora-seed-sweep?v=1&seed=90094">返回 Seed Sweep</a><h1>Head-wise PCK Object Query Overlay</h1><p>Seed 90094 · SAM2 context F04 · Q latent 1 · Object A sphere / Object B box · 每个对象 8 个独立 query × 13 key latent frames</p><div class="tools"><label>Stage <select id="stage"><option value="all_steps">S000-S039</option></select></label><label>Experiment <select id="profile"></select></label><label>Group <select id="group"><option value="top100">Top10 Heads</option><option value="bottom100">Bottom10 Heads</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="video" class="video-panel"></section><section id="records"></section></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),params=new URL(location.href).searchParams;let stage=params.get('stage')||'all_steps',profile=params.get('profile')||'alpha090',group=params.get('group')||'top100';const image=(name)=>`/api/object-query-attention-overlay/image?stage=${stage}&profile=${profile}&name=${encodeURIComponent(name)}`,video=()=>`/api/attention-additive-lora-seed-sweep/video?seed=90094&stage=${stage}&profile=${profile}&group=${group}`;
-function syncUrl(){const u=new URL(location.href);u.searchParams.set('stage',stage);u.searchParams.set('profile',profile);u.searchParams.set('group',group);history.replaceState(null,'',u)}function render(d){const profileSelect=document.getElementById('profile');if(profileSelect.options.length!==d.profiles.length)profileSelect.innerHTML=d.profiles.map(x=>`<option value="${e(x.id)}">${e(x.label)}</option>`).join('');profileSelect.value=profile;document.getElementById('stage').value=stage;document.getElementById('group').value=group;document.getElementById('status').textContent=`${d.records.filter(x=>x.ready).length}/${d.records.length||10} heads ready`;document.getElementById('video').innerHTML=`<h2>对应生成视频</h2><video controls preload="metadata" playsinline src="${video()}"></video>`;document.getElementById('records').innerHTML=d.records.length?d.records.map(r=>`<article class="panel ${group.startsWith('top')?'top':'bottom'}"><h2>L${String(r.block).padStart(2,'0')} / H${String(r.head).padStart(2,'0')}</h2><div class="meta"><span class="pill">PCK@32 ${Number(r.pck32).toFixed(3)}</span><span class="pill">S${String(r.step).padStart(3,'0')}</span><span class="pill">${group==='top100'?'Top10':'Bottom10'}</span></div>${r.ready?`<div class="images"><figure><figcaption>Before</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.before)}"></div></figure><figure><figcaption>After</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.after)}"></div></figure><figure><figcaption>|Delta|</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.abs_delta)}"></div></figure></div>`:'<div class="pending">Capture / overlay 生成中</div>'}</article>`).join('):'<div class="pending">该组合正在捕获，点击手动刷新查看。</div>'}
+function syncUrl(){const u=new URL(location.href);u.searchParams.set('stage',stage);u.searchParams.set('profile',profile);u.searchParams.set('group',group);history.replaceState(null,'',u)}function render(d){const profileSelect=document.getElementById('profile');if(profileSelect.options.length!==d.profiles.length)profileSelect.innerHTML=d.profiles.map(x=>`<option value="${e(x.id)}">${e(x.label)}</option>`).join('');profileSelect.value=profile;document.getElementById('stage').value=stage;document.getElementById('group').value=group;document.getElementById('status').textContent=`${d.records.filter(x=>x.ready).length}/${d.records.length||20} object-head records ready`;document.getElementById('video').innerHTML=`<h2>对应生成视频</h2><video controls preload="metadata" playsinline src="${video()}"></video>`;document.getElementById('records').innerHTML=d.records.length?d.records.map(r=>`<article class="panel ${group.startsWith('top')?'top':'bottom'}"><h2>L${String(r.block).padStart(2,'0')} / H${String(r.head).padStart(2,'0')} · ${e(r.region_name)} (${e(r.region_phrase)})</h2><div class="meta"><span class="pill">Combined Object PCK@32 ${Number(r.pck32).toFixed(3)}</span><span class="pill">Q=F${String(r.query_pixel_frame).padStart(2,'0')} / latent ${r.query_latent_frame}</span><span class="pill">${r.query_count} SAM2 queries</span><span class="pill">S${String(r.step).padStart(3,'0')}</span><span class="pill">${group==='top100'?'Top10':'Bottom10'}</span></div>${r.ready?`<div class="images"><figure><figcaption>Before / After · 相同空间 Query 点相邻</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.before_after)}"></div></figure><figure class="delta-row"><figcaption>|Delta|</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.abs_delta)}"></div></figure></div>`:'<div class="pending">Head-wise PCK capture / overlay 生成中</div>'}</article>`).join(''):'<div class="pending">该组合正在捕获，点击手动刷新查看。</div>'}
 async function load(){const d=await fetch(`/api/object-query-attention-overlay/catalog?stage=${stage}&profile=${profile}&group=${group}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['stage','profile','group'])document.getElementById(id).addEventListener('change',ev=>{if(id==='stage')stage=ev.target.value;if(id==='profile')profile=ev.target.value;if(id==='group')group=ev.target.value;syncUrl();load()});document.getElementById('refresh').addEventListener('click',load);load();
+</script></body></html>'''
+
+
+SEED_SWEEP_METRICS = (
+    ("physics_iq_with_context", "PhysicsIQ +Ctx", ("physics_iq_with_context", "score"), "max"),
+    ("physics_iq_without_context", "PhysicsIQ -Ctx", ("physics_iq_without_context", "score"), "max"),
+    ("pmf_with_context", "PMF +Ctx", ("pmf_with_context", "score"), "max"),
+    ("pmf_without_context", "PMF -Ctx", ("pmf_without_context", "score"), "max"),
+    ("wmreward", "WMReward Surprise", ("wmreward", "surprise"), "min"),
+    ("vbench_subject_consistency", "Subject Consistency", ("vbench_subject_consistency", "score"), "max"),
+    ("vbench_background_consistency", "Background Consistency", ("vbench_background_consistency", "score"), "max"),
+    ("vbench_temporal_flickering", "Temporal Flickering", ("vbench_temporal_flickering", "score"), "max"),
+    ("vbench_motion_smoothness", "Motion Smoothness", ("vbench_motion_smoothness", "score"), "max"),
+    ("vbench_dynamic_degree", "Dynamic Degree", ("vbench_dynamic_degree", "score"), "max"),
+    ("vbench_aesthetic_quality", "Aesthetic Quality", ("vbench_aesthetic_quality", "score"), "max"),
+    ("vbench_imaging_quality", "Imaging Quality", ("vbench_imaging_quality", "score"), "max"),
+    ("videophy2", "VideoPhy2", ("videophy2", "score"), "max"),
+    ("cosmos_reason1", "Cosmos Reason1", ("cosmos_reason1", "score"), "max"),
+)
+
+
+def _seed_metric_method_specs():
+    yield "original", "Original", "original", "original", "original"
+    profile_labels = dict(SEED_SWEEP_PROFILES)
+    for stage in ("all_steps", "steps00_09"):
+        stage_label = "S000-S039" if stage == "all_steps" else "S000-S009"
+        for profile, profile_label in SEED_SWEEP_PROFILES:
+            for group in ("top100", "bottom100"):
+                method = f"{stage}__{profile}__{group}"
+                label = f"{stage_label} · {profile_label} · {group.upper()}"
+                yield method, label, stage, profile, group
+
+
+def _nested_metric(payload, keys):
+    value = payload
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    return numeric if math.isfinite(numeric) else None
+
+
+def attention_lora_seed_sweep_metrics_summary():
+    method_specs = list(_seed_metric_method_specs())
+    values = {}
+    source_counts = {}
+    for method, _label, _stage, _profile, _group in method_specs:
+        method_root = ATTENTION_LORA_SEED_METRICS_ROOT / "methods" / method
+        method_values = {metric[0]: {} for metric in SEED_SWEEP_METRICS}
+        source_count = 0
+        if method_root.is_dir():
+            for path in sorted(method_root.glob("seed_*.json")):
+                payload = load_payload(path)
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    seed = int(payload.get("seed"))
+                except (TypeError, ValueError):
+                    continue
+                source_count += 1
+                for metric_id, _metric_label, keys, _direction in SEED_SWEEP_METRICS:
+                    metric_value = _nested_metric(payload, keys)
+                    if metric_value is not None:
+                        method_values[metric_id][seed] = metric_value
+        values[method] = method_values
+        source_counts[method] = source_count
+    seed_sets = [
+        set(values[method][metric_id])
+        for method, *_ in method_specs
+        for metric_id, _label, _keys, _direction in SEED_SWEEP_METRICS
+    ]
+    fully_complete_seeds = set.intersection(*seed_sets) if seed_sets else set()
+    common_seeds = {
+        metric_id: fully_complete_seeds
+        for metric_id, _label, _keys, _direction in SEED_SWEEP_METRICS
+    }
+    rows = []
+    for method, label, stage, profile, group in method_specs:
+        cells = {}
+        for metric_id, _metric_label, _keys, _direction in SEED_SWEEP_METRICS:
+            available = list(values[method][metric_id].values())
+            shared = [
+                values[method][metric_id][seed]
+                for seed in sorted(common_seeds[metric_id])
+            ]
+            available_mean = sum(available) / len(available) if available else None
+            available_std = (
+                math.sqrt(
+                    sum((value - available_mean) ** 2 for value in available)
+                    / len(available)
+                )
+                if available
+                else None
+            )
+            cells[metric_id] = {
+                "available_mean": available_mean,
+                "available_std": available_std,
+                "available_n": len(available),
+                "common_mean": sum(shared) / len(shared) if shared else None,
+                "common_n": len(shared),
+                "best": False,
+            }
+        rows.append(
+            {
+                "method": method,
+                "label": label,
+                "stage": stage,
+                "profile": profile,
+                "group": group,
+                "source_n": source_counts[method],
+                "metrics": cells,
+            }
+        )
+    for metric_id, _label, _keys, direction in SEED_SWEEP_METRICS:
+        candidates = [
+            row["metrics"][metric_id]["common_mean"]
+            for row in rows
+            if row["metrics"][metric_id]["common_mean"] is not None
+        ]
+        if not candidates:
+            continue
+        target = min(candidates) if direction == "min" else max(candidates)
+        for row in rows:
+            value = row["metrics"][metric_id]["common_mean"]
+            row["metrics"][metric_id]["best"] = (
+                value is not None and math.isclose(value, target, rel_tol=1e-10, abs_tol=1e-12)
+            )
+    prepared = load_payload(ATTENTION_LORA_SEED_METRICS_ROOT / "prepared_status.json") or {}
+    return {
+        "case": ATTENTION_LORA_CASE,
+        "expected_seeds": 50,
+        "metrics": [
+            {"id": metric_id, "label": label, "direction": direction}
+            for metric_id, label, _keys, direction in SEED_SWEEP_METRICS
+        ],
+        "rows": rows,
+        "prepared": prepared,
+        "common_seed_counts": {
+            metric_id: len(seeds) for metric_id, seeds in common_seeds.items()
+        },
+    }
+
+
+def attention_lora_seed_sweep_metrics_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>50-Seed 全指标均值</title><style>
+:root{--paper:#eee8dc;--ink:#18251f;--line:#c4b9a5;--card:#fffdf8;--green:#17685a;--gold:#d9a441;--rust:#ad432f}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 3% 0,#e99b5550,transparent 34rem),radial-gradient(circle at 98% 3%,#4d947752,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:17px 24px;background:#eee8dcef;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:4px 0;font-size:clamp(28px,4vw,49px)}header p{margin:5px 0}.status{font:12px ui-monospace,monospace}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}button{padding:8px 13px;border:1px solid var(--line);background:#fff;font-weight:900}main{width:min(100% - 18px,2900px);margin:auto;padding:18px 0 70px}.scroll{overflow:auto;border:1px solid var(--line);border-radius:15px;background:var(--card)}table{border-collapse:separate;border-spacing:0;min-width:5200px;width:100%;font-variant-numeric:tabular-nums}th,td{padding:9px;border-right:1px solid #d6cebf;border-bottom:1px solid #d6cebf;text-align:center}thead th{position:sticky;top:0;z-index:4;background:#1b3a30;color:#fff}th:first-child,td:first-child{position:sticky;left:0;z-index:3;text-align:left;min-width:285px}thead th:first-child{z-index:6}tbody td:first-child{background:#faf6ed}.method{font-weight:900}.method small{display:block;color:#6e6a61;margin-top:4px}.value{font-size:15px;font-weight:900}.available,.count{display:block;font:10px ui-monospace,monospace;color:#6c6b64;margin-top:3px}.best{background:#e1f0e6}.best .value{color:var(--green)}.badge{display:inline-block;margin-left:4px;padding:2px 5px;border-radius:99px;background:var(--green);color:#fff;font-size:8px}.pending{background:#eee8dc;color:#817969}.legend{margin:10px 0;font-size:12px;color:#625f57}.pill{display:inline-block;padding:6px 9px;border-radius:99px;background:#fff;border:1px solid var(--line);margin:3px}@media(max-width:800px){header{position:static}}
+</style></head><body><header><a href="/attention-additive-lora-seed-sweep?v=1&seed=35075">返回 Seed Sweep</a><h1>50-Seed · 全部14项指标</h1><p>仅统计所有 33 个方法共同完成的 seed；BEST 也只依据该共同 seed 子集。</p><div class="tools"><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><div id="summary"></div><p class="legend">单元格仅展示 Common-Seed Mean；WMReward Surprise 越低越好，其余指标越高越好。</p><div class="scroll"><table><thead id="head"></thead><tbody id="body"></tbody></table></div></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),fmt=v=>v==null?'—':Number(v).toFixed(4);function render(d){const counts=Object.values(d.common_seed_counts||{}),commonN=counts.length?Math.min(...counts):0;document.getElementById('status').textContent=`${commonN}/50 common seeds evaluated`;document.getElementById('summary').innerHTML=`<span class="pill">${d.rows.length} methods</span>`+d.metrics.map(m=>`<span class="pill">${e(m.label)} common n=${d.common_seed_counts[m.id]||0}</span>`).join('');document.getElementById('head').innerHTML='<tr><th>Method</th>'+d.metrics.map(m=>`<th>${e(m.label)}<br><small>${m.direction==='min'?'↓ lower':'↑ higher'}</small></th>`).join('')+'</tr>';document.getElementById('body').innerHTML=d.rows.map(r=>`<tr><td><span class="method">${e(r.label)}<small>${e(r.method)}</small></span></td>`+d.metrics.map(m=>{const c=r.metrics[m.id],pending=c.common_mean==null;return `<td class="${pending?'pending':c.best?'best':''}"><span class="value">${fmt(c.common_mean)}${c.best?`<span class="badge">BEST ${m.direction==='min'?'↓':'↑'}</span>`:''}</span><span class="count">common n=${c.common_n}</span></td>`}).join('')+'</tr>').join('')}async function load(){const d=await fetch('/api/attention-additive-lora-seed-sweep-metrics/summary',{cache:'no-store'}).then(r=>r.json());render(d)}document.getElementById('refresh').addEventListener('click',load);load();setInterval(load,30000);
 </script></body></html>'''
 
 

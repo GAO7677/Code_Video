@@ -116,7 +116,10 @@ def run_attention(args: argparse.Namespace) -> None:
     stage = import_path("seed_sweep_attention_stage", HERE / filename)
     worker = stage.worker
     if os.environ.get("OBJECT_QUERY_CAPTURE_ROOT", "").strip():
-        from AAA_my_test.object_query_attention_capture import install_qk_capture
+        if os.environ.get("OBJECT_QUERY_CAPTURE_PROTOCOL") == "headwise_pck":
+            from AAA_my_test.object_query_attention_capture_headwise_pck import install_qk_capture
+        else:
+            from AAA_my_test.object_query_attention_capture import install_qk_capture
 
         install_qk_capture(worker)
     worker.original_generate = seeded_generate(worker.base, args.seed)

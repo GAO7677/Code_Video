@@ -83,6 +83,69 @@ def matrix_image(frames, values, boxes, vmax, title, delta=False):
     return canvas
 
 
+def paired_matrix_image(frames, before, after, boxes, vmax, title):
+    """Interleave Before/After rows so each query frame can be compared directly."""
+    canvas = np.full(
+        (
+            HEADER_HEIGHT + LATENT_FRAMES * 2 * TILE_HEIGHT,
+            (LATENT_FRAMES + 1) * TILE_WIDTH,
+            3,
+        ),
+        245,
+        dtype=np.uint8,
+    )
+    cv2.putText(canvas, title, (8, 27), cv2.FONT_HERSHEY_SIMPLEX, .58, (30, 42, 36), 2)
+    for key_frame in range(LATENT_FRAMES):
+        x = (key_frame + 1) * TILE_WIDTH
+        cv2.putText(
+            canvas,
+            f"K{key_frame:02d}/F{key_frame*4:02d}",
+            (x + 38, 27),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            .42,
+            (30, 42, 36),
+            1,
+        )
+    for query_frame in range(LATENT_FRAMES):
+        for comparison_index, (label, values, stripe_color) in enumerate(
+            (("BEFORE", before, (46, 105, 178)), ("AFTER", after, (92, 130, 35)))
+        ):
+            row_index = query_frame * 2 + comparison_index
+            y = HEADER_HEIGHT + row_index * TILE_HEIGHT
+            query = cv2.resize(
+                frames[query_frame],
+                (TILE_WIDTH, TILE_HEIGHT),
+                interpolation=cv2.INTER_AREA,
+            )
+            scale_x, scale_y = TILE_WIDTH / 896.0, TILE_HEIGHT / 512.0
+            x1, y1, x2, y2 = boxes[query_frame]
+            cv2.rectangle(
+                query,
+                (int(x1 * scale_x), int(y1 * scale_y)),
+                (int(x2 * scale_x), int(y2 * scale_y)),
+                (30, 30, 230),
+                2,
+            )
+            cv2.rectangle(query, (0, 0), (TILE_WIDTH - 1, 19), (24, 31, 28), -1)
+            cv2.rectangle(query, (0, 0), (5, TILE_HEIGHT - 1), stripe_color, -1)
+            cv2.putText(
+                query,
+                f"Q{query_frame:02d}/F{query_frame*4:02d} {label}",
+                (9, 14),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                .34,
+                (255, 255, 255),
+                1,
+            )
+            canvas[y:y + TILE_HEIGHT, :TILE_WIDTH] = query
+            for key_frame in range(LATENT_FRAMES):
+                x = (key_frame + 1) * TILE_WIDTH
+                canvas[y:y + TILE_HEIGHT, x:x + TILE_WIDTH] = overlay(
+                    frames[key_frame], values[query_frame, key_frame], vmax
+                )
+    return canvas
+
+
 def main():
     args = parse_args()
     args.output_root.mkdir(parents=True, exist_ok=True)
@@ -118,6 +181,21 @@ def main():
             )
             cv2.imwrite(str(args.output_root / filename), image, [cv2.IMWRITE_JPEG_QUALITY, 90])
             outputs[kind] = filename
+        paired_filename = f"{name}__before_after.jpg"
+        paired = paired_matrix_image(
+            frames,
+            before,
+            after,
+            payload["query_boxes"],
+            probability_vmax,
+            f"{name} | paired Before / After | vmax={probability_vmax:.3e}",
+        )
+        cv2.imwrite(
+            str(args.output_root / paired_filename),
+            paired,
+            [cv2.IMWRITE_JPEG_QUALITY, 90],
+        )
+        outputs["before_after"] = paired_filename
         records.append(
             {
                 "capture": capture_path.name,
