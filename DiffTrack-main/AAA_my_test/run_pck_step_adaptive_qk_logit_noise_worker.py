@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import csv
@@ -35,8 +36,10 @@ spec.loader.exec_module(base)
 
 
 def select_step_heads(ranking_pool: str, extreme_count: int) -> dict[str, list[dict]]:
-    if ranking_pool != "all720" or extreme_count != 30:
-        raise ValueError("Q@K noise experiment requires all720 and extreme-count=30")
+    if ranking_pool != "all720" or extreme_count not in {30, 100}:
+        raise ValueError(
+            "Attention noise experiment requires all720 and extreme-count in {30, 100}"
+        )
     by_step: dict[int, list[dict[str, Any]]] = {step: [] for step in range(NUM_STEPS)}
     with RANKING_CSV.open("r", encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
@@ -54,19 +57,24 @@ def select_step_heads(ranking_pool: str, extreme_count: int) -> dict[str, list[d
                         "sigma": float(row["sigma"]),
                     }
                 )
-    groups: dict[str, list[dict]] = {"top30": [], "bottom30": []}
+    top_group = f"top{extreme_count}"
+    bottom_group = f"bottom{extreme_count}"
+    groups: dict[str, list[dict]] = {top_group: [], bottom_group: []}
     for step, rows in by_step.items():
         if len(rows) != 720 or len({(r["block"], r["head"]) for r in rows}) != 720:
             raise RuntimeError(f"step {step} does not contain 720 unique object heads")
         ranked = sorted(rows, key=lambda r: (-r["macro_pck32"], r["block"], r["head"]))
-        groups[f"top30_step_{step:02d}"] = [
+        groups[f"{top_group}_step_{step:02d}"] = [
             dict(row, rank_within_step=index + 1)
-            for index, row in enumerate(ranked[:30])
+            for index, row in enumerate(ranked[:extreme_count])
         ]
-        groups[f"bottom30_step_{step:02d}"] = [
+        groups[f"{bottom_group}_step_{step:02d}"] = [
             dict(row, rank_within_step=720 - index)
             for index, row in enumerate(
-                sorted(ranked[-30:], key=lambda r: (r["macro_pck32"], r["block"], r["head"]))
+                sorted(
+                    ranked[-extreme_count:],
+                    key=lambda r: (r["macro_pck32"], r["block"], r["head"]),
+                )
             )
         ]
     return groups
@@ -162,7 +170,7 @@ class AdaptiveQKLogitNoise:
         capture_enabled = (
             self.capture_root is not None
             and self.current_step == self.capture_step
-            and capture_prefix in {"top30", "bottom30"}
+            and capture_prefix in {"top30", "bottom30", "top100", "bottom100"}
         )
         capture_entry = None
         if capture_enabled:

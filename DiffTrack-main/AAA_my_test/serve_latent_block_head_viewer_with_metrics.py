@@ -31,6 +31,10 @@ QK_NOISE30_ROOT = Path(
 QK_ATTENTION_COMPARE_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_additive_noise_alpha030_pilot"
 )
+ATTENTION_LORA_CASE_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_additive_noise_lora_001460"
+)
+ATTENTION_LORA_CASE = "0613pybullet_sample_001460_w002"
 
 VIDEO_CONDITIONS = (
     ("original", "Original", STATIC30_ROOT, "original.mp4"),
@@ -311,8 +315,11 @@ VIDEOS_PORTAL_CARD = r'''
 QK_ATTENTION_PORTAL_CARD = r'''
 <a class="card new" href="/qk-noise-attention-compare?v=2"><div><span>12 / Attention 扰动对比</span><h2>Probability Noise Before / After</h2><p>对比 α=0.30 概率空间加噪前后的全 token 与潜变量帧注意力，Q/K/V 保持不变。</p></div><span class="go">打开注意力对比</span></a>
 '''
+ATTENTION_LORA_PORTAL_CARD = r'''
+<a class="card new" href="/attention-additive-lora-case?v=3"><div><span>13 / LORA ATTENTION 消融</span><h2>Top/Bottom 30/100 × α</h2><p>单页汇总 001460 case 的 Baseline、LoRA Original、16 组概率空间 attention 扰动视频与热力图。</p></div><span class="go">打开 LoRA Attention 对比</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -368,6 +375,31 @@ class MetricsHandler(viewer.Handler):
                 raise FileNotFoundError("unknown Q@K attention image")
             viewer.send_file_with_range(self, image_path, "image/png")
             return
+        if path == "/attention-additive-lora-case":
+            self.send_payload(
+                attention_lora_case_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/attention-additive-lora-case/catalog":
+            payload = json.dumps(attention_lora_case_catalog(), ensure_ascii=False).encode(
+                "utf-8"
+            )
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path in {
+            "/api/attention-additive-lora-case/video",
+            "/api/attention-additive-lora-case/image",
+        }:
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = attention_lora_case_asset(params.get("id", [""])[0])
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown LoRA attention asset")
+            content_type = "video/mp4" if path.endswith("/video") else "image/png"
+            viewer.send_file_with_range(self, asset, content_type)
+            return
         super().do_GET()
 
 
@@ -411,6 +443,108 @@ h1{margin:0;font-size:clamp(22px,3vw,38px);letter-spacing:.02em}header p{margin:
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const fmt=x=>Number(x).toExponential(4);
 async function load(){const data=await fetch('/api/qk-noise-attention-compare/catalog',{cache:'no-store'}).then(r=>r.json());const root=document.getElementById('main');if(!data.records.length)return;data.records.sort((a,b)=>a.group==='top30'?-1:b.group==='top30'?1:0);root.innerHTML=data.records.map(r=>`<section class="row ${r.group==='top30'?'top':'bottom'}"><div class="title"><h2>${esc(r.group.toUpperCase())}</h2><span class="meta">${esc(r.case)} · S${String(r.step).padStart(3,'0')} · ${r.unique_block_heads} block-heads</span></div><div class="images"><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.all_token_image)}"><figcaption>全 token：Before / After / 逐 head 平均 |ΔA|</figcaption></figure><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.frame_image)}"><figcaption>7×7 潜变量帧注意力质量</figcaption></figure></div><div class="stats"><span class="pill">mean per-head |ΔA| ${fmt(r.mean_abs_attention_delta)}</span><span class="pill">clipped ${(100*r.clipped_fraction).toFixed(2)}%</span><span class="pill">row-sum error ${fmt(r.max_row_sum_error)}</span><span class="pill">entropy ${r.before_mean_row_entropy.toFixed(4)} → ${r.after_mean_row_entropy.toFixed(4)}</span><span class="pill">Q/K/V modified: ${r.qkv_modified}</span></div></section>`).join('');}
 load().catch(e=>document.getElementById('main').textContent=e);setInterval(load,5000);
+</script></body></html>'''
+
+
+def _attention_lora_runs():
+    for alpha_tag, alpha in (
+        ("030", 0.3),
+        ("060", 0.6),
+        ("090", 0.9),
+        ("150", 1.5),
+    ):
+        for count in (30, 100):
+            key = f"alpha{alpha_tag}_count{count}"
+            yield key, alpha, count, ATTENTION_LORA_CASE_ROOT / key
+
+
+def attention_lora_case_asset(asset_id: str):
+    if asset_id == "control_baseline":
+        return STATIC30_ROOT / "baseline" / "cases" / ATTENTION_LORA_CASE / "original.mp4"
+    if asset_id == "control_lora":
+        static = STATIC30_ROOT / "lora" / "cases" / ATTENTION_LORA_CASE / "original.mp4"
+        if static.is_file():
+            return static
+        for _key, _alpha, _count, run_root in _attention_lora_runs():
+            generated = run_root / "videos" / "lora" / "cases" / ATTENTION_LORA_CASE / "original.mp4"
+            if generated.is_file():
+                return generated
+        return static
+    try:
+        run_key, kind, name = asset_id.split("::", 2)
+    except ValueError:
+        return None
+    run = next((item for item in _attention_lora_runs() if item[0] == run_key), None)
+    if run is None or Path(name).name != name:
+        return None
+    run_root = run[3]
+    if kind == "image":
+        return run_root / name
+    if kind == "video":
+        return run_root / "videos" / "lora" / "cases" / ATTENTION_LORA_CASE / name
+    return None
+
+
+def attention_lora_case_catalog():
+    controls = []
+    for asset_id, label in (
+        ("control_baseline", "参考模型：Wan2.2 Baseline · Original"),
+        ("control_lora", "消融模型：Wan+LoRA · Original"),
+    ):
+        path = attention_lora_case_asset(asset_id)
+        controls.append({"id": asset_id, "label": label, "ready": bool(path and path.is_file())})
+    records = []
+    for run_key, alpha, count, run_root in _attention_lora_runs():
+        for group in (f"top{count}", f"bottom{count}"):
+            metadata_path = next(iter(sorted(run_root.glob(f"*__{group}__step39.json"))), None)
+            metadata = {}
+            if metadata_path is not None:
+                try:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    metadata = {}
+            video_name = f"{group}_steps_00_40.mp4"
+            video_id = f"{run_key}::video::{video_name}"
+            video_path = attention_lora_case_asset(video_id)
+            all_token = metadata.get("all_token_image", "")
+            frame = metadata.get("frame_image", "")
+            records.append(
+                {
+                    "run_key": run_key,
+                    "model": "Wan+LoRA",
+                    "alpha": alpha,
+                    "count": count,
+                    "group": group,
+                    "video_id": video_id,
+                    "video_ready": bool(video_path and video_path.is_file()),
+                    "all_token_id": f"{run_key}::image::{all_token}" if all_token else "",
+                    "frame_id": f"{run_key}::image::{frame}" if frame else "",
+                    "heatmap_ready": bool(
+                        all_token
+                        and frame
+                        and attention_lora_case_asset(f"{run_key}::image::{all_token}").is_file()
+                        and attention_lora_case_asset(f"{run_key}::image::{frame}").is_file()
+                    ),
+                    "metrics": metadata,
+                }
+            )
+    return {
+        "case": ATTENTION_LORA_CASE,
+        "controls": controls,
+        "records": records,
+        "ready_records": sum(r["video_ready"] and r["heatmap_ready"] for r in records),
+        "expected_records": 16,
+    }
+
+
+def attention_lora_case_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wan+LoRA Attention Probability Noise</title><style>
+:root{--ink:#18211e;--paper:#eee9dc;--card:#fffdf7;--line:#c8bda7;--red:#b94332;--green:#176b61}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 4%,#f6cf9c,transparent 25%),linear-gradient(145deg,#ece5d4,#d9e8df);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:5;padding:17px 24px;background:rgba(238,233,220,.94);border-bottom:1px solid var(--line);backdrop-filter:blur(9px)}h1{margin:0;font-size:clamp(23px,3vw,39px)}header p{margin:5px 0;color:#5e6c65}.status{font-family:ui-monospace,monospace;font-size:13px}main{max-width:1800px;margin:auto;padding:20px}.controls,.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.control,.card{background:rgba(255,253,247,.94);border:1px solid var(--line);border-radius:16px;padding:15px;box-shadow:0 10px 28px rgba(39,48,42,.08)}h2{margin:7px 0 12px}.card.top{border-left:7px solid var(--red)}.card.bottom{border-left:7px solid var(--green)}video,img{display:block;width:100%;background:#151816;border:1px solid var(--line)}.heatmaps{display:grid;grid-template-columns:1.25fr 1fr;gap:10px;margin-top:11px}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);color:#68736d}.meta{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.pill{padding:5px 8px;border-radius:999px;background:#e9e2d2;font:12px ui-monospace,monospace}.section-title{margin:28px 0 13px}@media(max-width:980px){.controls,.grid,.heatmaps{grid-template-columns:1fr}header{position:static}main{padding:11px}}
+</style></head><body><header><h1>Wan+LoRA · Attention Probability Noise Ablation</h1><p><strong>消融目标模型：Wan+LoRA</strong> · 参考模型：Wan2.2 Baseline</p><p id="case"></p><div id="status" class="status">加载中</div></header><main><h2 class="section-title">Original controls（参考模型 vs 消融模型）</h2><section id="controls" class="controls"></section><h2 class="section-title">Wan+LoRA 消融：Adaptive Top/Bottom 30/100 × α=0.3/0.6/0.9/1.5</h2><section id="grid" class="grid"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const v=id=>`/api/attention-additive-lora-case/video?id=${encodeURIComponent(id)}`;const im=id=>`/api/attention-additive-lora-case/image?id=${encodeURIComponent(id)}`;const f=x=>Number(x).toExponential(3);
+async function load(){const d=await fetch('/api/attention-additive-lora-case/catalog',{cache:'no-store'}).then(r=>r.json());document.getElementById('case').textContent=`Case: ${d.case} · S039 heatmaps · A′=normalize(clamp(A+α/K·ε,0))`;document.getElementById('status').textContent=`消融模型 Wan+LoRA · ${d.ready_records}/${d.expected_records} perturbation records ready · 自动刷新`;document.getElementById('controls').innerHTML=d.controls.map(x=>`<article class="control"><h2>${e(x.label)}</h2>${x.ready?`<video controls preload="metadata" playsinline src="${v(x.id)}"></video>`:'<div class="pending">等待 Original 视频</div>'}</article>`).join('');d.records.sort((a,b)=>a.alpha-b.alpha||a.count-b.count||(a.group.startsWith('top')?-1:1));document.getElementById('grid').innerHTML=d.records.map(r=>{const m=r.metrics||{};return `<article class="card ${r.group.startsWith('top')?'top':'bottom'}"><div class="meta"><span class="pill">消融模型：${e(r.model)}</span><span class="pill">时间步：S00-S39</span><span class="pill">热力图：S039</span></div><h2>${e(r.group.toUpperCase())} · α=${r.alpha.toFixed(1)}</h2>${r.video_ready?`<video controls preload="metadata" playsinline src="${v(r.video_id)}"></video>`:'<div class="pending">Wan+LoRA 视频生成中</div>'}<div class="heatmaps">${r.heatmap_ready?`<img loading="lazy" src="${im(r.all_token_id)}"><img loading="lazy" src="${im(r.frame_id)}">`:'<div class="pending">Wan+LoRA S039 全 token 热力图生成中</div><div class="pending">Wan+LoRA 帧级热力图生成中</div>'}</div>${r.heatmap_ready?`<div class="meta"><span class="pill">mean |ΔA| ${f(m.mean_abs_attention_delta)}</span><span class="pill">clipped ${(100*m.clipped_fraction).toFixed(2)}%</span><span class="pill">row error ${f(m.max_row_sum_error)}</span></div>`:''}</article>`}).join('')}
+load();setInterval(load,10000);
 </script></body></html>'''
 
 
