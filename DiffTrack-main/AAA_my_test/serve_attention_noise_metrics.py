@@ -76,6 +76,8 @@ def expected_methods() -> list[dict[str, object]]:
                 "variant": "Original",
                 "alpha": None,
                 "experiment": "Head Zero Ablation",
+                "application_steps": "No ablation",
+                "selection": "Control",
                 "benchmark_root": str(HEAD_ZERO_ROOT),
             }
         )
@@ -88,9 +90,39 @@ def expected_methods() -> list[dict[str, object]]:
                         "variant": f"{rank.title()}{count}",
                         "alpha": None,
                         "experiment": "Head Zero Ablation",
+                        "application_steps": "S00-S39 (all steps)",
+                        "selection": "Static fixed heads",
                         "benchmark_root": str(HEAD_ZERO_ROOT),
                     }
                 )
+        for count in (30, 100):
+            for rank in ("top", "bottom"):
+                for start, end in ((0, 10), (10, 20), (20, 30), (30, 40)):
+                    methods.append(
+                        {
+                            "name": f"{model}_{rank}{count}_steps_{start:02d}_{end:02d}",
+                            "model": model,
+                            "variant": f"{rank.title()}{count}",
+                            "alpha": None,
+                            "experiment": "Head Zero Ablation",
+                            "application_steps": f"S{start:02d}-S{end - 1:02d}",
+                            "selection": "Static fixed heads",
+                            "benchmark_root": str(HEAD_ZERO_ROOT),
+                        }
+                    )
+        for rank in ("top", "bottom"):
+            methods.append(
+                {
+                    "name": f"{model}_adaptive_{rank}30_steps_00_40",
+                    "model": model,
+                    "variant": f"Adaptive {rank.title()}30",
+                    "alpha": None,
+                    "experiment": "Head Zero Ablation",
+                    "application_steps": "S00-S39 (all steps)",
+                    "selection": "Adaptive per-step heads",
+                    "benchmark_root": str(HEAD_ZERO_ROOT),
+                }
+            )
     for model in ("wan22_baseline", "wan_lora"):
         methods.append(
             {
@@ -99,6 +131,8 @@ def expected_methods() -> list[dict[str, object]]:
                 "variant": "Original",
                 "alpha": None,
                 "experiment": "Legacy Attention Noise (40-step/25-frame)",
+                "application_steps": "No perturbation",
+                "selection": "Control",
                 "benchmark_root": str(BENCH_ROOT),
             }
         )
@@ -112,6 +146,8 @@ def expected_methods() -> list[dict[str, object]]:
                             "variant": f"{rank.title()}{count}",
                             "alpha": alpha,
                             "experiment": "Legacy Attention Noise (40-step/25-frame)",
+                            "application_steps": "S00-S39 (all steps)",
+                            "selection": "Adaptive per-step heads",
                             "benchmark_root": str(BENCH_ROOT),
                         }
                     )
@@ -123,6 +159,8 @@ def expected_methods() -> list[dict[str, object]]:
                 "variant": "Original",
                 "alpha": None,
                 "experiment": "Unified Attention Noise (40-step/49-frame)",
+                "application_steps": "No perturbation",
+                "selection": "Control",
                 "benchmark_root": str(UNIFIED_BENCH_ROOT),
             }
         )
@@ -136,6 +174,8 @@ def expected_methods() -> list[dict[str, object]]:
                             "variant": f"{rank.title()}{count}",
                             "alpha": alpha,
                             "experiment": "Unified Attention Noise (40-step/49-frame)",
+                            "application_steps": "S00-S39 (all steps)",
+                            "selection": "Adaptive per-step heads",
                             "benchmark_root": str(UNIFIED_BENCH_ROOT),
                         }
                     )
@@ -287,7 +327,7 @@ header{padding:32px clamp(18px,4vw,64px) 18px}h1{font-family:"Iowan Old Style","
 </style>
 </head>
 <body>
-<header><div class="eyebrow">20 cases / controlled head ablation</div><h1>PCK Extreme Ablation Benchmark</h1><div class="sub">Head Zero, comparable 40-step/25-frame Legacy Noise for Wan2.2 Baseline and Wan+LoRA, plus a pending 40-step/49-frame Unified Noise matrix for all three models. Results refresh every 30 seconds.</div></header>
+<header><div class="eyebrow">20 cases / controlled head ablation</div><h1>PCK Extreme Ablation Benchmark</h1><div class="sub">Head Zero includes static S00-09, S10-19, S20-29, S30-39 and all-step interventions, plus Adaptive Top/Bottom30 with heads reselected at every denoising step. Legacy and Unified Noise use adaptive per-step head selection across S00-S39. Results refresh every 30 seconds.</div></header>
 <section class="status-grid">
   <div class="status"><span class="eyebrow">Generation queues</span><b id="generation">-</b></div>
   <div class="status"><span class="eyebrow">Benchmark tree</span><b id="prepared">-</b></div>
@@ -306,17 +346,17 @@ function render(){
   const experiment=document.querySelector('#experiment').value;
   const done=DATA.generation.queues.filter(x=>x.complete).length;
   document.querySelector('#generation').textContent=`${done}/${DATA.generation.queues.length} complete`;
-  document.querySelector('#prepared').textContent='55-method matrix';
+  document.querySelector('#prepared').textContent='91-method matrix';
   document.querySelector('#metricProgress').textContent=`${DATA.completed_metrics}/14`;
   const total=DATA.rows.reduce((n,r)=>n+r.case_count,0);
-  document.querySelector('#caseProgress').textContent=`${total}/1100`;
+  document.querySelector('#caseProgress').textContent=`${total}/1820`;
   const status=m=>DATA.metric_status[m];
-  document.querySelector('#thead').innerHTML='<tr><th class="left sticky">Experiment</th><th class="left">Model / condition</th><th>Cases</th>'+DATA.metrics.map(m=>`<th title="${status(m)}">${DATA.metric_labels[m]}<br><span class="${status(m)}">${status(m)}</span></th>`).join('')+'</tr>';
+  document.querySelector('#thead').innerHTML='<tr><th class="left sticky">Experiment</th><th class="left">Model / condition</th><th class="left">Application steps / selection</th><th>Cases</th>'+DATA.metrics.map(m=>`<th title="${status(m)}">${DATA.metric_labels[m]}<br><span class="${status(m)}">${status(m)}</span></th>`).join('')+'</tr>';
   const rows=DATA.rows.filter(r=>(filter==='all'||r.model===filter)&&(experiment==='all'||r.experiment===experiment));
   document.querySelector('#tbody').innerHTML=rows.map(r=>{
     const condition=r.alpha==null?r.variant:`${r.variant} / a=${r.alpha}`;
     const cells=DATA.metrics.map(m=>{const x=r.metrics[m];const best=DATA.best[m];const groupBest=DATA.best_by_experiment[r.experiment][m];const isBest=x.mean!=null&&best!=null&&Math.abs(x.mean-best)<1e-10;const isGroupBest=x.mean!=null&&groupBest!=null&&Math.abs(x.mean-groupBest)<1e-10;return `<td class="metric ${isBest?'best':(isGroupBest?'group-best':'')}">${fmt(x.mean)}<small>n=${x.count}</small></td>`}).join('');
-    return `<tr><td class="left sticky"><span class="experiment-tag">${r.experiment}</span></td><td class="left"><span class="model">${r.model_label}</span><br>${condition}</td><td>${r.case_count}</td>${cells}</tr>`;
+    return `<tr><td class="left sticky"><span class="experiment-tag">${r.experiment}</span></td><td class="left"><span class="model">${r.model_label}</span><br>${condition}</td><td class="left"><strong>${r.application_steps}</strong><br><small>${r.selection}</small></td><td>${r.case_count}</td>${cells}</tr>`;
   }).join('');
   document.querySelector('#stamp').textContent='Updated '+new Date().toLocaleTimeString();
 }
