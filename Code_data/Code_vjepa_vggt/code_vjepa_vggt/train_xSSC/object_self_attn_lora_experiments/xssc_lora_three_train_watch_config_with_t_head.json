@@ -217,7 +217,7 @@
     {
       "key": "t_head70_no_object",
       "label": "T-head70 + No-Object",
-      "color": "#17BECF",
+      "color": "#E377C2",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_no_object_gpu67_formal/from_scratch_20260803T062822Z/checkpoints",
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_no_object_gpu67_formal/resume_step500_20260803T_resume/checkpoints"

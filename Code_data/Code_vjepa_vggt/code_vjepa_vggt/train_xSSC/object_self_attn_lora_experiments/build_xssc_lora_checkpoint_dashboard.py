@@ -30,6 +30,7 @@ METHOD_PLOT_STYLES = {
     "s_head59_resume": {"marker": "s", "linestyle": "--"},
     "t_head70": {"marker": "^", "linestyle": "-."},
     "t_head70_resume": {"marker": "^", "linestyle": "-."},
+    "t_head70_no_object": {"marker": "h", "linestyle": (0, (3, 2))},
     "t_head70_slot_dedup_merge": {
         "marker": "v",
         "linestyle": (0, (3, 1, 1, 1)),
@@ -1135,6 +1136,11 @@ MERGED_METHODS = [
     {"key": "s_head59", "label": "S-head59 + Object", "color": "#2CA02C"},
     {"key": "t_head70", "label": "T-head70 + Object", "color": "#9467BD"},
     {
+        "key": "t_head70_no_object",
+        "label": "T-head70 + No-Object",
+        "color": "#E377C2",
+    },
+    {
         "key": "t_head70_slot_dedup_merge",
         "label": "T-head70 + Object + Slot-Dedup",
         "color": "#17BECF",
@@ -1332,21 +1338,13 @@ def build_average_metrics_page(
                 "mean": sum(values) / len(values) if values else None,
             }
         summaries.append(summary)
-    best: dict[str, float] = {}
-    for spec in CASE_METRIC_SPECS:
-        complete_values = [
-            float(row["metrics"][spec["key"]]["mean"])
-            for row in summaries
-            if row["metrics"][spec["key"]]["count"] == expected
-            and row["metrics"][spec["key"]]["mean"] is not None
-        ]
-        if complete_values:
-            best[spec["key"]] = (
-                min(complete_values)
-                if spec["direction"] == "lower"
-                else max(complete_values)
-            )
     method_colors = {method["key"]: method["color"] for method in MERGED_METHODS}
+    method_order = {
+        method["key"]: index for index, method in enumerate(MERGED_METHODS)
+    }
+    metric_directions = {
+        spec["key"]: spec["direction"] for spec in CASE_METRIC_SPECS
+    }
     header_cells = "".join(
         f"<th>{escape(spec['label'])} <span>{'↓' if spec['direction'] == 'lower' else '↑'}</span></th>"
         for spec in CASE_METRIC_SPECS
@@ -1358,21 +1356,25 @@ def build_average_metrics_page(
             stat = row["metrics"][spec["key"]]
             if stat["count"] != expected or stat["mean"] is None:
                 cells.append(
-                    f'<td class="pending">pending {stat["count"]}/{expected}</td>'
+                    f'<td class="pending" data-metric="{escape(spec["key"])}" '
+                    f'data-complete="0">pending {stat["count"]}/{expected}</td>'
                 )
                 continue
             value = float(stat["mean"])
-            is_best = spec["key"] in best and abs(value - best[spec["key"]]) <= 1e-9
             cells.append(
-                f'<td class="{"best" if is_best else ""}">'
-                f'{"★ " if is_best else ""}{format_average_metric(value)}</td>'
+                f'<td data-metric="{escape(spec["key"])}" data-complete="1" '
+                f'data-value="{value:.12g}">{format_average_metric(value)}</td>'
             )
         color = method_colors.get(str(row["method_key"]), "#172126")
         body_rows.append(
-            f'<tr><td class="method" style="color:{escape(color)}">'
+            f'<tr data-method="{escape(row["method_key"])}" '
+            f'data-step="{row["step"]}"><td class="method" '
+            f'style="color:{escape(color)}">'
             f'{escape(row["method_label"])}</td><td class="step">'
             f'{row["step"]}</td>{"".join(cells)}</tr>'
         )
+    method_order_json = json.dumps(method_order, ensure_ascii=True)
+    metric_directions_json = json.dumps(metric_directions, ensure_ascii=True)
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1380,8 +1382,13 @@ def build_average_metrics_page(
 *{{box-sizing:border-box}}body{{margin:0;background:#f3f5f6;color:#172126;
 font-family:Inter,"Noto Sans SC",Arial,sans-serif}}header{{padding:18px 22px;background:#fff;
 border-bottom:1px solid #d6dde0}}h1{{margin:0 0 5px;font-size:20px}}p{{margin:0;color:#657278;
-font-size:12px}}a{{color:#006d77;font-weight:800;text-decoration:none}}main{{padding:16px 20px}}
-.wrap{{overflow:auto;max-height:calc(100vh - 132px);border:1px solid #d6dde0;background:#fff}}
+font-size:12px}}a{{color:#006d77;font-weight:800;text-decoration:none}}main{{padding:14px 20px}}
+.toolbar{{display:flex;align-items:center;gap:12px;margin-bottom:10px}}.segmented{{display:inline-flex;
+padding:2px;border:1px solid #c9d2d6;border-radius:6px;background:#e5ebed}}.segmented button{{height:30px;
+padding:0 13px;border:0;border-radius:4px;background:transparent;color:#45545b;font-weight:800;cursor:pointer}}
+.segmented button.active{{background:#fff;color:#006d77;box-shadow:0 1px 3px rgba(23,33,38,.16)}}
+.view-note{{color:#657278;font-size:12px}}.wrap{{overflow:auto;max-height:calc(100vh - 174px);
+border:1px solid #d6dde0;background:#fff}}
 table{{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;
 font-size:11px;font-variant-numeric:tabular-nums}}th,td{{height:31px;padding:5px 8px;
 border-right:1px solid #e2e7e9;border-bottom:1px solid #e2e7e9;text-align:center;white-space:nowrap}}
@@ -1390,12 +1397,58 @@ thead th{{position:sticky;top:0;z-index:3;background:#e5ebed;color:#45545b}}thea
 thead .method{{z-index:4;background:#dce4e7}}.step{{position:sticky;left:190px;z-index:2;
 min-width:72px;background:#fff;color:#657278}}thead .step{{z-index:4;background:#dce4e7}}
 td.best{{background:#dff3e7;color:#075d37;font-weight:900}}td.pending{{color:#98a3a8;font-size:10px}}
+.best::before{{content:"★ ";}}tr.group-start td{{border-top:3px solid #aebbc0}}
 .back{{display:inline-block;margin-top:12px}}
 </style></head><body><header><h1>{escape(page_title)}</h1>
-<p>覆盖全部 {expected} 个 case 的均值才参与 ★ 最佳值比较；WMReward surprise 越低越好，其余越高越好。</p></header>
-<main><div class="wrap"><table><thead><tr><th class="method">方法</th><th class="step">Step</th>
+<p>覆盖全部 {expected} 个 case 的均值才参与组内 ★ 最佳值比较；WMReward surprise 越低越好，其余越高越好。</p></header>
+<main><div class="toolbar"><div class="segmented" role="group" aria-label="指标表分组方式">
+<button type="button" data-view="model" class="active">按模型</button>
+<button type="button" data-view="step">按 Step</button></div>
+<span class="view-note" id="view-note">同一模型内比较不同训练 step</span></div>
+<div class="wrap"><table><thead><tr><th class="method">方法</th><th class="step">Step</th>
 {header_cells}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>
-<a class="back" href="../">返回总览</a></main></body></html>"""
+<a class="back" href="../">返回总览</a></main><script>
+const methodOrder={method_order_json};
+const metricDirections={metric_directions_json};
+const tbody=document.querySelector("tbody");
+const rows=[...tbody.querySelectorAll("tr")];
+const buttons=[...document.querySelectorAll("button[data-view]")];
+const note=document.getElementById("view-note");
+function orderOf(row){{return methodOrder[row.dataset.method]??999;}}
+function applyView(view){{
+  rows.sort((left,right)=>view==="model"
+    ? orderOf(left)-orderOf(right)||Number(left.dataset.step)-Number(right.dataset.step)
+    : Number(left.dataset.step)-Number(right.dataset.step)||orderOf(left)-orderOf(right));
+  rows.forEach(row=>{{row.classList.remove("group-start");tbody.appendChild(row);}});
+  const groups=new Map();
+  let previous=null;
+  rows.forEach(row=>{{
+    const key=view==="model"?row.dataset.method:row.dataset.step;
+    if(key!==previous)row.classList.add("group-start");
+    previous=key;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(row);
+  }});
+  rows.forEach(row=>row.querySelectorAll("td.best").forEach(cell=>cell.classList.remove("best")));
+  groups.forEach(groupRows=>{{
+    Object.entries(metricDirections).forEach(([metric,direction])=>{{
+      const cells=groupRows.map(row=>row.querySelector(`td[data-metric="${{metric}}"]`))
+        .filter(cell=>cell&&cell.dataset.complete==="1");
+      if(!cells.length)return;
+      const values=cells.map(cell=>Number(cell.dataset.value));
+      const best=direction==="lower"?Math.min(...values):Math.max(...values);
+      cells.filter(cell=>Math.abs(Number(cell.dataset.value)-best)<=1e-9)
+        .forEach(cell=>cell.classList.add("best"));
+    }});
+  }});
+  buttons.forEach(button=>button.classList.toggle("active",button.dataset.view===view));
+  note.textContent=view==="model"?"同一模型内比较不同训练 step":"同一 step 内比较不同模型";
+  localStorage.setItem("averageMetricsView",view);
+}}
+buttons.forEach(button=>button.addEventListener("click",()=>applyView(button.dataset.view)));
+const saved=localStorage.getItem("averageMetricsView");
+applyView(saved==="step"?"step":"model");
+</script></body></html>"""
 
 
 def write_unified_videos_page(

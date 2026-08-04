@@ -35,6 +35,7 @@ TRAINING_CHECKPOINT_PATTERN = re.compile(
     r"full_sa|full_sa_resume|"
     r"s_head59|s_head59_resume|"
     r"t_head70|t_head70_resume|"
+    r"t_head70_no_object|"
     r"t_head70_slot_dedup_merge|"
     r"slot_dedup_merge|"
     r"full_sa_no_object"
@@ -90,6 +91,7 @@ TRAINING_VARIANT_LABELS = {
     "full_sa": "Full-SA + Object",
     "s_head59": "S-head59 + Object",
     "t_head70": "T-head70 + Object",
+    "t_head70_no_object": "T-head70 + No-Object",
     "t_head70_slot_dedup_merge": "T-head70 + Object + Slot-Dedup",
     "slot_dedup_merge": "Full-SA + Object + Slot-Dedup",
     "full_sa_no_object": "Full-SA + No-Object",
@@ -98,6 +100,7 @@ TRAINING_VARIANT_COLORS = {
     "full_sa": "#D62728",
     "s_head59": "#2CA02C",
     "t_head70": "#9467BD",
+    "t_head70_no_object": "#E377C2",
     "t_head70_slot_dedup_merge": "#17BECF",
     "slot_dedup_merge": "#1F77B4",
     "full_sa_no_object": "#FF7F0E",
@@ -106,6 +109,7 @@ TRAINING_VARIANT_MARKERS = {
     "full_sa": "o",
     "s_head59": "s",
     "t_head70": "^",
+    "t_head70_no_object": "h",
     "t_head70_slot_dedup_merge": "v",
     "slot_dedup_merge": "D",
     "full_sa_no_object": "X",
@@ -114,6 +118,7 @@ TRAINING_VARIANT_LINESTYLES = {
     "full_sa": "-",
     "s_head59": "--",
     "t_head70": "-.",
+    "t_head70_no_object": (0, (3, 2)),
     "t_head70_slot_dedup_merge": (0, (3, 1, 1, 1)),
     "slot_dedup_merge": ":",
     "full_sa_no_object": (0, (5, 1)),
@@ -125,6 +130,7 @@ TRAINING_VARIANT_ORDER = {
             "full_sa",
             "s_head59",
             "t_head70",
+            "t_head70_no_object",
             "t_head70_slot_dedup_merge",
             "slot_dedup_merge",
             "full_sa_no_object",

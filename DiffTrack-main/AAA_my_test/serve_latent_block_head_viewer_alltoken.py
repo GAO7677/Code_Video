@@ -46,6 +46,9 @@ BALANCED_INTERVAL_ROOT = Path(
     "/data/gaoya/agent-data/outputs/"
     "three_model_balanced_interval_samples_alltoken_qk_case001"
 )
+PCK_OVERLAY_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/pck_extreme_overlay_case001_s039"
+)
 BALANCED_VIDEO_PATHS = {
     "gt": Path(
         "/data/gaoya/agent-data/outputs/wan22_ti2v_5b_gt_real_sam2_regions_steps40/"
@@ -100,6 +103,7 @@ PORTAL = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta
 <a class="card new" href="/pck-extreme100-head-zero-ablation?v=1"><div><span>09 / ALL 720 扩大消融</span><h2>全组合 PCK Top100 / Bottom100</h2><p>从全部 720 个 Block-Head 选择排名两端，各 100 个 Head 分阶段同时置零。</p></div><span class="go">打开 TOP100 / BOTTOM100 消融</span></a>
 <a class="card" href="/rankings?v=2"><div><span>07 / 固定时间步指标</span><h2>Block × Head 排名</h2><p>比较固定时间步下三个模型各自的 720 个 Block-Head 组合。</p></div><span class="go">打开固定步排名</span></a>
 <a class="card" href="/single?v=2"><div><span>08 / 单组合检查</span><h2>轨迹显微镜</h2><p>选择模型、案例、Block 和 Head，逐潜空间帧检查 GT 与 Q@K 轨迹。</p></div><span class="go">打开单组合检查器</span></a>
+<a class="card new" href="/pck-extreme-overlays?v=1"><div><span>09 / PCK 高低对比</span><h2>Top6 与 Bottom6 轨迹视频</h2><p>在原视频真实锚点帧上，并排比较三个模型的 GT 与 Q@K 轨迹，直观看到 PCK 高低差异。</p></div><span class="go">打开 PCK OVERLAY 视频</span></a>
 </section></main></body></html>'''
 
 
@@ -179,6 +183,13 @@ BALANCED_INTERVAL_PAGE = (
         "/downloads/balanced-interval-selection.csv",
     )
 )
+
+
+PCK_OVERLAY_PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PCK@32 高低组合轨迹对比</title><style>
+:root{--paper:#ece7da;--ink:#17211e;--card:#fffdf7;--rust:#c65738;--teal:#176654;--line:#aaa392;--muted:#64706a}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 4% 0,#c6573830,transparent 35rem),radial-gradient(circle at 95% 4%,#17665425,transparent 32rem),var(--paper);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(2200px,calc(100% - 24px));margin:auto;padding:26px 0 70px}h1,h2,h3{font-family:Georgia,"Noto Serif CJK SC",serif}.back{float:right;color:var(--ink);font-weight:900}.eyebrow{color:var(--rust);font-size:11px;font-weight:900;letter-spacing:.15em}h1{font-size:clamp(40px,6vw,76px);line-height:.93;letter-spacing:-.04em;margin:8px 0}.lead{max-width:1100px;color:var(--muted);line-height:1.65}.formula{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:22px 0 36px}.formula article{background:var(--card);border:1px solid var(--line);padding:16px}.formula b{display:block;font:700 22px Georgia,serif;margin-bottom:7px}.formula p{margin:0;color:var(--muted);line-height:1.5}.section{margin-top:34px}.section-title{display:flex;align-items:end;justify-content:space-between;border-bottom:2px solid var(--ink);margin-bottom:11px}.section-title h2{font-size:32px;margin:0 0 6px}.section-title span{font-size:11px;font-weight:900;letter-spacing:.1em;margin-bottom:8px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--line);padding:11px;box-shadow:0 7px 20px #2d261715}.card h3{font-size:23px;margin:0 0 5px}.rank{float:right;color:var(--rust);font:900 11px "Trebuchet MS",sans-serif}.scores{display:grid;grid-template-columns:repeat(3,1fr);gap:4px 10px;margin:7px 0 10px;color:var(--muted);font-size:11px}.scores b{color:var(--ink)}video{display:block;width:100%;background:#0b100e;border:1px solid #333}.note{font-size:10px;color:var(--muted);line-height:1.45;margin:8px 0 0}.links{display:flex;gap:18px;margin-top:22px}.links a{color:var(--ink);font-weight:900}@media(max-width:1200px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:750px){.formula,.grid{grid-template-columns:1fr}.back{float:none;display:block;margin-bottom:12px}.scores{grid-template-columns:1fr 1fr}}
+</style></head><body><main><a class="back" href="/">返回可视化总览</a><div class="eyebrow">S039 · OBJECTS · 50 CASES · 3 MODELS · ORIGINAL VIDEO ANCHORS</div><h1>PCK@32 高低组合<br>轨迹 Overlay 对比</h1><p class="lead">白色圆环与白色轨迹是可见伪 GT，彩色点与轨迹是所选 Q@K Head 的预测。视频只使用原视频第 0、4、8、12、16、20、24 帧，对应7个真实潜空间锚点；不做时间插值。</p><section class="formula"><article><b>1. 单点误差</b><p>对有效 future 锚点，计算预测位置与 GT 位置的二维欧氏像素距离。</p></article><article><b>2. 案例 PCK@32</b><p>误差不超过32像素的有效比较次数 ÷ 该案例全部有效比较次数 × 100%。</p></article><article><b>3. 页面 Macro PCK@32</b><p>先在每个案例内合并目标区域，再让50个案例等权；最后对 GT、LoRA、Baseline 三模型等权平均。</p></article></section><div id="sections"></div><div class="links"><a href="/downloads/pck-extreme-selection.csv">下载 Top6/Bottom6 明细 CSV</a><a href="/all-steps/rankings?v=4">查看全部组合排名</a></div></main><script>
+const f=x=>Number(x).toFixed(2);const pad=x=>String(x).padStart(2,'0');function cards(rows){return rows.map(x=>{const video=`/api/pck-extremes/video?group=${x.group}&rank=${x.rank}`,poster=`/api/pck-extremes/poster?group=${x.group}&rank=${x.rank}`;return`<article class="card"><h3>L${pad(x.block)} / H${pad(x.head)}<span class="rank">${x.group==='top'?'最高':'最低'} #${x.rank}</span></h3><div class="scores"><span>综合 Macro <b>${f(x.macro_pck32)}%</b></span><span>最差模型 <b>${f(x.worst_model_macro_pck32)}%</b></span><span>平均误差 <b>${f(x.macro_mean_error_px)}px</b></span><span>GT <b>${f(x.gt_macro_pck32)}%</b></span><span>LoRA <b>${f(x.lora_macro_pck32)}%</b></span><span>Baseline <b>${f(x.baseline_macro_pck32)}%</b></span></div><video controls muted loop playsinline preload="metadata" poster="${poster}" src="${video}"></video><p class="note">当前案例 PCK@32：GT ${f(x.case_pck32.gt)}% · LoRA ${f(x.case_pck32.lora)}% · Baseline ${f(x.case_pck32.baseline)}%</p></article>`}).join('')}async function init(){const data=await fetch('/api/pck-extremes/catalog').then(r=>r.json()),top=data.items.filter(x=>x.group==='top'),bottom=data.items.filter(x=>x.group==='bottom');document.getElementById('sections').innerHTML=`<section class="section"><div class="section-title"><h2>高 PCK Top 6</h2><span>三模型50-CASE MACRO PCK@32 由高到低</span></div><div class="grid">${cards(top)}</div></section><section class="section"><div class="section-title"><h2>低 PCK Bottom 6</h2><span>三模型50-CASE MACRO PCK@32 由低到高</span></div><div class="grid">${cards(bottom)}</div></section>`}init();
+</script></body></html>'''
 
 
 def catalog() -> dict:
@@ -610,6 +621,29 @@ class Handler(BASE_HANDLER):
                 return self.send_payload(
                     BALANCED_INTERVAL_PAGE.encode(), "text/html; charset=utf-8"
                 )
+            if parsed.path == "/pck-extreme-overlays":
+                return self.send_payload(
+                    PCK_OVERLAY_PAGE.encode(), "text/html; charset=utf-8"
+                )
+            if parsed.path == "/api/pck-extremes/catalog":
+                return self.send_payload(
+                    (PCK_OVERLAY_ROOT / "catalog.json").read_bytes(),
+                    "application/json; charset=utf-8",
+                )
+            if parsed.path in ("/api/pck-extremes/video", "/api/pck-extremes/poster"):
+                query = parse_qs(parsed.query)
+                group = query.get("group", [""])[0]
+                rank = int(query.get("rank", ["0"])[0])
+                if group not in ("top", "bottom") or not 1 <= rank <= 6:
+                    raise ValueError("invalid PCK extreme selection")
+                folder = "videos" if parsed.path.endswith("video") else "posters"
+                suffix = ".mp4" if folder == "videos" else ".jpg"
+                matches = list((PCK_OVERLAY_ROOT / folder).glob(f"{group}_rank{rank:02d}_*{suffix}"))
+                if len(matches) != 1:
+                    raise FileNotFoundError(f"missing PCK overlay: {group} rank {rank}")
+                if folder == "videos":
+                    return self.send_video_file(matches[0])
+                return self.send_payload(matches[0].read_bytes(), "image/jpeg")
             if parsed.path == "/api/joint-interval/catalog":
                 return self.send_payload(
                     (INTERVAL_ROOT / "selected_heads.json").read_bytes(),
@@ -741,11 +775,58 @@ class Handler(BASE_HANDLER):
                     (BALANCED_INTERVAL_ROOT / "selected_heads.csv").read_bytes(),
                     "text/csv; charset=utf-8",
                 )
+            if parsed.path == "/downloads/pck-extreme-selection.csv":
+                return self.send_payload(
+                    (PCK_OVERLAY_ROOT / "selection.csv").read_bytes(),
+                    "text/csv; charset=utf-8",
+                )
             return super().do_GET()
         except (FileNotFoundError, ValueError) as error:
             return self.send_payload(str(error).encode(), "text/plain; charset=utf-8", 404)
         except Exception as error:
             return self.send_payload(repr(error).encode(), "text/plain; charset=utf-8", 500)
+
+
+PCK_COMPARISON_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/pck_high_low_overlay_case001_s039"
+)
+
+
+_previous_do_get = Handler.do_GET
+
+
+def _do_get_with_pck_overlay(self) -> None:
+    parsed = urlparse(self.path)
+    route = parsed.path.rstrip("/")
+    if route == "/pck-overlay-comparison":
+        page = (PCK_COMPARISON_ROOT / "index.html").read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(page)))
+        self.end_headers()
+        self.wfile.write(page)
+        return
+    prefix = "/pck-overlay-comparison/assets/"
+    if parsed.path.startswith(prefix):
+        name = Path(parsed.path[len(prefix) :]).name
+        path = PCK_COMPARISON_ROOT / name
+        if not path.is_file():
+            self.send_error(404, "PCK overlay asset not found")
+            return
+        if path.suffix.lower() == ".mp4":
+            return send_file_with_range(self, path, "video/mp4")
+        body = path.read_bytes()
+        content_type = "application/json; charset=utf-8" if path.suffix == ".json" else "application/octet-stream"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return
+    _previous_do_get(self)
+
+
+Handler.do_GET = _do_get_with_pck_overlay
 
 
 def main() -> None:
