@@ -1,0 +1,26 @@
+{
+  "extends": "formal_full_sa_no_object_kubric100_gpu67_1000steps.json",
+  "experiment": {
+    "name": "full_sa_no_object_kubric100_gpu67_ssh118_1000steps",
+    "description": "Two-GPU 100% Kubric Full-SA No-Object run on SSH 118 after PyBullet completes"
+  },
+  "launch": {
+    "gpu_set": "6,7",
+    "num_processes": 2,
+    "main_process_port": 29567,
+    "accelerate_bin": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/accelerate_ssh118.sh",
+    "python_bin": "/mnt/data/gaoya/agent-data/envs/wan-cu128/bin/python"
+  },
+  "paths": {
+    "wan_root": "/mnt/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B",
+    "pretrained_lora_checkpoint": "/mnt/data/gaoya/agent-data/weights/wan_openvid_lora_step10000/checkpoint.safetensors",
+    "pybullet_root": "/mnt/data/gaoya/dataset/0717pybullet_5000_vbenchtop5",
+    "kubric_root": "/mnt/data/gaoya/dataset/nnsriram97-phyco_kubric",
+    "openvid_root": "/mnt/data/gaoya/dataset/unused-openvid-ratio-zero",
+    "output_root": "/mnt/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora",
+    "cache_root": "/mnt/data/gaoya/agent-data/cache/xssc_object_self_attn_lora"
+  },
+  "data": {
+    "kubric_cache_root": "/mnt/data/gaoya/agent-data/cache/kubric_no_gt_box_dataset"
+  }
+}

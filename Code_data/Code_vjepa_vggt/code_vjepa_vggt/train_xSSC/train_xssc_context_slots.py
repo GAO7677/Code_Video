@@ -641,51 +641,81 @@ def build_parser() -> argparse.ArgumentParser:
 def build_dataset(args: argparse.Namespace):
     if args.dataset_type != "xssc_replay_mix":
         return tvn.build_dataset(args)
-    if not args.pybullet0713_root or not args.kubric_root or not args.openvid_root:
-        raise ValueError(
-            "xssc_replay_mix requires --pybullet0713_root, --kubric_root, and --openvid_root"
-        )
     if (int(args.num_frames) - 1) % 4 != 0:
         raise ValueError("xssc_replay_mix num_frames must satisfy 4n+1")
     resolution = (int(args.height), int(args.width))
-    pybullet = PyBullet0713NoGTBoxDataset(
-        root=args.pybullet0713_root,
-        split=args.pybullet0713_split,
-        resolution=resolution,
-        num_frames=args.num_frames,
-        num_context_frames=args.fixed_num_context_frames,
-        sampling_strategy=args.pybullet0713_sampling_strategy,
-        families=args.pybullet0713_family,
-        init_scan_limit=args.pybullet0713_init_scan_limit,
-    )
-    kubric = KubricReplayNoGTBoxDataset(
-        root=args.kubric_root,
-        split=args.kubric_split,
-        resolution=resolution,
-        num_frames=args.num_frames,
-        num_context_frames=args.fixed_num_context_frames,
-        index_num_frames=args.kubric_replay_index_num_frames,
-        index_num_context_frames=args.kubric_replay_index_num_context_frames,
-        sampling_strategy=args.kubric_sampling_strategy,
-        seed=42,
-        init_scan_limit=args.kubric_init_scan_limit,
-        cache_root=args.kubric_cache_root,
-    )
-    openvid = OpenVidNoGTBoxDataset(
-        root=args.openvid_root,
-        resolution=resolution,
-        num_frames=args.num_frames,
-        num_context_frames=args.fixed_num_context_frames,
-        max_samples=args.openvid_max_samples,
-    )
+    source_probabilities = {
+        "pybullet": float(args.mixture_pybullet_ratio),
+        "kubric": float(args.mixture_kubric_ratio),
+        "openvid": float(args.mixture_openvid_ratio),
+    }
+    if any(value < 0.0 for value in source_probabilities.values()):
+        raise ValueError(
+            f"xssc_replay_mix probabilities must be non-negative: {source_probabilities}"
+        )
+    if sum(source_probabilities.values()) <= 0.0:
+        raise ValueError(
+            f"xssc_replay_mix requires at least one positive source: {source_probabilities}"
+        )
+
+    datasets = []
+    source_names = []
+    active_probabilities = []
+    if source_probabilities["pybullet"] > 0.0:
+        if not args.pybullet0713_root:
+            raise ValueError("Positive PyBullet ratio requires --pybullet0713_root")
+        datasets.append(
+            PyBullet0713NoGTBoxDataset(
+                root=args.pybullet0713_root,
+                split=args.pybullet0713_split,
+                resolution=resolution,
+                num_frames=args.num_frames,
+                num_context_frames=args.fixed_num_context_frames,
+                sampling_strategy=args.pybullet0713_sampling_strategy,
+                families=args.pybullet0713_family,
+                init_scan_limit=args.pybullet0713_init_scan_limit,
+            )
+        )
+        source_names.append("pybullet")
+        active_probabilities.append(source_probabilities["pybullet"])
+    if source_probabilities["kubric"] > 0.0:
+        if not args.kubric_root:
+            raise ValueError("Positive Kubric ratio requires --kubric_root")
+        datasets.append(
+            KubricReplayNoGTBoxDataset(
+                root=args.kubric_root,
+                split=args.kubric_split,
+                resolution=resolution,
+                num_frames=args.num_frames,
+                num_context_frames=args.fixed_num_context_frames,
+                index_num_frames=args.kubric_replay_index_num_frames,
+                index_num_context_frames=args.kubric_replay_index_num_context_frames,
+                sampling_strategy=args.kubric_sampling_strategy,
+                seed=42,
+                init_scan_limit=args.kubric_init_scan_limit,
+                cache_root=args.kubric_cache_root,
+            )
+        )
+        source_names.append("kubric")
+        active_probabilities.append(source_probabilities["kubric"])
+    if source_probabilities["openvid"] > 0.0:
+        if not args.openvid_root:
+            raise ValueError("Positive OpenVid ratio requires --openvid_root")
+        datasets.append(
+            OpenVidNoGTBoxDataset(
+                root=args.openvid_root,
+                resolution=resolution,
+                num_frames=args.num_frames,
+                num_context_frames=args.fixed_num_context_frames,
+                max_samples=args.openvid_max_samples,
+            )
+        )
+        source_names.append("openvid")
+        active_probabilities.append(source_probabilities["openvid"])
     return WeightedNoGTBoxMixture(
-        datasets=(pybullet, kubric, openvid),
-        source_names=("pybullet", "kubric", "openvid"),
-        source_probabilities=(
-            args.mixture_pybullet_ratio,
-            args.mixture_kubric_ratio,
-            args.mixture_openvid_ratio,
-        ),
+        datasets=tuple(datasets),
+        source_names=tuple(source_names),
+        source_probabilities=tuple(active_probabilities),
     )
 
 

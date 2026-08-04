@@ -232,7 +232,17 @@ class PyBullet0713NoGTBoxDataset(Dataset):
                 case_id = _clean_text(row.get("case_id") or row.get("sample_key"))
                 family_key = _clean_text(row.get("family_key"))
                 if output_root:
-                    paths.append(Path(output_root) / "case_manifest.json")
+                    original_path = Path(output_root) / "case_manifest.json"
+                    if original_path.is_file():
+                        paths.append(original_path)
+                    elif case_id and family_key:
+                        paths.append(
+                            self.root
+                            / "cases"
+                            / family_key
+                            / case_id
+                            / "case_manifest.json"
+                        )
                 elif case_id and family_key:
                     paths.append(self.root / "cases" / family_key / case_id / "case_manifest.json")
             deduped = list(dict.fromkeys(paths))
@@ -265,12 +275,16 @@ class PyBullet0713NoGTBoxDataset(Dataset):
             video_path = Path(_clean_text(manifest.get("video")))
             if not video_path.is_absolute():
                 video_path = manifest_path.parent / video_path
+            elif not video_path.is_file():
+                video_path = manifest_path.parent / "videos" / video_path.name
             if not video_path.is_file():
                 continue
             meta_text = _clean_text(manifest.get("meta"))
             meta_path = Path(meta_text) if meta_text else None
             if meta_path is not None and not meta_path.is_absolute():
                 meta_path = manifest_path.parent / meta_path
+            elif meta_path is not None and not meta_path.is_file():
+                meta_path = manifest_path.parent / "meta" / meta_path.name
             caption = _first_nonempty(
                 manifest.get("input_caption"),
                 manifest.get("caption"),

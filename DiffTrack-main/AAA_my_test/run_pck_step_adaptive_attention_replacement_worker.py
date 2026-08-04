@@ -31,6 +31,8 @@ if NOISE_MODE not in {
     "probability_zero",
     "probability_uniform",
     "probability_temporal_causal",
+    "probability_strict_past",
+    "probability_strict_future",
 }:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
 
@@ -234,7 +236,11 @@ class AdaptiveQKLogitNoise:
                 device=logits.device,
                 dtype=torch.float32,
             )
-            if self.noise_mode == "probability_temporal_causal":
+            if self.noise_mode in {
+                "probability_temporal_causal",
+                "probability_strict_past",
+                "probability_strict_future",
+            }:
                 latent_frames = int(os.environ.get("ATTENTION_MASK_LATENT_FRAMES", "7"))
                 if sequence % latent_frames != 0:
                     raise RuntimeError(
@@ -247,11 +253,22 @@ class AdaptiveQKLogitNoise:
                 key_frames = (
                     torch.arange(sequence, device=logits.device) // spatial_tokens
                 )
-                allowed = key_frames.unsqueeze(0) <= query_frames.unsqueeze(1)
-                probabilities = torch.softmax(
-                    logits.masked_fill(~allowed.unsqueeze(0).unsqueeze(0), -torch.inf),
-                    dim=-1,
-                )
+                if self.noise_mode == "probability_temporal_causal":
+                    allowed = key_frames.unsqueeze(0) <= query_frames.unsqueeze(1)
+                elif self.noise_mode == "probability_strict_past":
+                    allowed = key_frames.unsqueeze(0) < query_frames.unsqueeze(1)
+                else:
+                    allowed = key_frames.unsqueeze(0) > query_frames.unsqueeze(1)
+                expanded = allowed.unsqueeze(0).unsqueeze(0)
+                valid_rows = allowed.any(dim=-1)
+                probabilities = torch.zeros_like(before_probabilities)
+                if valid_rows.any():
+                    probabilities[:, :, valid_rows] = torch.softmax(
+                        logits[:, :, valid_rows].masked_fill(
+                            ~expanded[:, :, valid_rows], -torch.inf
+                        ),
+                        dim=-1,
+                    )
                 if capture_entry is not None:
                     capture_entry["max_row_sum_error"] = max(
                         capture_entry["max_row_sum_error"],
@@ -496,6 +513,8 @@ def write_experiment_metadata() -> None:
                     "probability_zero": "direct_attention_probability_zero",
                     "probability_uniform": "direct_attention_probability_uniform",
                     "probability_temporal_causal": "temporal_causal_attention_mask",
+                    "probability_strict_past": "strict_past_attention_mask",
+                    "probability_strict_future": "strict_future_attention_mask",
                     "probability_additive": "direct_attention_probability_additive_noise",
                     "logit": "direct_qk_logit_noise",
                 }[NOISE_MODE],

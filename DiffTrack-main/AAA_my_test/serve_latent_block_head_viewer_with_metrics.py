@@ -46,6 +46,9 @@ ATTENTION_LORA_STEPS00_09_ROOT = Path(
 ATTENTION_LORA_SEED_SWEEP_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
 )
+OBJECT_QUERY_OVERLAY_PILOT_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/object_query_attention_overlay_case001460_seed090094"
+)
 ATTENTION_LORA_CASE = "0613pybullet_sample_001460_w002"
 ATTENTION_TEST_LIST = Path(
     "/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt"
@@ -354,6 +357,7 @@ MONO_SCALE_LORA_VIDEO_PORTAL_CARD = r'''
 '''
 ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD = r'''
 <a class="card new" href="/attention-additive-lora-seed-sweep?v=1"><div><span>16 / LORA 50-SEED SWEEP</span><h2>001460 · 50 Seeds × 全实验</h2><p>查看 Wan+LoRA Top/Bottom100 在全时间步与 S000-S009 的六类干预结果，seed 可下拉选择。</p></div><span class="go">打开 50-Seed 对比</span></a>
+<a class="card new" href="/object-query-attention-overlay?v=1"><div><span>17 / OBJECT QUERY OVERLAY</span><h2>Top/Bottom10 · 13×13 Latent 时间轴</h2><p>将动态物体 Query tokens 的 Before、After 与 |Delta| attention overlay 到对应视频帧。</p></div><span class="go">打开 Object Query 对比</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + "</section>", 1
@@ -550,6 +554,39 @@ class MetricsHandler(viewer.Handler):
                 raise FileNotFoundError("unknown seed-sweep asset")
             content_type = "video/mp4" if path.endswith("/video") else "image/png"
             viewer.send_file_with_range(self, asset, content_type)
+            return
+        if path == "/object-query-attention-overlay":
+            self.send_payload(
+                object_query_attention_overlay_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/object-query-attention-overlay/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                object_query_attention_overlay_catalog(
+                    params.get("stage", ["all_steps"])[0],
+                    params.get("profile", ["alpha090"])[0],
+                    params.get("group", ["top100"])[0],
+                ),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/object-query-attention-overlay/image":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_attention_overlay_asset(
+                params.get("stage", [""])[0],
+                params.get("profile", [""])[0],
+                params.get("name", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown object-query overlay")
+            viewer.send_file_with_range(self, asset, "image/jpeg")
             return
         super().do_GET()
 
@@ -1494,6 +1531,8 @@ SEED_SWEEP_PROFILES = (
     ("zero", "A = 0"),
     ("uniform", "A = 1/N_K"),
     ("temporal_causal", "Temporal Causal"),
+    ("strict_past", "Strict Past Only"),
+    ("strict_future", "Strict Future Only"),
     ("head_output_zero", "Head Output Zero"),
 )
 
@@ -1620,7 +1659,7 @@ def attention_lora_seed_sweep_catalog(requested_seed: str = ""):
     completed_seeds = 0
     for seed in seeds:
         seed_root = ATTENTION_LORA_SEED_SWEEP_ROOT / "seeds" / f"seed_{seed:06d}"
-        if sum(1 for _ in seed_root.glob("*/*/complete")) == 12:
+        if sum(1 for _ in seed_root.glob("*/*/complete")) == 16:
             completed_seeds += 1
     return {
         "case": ATTENTION_LORA_CASE,
@@ -1637,13 +1676,74 @@ def attention_lora_seed_sweep_catalog(requested_seed: str = ""):
 
 def attention_lora_seed_sweep_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wan+LoRA 50-Seed Sweep</title><style>
-:root{--ink:#1a2822;--paper:#eee8dc;--card:#fffdf8;--line:#bdb3a0;--red:#ae432f;--green:#17695d;--dark:#19362d;--gold:#bb7b28}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 0,#eaa76755,transparent 34rem),radial-gradient(circle at 96% 3%,#52977c55,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:17px 24px;background:#eee8dced;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#53635b}main{width:min(2300px,calc(100% - 20px));margin:auto;padding:20px 0 80px}.original{max-width:700px;background:var(--card);border:1px solid var(--line);border-radius:15px;padding:13px}.original video,.card video,.card img{display:block;width:100%;background:#151916;border:1px solid var(--line);border-radius:7px}.matrix-shell{overflow:auto;margin-top:20px;border:1px solid var(--line);border-radius:16px;padding:9px;background:#d8d0c1}.matrix{display:grid;grid-template-columns:230px repeat(6,330px);gap:8px;width:max-content}.head,.row-head,.cell{border:1px solid var(--line);border-radius:10px}.head{padding:12px;text-align:center;background:#f9f4e9;font-weight:900;border-top:5px solid var(--gold)}.row-head{position:sticky;left:9px;z-index:4;padding:15px;background:var(--dark);color:#fff}.row-head.top{border-left:7px solid var(--red)}.row-head.bottom{border-left:7px solid var(--green)}.row-head small{display:block;color:#cbd8d1;margin-top:8px}.cell{padding:8px;background:#f6f1e7}.card{height:100%;padding:10px;background:var(--card);border-radius:10px}.card.top{border-left:5px solid var(--red)}.card.bottom{border-left:5px solid var(--green)}.card h3{margin:0 0 7px;font-size:16px}.pill{display:inline-block;margin:3px;padding:4px 7px;border-radius:99px;background:#e9e2d4;font:10px ui-monospace,monospace}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:7px;color:#746e62}.maps{display:grid;gap:7px;margin-top:8px}.note{font-size:11px;color:#665f55}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;background:var(--dark);color:#fff;padding:13px 19px}@media(max-width:800px){header{position:static}.matrix{grid-template-columns:170px repeat(6,280px)}main{width:calc(100% - 10px)}}
+:root{--ink:#1a2822;--paper:#eee8dc;--card:#fffdf8;--line:#bdb3a0;--red:#ae432f;--green:#17695d;--dark:#19362d;--gold:#bb7b28}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 0,#eaa76755,transparent 34rem),radial-gradient(circle at 96% 3%,#52977c55,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:17px 24px;background:#eee8dced;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#53635b}main{width:min(2300px,calc(100% - 20px));margin:auto;padding:20px 0 80px}.original{max-width:700px;background:var(--card);border:1px solid var(--line);border-radius:15px;padding:13px}.original video,.card video,.card img{display:block;width:100%;background:#151916;border:1px solid var(--line);border-radius:7px}.matrix-shell{overflow:auto;margin-top:20px;border:1px solid var(--line);border-radius:16px;padding:9px;background:#d8d0c1}.matrix{display:grid;grid-template-columns:230px repeat(8,330px);gap:8px;width:max-content}.head,.row-head,.cell{border:1px solid var(--line);border-radius:10px}.head{padding:12px;text-align:center;background:#f9f4e9;font-weight:900;border-top:5px solid var(--gold)}.row-head{position:sticky;left:9px;z-index:4;padding:15px;background:var(--dark);color:#fff}.row-head.top{border-left:7px solid var(--red)}.row-head.bottom{border-left:7px solid var(--green)}.row-head small{display:block;color:#cbd8d1;margin-top:8px}.cell{padding:8px;background:#f6f1e7}.card{height:100%;padding:10px;background:var(--card);border-radius:10px}.card.top{border-left:5px solid var(--red)}.card.bottom{border-left:5px solid var(--green)}.card h3{margin:0 0 7px;font-size:16px}.pill{display:inline-block;margin:3px;padding:4px 7px;border-radius:99px;background:#e9e2d4;font:10px ui-monospace,monospace}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:7px;color:#746e62}.maps{display:grid;gap:7px;margin-top:8px}.note{font-size:11px;color:#665f55}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;background:var(--dark);color:#fff;padding:13px 19px}@media(max-width:800px){header{position:static}.matrix{grid-template-columns:170px repeat(6,280px)}main{width:calc(100% - 10px)}}
 </style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a><h1>Wan+LoRA · 50-Seed Sweep</h1><p>0613pybullet_sample_001460_w002 · 40步 · 49帧 · 仅 seed 改变</p><div class="tools"><label>Seed <select id="seed"></select></label><button id="refresh">手动刷新</button><span class="status" id="status">读取中</span></div></header><main><h2>Original</h2><section id="original" class="original"></section><div class="matrix-shell"><section id="matrix" class="matrix"></section></div></main><script>
-const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let current=q.get('seed')||'';const profiles=[['alpha090','α = 0.9'],['alpha150','α = 1.5'],['zero','A = 0'],['uniform','A = 1/N_K'],['temporal_causal','Temporal Causal'],['head_output_zero','Head Output Zero']];
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let current=q.get('seed')||'';const profiles=[['alpha090','α = 0.9'],['alpha150','α = 1.5'],['zero','A = 0'],['uniform','A = 1/N_K'],['temporal_causal','Temporal Causal'],['strict_past','Strict Past Only'],['strict_future','Strict Future Only'],['head_output_zero','Head Output Zero']];
 const video=(stage,profile,group)=>`/api/attention-additive-lora-seed-sweep/video?seed=${encodeURIComponent(current)}&stage=${stage}&profile=${profile}&group=${group}`;const image=(r,name)=>`/api/attention-additive-lora-seed-sweep/image?seed=${encodeURIComponent(current)}&stage=${r.stage}&profile=${r.profile}&group=${r.group}&name=${encodeURIComponent(name)}`;
 function card(r){const maps=r.heatmap_ready?`<div class="maps"><img loading="lazy" src="${image(r,r.all_token)}"><img loading="lazy" src="${image(r,r.frame)}"></div>`:r.heatmap_expected?'<div class="note">热力图等待生成</div>':'<div class="note">Attention 不变，仅 Head 输出置零</div>';return `<article class="card ${r.group.startsWith('top')?'top':'bottom'}"><h3>${e(r.label)}</h3><span class="pill">${e(r.group.toUpperCase())}</span><span class="pill">${r.stage==='all_steps'?'S000-S039':'S000-S009'}</span>${r.video_ready?`<video controls preload="metadata" playsinline src="${video(r.stage,r.profile,r.group)}"></video>`:'<div class="pending">视频生成中</div>'}${maps}</article>`}
 function render(d){current=String(d.selected_seed);const select=document.getElementById('seed');if(select.options.length!==d.seeds.length)select.innerHTML=d.seeds.map(x=>`<option value="${x}">${x}</option>`).join('');select.value=current;document.getElementById('status').textContent=`${d.completed_seeds}/${d.total_seeds} seeds complete · 当前 ${d.ready_records}/${d.expected_records} experiments ready`;document.getElementById('original').innerHTML=d.original_ready?`<video controls preload="metadata" playsinline src="${video('original','original','original')}"></video>`:'<div class="pending">Original 生成中</div>';let html='<div class="head">Head组 × 阶段</div>'+profiles.map(x=>`<div class="head">${e(x[1])}</div>`).join('');for(const stage of ['all_steps','steps00_09'])for(const group of ['top100','bottom100']){html+=`<div class="row-head ${group.startsWith('top')?'top':'bottom'}"><strong>${group.toUpperCase()}</strong><small>${stage==='all_steps'?'全时间步 S000-S039':'仅前10步 S000-S009'}</small></div>`;for(const [profile] of profiles){const r=d.records.find(x=>x.stage===stage&&x.group===group&&x.profile===profile);html+=`<div class="cell">${card(r)}</div>`}}document.getElementById('matrix').innerHTML=html}
 async function load(){const d=await fetch(`/api/attention-additive-lora-seed-sweep/catalog?seed=${encodeURIComponent(current)}`,{cache:'no-store'}).then(r=>r.json());render(d)}document.getElementById('seed').addEventListener('change',ev=>{current=ev.target.value;const u=new URL(location.href);u.searchParams.set('seed',current);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
+def object_query_attention_overlay_asset(stage: str, profile: str, name: str):
+    if (
+        stage not in {"all_steps", "steps00_09"}
+        or profile not in {item[0] for item in SEED_SWEEP_PROFILES}
+        or Path(name).name != name
+        or not name.endswith(".jpg")
+    ):
+        return None
+    return OBJECT_QUERY_OVERLAY_PILOT_ROOT / stage / profile / "overlays" / name
+
+
+def object_query_attention_overlay_catalog(
+    stage: str, profile: str, group: str
+):
+    allowed_profiles = {item[0] for item in SEED_SWEEP_PROFILES}
+    if stage not in {"all_steps", "steps00_09"}:
+        stage = "all_steps"
+    if profile not in allowed_profiles:
+        profile = "alpha090"
+    if group not in {"top100", "bottom100"}:
+        group = "top100"
+    root = OBJECT_QUERY_OVERLAY_PILOT_ROOT / stage / profile / "overlays"
+    payload = load_payload(root / "manifest.json") or {}
+    records = []
+    for record in payload.get("records", []):
+        if record.get("group") != group:
+            continue
+        images = record.get("images", {})
+        ready = all(
+            bool(
+                (asset := object_query_attention_overlay_asset(stage, profile, str(name)))
+                and asset.is_file()
+            )
+            for name in images.values()
+        )
+        records.append({**record, "ready": ready})
+    records.sort(key=lambda item: (int(item.get("block", 0)), int(item.get("head", 0))))
+    return {
+        "case": ATTENTION_LORA_CASE,
+        "seed": 90094,
+        "stage": stage,
+        "profile": profile,
+        "group": group,
+        "profiles": [
+            {"id": profile_id, "label": label}
+            for profile_id, label in SEED_SWEEP_PROFILES
+        ],
+        "records": records,
+    }
+
+
+def object_query_attention_overlay_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Object Query Attention Overlay</title><style>
+:root{--paper:#eee8dc;--ink:#17251f;--line:#bcb19d;--card:#fffdf8;--red:#ad422e;--green:#17685c}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 5% 0,#e99e5555,transparent 32rem),radial-gradient(circle at 98% 4%,#4b937655,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:10;padding:17px 24px;background:#eee8dced;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(27px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;flex-wrap:wrap;align-items:center}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#58675f}main{width:min(2280px,calc(100% - 18px));margin:auto;padding:20px 0 70px}.video-panel,.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:15px}.video-panel{max-width:760px}.video-panel video{display:block;width:100%;background:#131714}.panel.top{border-left:7px solid var(--red)}.panel.bottom{border-left:7px solid var(--green)}.panel h2{margin:0 0 8px}.meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}.pill{padding:5px 8px;background:#e8e1d3;border-radius:99px;font:11px ui-monospace,monospace}.images{display:grid;gap:10px}.images figure{margin:0}.images img{display:block;width:100%;min-width:1900px;border:1px solid var(--line);background:#111}.images figcaption{font-weight:900;margin:4px 0}.scroll{overflow:auto}.pending{padding:50px;border:1px dashed var(--line);background:var(--card)}@media(max-width:800px){header{position:static}}
+</style></head><body><header><a href="/attention-additive-lora-seed-sweep?v=1&seed=90094">返回 Seed Sweep</a><h1>Object Query Attention Overlay</h1><p>Seed 90094 · drop_ball GT Query tokens · 13 Query latent frames × 13 Key latent frames · RGB F000,F004,...,F048</p><div class="tools"><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><label>Experiment <select id="profile"></select></label><label>Group <select id="group"><option value="top100">Top10 Heads</option><option value="bottom100">Bottom10 Heads</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="video" class="video-panel"></section><section id="records"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),params=new URL(location.href).searchParams;let stage=params.get('stage')||'all_steps',profile=params.get('profile')||'alpha090',group=params.get('group')||'top100';const image=(name)=>`/api/object-query-attention-overlay/image?stage=${stage}&profile=${profile}&name=${encodeURIComponent(name)}`,video=()=>`/api/attention-additive-lora-seed-sweep/video?seed=90094&stage=${stage}&profile=${profile}&group=${group}`;
+function syncUrl(){const u=new URL(location.href);u.searchParams.set('stage',stage);u.searchParams.set('profile',profile);u.searchParams.set('group',group);history.replaceState(null,'',u)}function render(d){const profileSelect=document.getElementById('profile');if(profileSelect.options.length!==d.profiles.length)profileSelect.innerHTML=d.profiles.map(x=>`<option value="${e(x.id)}">${e(x.label)}</option>`).join('');profileSelect.value=profile;document.getElementById('stage').value=stage;document.getElementById('group').value=group;document.getElementById('status').textContent=`${d.records.filter(x=>x.ready).length}/${d.records.length||10} heads ready`;document.getElementById('video').innerHTML=`<h2>对应生成视频</h2><video controls preload="metadata" playsinline src="${video()}"></video>`;document.getElementById('records').innerHTML=d.records.length?d.records.map(r=>`<article class="panel ${group.startsWith('top')?'top':'bottom'}"><h2>L${String(r.block).padStart(2,'0')} / H${String(r.head).padStart(2,'0')}</h2><div class="meta"><span class="pill">PCK@32 ${Number(r.pck32).toFixed(3)}</span><span class="pill">S${String(r.step).padStart(3,'0')}</span><span class="pill">${group==='top100'?'Top10':'Bottom10'}</span></div>${r.ready?`<div class="images"><figure><figcaption>Before</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.before)}"></div></figure><figure><figcaption>After</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.after)}"></div></figure><figure><figcaption>|Delta|</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.abs_delta)}"></div></figure></div>`:'<div class="pending">Capture / overlay 生成中</div>'}</article>`).join('):'<div class="pending">该组合正在捕获，点击手动刷新查看。</div>'}
+async function load(){const d=await fetch(`/api/object-query-attention-overlay/catalog?stage=${stage}&profile=${profile}&group=${group}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['stage','profile','group'])document.getElementById(id).addEventListener('change',ev=>{if(id==='stage')stage=ev.target.value;if(id==='profile')profile=ev.target.value;if(id==='group')group=ev.target.value;syncUrl();load()});document.getElementById('refresh').addEventListener('click',load);load();
 </script></body></html>'''
 
 

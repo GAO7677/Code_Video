@@ -39,6 +39,8 @@ def parse_args() -> argparse.Namespace:
             "zero",
             "uniform",
             "temporal_causal",
+            "strict_past",
+            "strict_future",
             "head_output_zero",
         ),
         required=True,
@@ -75,7 +77,7 @@ def seeded_generate(base, seed: int):
 
 
 def base_argv(args: argparse.Namespace) -> list[str]:
-    return [
+    argv = [
         str(Path(__file__)),
         "--model",
         "lora",
@@ -92,6 +94,9 @@ def base_argv(args: argparse.Namespace) -> list[str]:
         "--extreme-count",
         "100",
     ]
+    if os.environ.get("OBJECT_QUERY_CAPTURE_ROOT", "").strip():
+        argv.append("--overwrite")
+    return argv
 
 
 def run_attention(args: argparse.Namespace) -> None:
@@ -110,6 +115,10 @@ def run_attention(args: argparse.Namespace) -> None:
         )
     stage = import_path("seed_sweep_attention_stage", HERE / filename)
     worker = stage.worker
+    if os.environ.get("OBJECT_QUERY_CAPTURE_ROOT", "").strip():
+        from AAA_my_test.object_query_attention_capture import install_qk_capture
+
+        install_qk_capture(worker)
     worker.original_generate = seeded_generate(worker.base, args.seed)
     worker.base.LEGACY_ROOTS = ()
     sys.argv = base_argv(args)
@@ -155,8 +164,13 @@ def run_head_output_zero(args: argparse.Namespace) -> None:
         "seed_sweep_head_zero",
         HERE / "run_pck_step_adaptive_head_zero_ablation_worker.py",
     )
+    capture_enabled = bool(os.environ.get("OBJECT_QUERY_CAPTURE_ROOT", "").strip())
+    if capture_enabled:
+        from AAA_my_test.object_query_attention_capture import install_head_zero_capture
+
+        install_head_zero_capture(adaptive)
     base = adaptive.base
-    parent_zeroer = adaptive.StepAdaptiveExtremeHeadZeroer.__mro__[1]
+    parent_zeroer = adaptive.StepAdaptiveExtremeHeadZeroer.__mro__[-2]
 
     def set_variant(self, group, steps):
         self.adaptive_prefix = group
@@ -170,7 +184,16 @@ def run_head_output_zero(args: argparse.Namespace) -> None:
     else:
         base.STAGE_RANGES = (("steps_00_10", tuple(range(10))),)
     base.LEGACY_ROOTS = ()
-    base.generate = seeded_generate(base, args.seed)
+    generate = seeded_generate(base, args.seed)
+    if capture_enabled:
+        def generate_with_capture(pipe, zeroer, context, prompt, group, steps):
+            result = generate(pipe, zeroer, context, prompt, group, steps)
+            zeroer.flush_object_capture(group)
+            return result
+
+        base.generate = generate_with_capture
+    else:
+        base.generate = generate
     sys.argv = base_argv(args)
     base.main()
 

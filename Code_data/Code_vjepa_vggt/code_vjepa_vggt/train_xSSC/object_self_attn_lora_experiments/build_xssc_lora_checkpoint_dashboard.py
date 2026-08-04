@@ -9,6 +9,7 @@ import html
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,8 @@ METHOD_PLOT_STYLES = {
     "full_sa": {"marker": "o", "linestyle": "-"},
     "full_sa_resume": {"marker": "o", "linestyle": "-"},
     "full_sa_no_object": {"marker": "X", "linestyle": (0, (5, 1))},
+    "full_sa_no_object_pybullet100": {"marker": "p", "linestyle": (0, (4, 1))},
+    "full_sa_no_object_kubric100": {"marker": "*", "linestyle": (0, (2, 1))},
     "s_head59": {"marker": "s", "linestyle": "--"},
     "s_head59_resume": {"marker": "s", "linestyle": "--"},
     "t_head70": {"marker": "^", "linestyle": "-."},
@@ -217,6 +220,33 @@ def load_discovered_checkpoints(watch_root: Path) -> list[dict[str, Any]]:
     return sorted(records, key=lambda row: (row["method_key"], int(row["step"])))
 
 
+def load_configured_checkpoints(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Scan current config roots so stale long-running watchers cannot hide new methods."""
+    records: dict[tuple[str, int], dict[str, Any]] = {}
+    for method_index, method in enumerate(config["methods"]):
+        for root_value in method.get("watch_roots", []):
+            root = Path(root_value).resolve()
+            if not root.is_dir():
+                continue
+            for checkpoint in sorted(root.glob("step-*")):
+                try:
+                    step = int(checkpoint.name.removeprefix("step-"))
+                except ValueError:
+                    continue
+                records[(str(method["key"]), step)] = {
+                    "method_key": method["key"],
+                    "method_label": method["label"],
+                    "method_index": method_index,
+                    "step": step,
+                    "checkpoint_dir": str(checkpoint),
+                    "source": "configured-root",
+                }
+    return sorted(
+        records.values(),
+        key=lambda row: (int(row["method_index"]), int(row["step"])),
+    )
+
+
 def load_physiciq_manifests(watch_root: Path) -> list[dict[str, Any]]:
     manifests = [
         load_json(path)
@@ -235,6 +265,91 @@ def load_physiciq_manifests(watch_root: Path) -> list[dict[str, Any]]:
         manifests,
         key=lambda row: (method_order.get(row["method_key"], 999), int(row["step"])),
     )
+
+
+def load_live_test_manifests(
+    config: dict[str, Any], completed: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Add partially generated checkpoints to galleries without marking them complete."""
+    watch_root = Path(config["paths"]["watch_root"]).resolve()
+    runtime = config["runtime"]
+    completed_pairs = {
+        (str(row["method_key"]), int(row["step"])) for row in completed
+    }
+    live = list(completed)
+    for method_index, method in enumerate(config["methods"]):
+        for root_value in method.get("watch_roots", []):
+            root = Path(root_value).resolve()
+            if not root.is_dir():
+                continue
+            for checkpoint in sorted(root.glob("step-*")):
+                try:
+                    step = int(checkpoint.name.removeprefix("step-"))
+                except ValueError:
+                    continue
+                pair = (str(method["key"]), step)
+                if pair in completed_pairs:
+                    continue
+                output_name = (
+                    f"step-{step:06d}_steps{int(runtime['num_inference_steps'])}"
+                    f"_{int(runtime['height'])}x{int(runtime['width'])}"
+                    f"_ctx{int(runtime['context_frames']):02d}_{int(runtime['num_frames'])}f"
+                )
+                result_root = watch_root / "results" / method["key"] / output_name
+                if count_paired_result_cases(result_root) == 0:
+                    continue
+                live.append(
+                    {
+                        "method_key": method["key"],
+                        "method_label": method["label"],
+                        "method_index": method_index,
+                        "step": step,
+                        "checkpoint_dir": str(checkpoint),
+                        "result_root": str(result_root),
+                        "origin": "watcher-live",
+                    }
+                )
+                completed_pairs.add(pair)
+    return sorted(live, key=lambda row: (row.get("method_index", 999), row["step"]))
+
+
+def load_live_physiciq_manifests(
+    config: dict[str, Any], completed: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    phys = config.get("physiciq", {})
+    if not phys.get("enabled"):
+        return completed
+    completed_pairs = {
+        (str(row["method_key"]), int(row["step"])) for row in completed
+    }
+    methods = {method["key"]: method for method in config["methods"]}
+    live = list(completed)
+    for task in load_configured_checkpoints(config):
+        method_key = str(task["method_key"])
+        step = int(task["step"])
+        pair = (method_key, step)
+        if method_key not in phys["method_keys"] or pair in completed_pairs:
+            continue
+        name = phys["method_name_template"].format(
+            method_key=method_key,
+            step=step,
+        )
+        result_root = Path(phys["output_root"]).resolve() / name
+        if count_paired_result_cases(result_root) == 0:
+            continue
+        method = methods.get(method_key, {})
+        live.append(
+            {
+                "method_key": method_key,
+                "method_label": method.get("label", method_key),
+                "step": step,
+                "checkpoint_dir": task["checkpoint_dir"],
+                "result_root": str(result_root),
+                "origin": "watcher-live",
+            }
+        )
+        completed_pairs.add(pair)
+    return sorted(live, key=lambda row: (row["method_key"], row["step"]))
 
 
 def metric_done_count(watch_root: Path, method_key: str, step: int) -> int:
@@ -317,7 +432,7 @@ def build_physiciq_status(config: dict[str, Any]) -> dict[str, Any] | None:
     pending = load_json(pending_path) if pending_path.is_file() else None
     configured_steps = phys.get("trigger_steps", "all")
     if configured_steps == "all":
-        discovered = load_discovered_checkpoints(watch_root)
+        discovered = load_configured_checkpoints(config)
         task_pairs = sorted(
             {
                 (manifest["method_key"], int(manifest["step"]))
@@ -523,6 +638,8 @@ def build_video_media(
         }
         for case in cases:
             source = result_root / f"{case['stem']}.mp4"
+            if not source.is_file():
+                continue
             destination = (
                 media_root
                 / method_key
@@ -913,12 +1030,19 @@ def build_metric_plots(
     return plots
 
 
-def build_metrics_page(plots: list[dict[str, Any]]) -> str:
+def build_metrics_page(
+    plots: list[dict[str, Any]], pending_messages: list[str] | None = None
+) -> str:
     cards = "".join(
         f"""<article><h2>{escape(plot['label'])}</h2>
         <img src="{escape(plot['image'])}" alt="{escape(plot['label'])}"></article>"""
         for plot in plots
     )
+    pending_messages = pending_messages or []
+    pending = ""
+    if pending_messages:
+        items = "".join(f"<li>{escape(message)}</li>" for message in pending_messages)
+        pending = f'<section class="pending"><strong>正在接入</strong><ul>{items}</ul></section>'
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -931,7 +1055,10 @@ def build_metrics_page(plots: list[dict[str, Any]]) -> str:
     header{{position:sticky;top:0;z-index:4;display:flex;align-items:center;gap:16px;
       padding:14px 20px;background:rgba(255,255,255,.97);border-bottom:1px solid var(--line)}}
     h1{{margin:0;font-size:19px}}header span{{color:var(--muted)}}a{{margin-left:auto;color:var(--accent);
-      font-weight:800;text-decoration:none}}main{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+      font-weight:800;text-decoration:none}}.pending{{max-width:1460px;margin:14px auto 0;padding:11px 14px;
+      background:#e8f5f4;border:1px solid #9ccfca;border-radius:6px;color:#075d63}}
+    .pending ul{{display:flex;flex-wrap:wrap;gap:6px 22px;margin:5px 0 0;padding-left:18px;font-size:12px}}
+    main{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
       gap:12px;max-width:1460px;margin:auto;padding:16px}}
     article{{min-width:0;padding:10px;background:var(--surface);border:1px solid var(--line);
       border-radius:6px}}h2{{margin:0 0 6px;font-size:13px}}img{{display:block;width:100%;height:auto}}
@@ -942,10 +1069,36 @@ def build_metrics_page(plots: list[dict[str, Any]]) -> str:
   <header><h1>Checkpoint 指标曲线</h1>
     <span>横轴：训练 step · 颜色：训练方法 · 仅绘制完整 20-case 指标</span>
     <a href="../">返回监控页</a></header>
-  <main>{cards}</main>
+  {pending}<main>{cards}</main>
 </body>
 </html>
 """
+
+
+def annotate_metrics_index(path: Path, messages: list[str]) -> None:
+    """Add an idempotent live-evaluation banner to an externally built plot page."""
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(
+        r"<!-- xssc-live-start -->.*?<!-- xssc-live-end -->",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+    if messages:
+        items = "".join(f"<li>{escape(message)}</li>" for message in messages)
+        banner = (
+            '<!-- xssc-live-start --><section style="margin:12px;padding:12px 14px;'
+            'border:1px solid #9ccfca;background:#e8f5f4;color:#075d63;'
+            'font-family:Arial,sans-serif"><strong>正在接入</strong><ul style="margin:6px 0 0">'
+            f"{items}</ul></section><!-- xssc-live-end -->"
+        )
+        if "<body>" in text:
+            text = text.replace("<body>", f"<body>{banner}", 1)
+        else:
+            text = banner + text
+    path.write_text(text, encoding="utf-8")
 
 
 def build_merged_metric_plots_from_points(
@@ -1139,6 +1292,16 @@ MERGED_METHODS = [
         "key": "t_head70_no_object",
         "label": "T-head70 + No-Object",
         "color": "#E377C2",
+    },
+    {
+        "key": "full_sa_no_object_pybullet100",
+        "label": "Full-SA + No-Object (PyBullet 100%)",
+        "color": "#00A6A6",
+    },
+    {
+        "key": "full_sa_no_object_kubric100",
+        "label": "Full-SA + No-Object (Kubric 100%)",
+        "color": "#F28E2B",
     },
     {
         "key": "t_head70_slot_dedup_merge",
@@ -1490,9 +1653,7 @@ def build_status(
     manifests: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     watch_root = Path(config["paths"]["watch_root"]).resolve()
-    discovery_path = watch_root / "state" / "discovery.json"
-    discovery = load_json(discovery_path) if discovery_path.is_file() else {}
-    discovered = discovery.get("checkpoints", [])
+    discovered = load_configured_checkpoints(config)
     total_metrics = len(config["metrics"]["cpu"]) + len(config["metrics"]["gpu"])
     rows: list[dict[str, Any]] = []
     for method in config["methods"]:
@@ -1654,6 +1815,21 @@ def build_master_hub(
             Path(legacy_physiciq_metrics_root),
             hub_root / "history-physiciq-metrics",
         )
+    test5_metric_total = len(config["metrics"]["cpu"]) + len(config["metrics"]["gpu"])
+    test5_live_messages = []
+    for record in test_records:
+        metric_done = metric_done_count(
+            watch_root, str(record["method_key"]), int(record["step"])
+        )
+        if (
+            record.get("origin") == "watcher-live"
+            or str(record["method_key"]).endswith(("pybullet100", "kubric100"))
+        ) and metric_done < test5_metric_total:
+            test5_live_messages.append(
+                f"{record['method_label']} · step {record['step']} · "
+                f"生成 {len(record.get('videos', {}))}/{len(test_cases)}，"
+                f"指标 {metric_done}/{test5_metric_total}"
+            )
     test5_metric_root = hub_root / "test5-metrics"
     test5_plots = build_merged_metric_plots_from_points(
         config,
@@ -1665,7 +1841,7 @@ def build_master_hub(
     )
     test5_metric_root.mkdir(parents=True, exist_ok=True)
     (test5_metric_root / "index.html").write_text(
-        build_metrics_page(test5_plots),
+        build_metrics_page(test5_plots, test5_live_messages),
         encoding="utf-8",
     )
     legacy_test_records = load_legacy_video_records(
@@ -1766,6 +1942,14 @@ def build_master_hub(
             ),
             plot_root if (plot_root / "index.html").is_file() else None,
         )
+        phys_live_messages = []
+        if phys_status is not None:
+            phys_live_messages = [
+                f"{row['method_label']} · step {row['step']} · "
+                f"生成 {row['generated']}/{row['expected_cases']}，完整指标 pending"
+                for row in phys_status["rows"]
+                if row["generated"] > 0 and not row["manifest_done"]
+            ]
         configured_steps = phys_config.get("trigger_steps", "all")
         generated_text = "生成 pending"
         metric_text = "正式指标 pending"
@@ -1784,6 +1968,9 @@ def build_master_hub(
                 f"{phys_status['partial_metric_expected']}"
             )
         if preferred_plot_root is not None:
+            annotate_metrics_index(
+                preferred_plot_root / "index.html", phys_live_messages
+            )
             link_directory(preferred_plot_root, hub_root / "physiciq-metrics")
             action = (
                 '<a href="checkpoint-watch/#physiciq">监控入口</a>'
@@ -1899,7 +2086,8 @@ def main() -> None:
     watch_root = Path(config["paths"]["watch_root"]).resolve()
     site_root = watch_root / "site"
     site_root.mkdir(parents=True, exist_ok=True)
-    manifests = load_manifests(watch_root)
+    completed_manifests = load_manifests(watch_root)
+    manifests = load_live_test_manifests(config, completed_manifests)
     cases = read_inputs(Path(config["paths"]["input_list"]))
     records = build_video_media(config, manifests, cases)
     videos_root = site_root / "videos"
@@ -1913,7 +2101,10 @@ def main() -> None:
     phys_records: list[dict[str, Any]] = []
     if phys_config.get("enabled"):
         phys_cases = read_inputs(Path(phys_config["input_list"]))
-        phys_manifests = load_physiciq_manifests(watch_root)
+        completed_phys_manifests = load_physiciq_manifests(watch_root)
+        phys_manifests = load_live_physiciq_manifests(
+            config, completed_phys_manifests
+        )
         if phys_manifests:
             phys_records = build_video_media(
                 config,
@@ -1942,14 +2133,29 @@ def main() -> None:
                 ),
                 encoding="utf-8",
             )
-    plots = build_metric_plots(config, manifests)
+    plots = build_metric_plots(config, completed_manifests)
     metrics_root = site_root / "metrics"
     metrics_root.mkdir(parents=True, exist_ok=True)
+    metric_total = len(config["metrics"]["cpu"]) + len(config["metrics"]["gpu"])
+    live_messages = []
+    for record in records:
+        metric_done = metric_done_count(
+            watch_root, str(record["method_key"]), int(record["step"])
+        )
+        if (
+            record.get("origin") == "watcher-live"
+            or str(record["method_key"]).endswith(("pybullet100", "kubric100"))
+        ) and metric_done < metric_total:
+            live_messages.append(
+                f"{record['method_label']} · step {record['step']} · "
+                f"生成 {len(record.get('videos', {}))}/{len(cases)}，"
+                f"指标 {metric_done}/{metric_total}"
+            )
     (metrics_root / "index.html").write_text(
-        build_metrics_page(plots),
+        build_metrics_page(plots, live_messages),
         encoding="utf-8",
     )
-    status = build_status(config, manifests)
+    status = build_status(config, completed_manifests)
     phys_status = build_physiciq_status(config)
     pending = (watch_root / "state" / "inference.pending").is_file()
     (site_root / "index.html").write_text(
@@ -1958,7 +2164,7 @@ def main() -> None:
     )
     manifest = {
         "num_cases": len(cases),
-        "num_inference_results": len(manifests),
+        "num_inference_results": len(completed_manifests),
         "num_metric_plots": len(plots),
         "status": status,
         "physiciq_status": phys_status,
