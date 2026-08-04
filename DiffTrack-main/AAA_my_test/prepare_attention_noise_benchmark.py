@@ -220,7 +220,9 @@ def main() -> None:
             "num_cases": len(cases),
             "num_method_cases": len(specs) * len(cases),
             "cases": [case for case, _ in cases],
-            "methods": specs,
+            "methods": [
+                {**spec, "source_root": str(spec["source_root"])} for spec in specs
+            ],
         },
     )
     (BENCH_ROOT / "PREPARED").write_text("ready\n")
