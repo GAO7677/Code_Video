@@ -29,7 +29,7 @@ QK_NOISE30_ROOT = Path(
     "pck_step_adaptive_qk_logit_noise_sigma030_all720_test5"
 )
 QK_ATTENTION_COMPARE_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/qk_attention_before_after_sigma030_pilot"
+    "/data/gaoya/agent-data/outputs/attention_additive_noise_alpha030_pilot"
 )
 
 VIDEO_CONDITIONS = (
@@ -309,7 +309,7 @@ VIDEOS_PORTAL_CARD = r'''
 <a class="card new" href="/pck-ablation-case-videos?v=1"><div><span>11 / CASE 视频矩阵</span><h2>每个 Case 的全部消融</h2><p>按 case 汇总两个模型的 Original、静态 Top/Bottom30、Top/Bottom100 和 step-adaptive Top/Bottom30。</p></div><span class="go">打开 CASE 消融视频矩阵</span></a>
 '''
 QK_ATTENTION_PORTAL_CARD = r'''
-<a class="card new" href="/qk-noise-attention-compare?v=1"><div><span>12 / Q@K 扰动对比</span><h2>Attention Before / After</h2><p>对比 σ0.30 扰动前后的全 token 与潜变量帧注意力，Q/K/V 保持不变。</p></div><span class="go">打开注意力对比</span></a>
+<a class="card new" href="/qk-noise-attention-compare?v=2"><div><span>12 / Attention 扰动对比</span><h2>Probability Noise Before / After</h2><p>对比 α=0.30 概率空间加噪前后的全 token 与潜变量帧注意力，Q/K/V 保持不变。</p></div><span class="go">打开注意力对比</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + "</section>", 1
@@ -396,7 +396,7 @@ def qk_noise_attention_compare_file(requested_name: str):
 def qk_noise_attention_compare_page():
     return r'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Q@K Noise Attention Compare</title>
+<title>Attention Probability Noise Compare</title>
 <style>
 :root{--ink:#17221d;--muted:#607068;--paper:#f3efe3;--card:#fffdf7;--line:#c9c1ae;--top:#b83f2f;--bottom:#146b64}
 *{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 12% 8%,#f8d9ad 0,transparent 28%),linear-gradient(135deg,#ece5d4,#dce9df);font-family:"Noto Serif SC","Source Han Serif SC",serif}
@@ -406,10 +406,10 @@ h1{margin:0;font-size:clamp(22px,3vw,38px);letter-spacing:.02em}header p{margin:
 .title{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.title h2{margin:0;font-size:25px}.meta{color:var(--muted);font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px}
 .images{display:grid;grid-template-columns:1.25fr 1fr;gap:16px;margin-top:14px}.images figure{margin:0}.images img{width:100%;display:block;border:1px solid var(--line);background:#fff}.images figcaption{margin-top:7px;color:var(--muted)}
 .stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.pill{padding:7px 10px;border-radius:999px;background:#ebe5d6;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px}@media(max-width:900px){.images{grid-template-columns:1fr}header{position:static}main{padding:12px}}
-</style></head><body><header><h1>Q@K Noise σ0.30: Attention Before / After</h1><p>Q/K/V 不变，仅对所选 head 的 QK logits 加噪；S039，Baseline pilot case。</p></header><main id="main"><div class="status">正在等待注意力捕获结果，页面会自动刷新。</div></main>
+</style></head><body><header><h1>Attention Probability Noise α=0.30</h1><p>A′ = normalize(clamp(A + α/K · ε, 0))；Q/K/V 不变；S039，Baseline pilot case。</p></header><main id="main"><div class="status">正在等待注意力捕获结果，页面会自动刷新。</div></main>
 <script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const fmt=x=>Number(x).toExponential(4);
-async function load(){const data=await fetch('/api/qk-noise-attention-compare/catalog',{cache:'no-store'}).then(r=>r.json());const root=document.getElementById('main');if(!data.records.length)return;data.records.sort((a,b)=>a.group==='top30'?-1:b.group==='top30'?1:0);root.innerHTML=data.records.map(r=>`<section class="row ${r.group==='top30'?'top':'bottom'}"><div class="title"><h2>${esc(r.group.toUpperCase())}</h2><span class="meta">${esc(r.case)} · S${String(r.step).padStart(3,'0')} · ${r.unique_block_heads} block-heads</span></div><div class="images"><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.all_token_image)}"><figcaption>全 token 注意力：Before / After / 差值</figcaption></figure><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.frame_image)}"><figcaption>7×7 潜变量帧注意力质量：Before / After / 差值</figcaption></figure></div><div class="stats"><span class="pill">mean |ΔA| ${fmt(r.mean_abs_attention_delta)}</span><span class="pill">max |ΔA| ${fmt(r.max_abs_attention_delta)}</span><span class="pill">entropy ${r.before_mean_row_entropy.toFixed(4)} → ${r.after_mean_row_entropy.toFixed(4)}</span><span class="pill">Q/K/V modified: ${r.qkv_modified}</span></div></section>`).join('');}
+async function load(){const data=await fetch('/api/qk-noise-attention-compare/catalog',{cache:'no-store'}).then(r=>r.json());const root=document.getElementById('main');if(!data.records.length)return;data.records.sort((a,b)=>a.group==='top30'?-1:b.group==='top30'?1:0);root.innerHTML=data.records.map(r=>`<section class="row ${r.group==='top30'?'top':'bottom'}"><div class="title"><h2>${esc(r.group.toUpperCase())}</h2><span class="meta">${esc(r.case)} · S${String(r.step).padStart(3,'0')} · ${r.unique_block_heads} block-heads</span></div><div class="images"><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.all_token_image)}"><figcaption>全 token：Before / After / 逐 head 平均 |ΔA|</figcaption></figure><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.frame_image)}"><figcaption>7×7 潜变量帧注意力质量</figcaption></figure></div><div class="stats"><span class="pill">mean per-head |ΔA| ${fmt(r.mean_abs_attention_delta)}</span><span class="pill">clipped ${(100*r.clipped_fraction).toFixed(2)}%</span><span class="pill">row-sum error ${fmt(r.max_row_sum_error)}</span><span class="pill">entropy ${r.before_mean_row_entropy.toFixed(4)} → ${r.after_mean_row_entropy.toFixed(4)}</span><span class="pill">Q/K/V modified: ${r.qkv_modified}</span></div></section>`).join('');}
 load().catch(e=>document.getElementById('main').textContent=e);setInterval(load,5000);
 </script></body></html>'''
 

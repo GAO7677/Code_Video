@@ -22,6 +22,10 @@ RANKING_CSV = Path(
 NUM_STEPS = 40
 SIGMA = 0.30
 QUERY_CHUNK = 128
+NOISE_MODE = os.environ.get("ATTENTION_NOISE_MODE", "logit").strip().lower()
+ATTENTION_ALPHA = float(os.environ.get("ATTENTION_NOISE_ALPHA", "0.30"))
+if NOISE_MODE not in {"logit", "probability_additive"}:
+    raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
 
 spec = importlib.util.spec_from_file_location("pck_qk_base_worker", BASE_WORKER)
 if spec is None or spec.loader is None:
@@ -82,6 +86,8 @@ class AdaptiveQKLogitNoise:
         self.capture_step = int(os.environ.get("QK_ATTENTION_CAPTURE_STEP", "39"))
         self.capture_model = os.environ.get("QK_ATTENTION_CAPTURE_MODEL", "baseline")
         self.capture_case = os.environ.get("QK_ATTENTION_CAPTURE_CASE", "case")
+        self.noise_mode = NOISE_MODE
+        self.attention_alpha = ATTENTION_ALPHA
         self.capture_groups: dict[str, dict[str, Any]] = {}
         self.original_model_fn = pipe.model_fn
         self.original_forwards: list[tuple[Any, Any]] = []
@@ -131,7 +137,8 @@ class AdaptiveQKLogitNoise:
     def _seed(self, block: int, heads: list[int], chunk_start: int) -> int:
         key = (
             f"{self.noise_context}|step={self.current_step}|block={block}|"
-            f"heads={','.join(map(str, heads))}|chunk={chunk_start}|sigma={SIGMA}"
+            f"heads={','.join(map(str, heads))}|chunk={chunk_start}|"
+            f"mode={self.noise_mode}|sigma={SIGMA}|alpha={self.attention_alpha}"
         )
         return int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:8], "little")
 
@@ -164,9 +171,13 @@ class AdaptiveQKLogitNoise:
                 {
                     "before": torch.zeros((sequence, sequence), dtype=torch.float32),
                     "after": torch.zeros((sequence, sequence), dtype=torch.float32),
+                    "abs_delta": torch.zeros((sequence, sequence), dtype=torch.float32),
                     "head_instances": 0,
                     "selected": set(),
                     "forward_calls": 0,
+                    "clipped_elements": 0,
+                    "total_elements": 0,
+                    "max_row_sum_error": 0.0,
                 },
             )
         for start in range(0, sequence, QUERY_CHUNK):
@@ -182,15 +193,35 @@ class AdaptiveQKLogitNoise:
                 device=logits.device,
                 dtype=torch.float32,
             )
-            noise = noise - noise.mean(dim=-1, keepdim=True)
-            noise = noise / noise.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-6)
-            probabilities = torch.softmax(logits + SIGMA * row_std * noise, dim=-1)
+            if self.noise_mode == "probability_additive":
+                perturbed = before_probabilities + (self.attention_alpha / sequence) * noise
+                clipped = perturbed.clamp_min(0.0)
+                row_sum = clipped.sum(dim=-1, keepdim=True)
+                probabilities = torch.where(
+                    row_sum > 0,
+                    clipped / row_sum.clamp_min(1e-12),
+                    before_probabilities,
+                )
+                if capture_entry is not None:
+                    capture_entry["clipped_elements"] += int((perturbed < 0).sum().item())
+                    capture_entry["total_elements"] += perturbed.numel()
+                    capture_entry["max_row_sum_error"] = max(
+                        capture_entry["max_row_sum_error"],
+                        float((probabilities.sum(dim=-1) - 1.0).abs().max().item()),
+                    )
+            else:
+                noise = noise - noise.mean(dim=-1, keepdim=True)
+                noise = noise / noise.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-6)
+                probabilities = torch.softmax(logits + SIGMA * row_std * noise, dim=-1)
             if capture_entry is not None:
                 capture_entry["before"][start:end] += (
                     before_probabilities.sum(dim=(0, 1)).detach().cpu()
                 )
                 capture_entry["after"][start:end] += (
                     probabilities.sum(dim=(0, 1)).detach().cpu()
+                )
+                capture_entry["abs_delta"][start:end] += (
+                    (probabilities - before_probabilities).abs().sum(dim=(0, 1)).detach().cpu()
                 )
             selected_output[:, :, start:end] = torch.matmul(
                 probabilities.to(dtype=selected_v.dtype), selected_v
@@ -238,6 +269,7 @@ class AdaptiveQKLogitNoise:
         before = entry["before"] / count
         after = entry["after"] / count
         delta = after - before
+        mean_abs_delta = entry["abs_delta"] / count
         prefix = (
             f"{self.capture_model}__{self.capture_case}__{group}"
             f"__step{self.capture_step:02d}"
@@ -250,13 +282,13 @@ class AdaptiveQKLogitNoise:
         log_after = np.log10(after_small + 1e-9)
         color_values = np.concatenate((log_before.ravel(), log_after.ravel()))
         vmin, vmax = np.percentile(color_values, [1.0, 99.5])
-        delta_small = self._downsample(delta).astype(np.float32)
-        delta_limit = float(np.percentile(np.abs(delta_small), 99.5)) or 1e-9
+        delta_small = self._downsample(mean_abs_delta).astype(np.float32)
+        delta_limit = float(np.percentile(delta_small, 99.5)) or 1e-9
         fig, axes = plt.subplots(1, 3, figsize=(18, 5.4), constrained_layout=True)
         panels = (
             (log_before, "Before: log10 attention", "magma", vmin, vmax),
             (log_after, "After: log10 attention", "magma", vmin, vmax),
-            (delta_small, "After - Before", "coolwarm", -delta_limit, delta_limit),
+            (delta_small, "Mean per-head |After - Before|", "viridis", 0.0, delta_limit),
         )
         for axis, (values, title, cmap, low, high) in zip(axes, panels):
             image = axis.imshow(values, cmap=cmap, vmin=low, vmax=high, aspect="auto")
@@ -264,7 +296,15 @@ class AdaptiveQKLogitNoise:
             axis.set_xlabel("Key token index (downsampled)")
             axis.set_ylabel("Query token index (downsampled)")
             fig.colorbar(image, ax=axis, fraction=0.046, pad=0.03)
-        fig.suptitle(f"{group.upper()} | S{self.capture_step:03d} | sigma={SIGMA:.2f}")
+        strength_label = (
+            f"alpha={self.attention_alpha:.2f}"
+            if self.noise_mode == "probability_additive"
+            else f"sigma={SIGMA:.2f}"
+        )
+        fig.suptitle(
+            f"{group.upper()} | S{self.capture_step:03d} | "
+            f"{self.noise_mode} | {strength_label}"
+        )
         fig.savefig(self.capture_root / f"{prefix}__all_token.png", dpi=160)
         plt.close(fig)
 
@@ -298,7 +338,14 @@ class AdaptiveQKLogitNoise:
             "case": self.capture_case,
             "group": group,
             "step": self.capture_step,
-            "sigma": SIGMA,
+            "intervention": self.noise_mode,
+            "sigma": SIGMA if self.noise_mode == "logit" else None,
+            "alpha": self.attention_alpha if self.noise_mode == "probability_additive" else None,
+            "noise_scale_per_attention_element": (
+                self.attention_alpha / int(before.shape[0])
+                if self.noise_mode == "probability_additive"
+                else None
+            ),
             "qkv_modified": False,
             "sequence_tokens": int(before.shape[0]),
             "latent_frames": 7 if before.shape[0] % 7 == 0 else None,
@@ -309,8 +356,15 @@ class AdaptiveQKLogitNoise:
                 {"block": block, "head": head}
                 for block, head in sorted(entry["selected"])
             ],
-            "mean_abs_attention_delta": float(delta.abs().mean()),
-            "max_abs_attention_delta": float(delta.abs().max()),
+            "mean_abs_attention_delta": float(mean_abs_delta.mean()),
+            "max_mean_abs_attention_delta": float(mean_abs_delta.max()),
+            "signed_aggregate_mean_abs_delta": float(delta.abs().mean()),
+            "clipped_fraction": (
+                entry["clipped_elements"] / entry["total_elements"]
+                if entry["total_elements"]
+                else None
+            ),
+            "max_row_sum_error": entry["max_row_sum_error"],
             "before_mean_row_entropy": before_entropy,
             "after_mean_row_entropy": after_entropy,
             "entropy_change": after_entropy - before_entropy,
@@ -352,9 +406,28 @@ def write_experiment_metadata() -> None:
     (root / "QK_LOGIT_NOISE_EXPERIMENT.json").write_text(
         json.dumps(
             {
-                "intervention": "direct_qk_logit_noise",
+                "intervention": (
+                    "direct_attention_probability_additive_noise"
+                    if NOISE_MODE == "probability_additive"
+                    else "direct_qk_logit_noise"
+                ),
                 "qkv_modified": False,
-                "sigma_relative_to_per_query_logit_std": SIGMA,
+                "sigma_relative_to_per_query_logit_std": (
+                    SIGMA if NOISE_MODE == "logit" else None
+                ),
+                "attention_alpha": (
+                    ATTENTION_ALPHA if NOISE_MODE == "probability_additive" else None
+                ),
+                "attention_noise_scale": (
+                    "alpha / num_key_tokens"
+                    if NOISE_MODE == "probability_additive"
+                    else None
+                ),
+                "probability_postprocess": (
+                    "clamp_min_0_then_row_normalize"
+                    if NOISE_MODE == "probability_additive"
+                    else None
+                ),
                 "query_chunk": QUERY_CHUNK,
                 "selection": "per-step three-model combined object PCK@32 adaptive top30/bottom30",
                 "denoising_steps": list(range(NUM_STEPS)),
