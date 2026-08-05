@@ -588,6 +588,12 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/object-query-continuity-comparison":
+            self.send_payload(
+                object_query_continuity_comparison_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
         if path == "/api/object-query-continuity-overlay/catalog":
             from urllib.parse import parse_qs
 
@@ -2148,7 +2154,10 @@ async function load(){const d=await fetch('/api/attention-lora-pck32-temporal-te
 OBJECT_QUERY_CONTINUITY_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_object_query_continuity_case001460"
 )
-OBJECT_QUERY_CONTINUITY_SEEDS = (90094, 35075, 21890)
+OBJECT_QUERY_MAIN_COMPONENT_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_object_query_main_component_case001460"
+)
+OBJECT_QUERY_CONTINUITY_SEEDS = (90094, 35075, 21890, 49530, 47326, 32466)
 OBJECT_QUERY_CONTINUITY_STAGES = ("all_steps", "steps00_09")
 OBJECT_QUERY_CONTINUITY_CASE = "0613pybullet_sample_001460_w002"
 
@@ -2172,8 +2181,26 @@ def object_query_continuity_asset(seed: str, stage: str, kind: str, name: str = 
             seed_root / "videos" / "lora" / "cases" / OBJECT_QUERY_CONTINUITY_CASE
             / f"top100_{suffix}.mp4"
         )
+    if kind == "new_intervention":
+        suffix = "steps_00_40" if stage == "all_steps" else "steps_00_10"
+        return (
+            OBJECT_QUERY_MAIN_COMPONENT_ROOT / "seeds" / f"seed_{seed_value:06d}"
+            / stage / "videos" / "lora" / "cases" / OBJECT_QUERY_CONTINUITY_CASE
+            / f"top100_{suffix}.mp4"
+        )
     if kind == "overlay" and Path(name).name == name and name.endswith(".jpg"):
         return seed_root / "overlays" / name
+    if kind == "identity_overlay" and Path(name).name == name and name.endswith(".jpg"):
+        step_tag = "step39" if stage == "all_steps" else "step09"
+        return (
+            OBJECT_QUERY_CONTINUITY_ROOT / "seeds" / f"seed_{seed_value:06d}"
+            / "identity" / step_tag / "overlays" / name
+        )
+    if kind == "new_overlay" and Path(name).name == name and name.endswith(".jpg"):
+        return (
+            OBJECT_QUERY_MAIN_COMPONENT_ROOT / "seeds" / f"seed_{seed_value:06d}"
+            / stage / "overlays" / name
+        )
     return None
 
 
@@ -2193,6 +2220,54 @@ def object_query_continuity_catalog(seed: str, stage: str):
     records = []
     if manifest.is_file():
         records = json.loads(manifest.read_text(encoding="utf-8")).get("records", [])
+    identity_tag = "step39" if stage == "all_steps" else "step09"
+    identity_manifest = (
+        OBJECT_QUERY_CONTINUITY_ROOT / "seeds" / f"seed_{seed_value:06d}"
+        / "identity" / identity_tag / "overlays" / "manifest.json"
+    )
+    identity_records = []
+    if identity_manifest.is_file():
+        identity_records = json.loads(identity_manifest.read_text(encoding="utf-8")).get("records", [])
+    new_manifest = (
+        OBJECT_QUERY_MAIN_COMPONENT_ROOT / "seeds" / f"seed_{seed_value:06d}"
+        / stage / "overlays" / "manifest.json"
+    )
+    new_records = []
+    if new_manifest.is_file():
+        new_records = json.loads(new_manifest.read_text(encoding="utf-8")).get("records", [])
+    intervention = {(int(row["block"]), int(row["head"]), row["region_name"]): row for row in records}
+    identity = {(int(row["block"]), int(row["head"]), row["region_name"]): row for row in identity_records}
+    new_intervention = {
+        (int(row["block"]), int(row["head"]), row["region_name"]): row
+        for row in new_records
+    }
+    merged = []
+    for key in sorted(set(intervention) | set(identity) | set(new_intervention)):
+        intervention_row = intervention.get(key, {})
+        identity_row = identity.get(key, {})
+        row = dict(intervention_row or identity_row)
+        intervention_images = intervention_row.get("images", {})
+        identity_images = identity_row.get("images", {})
+        row["identity_image"] = (
+            identity_images.get("identity") or identity_row.get("image")
+        )
+        row["before_image"] = intervention_images.get("before")
+        row["p90_mask_image"] = intervention_images.get("p90_mask")
+        row["main_component_image"] = intervention_images.get("main_component")
+        row["after_image"] = intervention_images.get("after")
+        row["removed_image"] = intervention_images.get("removed")
+        row["image"] = intervention_images.get("combined") or intervention_row.get("image")
+        new_row = new_intervention.get(key, {})
+        new_images = new_row.get("images", {})
+        row["new_before_image"] = new_images.get("before")
+        row["new_p90_mask_image"] = new_images.get("p90_mask")
+        row["new_main_component_image"] = new_images.get("main_component")
+        row["new_after_image"] = new_images.get("after")
+        row["new_removed_image"] = new_images.get("removed")
+        row["new_p90_mask_source"] = new_row.get("p90_mask_source")
+        row["new_main_component_source"] = new_row.get("main_component_source")
+        merged.append(row)
+    records = merged
     records.sort(key=lambda row: (-float(row.get("pck32", 0)), int(row["block"]), int(row["head"]), row["region_name"]))
     return {
         "seed": seed_value,
@@ -2201,16 +2276,28 @@ def object_query_continuity_catalog(seed: str, stage: str):
         "stages": list(OBJECT_QUERY_CONTINUITY_STAGES),
         "baseline_ready": bool((object_query_continuity_asset(str(seed_value), stage, "baseline") or Path()).is_file()),
         "video_ready": bool((object_query_continuity_asset(str(seed_value), stage, "intervention") or Path()).is_file()),
+        "new_video_ready": bool((object_query_continuity_asset(str(seed_value), stage, "new_intervention") or Path()).is_file()),
         "records": records,
+        "identity_ready": len(identity_records),
+        "intervention_ready": len(intervention),
+        "new_intervention_ready": len(new_intervention),
     }
 
 
 def object_query_continuity_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Object Query Spatial Continuity</title><style>
-:root{--paper:#eee8dc;--ink:#17251f;--line:#b9ad98;--card:#fffdf8;--orange:#b54a2e;--green:#176a5c;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 5% 0,#ea9f5655,transparent 34rem),radial-gradient(circle at 97% 3%,#4d957855,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:16px 24px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#526159}main{width:min(2450px,calc(100% - 18px));margin:auto;padding:20px 0 90px}.videos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:18px}.video-card,.head-card{padding:12px;border:1px solid var(--line);border-radius:15px;background:var(--card)}.video-card:first-child{border-top:7px solid var(--blue)}.video-card:last-child{border-top:7px solid var(--green)}video{display:block;width:100%;background:#121714;border-radius:8px}.head-card{margin:14px 0;border-left:7px solid var(--orange)}.head-card h2{margin:0 0 8px}.meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}.pill{padding:5px 8px;border-radius:99px;background:#e8e0d2;font:11px ui-monospace,monospace}.objects{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.object{overflow:auto;border:1px solid var(--line);border-radius:9px;padding:7px}.object h3{position:sticky;left:0;width:max-content;margin:0 0 6px;padding:4px 9px;background:var(--ink);color:#fff;border-radius:5px}.object img{display:block;min-width:2240px;width:100%}.pending{padding:70px 20px;text-align:center;border:1px dashed var(--line);border-radius:10px}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;padding:13px 19px;background:var(--green);color:#fff;box-shadow:0 8px 24px #0003}@media(max-width:900px){header{position:static}.videos,.objects{grid-template-columns:1fr}}
-</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/object-query-attention-overlay?v=1">原 Object Query Overlay</a><h1>Object Query 跨帧空间连续性</h1><p>0613pybullet_sample_001460_w002 · Wan+LoRA · PCK@32 Top100 · Object A/B 各 8 query tokens · anchor K01/F04</p><div class="tools"><label>Seed <select id="seed"><option>90094</option><option>35075</option><option>21890</option></select></label><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="records"></section></main><script>
-const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'90094',stage=q.get('stage')||'all_steps';const video=kind=>`/api/object-query-continuity-overlay/video?seed=${seed}&stage=${stage}&kind=${kind}`,image=name=>`/api/object-query-continuity-overlay/image?seed=${seed}&stage=${stage}&kind=overlay&name=${encodeURIComponent(name)}`;function sync(){const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u)}function render(d){document.getElementById('seed').value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`${d.records.length}/20 object-head overlays ready`;document.getElementById('videos').innerHTML=`<article class="video-card"><h2>Wan+LoRA Original</h2>${d.baseline_ready?`<video controls preload="metadata" playsinline src="${video('baseline')}"></video>`:'<div class="pending">Baseline missing</div>'}</article><article class="video-card"><h2>Spatial Continuity · ${stage==='all_steps'?'S000-S039':'S000-S009'}</h2>${d.video_ready?`<video controls preload="metadata" playsinline src="${video('intervention')}"></video>`:'<div class="pending">视频生成中</div>'}</article>`;const groups=new Map;for(const r of d.records){const key=`${r.block}:${r.head}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r)}document.getElementById('records').innerHTML=groups.size?[...groups.values()].map(rows=>{const first=rows[0];return `<article class="head-card"><h2>L${String(first.block).padStart(2,'0')} / H${String(first.head).padStart(2,'0')}</h2><div class="meta"><span class="pill">LoRA PCK@32 ${Number(first.pck32).toFixed(3)}</span><span class="pill">High response P90</span><span class="pill">8-neighbor radius 1</span><span class="pill">Only K02-K12 constrained</span></div><div class="objects">${rows.map(r=>`<section class="object"><h3>${e(r.region_name)} · ${e(r.region_phrase)}</h3><img loading="lazy" src="${image(r.image)}"></section>`).join('')}</div></article>`}).join(''):'<div class="pending">Capture 与 overlay 生成中，点击手动刷新。</div>'}
+:root{--paper:#eee8dc;--ink:#17251f;--line:#b9ad98;--card:#fffdf8;--orange:#b54a2e;--green:#176a5c;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 5% 0,#ea9f5655,transparent 34rem),radial-gradient(circle at 97% 3%,#4d957855,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:16px 24px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#526159}main{width:min(2450px,calc(100% - 18px));margin:auto;padding:20px 0 90px}.videos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:18px}.video-card,.head-card{padding:12px;border:1px solid var(--line);border-radius:15px;background:var(--card)}.video-card:first-child{border-top:7px solid var(--blue)}.video-card:last-child{border-top:7px solid var(--green)}video{display:block;width:100%;background:#121714;border-radius:8px}.head-card{margin:14px 0;border-left:7px solid var(--orange)}.head-card h2{margin:0 0 8px}.meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}.pill{padding:5px 8px;border-radius:99px;background:#e8e0d2;font:11px ui-monospace,monospace}.objects{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.object{overflow:auto;border:1px solid var(--line);border-radius:9px;padding:7px}.object h3{position:sticky;left:0;width:max-content;margin:0 0 6px;padding:4px 9px;background:var(--ink);color:#fff;border-radius:5px}.attention-row{margin:8px 0 14px}.attention-row h4{position:sticky;left:0;width:max-content;margin:0 0 5px;padding:3px 7px;background:#ece4d6;border-left:4px solid var(--blue)}.attention-row.intervention h4{border-left-color:var(--orange)}.attention-row.removed h4{border-left-color:var(--green)}.object img{display:block;min-width:2240px;width:100%;border:1px solid #d8cfbf}.pending{padding:70px 20px;text-align:center;border:1px dashed var(--line);border-radius:10px}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;padding:13px 19px;background:var(--green);color:#fff;box-shadow:0 8px 24px #0003}@media(max-width:900px){header{position:static}.videos,.objects{grid-template-columns:1fr}}
+</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/object-query-attention-overlay?v=1">原 Object Query Overlay</a><h1>Object Query 跨帧空间连续性</h1><p>0613pybullet_sample_001460_w002 · Wan+LoRA · PCK@32 Top100 · Object A/B 各 8 query tokens · anchor K01/F04</p><div class="tools"><label>Seed <select id="seed"><option>90094</option><option>35075</option><option>21890</option><option>49530</option><option>47326</option><option>32466</option></select></label><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="records"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'90094',stage=q.get('stage')||'all_steps';const video=kind=>`/api/object-query-continuity-overlay/video?seed=${seed}&stage=${stage}&kind=${kind}`,image=(name,kind='overlay')=>`/api/object-query-continuity-overlay/image?seed=${seed}&stage=${stage}&kind=${kind}&name=${encodeURIComponent(name)}`,panel=(title,name,kind='overlay',cls='')=>`<div class="attention-row ${cls}"><h4>${title}</h4>${name?`<img loading="lazy" src="${image(name,kind)}">`:'<div class="pending">capture 生成中</div>'}</div>`;function sync(){const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u)}function render(d){document.getElementById('seed').value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`Identity ${d.identity_ready}/20 · Intervention ${d.intervention_ready}/20`;document.getElementById('videos').innerHTML=`<article class="video-card"><h2>Wan+LoRA Original</h2>${d.baseline_ready?`<video controls preload="metadata" playsinline src="${video('baseline')}"></video>`:'<div class="pending">Baseline missing</div>'}</article><article class="video-card"><h2>Spatial Continuity · ${stage==='all_steps'?'S000-S039':'S000-S009'}</h2>${d.video_ready?`<video controls preload="metadata" playsinline src="${video('intervention')}"></video>`:'<div class="pending">视频生成中</div>'}</article>`;const groups=new Map;for(const r of d.records){const key=`${r.block}:${r.head}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r)}document.getElementById('records').innerHTML=groups.size?[...groups.values()].map(rows=>{const first=rows[0];return `<article class="head-card"><h2>L${String(first.block).padStart(2,'0')} / H${String(first.head).padStart(2,'0')}</h2><div class="meta"><span class="pill">LoRA PCK@32 ${Number(first.pck32).toFixed(3)}</span><span class="pill">8 queries preserved then SUM</span><span class="pill">P90 + P99/Top-5 masks captured</span><span class="pill">Main component is visualization-only</span><span class="pill">Only K02-K12 constrained</span></div><div class="objects">${rows.map(r=>`<section class="object"><h3>${e(r.region_name)} · ${e(r.region_phrase)}</h3>${panel('No Intervention · Original Object Query Attention',r.identity_image,'identity_overlay')}${panel('Continuity Intervention · Before',r.before_image,'overlay','intervention')}${panel(`Per-frame P90 Mask · ${e(r.p90_mask_source||'pending')}`,r.p90_mask_image,'overlay','removed')}${panel(`P99 / Top-${e(r.main_component_topk||5)} Main Connected Component · ${e(r.main_component_source||'pending')}`,r.main_component_image,'overlay','removed')}${panel('Continuity Intervention · After',r.after_image,'overlay','intervention')}${panel('Continuity Intervention · Removed Attention Mass',r.removed_image,'overlay','removed')}</section>`).join('')}</div></article>`}).join(''):'<div class="pending">Identity 与 intervention capture 生成中，点击手动刷新。</div>'}
 async function load(){const d=await fetch(`/api/object-query-continuity-overlay/catalog?seed=${seed}&stage=${stage}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;else stage=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
+def object_query_continuity_comparison_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Object Query Continuity · Old vs New</title><style>
+:root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--old:#b44d31;--new:#176a5c;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2500px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.videos{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.video,.head,.object,.method{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px}.video.original{border-top:7px solid var(--blue)}.video.old{border-top:7px solid var(--old)}.video.new{border-top:7px solid var(--new)}video{display:block;width:100%;background:#111714}.head{margin:14px 0}.head>h2{margin:0 0 7px}.objects{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.object{overflow:auto}.object>h3{position:sticky;left:0;width:max-content;margin:0 0 7px;padding:4px 8px;background:var(--ink);color:#fff}.identity{border-left:6px solid var(--blue);margin-bottom:9px}.methods{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.method.old{border-top:6px solid var(--old)}.method.new{border-top:6px solid var(--new)}.method h3{position:sticky;left:0;width:max-content;margin:0 0 7px}.row{margin:6px 0 12px}.row h4{position:sticky;left:0;width:max-content;margin:0 0 4px;padding:3px 7px;background:#ece4d6}.row img{display:block;min-width:2240px;width:100%;border:1px solid #d8cfbf}.pending{padding:48px 15px;text-align:center;border:1px dashed var(--line)}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:13px 18px;background:var(--new);color:white}@media(max-width:1000px){header{position:static}.videos,.objects,.methods{grid-template-columns:1fr}}
+</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/object-query-continuity-overlay?v=5">旧方案页面</a><h1>Object Query Continuity · Old vs New</h1><p>旧：P90 链式邻接。新：上一帧 P99/Top-5 主连通分量约束当前帧 P90；主连通分量逐帧独立计算。</p><div class="tools"><label>Seed <select id="seed"><option>90094</option><option>35075</option><option>21890</option><option>49530</option><option>47326</option><option>32466</option></select></label><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="records"></section></main><script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'90094',stage=q.get('stage')||'all_steps';const asset=(kind,name='')=>`/api/object-query-continuity-overlay/${kind.includes('intervention')||kind==='baseline'?'video':'image'}?seed=${seed}&stage=${stage}&kind=${kind}${name?`&name=${encodeURIComponent(name)}`:''}`,video=(cls,title,kind,ready)=>`<article class="video ${cls}"><h2>${title}</h2>${ready?`<video controls preload="metadata" playsinline src="${asset(kind)}"></video>`:'<div class="pending">生成中</div>'}</article>`,row=(title,name,kind)=>`<div class="row"><h4>${title}</h4>${name?`<img loading="lazy" src="${asset(kind,name)}">`:'<div class="pending">capture 生成中</div>'}</div>`,method=(title,cls,r,prefix,kind)=>`<section class="method ${cls}"><h3>${title}</h3>${row('Before',r[`${prefix}before_image`],kind)}${row('Per-frame P90 Mask',r[`${prefix}p90_mask_image`],kind)}${row('P99 / Top-5 Main Connected Component',r[`${prefix}main_component_image`],kind)}${row('After',r[`${prefix}after_image`],kind)}${row('Removed Attention Mass',r[`${prefix}removed_image`],kind)}</section>`;function sync(){const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u)}function render(d){document.getElementById('seed').value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`Identity ${d.identity_ready}/20 · Old ${d.intervention_ready}/20 · New ${d.new_intervention_ready}/20`;document.getElementById('videos').innerHTML=video('original','Wan+LoRA Original','baseline',d.baseline_ready)+video('old','旧方案 · P90 Chain','intervention',d.video_ready)+video('new','新方案 · Top-5 Main Component','new_intervention',d.new_video_ready);const groups=new Map;for(const r of d.records){const key=`${r.block}:${r.head}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r)}document.getElementById('records').innerHTML=groups.size?[...groups.values()].map(rows=>{const f=rows[0];return `<article class="head"><h2>L${String(f.block).padStart(2,'0')} / H${String(f.head).padStart(2,'0')} · PCK@32 ${Number(f.pck32).toFixed(3)}</h2><div class="objects">${rows.map(r=>`<section class="object"><h3>${esc(r.region_name)} · ${esc(r.region_phrase)}</h3><div class="identity">${row('No Intervention · Original Attention',r.identity_image,'identity_overlay')}</div><div class="methods">${method('旧方案 · P90-to-P90 Chain','old',r,'','overlay')}${method('新方案 · Previous Top-5 Main Component','new',r,'new_','new_overlay')}</div></section>`).join('')}</div></article>`}).join(''):'<div class="pending">等待 capture</div>'}async function load(){const d=await fetch(`/api/object-query-continuity-overlay/catalog?seed=${seed}&stage=${stage}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;else stage=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
 </script></body></html>'''
 
 

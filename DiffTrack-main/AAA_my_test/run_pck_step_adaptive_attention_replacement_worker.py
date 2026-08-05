@@ -40,6 +40,8 @@ if NOISE_MODE not in {
     "probability_exclude_current",
     "probability_context_only",
     "probability_object_query_continuity",
+    "probability_object_query_main_component_continuity",
+    "probability_object_query_identity",
     "probability_identity",
 }:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
@@ -148,7 +150,11 @@ class AdaptiveQKLogitNoise:
         self.object_continuity_entries: dict[tuple, dict[str, Any]] = {}
         self.object_continuity_capture_root = None
         self.object_continuity_capture_heads: dict[tuple[int, int], float] = {}
-        if self.noise_mode == "probability_object_query_continuity":
+        if self.noise_mode in {
+            "probability_object_query_continuity",
+            "probability_object_query_main_component_continuity",
+            "probability_object_query_identity",
+        }:
             from AAA_my_test.object_query_attention_capture_headwise_pck import pck_query_regions
 
             self.object_continuity_regions, self.object_continuity_context_frame = pck_query_regions()
@@ -270,26 +276,82 @@ class AdaptiveQKLogitNoise:
                 response.flatten(-2), quantile, dim=-1, keepdim=True
             ).unsqueeze(-1)
             high = response >= thresholds
-            rejected = torch.zeros_like(high)
-            previous = high[:, :, context_frames - 1]
-            kernel = 2 * radius + 1
-            for frame in range(context_frames, latent_frames):
-                neighboring = torch.nn.functional.max_pool2d(
-                    previous.float(), kernel_size=kernel, stride=1, padding=radius
-                ) > 0
-                kept = high[:, :, frame] & neighboring
-                rejected[:, :, frame] = high[:, :, frame] & ~neighboring
-                previous = kept
-            rejected_flat = rejected.flatten(-2).reshape(
-                rejected.shape[0], rejected.shape[1], latent_frames * spatial_tokens
+            top_k = min(
+                int(os.environ.get("OBJECT_CONTINUITY_MAIN_COMPONENT_TOPK", "5")),
+                16 * 28,
             )
-            region_after = region_before.masked_fill(rejected_flat.unsqueeze(2), 0.0)
-            row_sum = region_after.sum(dim=-1, keepdim=True)
-            region_after = torch.where(
-                row_sum > 0,
-                region_after / row_sum.clamp_min(1e-12),
-                region_before,
+            flat_response = response.flatten(-2)
+            top_indices = torch.topk(flat_response, k=top_k, dim=-1).indices
+            topk_candidate = torch.zeros_like(flat_response, dtype=torch.bool)
+            topk_candidate.scatter_(-1, top_indices, True)
+            topk_candidate = topk_candidate.reshape_as(response)
+            component_shape = topk_candidate.shape
+            candidate_2d = topk_candidate.reshape(-1, 16, 28)
+            peak_indices = flat_response.argmax(dim=-1).reshape(-1, 1)
+            main_component = torch.zeros_like(
+                candidate_2d.reshape(-1, 16 * 28), dtype=torch.bool
             )
+            main_component.scatter_(-1, peak_indices, True)
+            main_component = main_component.reshape(-1, 16, 28)
+            for _ in range(top_k):
+                main_component = candidate_2d & (
+                    torch.nn.functional.max_pool2d(
+                        main_component.float().unsqueeze(1),
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                    ).squeeze(1) > 0
+                )
+            main_component = main_component.reshape(component_shape)
+            if self.noise_mode == "probability_object_query_continuity":
+                rejected = torch.zeros_like(high)
+                previous = high[:, :, context_frames - 1]
+                kernel = 2 * radius + 1
+                for frame in range(context_frames, latent_frames):
+                    neighboring = torch.nn.functional.max_pool2d(
+                        previous.float(), kernel_size=kernel, stride=1, padding=radius
+                    ) > 0
+                    kept = high[:, :, frame] & neighboring
+                    rejected[:, :, frame] = high[:, :, frame] & ~neighboring
+                    previous = kept
+                rejected_flat = rejected.flatten(-2).reshape(
+                    rejected.shape[0], rejected.shape[1], latent_frames * spatial_tokens
+                )
+                region_after = region_before.masked_fill(rejected_flat.unsqueeze(2), 0.0)
+                row_sum = region_after.sum(dim=-1, keepdim=True)
+                region_after = torch.where(
+                    row_sum > 0,
+                    region_after / row_sum.clamp_min(1e-12),
+                    region_before,
+                )
+            elif self.noise_mode == "probability_object_query_main_component_continuity":
+                rejected = torch.zeros_like(high)
+                kernel = 2 * radius + 1
+                for frame in range(context_frames, latent_frames):
+                    previous_component = main_component[:, :, frame - 1]
+                    neighboring = torch.nn.functional.max_pool2d(
+                        previous_component.float(),
+                        kernel_size=kernel,
+                        stride=1,
+                        padding=radius,
+                    ) > 0
+                    rejected[:, :, frame] = high[:, :, frame] & ~neighboring
+                rejected_flat = rejected.flatten(-2).reshape(
+                    rejected.shape[0], rejected.shape[1],
+                    latent_frames * spatial_tokens,
+                )
+                region_after = region_before.masked_fill(
+                    rejected_flat.unsqueeze(2), 0.0
+                )
+                row_sum = region_after.sum(dim=-1, keepdim=True)
+                region_after = torch.where(
+                    row_sum > 0,
+                    region_after / row_sum.clamp_min(1e-12),
+                    region_before,
+                )
+            else:
+                rejected = torch.zeros_like(high)
+                region_after = region_before
             after[:, :, positions] = region_after
 
             if (
@@ -305,21 +367,37 @@ class AdaptiveQKLogitNoise:
                     entry = self.object_continuity_entries.setdefault(
                         key,
                         {
-                            "before": torch.zeros((latent_frames, 16, 28)),
-                            "after": torch.zeros((latent_frames, 16, 28)),
-                            "removed": torch.zeros((latent_frames, 16, 28)),
+                            "before": torch.zeros(
+                                (len(region_rows), latent_frames, 16, 28)
+                            ),
+                            "after": torch.zeros(
+                                (len(region_rows), latent_frames, 16, 28)
+                            ),
+                            "removed": torch.zeros(
+                                (len(region_rows), latent_frames, 16, 28)
+                            ),
+                            "p90_frequency": torch.zeros((latent_frames, 16, 28)),
+                            "main_component_frequency": torch.zeros(
+                                (latent_frames, 16, 28)
+                            ),
                             "count": 0,
                             "region": region,
                             "pck32": score,
                         },
                     )
-                    before_map = response[:, head_offset].mean(dim=0).detach().cpu()
-                    after_map = region_after[:, head_offset].mean(dim=(0, 1)).reshape(
-                        latent_frames, 16, 28
+                    before_map = region_before[:, head_offset].mean(dim=0).reshape(
+                        len(region_rows), latent_frames, 16, 28
+                    ).detach().cpu()
+                    after_map = region_after[:, head_offset].mean(dim=0).reshape(
+                        len(region_rows), latent_frames, 16, 28
                     ).detach().cpu()
                     entry["before"] += before_map
                     entry["after"] += after_map
                     entry["removed"] += (before_map - after_map).clamp_min(0)
+                    entry["p90_frequency"] += high[:, head_offset].float().mean(dim=0).detach().cpu()
+                    entry["main_component_frequency"] += (
+                        main_component[:, head_offset].float().mean(dim=0).detach().cpu()
+                    )
                     entry["count"] += 1
         return query_rows, after
 
@@ -348,6 +426,10 @@ class AdaptiveQKLogitNoise:
                 before=(entry["before"] / count).numpy(),
                 after=(entry["after"] / count).numpy(),
                 removed=(entry["removed"] / count).numpy(),
+                p90_frequency=(entry["p90_frequency"] / count).numpy(),
+                main_component_frequency=(
+                    entry["main_component_frequency"] / count
+                ).numpy(),
                 query_points=region["points"],
                 query_mask=region["mask"],
                 query_token_indices=region["token_indices"],
@@ -367,6 +449,12 @@ class AdaptiveQKLogitNoise:
                 neighbor_radius=np.int32(
                     int(os.environ.get("OBJECT_CONTINUITY_NEIGHBOR_RADIUS", "1"))
                 ),
+                main_component_topk=np.int32(
+                    int(os.environ.get("OBJECT_CONTINUITY_MAIN_COMPONENT_TOPK", "5"))
+                ),
+                mode=np.asarray(self.noise_mode),
+                protocol=np.asarray("headwise_pck_sam2_context_f04"),
+                query_aggregation=np.asarray("preserve_then_sum"),
             )
 
     def _attention(self, q, k, v, original, groups: dict[str, list[int]], block: int):
@@ -387,7 +475,11 @@ class AdaptiveQKLogitNoise:
         scale = 1.0 / math.sqrt(head_dim)
         continuity_rows = []
         continuity_after = None
-        if self.noise_mode == "probability_object_query_continuity":
+        if self.noise_mode in {
+            "probability_object_query_continuity",
+            "probability_object_query_main_component_continuity",
+            "probability_object_query_identity",
+        }:
             continuity_rows, continuity_after = self._object_continuity_probabilities(
                 selected_q, key_t, scale, heads, block
             )
@@ -428,7 +520,10 @@ class AdaptiveQKLogitNoise:
             )
             if self.noise_mode == "probability_identity":
                 probabilities = before_probabilities
-            elif self.noise_mode == "probability_object_query_continuity":
+            elif self.noise_mode in {
+                "probability_object_query_continuity",
+                "probability_object_query_identity",
+            }:
                 probabilities = before_probabilities.clone()
                 pairs = [
                     (row - start, index)
@@ -547,6 +642,9 @@ class AdaptiveQKLogitNoise:
             capture_entry["forward_calls"] += 1
         fused_output = original(q, k, v)
         if self.noise_mode == "probability_identity":
+            return fused_output
+        if self.noise_mode == "probability_object_query_identity":
+            self.call_count += 1
             return fused_output
         output_heads = fused_output.reshape(batch, sequence, num_heads, head_dim).permute(0, 2, 1, 3).clone()
         if self.noise_mode == "probability_object_query_continuity":
@@ -756,6 +854,8 @@ def write_experiment_metadata() -> None:
                     "probability_exclude_current": "exclude_current_frame_attention_mask",
                     "probability_context_only": "context_frames_only_attention_mask",
                     "probability_object_query_continuity": "object_query_temporal_spatial_continuity",
+                    "probability_object_query_main_component_continuity": "object_query_main_component_temporal_spatial_continuity",
+                    "probability_object_query_identity": "object_query_identity_no_intervention",
                     "probability_additive": "direct_attention_probability_additive_noise",
                     "logit": "direct_qk_logit_noise",
                 }[NOISE_MODE],
