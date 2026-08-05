@@ -2813,19 +2813,22 @@ def object_query_frozen_trajectory_asset(seed: str, stage: str, kind: str, name:
     if seed_value not in OBJECT_QUERY_TOP100_MEAN_SEEDS or stage not in {"all_steps", "steps00_09"}:
         return None
     seed_root = OBJECT_QUERY_FROZEN_TRAJECTORY_ROOT / "seeds" / f"seed_{seed_value:06d}"
-    if kind == "trajectory" and Path(name).name == name and name.endswith(".jpg"):
-        return seed_root / "trajectory" / "overlays" / name
-    if kind == "apply" and Path(name).name == name and name.endswith(".jpg"):
-        return seed_root / "apply" / stage / "overlays" / name
+    if kind in {"p95_trajectory", "p99_trajectory", "p95_single_trajectory", "p99_single_trajectory"} and Path(name).name == name and name.endswith(".jpg"):
+        label = kind.rsplit("_trajectory", 1)[0]
+        return seed_root / "trajectory" / label / "overlays" / name
+    if kind in {"p95_apply", "p99_apply", "p95_single_apply", "p99_single_apply"} and Path(name).name == name and name.endswith(".jpg"):
+        label = kind.rsplit("_apply", 1)[0]
+        return seed_root / "apply" / label / stage / "overlays" / name
     if kind == "original_video":
         return (
             Path("/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460")
             / "seeds" / f"seed_{seed_value:06d}" / "original.mp4"
         )
-    if kind == "intervention_video":
+    if kind in {"p95_video", "p99_video", "p95_single_video", "p99_single_video"}:
+        label = kind.rsplit("_video", 1)[0]
         suffix = "steps_00_40" if stage == "all_steps" else "steps_00_10"
         return (
-            seed_root / "apply" / stage / "videos" / "lora" / "cases"
+            seed_root / "apply" / label / stage / "videos" / "lora" / "cases"
             / "0613pybullet_sample_001460_w002" / f"top100_{suffix}.mp4"
         )
     return None
@@ -2847,45 +2850,73 @@ def object_query_frozen_trajectory_catalog(seed: str, stage: str, step: str, bra
     if branch not in {"conditional", "unconditional"}:
         branch = "conditional"
     seed_root = OBJECT_QUERY_FROZEN_TRAJECTORY_ROOT / "seeds" / f"seed_{seed_value:06d}"
-    trajectory_payload = load_payload(seed_root / "trajectory" / "overlays" / "manifest.json") or {}
-    apply_payload = load_payload(seed_root / "apply" / stage / "overlays" / "manifest.json") or {}
-    trajectory = {
-        row["region_name"]: row
-        for row in trajectory_payload.get("records", [])
-        if int(row.get("step", -1)) == step_value and row.get("cfg_branch") == branch
-    }
-    applied = {
-        row["region_name"]: row
-        for row in apply_payload.get("records", [])
-        if int(row.get("step", -1)) == step_value and row.get("cfg_branch") == branch
-    }
+    variants = {}
+    labels = ("p95", "p99", "p95_single", "p99_single")
+    for label in labels:
+        trajectory_payload = load_payload(seed_root / "trajectory" / label / "overlays" / "manifest.json") or {}
+        apply_payload = load_payload(seed_root / "apply" / label / stage / "overlays" / "manifest.json") or {}
+        trajectory = {
+            row["region_name"]: row
+            for row in trajectory_payload.get("records", [])
+            if int(row.get("step", -1)) == step_value and row.get("cfg_branch") == branch
+        }
+        applied = {
+            row["region_name"]: row
+            for row in apply_payload.get("records", [])
+            if int(row.get("step", -1)) == step_value and row.get("cfg_branch") == branch
+        }
+        variants[label] = {"trajectory": trajectory, "applied": applied}
     records = []
-    for region in sorted(set(trajectory) | set(applied)):
-        source = trajectory.get(region, {})
-        result = applied.get(region, {})
+    regions = set()
+    for payload in variants.values():
+        regions.update(payload["trajectory"])
+        regions.update(payload["applied"])
+    for region in sorted(regions):
+        sources = {
+            label: payload["trajectory"].get(region, {})
+            for label, payload in variants.items()
+        }
+        results = {
+            label: payload["applied"].get(region, {})
+            for label, payload in variants.items()
+        }
+        representative = sources["p95"] or sources["p99"] or results["p95"] or results["p99"]
         records.append({
             "region_name": region,
-            "region_phrase": (source or result).get("region_phrase", region),
-            "num_heads": max(int(source.get("num_heads", 0)), int(result.get("num_heads", 0))),
-            "quantile": source.get("quantile", 0.90),
-            "radius": source.get("radius", 2),
-            "trajectory_images": source.get("images", {}),
-            "apply_images": result.get("images", {}),
+            "region_phrase": representative.get("region_phrase", region),
+            "num_heads": max(
+                [int(row.get("num_heads", 0)) for row in [*sources.values(), *results.values()]]
+            ),
+            "variants": {
+                label: {
+                    "quantile": sources[label].get("quantile", 0.95 if label.startswith("p95") else 0.99),
+                    "radius": sources[label].get("radius", 2),
+                    "trajectory_images": sources[label].get("images", {}),
+                    "apply_images": results[label].get("images", {}),
+                }
+                for label in labels
+            },
         })
     return {
         "seed": seed_value, "stage": stage, "step": step_value, "branch": branch,
         "seeds": list(OBJECT_QUERY_TOP100_MEAN_SEEDS), "records": records,
-        "probe_ready": len(trajectory), "apply_ready": len(applied),
+        "ready": {
+            label: {
+                "trajectory": len(variants[label]["trajectory"]),
+                "apply": len(variants[label]["applied"]),
+                "video": bool((asset := object_query_frozen_trajectory_asset(str(seed_value), stage, f"{label}_video", "")) and asset.is_file()),
+            }
+            for label in labels
+        },
         "original_video_ready": bool((asset := object_query_frozen_trajectory_asset(str(seed_value), stage, "original_video", "")) and asset.is_file()),
-        "intervention_video_ready": bool((asset := object_query_frozen_trajectory_asset(str(seed_value), stage, "intervention_video", "")) and asset.is_file()),
     }
 
 
 def object_query_frozen_trajectory_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Frozen Object Trajectory Mask</title><style>
-:root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--red:#b1432d;--green:#176a5c;--gold:#b78024;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2450px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.videos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.video,.object{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:10px}.video video{display:block;width:100%;background:#111}.object{overflow:auto;margin:14px 0}.object>h2{position:sticky;left:0;width:max-content;margin:0 0 9px}.row{margin:8px 0 18px}.row h3{position:sticky;left:0;width:max-content;margin:0 0 4px;padding:4px 9px;background:#ece4d6;border-left:6px solid var(--blue)}.row.mask h3{border-left-color:var(--gold)}.row.keep h3{border-left-color:var(--green)}.row.remove h3{border-left-color:var(--red)}.explain{position:sticky;left:0;width:min(1180px,calc(100vw - 52px));margin:0 0 8px;padding:8px 11px;background:#f5f0e6;border:1px solid #d7cdbb;border-radius:7px;font:13px/1.55 "Noto Sans SC","Source Han Sans SC",sans-serif}.row img{display:block;min-width:2260px;width:100%;border:1px solid #d8cfbf}.pending{padding:52px 15px;text-align:center;border:1px dashed var(--line)}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:13px 18px;background:var(--green);color:#fff}@media(max-width:900px){header{position:static}.videos{grid-template-columns:1fr}}
-</style></head><body><button id="replay" class="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/object-query-group-mean-continuity?v=3">上一版 Group Mean</a><h1>Original Top100 Mean → Frozen Object Trajectory</h1><p>先从完全无干预 attention 提取空间连续的对象响应轨迹，再把偏离轨迹的 P90 高响应区域作为 frozen mask 回写全部 Top100 heads。</p><div class="tools"><label>Seed <select id="seed"></select></label><label>Apply Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><label>Denoise Step <select id="step"></select></label><label>CFG Branch <select id="branch"><option value="conditional">Conditional</option><option value="unconditional">Unconditional</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="content"></section></main><script>
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'47326',stage=q.get('stage')||'all_steps',step=q.get('step')||'39',branch=q.get('branch')||'conditional';const api='/api/object-query-frozen-trajectory',image=(kind,name)=>`${api}/image?seed=${seed}&stage=${stage}&kind=${kind}&name=${encodeURIComponent(name)}`,video=kind=>`${api}/video?seed=${seed}&stage=${stage}&kind=${kind}`,row=(title,cls,kind,name,text)=>`<section class="row ${cls}"><h3>${title}</h3><p class="explain">${text}</p>${name?`<img loading="lazy" src="${image(kind,name)}">`:'<div class="pending">等待该步骤 capture</div>'}</section>`;function sync(){const u=new URL(location.href);for(const [k,v] of Object.entries({seed,stage,step,branch}))u.searchParams.set(k,v);history.replaceState(null,'',u)}function render(d){const ss=document.getElementById('seed');if(ss.options.length!==d.seeds.length)ss.innerHTML=d.seeds.map(x=>`<option>${x}</option>`).join('');ss.value=String(seed);const ds=document.getElementById('step');if(!ds.options.length)ds.innerHTML=Array.from({length:40},(_,i)=>`<option value="${i}">S${String(i).padStart(3,'0')}</option>`).join('');ds.value=String(step);document.getElementById('stage').value=stage;document.getElementById('branch').value=branch;document.getElementById('status').textContent=`S${String(d.step).padStart(3,'0')} ${d.branch} · trajectory ${d.probe_ready}/2 · apply ${d.apply_ready}/2`;document.getElementById('videos').innerHTML=`<article class="video"><h2>Wan+LoRA Original</h2>${d.original_video_ready?`<video controls preload="metadata" playsinline src="${video('original_video')}"></video>`:'<div class="pending">等待 baseline</div>'}</article><article class="video"><h2>Frozen Trajectory Intervention · ${stage==='all_steps'?'S000-S039':'S000-S009'}</h2>${d.intervention_video_ready?`<video controls preload="metadata" playsinline src="${video('intervention_video')}"></video>`:'<div class="pending">等待 intervention</div>'}</article>`;document.getElementById('content').innerHTML=d.records.length?d.records.map(r=>`<article class="object"><h2>${esc(r.region_name)} · ${esc(r.region_phrase)} · ${r.num_heads}/100 heads</h2>${row('1. No Intervention · Top100 Mean','', 'trajectory',r.trajectory_images.mean,'完全无干预推理中 SUM 8 object queries / MEAN Top100 heads；13 个 K 帧分别缩放。')}${row('2. All High-Response Regions · P90','mask','trajectory',r.trajectory_images.candidate,'每个 K 帧独立提取 P90 高响应候选，尚未做连续性判断。')}${row('3. Spatially Continuous Trajectory','keep','trajectory',r.trajectory_images.trajectory,'K01 由 SAM2 object query 位置初始化；K02 起保留与上一帧有效轨迹 radius=2 邻域相交的所有连通分量，连续性优先于峰值大小。')}${row('4. F_t · Frozen Removal Mask','remove','trajectory',r.trajectory_images.forbidden,'P90 候选减去连续轨迹。K00/K01 不删除；该 mask 来自 Original Probe，Apply 时不再改变。')}${row('5. Apply Before · Top100 Mean','', 'apply',r.apply_images.before,'在 intervention 推理中、frozen mask 回写之前的 Top100 Mean。')}${row('6. Apply After · Top100 Mean','keep','apply',r.apply_images.after,'对每个选中 head 的 8 个 object-query 行删除 F_t 后逐行归一化，再聚合 Top100。')}${row('7. Actual Removed Attention Mass','remove','apply',r.apply_images.removed,'实际的 max(Before−After,0)，用于验证 frozen F_t 是否真正作用到 attention。')}</article>`).join(''):'<div class="pending">等待该 seed/step/branch 数据</div>'}async function load(){const d=await fetch(`${api}/catalog?seed=${seed}&stage=${stage}&step=${step}&branch=${branch}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage','step','branch'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;if(id==='stage')stage=ev.target.value;if(id==='step')step=ev.target.value;if(id==='branch')branch=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+:root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--red:#b1432d;--green:#176a5c;--gold:#b78024;--blue:#285f7a;--p95:#176a5c;--p99:#b1432d}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2450px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.videos{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:11px}.video,.object{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:10px}.video.p95{border-top:7px solid var(--p95)}.video.p99{border-top:7px solid var(--p99)}.video.single{box-shadow:inset 0 0 0 3px #d9a441}.video video{display:block;width:100%;background:#111}.object{overflow:auto;margin:14px 0}.object>h2{position:sticky;left:0;width:max-content;margin:0 0 9px}.row{margin:8px 0 18px}.row h3{position:sticky;left:0;width:max-content;margin:0 0 4px;padding:4px 9px;background:#ece4d6;border-left:6px solid var(--blue)}.row.p95 h3{border-left-color:var(--p95)}.row.p99 h3{border-left-color:var(--p99)}.row.single h3{box-shadow:inset 0 -3px #d9a441}.explain{position:sticky;left:0;width:min(1180px,calc(100vw - 52px));margin:0 0 8px;padding:8px 11px;background:#f5f0e6;border:1px solid #d7cdbb;border-radius:7px;font:13px/1.55 "Noto Sans SC","Source Han Sans SC",sans-serif}.row img{display:block;min-width:2260px;width:100%;border:1px solid #d8cfbf}.pending{padding:52px 15px;text-align:center;border:1px dashed var(--line)}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:13px 18px;background:var(--green);color:#fff}@media(max-width:1200px){.videos{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){header{position:static}.videos{grid-template-columns:1fr}}
+</style></head><body><button id="replay" class="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/object-query-group-mean-continuity?v=3">上一版 Group Mean</a><h1>Old Multi-Component vs New Single-Component</h1><p>P95/P99 均共用同一 No-Intervention Top100 Mean。旧方案允许多个连续 components；新方案每帧只保留一个空间连续 component，其余高响应全部进入 frozen F_t。</p><div class="tools"><label>Seed <select id="seed"></select></label><label>Apply Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><label>Denoise Step <select id="step"></select></label><label>CFG Branch <select id="branch"><option value="conditional">Conditional</option><option value="unconditional">Unconditional</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="content"></section></main><script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'47326',stage=q.get('stage')||'all_steps',step=q.get('step')||'39',branch=q.get('branch')||'conditional';const api='/api/object-query-frozen-trajectory',image=(kind,name)=>`${api}/image?seed=${seed}&stage=${stage}&kind=${kind}&name=${encodeURIComponent(name)}`,video=kind=>`${api}/video?seed=${seed}&stage=${stage}&kind=${kind}`,row=(title,cls,kind,name,text)=>`<section class="row ${cls}"><h3>${title}</h3><p class="explain">${text}</p>${name?`<img loading="lazy" src="${image(kind,name)}">`:'<div class="pending">等待该步骤 capture</div>'}</section>`;function sync(){const u=new URL(location.href);for(const [k,v] of Object.entries({seed,stage,step,branch}))u.searchParams.set(k,v);history.replaceState(null,'',u)}function render(d){const ss=document.getElementById('seed');if(ss.options.length!==d.seeds.length)ss.innerHTML=d.seeds.map(x=>`<option>${x}</option>`).join('');ss.value=String(seed);const ds=document.getElementById('step');if(!ds.options.length)ds.innerHTML=Array.from({length:40},(_,i)=>`<option value="${i}">S${String(i).padStart(3,'0')}</option>`).join('');ds.value=String(step);document.getElementById('stage').value=stage;document.getElementById('branch').value=branch;document.getElementById('status').textContent=`S${String(d.step).padStart(3,'0')} ${d.branch} · old P95/P99 ${d.ready.p95.apply}/2/${d.ready.p99.apply}/2 · single P95/P99 ${d.ready.p95_single.apply}/2/${d.ready.p99_single.apply}/2`;document.getElementById('videos').innerHTML=`<article class="video"><h2>Wan+LoRA Original</h2>${d.original_video_ready?`<video controls preload="metadata" playsinline src="${video('original_video')}"></video>`:'<div class="pending">等待 baseline</div>'}</article><article class="video p95"><h2>Old P95 · Multi</h2>${d.ready.p95.video?`<video controls preload="metadata" playsinline src="${video('p95_video')}"></video>`:'<div class="pending">等待旧 P95</div>'}</article><article class="video p99"><h2>Old P99 · Multi</h2>${d.ready.p99.video?`<video controls preload="metadata" playsinline src="${video('p99_video')}"></video>`:'<div class="pending">等待旧 P99</div>'}</article><article class="video p95 single"><h2>New P95 · Single</h2>${d.ready.p95_single.video?`<video controls preload="metadata" playsinline src="${video('p95_single_video')}"></video>`:'<div class="pending">等待新 P95</div>'}</article><article class="video p99 single"><h2>New P99 · Single</h2>${d.ready.p99_single.video?`<video controls preload="metadata" playsinline src="${video('p99_single_video')}"></video>`:'<div class="pending">等待新 P99</div>'}</article>`;document.getElementById('content').innerHTML=d.records.length?d.records.map(r=>{const a=r.variants.p95,b=r.variants.p99,c=r.variants.p95_single,dv=r.variants.p99_single;return `<article class="object"><h2>${esc(r.region_name)} · ${esc(r.region_phrase)} · ${r.num_heads}/100 heads</h2>${row('1. Common No Intervention · Top100 Mean','', 'p95_trajectory',a.trajectory_images.mean,'四组实验共用同一份完全无干预 Top100 Mean。')}${row('2. P95 · Raw High-Response Candidates','p95','p95_trajectory',a.trajectory_images.candidate,'共同的原始 P95 候选，内部允许多个 disconnected components。')}${row('3. Old P95 · Multi-Component Trajectory','p95','p95_trajectory',a.trajectory_images.trajectory,'旧方案合并所有与上一帧邻域相交的 components。')}${row('4. New P95 · Single-Component Trajectory','p95 single','p95_single_trajectory',c.trajectory_images.trajectory,'新方案严格只保留一个 component，连续性优先于响应强度。')}${row('5. Old P95 · Frozen F_t','p95','p95_trajectory',a.trajectory_images.forbidden,'旧方案未被多 component 轨迹覆盖的候选。')}${row('6. New P95 · Frozen F_t','p95 single','p95_single_trajectory',c.trajectory_images.forbidden,'新方案除唯一连续 component 外的全部 P95 候选。')}${row('7. Old P95 · Apply After','p95','p95_apply',a.apply_images.after,'旧 P95 mask 回写后的 Top100 Mean。')}${row('8. New P95 · Apply After','p95 single','p95_single_apply',c.apply_images.after,'单 component P95 mask 回写后的 Top100 Mean。')}${row('9. Old P95 · Removed Mass','p95','p95_apply',a.apply_images.removed,'旧方案实际删除量。')}${row('10. New P95 · Removed Mass','p95 single','p95_single_apply',c.apply_images.removed,'新方案实际删除量。')}${row('11. P99 · Raw High-Response Candidates','p99','p99_trajectory',b.trajectory_images.candidate,'共同的原始 P99 候选。')}${row('12. Old P99 · Multi-Component Trajectory','p99','p99_trajectory',b.trajectory_images.trajectory,'旧方案允许多个连续 components。')}${row('13. New P99 · Single-Component Trajectory','p99 single','p99_single_trajectory',dv.trajectory_images.trajectory,'新方案每帧严格一个 component。')}${row('14. Old P99 · Frozen F_t','p99','p99_trajectory',b.trajectory_images.forbidden,'旧 P99 removal mask。')}${row('15. New P99 · Frozen F_t','p99 single','p99_single_trajectory',dv.trajectory_images.forbidden,'新 P99 单 component removal mask。')}${row('16. Old P99 · Apply After','p99','p99_apply',b.apply_images.after,'旧 P99 mask 回写结果。')}${row('17. New P99 · Apply After','p99 single','p99_single_apply',dv.apply_images.after,'新 P99 单 component 回写结果。')}${row('18. Old P99 · Removed Mass','p99','p99_apply',b.apply_images.removed,'旧方案实际删除量。')}${row('19. New P99 · Removed Mass','p99 single','p99_single_apply',dv.apply_images.removed,'新方案实际删除量。')}</article>`}).join(''):'<div class="pending">等待该 seed/step/branch 数据</div>'}async function load(){const d=await fetch(`${api}/catalog?seed=${seed}&stage=${stage}&step=${step}&branch=${branch}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage','step','branch'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;if(id==='stage')stage=ev.target.value;if(id==='step')step=ev.target.value;if(id==='branch')branch=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
 </script></body></html>'''
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Wait for fixed-Top100 step-500, then capture Top30 object-query attention on GPU5.
+# Capture Top30 object-query attention from the training baseline on GPU5.
 set -euo pipefail
 
 HERE="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments"
@@ -7,9 +7,7 @@ PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 WORKER="${HERE}/capture_training_object_query_top30_step500.py"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/training_object_query_top30_step500}"
 CACHE_ROOT="${OUTPUT_ROOT}/grounded_sam2_regions"
-EXPERIMENT_ROOT="/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/lora_pck32_top100_t_head_no_object_gpu67_formal"
-RUN_ROOT="${RUN_ROOT:-$(find "${EXPERIMENT_ROOT}" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)}"
-CHECKPOINT="${RUN_ROOT}/checkpoints/step-000500"
+BASELINE_CONFIG="${BASELINE_CONFIG:-/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/lora_pck32_top100_t_head_no_object_gpu67_formal/pck32_top100_from_scratch_20260805T100041Z/resolved_experiment_config.json}"
 POLL_SECONDS="${POLL_SECONDS:-60}"
 GPU_MEMORY_LIMIT_MIB="${GPU_MEMORY_LIMIT_MIB:-8000}"
 
@@ -49,26 +47,12 @@ if [[ ! -s "${CACHE_ROOT}/complete.marker" ]]; then
   date -u +%FT%TZ > "${CACHE_ROOT}/complete.marker"
 fi
 
-while [[ ! -s "${CHECKPOINT}/checkpoint.safetensors" || ! -s "${CHECKPOINT}/training_state.pt" ]]; do
-  status waiting_checkpoint "waiting for fixed Top100 step-000500"
-  sleep "${POLL_SECONDS}"
-done
-
-before="$(stat -c '%s:%Y' "${CHECKPOINT}/checkpoint.safetensors" "${CHECKPOINT}/training_state.pt")"
-status stabilizing "step-000500 found; checking file stability"
-sleep 60
-after="$(stat -c '%s:%Y' "${CHECKPOINT}/checkpoint.safetensors" "${CHECKPOINT}/training_state.pt")"
-if [[ "${before}" != "${after}" ]]; then
-  status stabilizing "checkpoint changed during stability window; waiting another 60s"
-  sleep 60
-fi
-
 wait_gpu5
-status loading_checkpoint "GPU5: loading fixed Top100 step-000500"
+status loading_baseline "GPU5: loading Wan2.2 + OpenVid LoRA baseline without Top100 modules"
 "${PYTHON}" "${WORKER}" capture \
   --output-root "${OUTPUT_ROOT}" \
   --cache-root "${CACHE_ROOT}" \
-  --checkpoint "${CHECKPOINT}" \
+  --baseline-config "${BASELINE_CONFIG}" \
   --device cuda:0 \
   > "${OUTPUT_ROOT}/logs/capture.log" 2>&1
 

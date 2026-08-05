@@ -20,6 +20,7 @@ def parse_args():
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--quantile", type=float, default=0.90)
     parser.add_argument("--radius", type=int, default=2)
+    parser.add_argument("--single-component", action="store_true")
     return parser.parse_args()
 
 
@@ -67,7 +68,7 @@ def choose_anchor(candidate, query_indices):
     return regions[int(np.argmin(distances))]
 
 
-def track(candidate, query_indices, radius):
+def track(candidate, response, query_indices, radius, single_component=False):
     trajectory = np.zeros_like(candidate, dtype=bool)
     trajectory[0] = candidate[0]
     trajectory[1] = choose_anchor(candidate[1], query_indices)
@@ -79,10 +80,27 @@ def track(candidate, query_indices, radius):
         neighborhood = cv2.dilate(trajectory[frame - 1].astype(np.uint8), kernel) > 0
         continuous = [region for region in regions if np.any(region & neighborhood)]
         if continuous:
-            trajectory[frame] = np.logical_or.reduce(continuous)
+            if single_component:
+                previous_center = centroid(trajectory[frame - 1])
+                trajectory[frame] = max(
+                    continuous,
+                    key=lambda region: (
+                        int(np.count_nonzero(region & neighborhood)),
+                        -float(np.linalg.norm(centroid(region) - previous_center)),
+                        float(response[frame][region].sum()),
+                    ),
+                )
+            else:
+                trajectory[frame] = np.logical_or.reduce(continuous)
             continue
         previous_center = centroid(trajectory[frame - 1])
-        nearest = min(regions, key=lambda region: np.linalg.norm(centroid(region) - previous_center))
+        nearest = min(
+            regions,
+            key=lambda region: (
+                float(np.linalg.norm(centroid(region) - previous_center)),
+                -float(response[frame][region].sum()),
+            ),
+        )
         trajectory[frame] = nearest
     return trajectory
 
@@ -135,7 +153,9 @@ def main():
         normalized = mean / frame_max[:, None, None]
         thresholds = np.quantile(normalized.reshape(FRAMES, -1), args.quantile, axis=1)
         candidate = normalized >= thresholds[:, None, None]
-        trajectory = track(candidate, query_indices, args.radius)
+        trajectory = track(
+            candidate, normalized, query_indices, args.radius, args.single_component
+        )
         forbidden = candidate & ~trajectory
         forbidden[:2] = False
         stem = f"seed{seed:06d}__step{step:02d}__{branch}__{region}"
@@ -156,6 +176,7 @@ def main():
             num_heads=np.int32(num_heads),
             quantile=np.float32(args.quantile),
             radius=np.int32(args.radius),
+            single_component=np.bool_(args.single_component),
         )
         images = {
             "mean": f"{stem}__mean.jpg",
@@ -166,7 +187,17 @@ def main():
         rendered = {
             "mean": strip(frames, normalized, f"S{step:03d} {branch} · No Intervention Top100 Mean · per-frame scale"),
             "candidate": strip(frames, candidate, "All high-response regions · per-frame P90", True, (35, 160, 230)),
-            "trajectory": strip(frames, trajectory, "Spatially continuous object trajectory · radius 2", True, (55, 185, 80)),
+            "trajectory": strip(
+                frames,
+                trajectory,
+                (
+                    "Single connected trajectory · continuity first · radius 2"
+                    if args.single_component
+                    else "Multi-component continuous trajectory · radius 2"
+                ),
+                True,
+                (55, 185, 80),
+            ),
             "forbidden": strip(frames, forbidden, "F_t · high response outside continuous trajectory", True, (35, 40, 235)),
         }
         for key, image in rendered.items():
@@ -175,6 +206,7 @@ def main():
             "seed": seed, "step": step, "cfg_branch": branch,
             "region_name": region, "region_phrase": phrase,
             "num_heads": num_heads, "quantile": args.quantile, "radius": args.radius,
+            "single_component": args.single_component,
             "mask": mask_name, "images": images,
         })
     (args.render_root / "manifest.json").write_text(

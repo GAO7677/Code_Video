@@ -14,9 +14,12 @@ CASE_LIST="${ROOT}/case_list.txt"
 BASELINE="/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds/seed_${SID}/original.mp4"
 PROBE_ROOT="${SEED_ROOT}/probe/captures"
 
-mkdir -p "${ROOT}/logs" "${SEED_ROOT}" "${PROBE_ROOT}"
+mkdir -p "${ROOT}/logs" "${SEED_ROOT}"
 printf '%s\n' "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons/${CASE}.json" > "${CASE_LIST}"
 [[ -s "${BASELINE}" ]] || { echo "Missing baseline: ${BASELINE}" >&2; exit 1; }
+[[ $(find "${PROBE_ROOT}" -maxdepth 1 -name '*.npz' 2>/dev/null | wc -l) -ge 160 ]] || {
+  echo "Incomplete shared No-Intervention Probe for seed ${SEED}" >&2; exit 1;
+}
 export CUDA_VISIBLE_DEVICES="${GPU}"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 cd "${DIFFTRACK}"
@@ -28,37 +31,19 @@ link_baseline() {
   [[ -e "${target}" ]] || ln "${BASELINE}" "${target}" 2>/dev/null || cp --reflink=auto "${BASELINE}" "${target}"
 }
 
-PROBE_COUNT=$(find "${PROBE_ROOT}" -maxdepth 1 -name '*.npz' 2>/dev/null | wc -l)
-if [[ "${PROBE_COUNT}" -ge 160 && ! -f "${SEED_ROOT}/probe/complete" ]]; then
-  printf 'reused_complete_capture_count=%s\ncompleted=%s\n' \
-    "${PROBE_COUNT}" "$(date -u +%FT%TZ)" > "${SEED_ROOT}/probe/complete"
-fi
-if [[ ! -f "${SEED_ROOT}/probe/complete" ]]; then
-  PROBE_VIDEO_ROOT="${SEED_ROOT}/probe/videos"
-  link_baseline "${PROBE_VIDEO_ROOT}"
-  ATTENTION_NOISE_MODE=probability_object_query_trajectory_probe \
-  ATTENTION_NOISE_ALPHA=0 ATTENTION_NOISE_SEED="${SEED}" QK_ATTENTION_NOISE_SEED="${SEED}" \
-  ATTENTION_GROUP_FILTER=top ATTENTION_CFG_BRANCH_MODE=both \
-  ATTENTION_MASK_LATENT_FRAMES=13 ATTENTION_MASK_CONTEXT_LATENT_FRAMES=2 \
-  OBJECT_GROUP_EXPECTED_HEADS=100 OBJECT_CONTINUITY_HIGH_QUANTILE=0.90 \
-  OBJECT_CONTINUITY_NEIGHBOR_RADIUS=2 OBJECT_CONTINUITY_MAIN_COMPONENT_TOPK=5 \
-  OBJECT_TRAJECTORY_PROBE_ROOT="${PROBE_ROOT}" \
-    "${PYTHON}" "${WORKER}" --seed "${SEED}" \
-      --profile object_query_main_component --stage all_steps --ranking-criterion pck32 \
-      --input-json-list "${CASE_LIST}" --output-root "${PROBE_VIDEO_ROOT}"
-  printf 'completed=%s\n' "$(date -u +%FT%TZ)" > "${SEED_ROOT}/probe/complete"
-fi
-
-for QUANTILE_SPEC in p95:0.95 p99:0.99; do
-  LABEL="${QUANTILE_SPEC%%:*}"
-  QUANTILE="${QUANTILE_SPEC##*:}"
+for SPEC in p95_single:0.95 p99_single:0.99; do
+  LABEL="${SPEC%%:*}"
+  QUANTILE="${SPEC##*:}"
   MASK_ROOT="${SEED_ROOT}/trajectory/${LABEL}/masks"
-  TRAJECTORY_RENDER="${SEED_ROOT}/trajectory/${LABEL}/overlays"
-  mkdir -p "${MASK_ROOT}" "${TRAJECTORY_RENDER}"
-  "${PYTHON}" AAA_my_test/build_object_query_frozen_trajectory_masks.py \
-    --probe-root "${PROBE_ROOT}" --output-root "${MASK_ROOT}" \
-    --render-root "${TRAJECTORY_RENDER}" --video "${BASELINE}" \
-    --quantile "${QUANTILE}" --radius 2
+  RENDER_ROOT="${SEED_ROOT}/trajectory/${LABEL}/overlays"
+  mkdir -p "${MASK_ROOT}" "${RENDER_ROOT}"
+  MASK_COUNT=$(find "${MASK_ROOT}" -maxdepth 1 -name '*.npz' 2>/dev/null | wc -l)
+  if [[ "${MASK_COUNT}" -lt 160 || ! -f "${RENDER_ROOT}/manifest.json" ]]; then
+    "${PYTHON}" AAA_my_test/build_object_query_frozen_trajectory_masks.py \
+      --probe-root "${PROBE_ROOT}" --output-root "${MASK_ROOT}" \
+      --render-root "${RENDER_ROOT}" --video "${BASELINE}" \
+      --quantile "${QUANTILE}" --radius 2 --single-component
+  fi
 
   for STAGE in all_steps steps00_09; do
     RUN_ROOT="${SEED_ROOT}/apply/${LABEL}/${STAGE}"
@@ -66,8 +51,7 @@ for QUANTILE_SPEC in p95:0.95 p99:0.99; do
     VIDEO_ROOT="${RUN_ROOT}/videos"
     CAPTURE_ROOT="${RUN_ROOT}/captures"
     OVERLAY_ROOT="${RUN_ROOT}/overlays"
-    ACTIVE_END=39
-    SUFFIX=steps_00_40
+    ACTIVE_END=39; SUFFIX=steps_00_40
     [[ "${STAGE}" == "steps00_09" ]] && { ACTIVE_END=9; SUFFIX=steps_00_10; }
     mkdir -p "${CAPTURE_ROOT}" "${OVERLAY_ROOT}"
     link_baseline "${VIDEO_ROOT}"
@@ -82,12 +66,12 @@ for QUANTILE_SPEC in p95:0.95 p99:0.99; do
         --profile object_query_main_component --stage "${STAGE}" --ranking-criterion pck32 \
         --input-json-list "${CASE_LIST}" --output-root "${VIDEO_ROOT}"
     VIDEO="${VIDEO_ROOT}/lora/cases/${CASE}/top100_${SUFFIX}.mp4"
-    [[ -s "${VIDEO}" ]] || { echo "Missing intervention video: ${VIDEO}" >&2; exit 1; }
+    [[ -s "${VIDEO}" ]] || { echo "Missing single-component video: ${VIDEO}" >&2; exit 1; }
     "${PYTHON}" AAA_my_test/render_object_query_frozen_trajectory_apply.py \
       --capture-root "${CAPTURE_ROOT}" --video "${VIDEO}" --output-root "${OVERLAY_ROOT}"
-    printf 'gpu=%s\nseed=%s\nquantile=%s\nstage=%s\ncompleted=%s\n' \
+    printf 'gpu=%s\nseed=%s\nquantile=%s\nscheme=single_component\nstage=%s\ncompleted=%s\n' \
       "${GPU}" "${SEED}" "${QUANTILE}" "${STAGE}" "$(date -u +%FT%TZ)" > "${RUN_ROOT}/complete"
   done
 done
-printf 'gpu=%s\nseed=%s\nquantiles=p95,p99\ncompleted=%s\n' \
-  "${GPU}" "${SEED}" "$(date -u +%FT%TZ)" > "${SEED_ROOT}/p95_p99_complete"
+printf 'gpu=%s\nseed=%s\nscheme=single_component_p95_p99\ncompleted=%s\n' \
+  "${GPU}" "${SEED}" "$(date -u +%FT%TZ)" > "${SEED_ROOT}/single_p95_p99_complete"

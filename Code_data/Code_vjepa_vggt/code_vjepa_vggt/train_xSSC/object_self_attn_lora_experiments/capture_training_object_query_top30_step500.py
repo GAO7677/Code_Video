@@ -66,8 +66,8 @@ def write_status(root: Path, state: str, message: str, **extra) -> None:
 def write_page(root: Path) -> None:
     page = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Step-500 Top30 Object Query Attention</title><style>
 :root{--paper:#eee7d8;--ink:#17251f;--card:#fffdf8;--line:#bdb19c;--green:#176b5c;--rust:#ad452f;--gold:#bc812c}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99c5550,transparent 34rem),radial-gradient(circle at 98% 2%,#4c947653,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:10;padding:16px 24px;background:#eee7d8ef;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(27px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:8px 11px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#58665f}main{width:min(2350px,calc(100% - 18px));margin:auto;padding:18px 0 70px}.summary{padding:12px;border:1px solid var(--line);border-radius:13px;background:var(--card);margin-bottom:13px}.video{max-width:720px}.video video{display:block;width:100%;background:#111}.record{margin:10px 0;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--card)}.record.aggregate{border-left:7px solid var(--gold)}.record.head{border-left:7px solid var(--green)}.record h2{margin:0 0 7px;font-size:18px}.meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.pill{padding:4px 7px;border-radius:99px;background:#e9e1d2;font:10px ui-monospace,monospace}.scroll{overflow:auto}.record img{display:block;min-width:2240px;width:2240px;border:1px solid var(--line);background:#111}.pending{padding:60px;border:1px dashed var(--line);border-radius:12px;background:var(--card)}@media(max-width:800px){header{position:static}}
-</style></head><body><header><a href="http://localhost:8855/">返回总入口</a><h1>Step-500 · Fixed Top30 Object Query Attention</h1><p>训练样本GT teacher-forced · Q=F04/latent 1 · 13帧latent时间轴 · S00/S09/S19/S29/S39</p><div class="tools"><label>Sample <select id="case"></select></label><label>Object <select id="region"></select></label><label>Noise <select id="step"></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="summary" class="summary"></section><section id="video" class="video"></section><section id="records"></section></main><script>
-const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data=null;const ids=['case','region','step'];function sync(id,values){const el=document.getElementById(id),old=el.value;el.innerHTML=values.map(x=>`<option value="${e(x.value)}">${e(x.label)}</option>`).join('');if(values.some(x=>x.value===old))el.value=old}function render(){if(!data)return;sync('case',data.cases.map(x=>({value:x.case_key,label:`${x.family} · ${x.case_key}`})));const key=document.getElementById('case').value||data.cases[0]?.case_key,c=data.cases.find(x=>x.case_key===key);if(!c)return;sync('region',c.regions.map(x=>({value:x.name,label:x.phrase})));sync('step',data.steps.map(x=>({value:String(x.step),label:`S${String(x.step).padStart(2,'0')} · σ=${Number(x.sigma).toFixed(4)}`})));const region=document.getElementById('region').value||c.regions[0]?.name,step=Number(document.getElementById('step').value||data.steps[0].step),rows=data.records.filter(x=>x.case_key===key&&x.region===region&&x.step===step).sort((a,b)=>a.rank-b.rank);document.getElementById('summary').innerHTML=`<b>${e(c.caption)}</b><div class="meta"><span class="pill">${e(c.family)}</span><span class="pill">checkpoint step-000500</span><span class="pill">${rows.length-1}/30 heads</span><span class="pill">GT latent加噪后单次前向</span></div>`;document.getElementById('video').innerHTML=`<h2>GT 49 frames</h2><video controls preload="metadata" src="${e(c.gt_video)}"></video>`;document.getElementById('records').innerHTML=rows.length?rows.map(r=>`<article class="record ${r.aggregate?'aggregate':'head'}"><h2>${r.aggregate?'Top30 Head Mean':`#${r.rank} · B${String(r.block).padStart(2,'0')} / H${String(r.head).padStart(2,'0')}`}</h2><div class="meta"><span class="pill">S${String(r.step).padStart(2,'0')}</span><span class="pill">t=${Number(r.timestep).toFixed(3)}</span><span class="pill">σ=${Number(r.sigma).toFixed(5)}</span>${r.pck32==null?'':`<span class="pill">LoRA PCK@32 ${Number(r.pck32).toFixed(3)}</span>`}<span class="pill">Q tokens ${r.query_count}</span></div><div class="scroll"><img loading="lazy" src="${e(r.image)}"></div></article>`).join(''):'<div class="pending">该组合尚未生成</div>'}
+</style></head><body><header><a href="http://localhost:8855/">返回总入口</a><h1>Training Baseline · Fixed Top30 Object Query Attention</h1><p>Wan2.2 + OpenVid LoRA · 不加载Top100训练模块 · GT teacher-forced · Q=F04/latent 1 · S00/S09/S19/S29/S39</p><div class="tools"><label>Sample <select id="case"></select></label><label>Object <select id="region"></select></label><label>Noise <select id="step"></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="summary" class="summary"></section><section id="video" class="video"></section><section id="records"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data=null;const ids=['case','region','step'];function sync(id,values){const el=document.getElementById(id),old=el.value;el.innerHTML=values.map(x=>`<option value="${e(x.value)}">${e(x.label)}</option>`).join('');if(values.some(x=>x.value===old))el.value=old}function render(){if(!data)return;sync('case',data.cases.map(x=>({value:x.case_key,label:`${x.family} · ${x.case_key}`})));const key=document.getElementById('case').value||data.cases[0]?.case_key,c=data.cases.find(x=>x.case_key===key);if(!c)return;sync('region',c.regions.map(x=>({value:x.name,label:x.phrase})));sync('step',data.steps.map(x=>({value:String(x.step),label:`S${String(x.step).padStart(2,'0')} · σ=${Number(x.sigma).toFixed(4)}`})));const region=document.getElementById('region').value||c.regions[0]?.name,step=Number(document.getElementById('step').value||data.steps[0].step),rows=data.records.filter(x=>x.case_key===key&&x.region===region&&x.step===step).sort((a,b)=>a.rank-b.rank);document.getElementById('summary').innerHTML=`<b>${e(c.caption)}</b><div class="meta"><span class="pill">${e(c.family)}</span><span class="pill">Wan2.2 + OpenVid LoRA baseline</span><span class="pill">无Top100训练模块</span><span class="pill">${rows.length-1}/30 heads</span><span class="pill">GT latent加噪后单次前向</span></div>`;document.getElementById('video').innerHTML=`<h2>GT 49 frames</h2><video controls preload="metadata" src="${e(c.gt_video)}"></video>`;document.getElementById('records').innerHTML=rows.length?rows.map(r=>`<article class="record ${r.aggregate?'aggregate':'head'}"><h2>${r.aggregate?'Top30 Head Mean':`#${r.rank} · B${String(r.block).padStart(2,'0')} / H${String(r.head).padStart(2,'0')}`}</h2><div class="meta"><span class="pill">S${String(r.step).padStart(2,'0')}</span><span class="pill">t=${Number(r.timestep).toFixed(3)}</span><span class="pill">σ=${Number(r.sigma).toFixed(5)}</span>${r.pck32==null?'':`<span class="pill">LoRA PCK@32 ${Number(r.pck32).toFixed(3)}</span>`}<span class="pill">Q tokens ${r.query_count}</span></div><div class="scroll"><img loading="lazy" src="${e(r.image)}"></div></article>`).join(''):'<div class="pending">该组合尚未生成</div>'}
 async function load(){try{const s=await fetch('status.json?'+Date.now()).then(r=>r.json());document.getElementById('status').textContent=`${s.state} · ${s.message}`;const r=await fetch('catalog.json?'+Date.now());if(r.ok){data=await r.json();render()}else document.getElementById('records').innerHTML='<div class="pending">等待 step-500 与捕获结果</div>'}catch(err){document.getElementById('status').textContent=err}}ids.forEach(id=>document.getElementById(id).addEventListener('change',render));document.getElementById('refresh').addEventListener('click',load);load();
 </script></body></html>'''
     (root / "index.html").write_text(page, encoding="utf-8")
@@ -160,6 +160,15 @@ def build_sparse_model(checkpoint: Path, device: str):
     model.pipe.to(device=torch.device(device), dtype=model.pipe.torch_dtype)
     model.eval()
     return model, model.pipe, manifest_path
+
+
+def build_training_baseline(config_path: Path, device: str):
+    manifest = json.loads(config_path.read_text(encoding="utf-8"))
+    config = manifest["resolved_config"]
+    wan_root = Path(config["paths"]["wan_root"])
+    openvid_lora = Path(config["paths"]["pretrained_lora_checkpoint"])
+    pipe = gt.target.core.build_pipeline(wan_root, device, openvid_lora)
+    return None, pipe, config_path
 
 
 def load_regions(cache_dir: Path) -> tuple[list[dict], np.ndarray, np.ndarray]:
@@ -319,7 +328,14 @@ def render_strip(frames, values, context, mask, points, title: str, output: Path
 
 def capture(args) -> None:
     targets = top30_rows(args.selection, args.ranking)
-    model, pipe, experiment_manifest = build_sparse_model(args.checkpoint, args.device)
+    if args.baseline_config is not None:
+        model, pipe, experiment_manifest = build_training_baseline(
+            args.baseline_config, args.device
+        )
+        model_label = "Wan2.2 + OpenVid LoRA training baseline; no Top100 modules"
+    else:
+        model, pipe, experiment_manifest = build_sparse_model(args.checkpoint, args.device)
+        model_label = "fixed Top100 step-000500"
     cases = load_case_manifests(args.output_root / "dataset")
     catalog_cases, catalog_records, step_meta = [], [], {}
     for case_index, case in enumerate(cases, start=1):
@@ -412,7 +428,8 @@ def capture(args) -> None:
         del capture_state, gt_latents, shared, positive
         torch.cuda.empty_cache()
     atomic_json(args.output_root / "catalog.json", {
-        "checkpoint": str(args.checkpoint), "experiment_manifest": str(experiment_manifest),
+        "checkpoint": str(args.checkpoint) if args.checkpoint is not None else None,
+        "model": model_label, "experiment_manifest": str(experiment_manifest),
         "protocol": "GT_latent_teacher_forced_fixed_noise_object_query_global_softmax",
         "cases": catalog_cases, "steps": [step_meta[step] for step in STEPS],
         "targets": targets, "records": catalog_records,
@@ -429,6 +446,7 @@ def parse_args():
     parser.add_argument("--ranking", type=Path, default=DEFAULT_RANKING)
     parser.add_argument("--cache-root", type=Path)
     parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--baseline-config", type=Path)
     parser.add_argument("--device", default="cuda:0")
     return parser.parse_args()
 
@@ -440,8 +458,8 @@ def main():
     if args.mode == "prepare":
         prepare_dataset(args)
         return
-    if args.checkpoint is None or args.cache_root is None:
-        raise ValueError("capture requires --checkpoint and --cache-root")
+    if args.cache_root is None or (args.checkpoint is None and args.baseline_config is None):
+        raise ValueError("capture requires --cache-root and a checkpoint or baseline config")
     capture(args)
 
 

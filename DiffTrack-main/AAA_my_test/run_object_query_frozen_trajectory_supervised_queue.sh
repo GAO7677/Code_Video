@@ -6,7 +6,7 @@ ROOT="/data/gaoya/agent-data/outputs/attention_lora_object_query_frozen_trajecto
 mkdir -p "${ROOT}/logs"
 cd /home/gaoya/Code_Video/DiffTrack-main
 for seed in "$@"; do
-  [[ -f "${ROOT}/seeds/seed_$(printf '%06d' "${seed}")/complete" ]] && continue
+  [[ -f "${ROOT}/seeds/seed_$(printf '%06d' "${seed}")/p95_p99_complete" ]] && continue
   log="${ROOT}/logs/gpu${GPU}_seed${seed}.log"
   success=0
   for attempt in 1 2 3; do
