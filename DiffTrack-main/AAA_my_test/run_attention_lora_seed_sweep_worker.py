@@ -116,7 +116,7 @@ def base_argv(args: argparse.Namespace) -> list[str]:
         "--ranking-pool",
         "all720",
         "--extreme-count",
-        "100",
+        os.environ.get("ATTENTION_EXTREME_COUNT", "100"),
     ]
     if os.environ.get("OBJECT_QUERY_CAPTURE_ROOT", "").strip():
         argv.append("--overwrite")

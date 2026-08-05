@@ -21,6 +21,8 @@ def parse_args():
     parser.add_argument("--quantile", type=float, default=0.90)
     parser.add_argument("--radius", type=int, default=2)
     parser.add_argument("--single-component", action="store_true")
+    parser.add_argument("--removal-dilate-radius", type=int, default=0)
+    parser.add_argument("--backtrack-frames", type=int, default=0)
     return parser.parse_args()
 
 
@@ -105,6 +107,76 @@ def track(candidate, response, query_indices, radius, single_component=False):
     return trajectory
 
 
+def dilate_mask(mask, radius=1):
+    size = 2 * radius + 1
+    kernel = np.ones((size, size), np.uint8)
+    return cv2.dilate(mask.astype(np.uint8), kernel) > 0
+
+
+def best_matching_component(mask, anchor, max_center_distance=2.5):
+    _labels, regions = components(mask)
+    if not regions:
+        return None
+    anchor_neighborhood = dilate_mask(anchor, radius=1)
+    anchor_center = centroid(anchor)
+    matches = []
+    for region in regions:
+        overlap = int(np.count_nonzero(region & anchor_neighborhood))
+        distance = float(np.linalg.norm(centroid(region) - anchor_center))
+        if overlap > 0 or distance <= max_center_distance:
+            matches.append((overlap, -distance, region))
+    if not matches:
+        return None
+    return max(matches, key=lambda item: (item[0], item[1]))[2]
+
+
+def backward_prune(candidate, forward_trajectory, backtrack_frames):
+    corrected = forward_trajectory.copy()
+    rejected_events = np.zeros_like(corrected, dtype=bool)
+    backward_removed = np.zeros_like(corrected, dtype=bool)
+    if backtrack_frames <= 0:
+        return corrected, rejected_events, backward_removed
+
+    for frame in range(2, FRAMES):
+        previous = corrected[frame - 1]
+        current = corrected[frame]
+        if not previous.any() or not current.any():
+            continue
+
+        # Trigger only when the selected branch switches. A normally continuing
+        # branch must not cause nearby rejected candidates to prune its history.
+        if np.any(current & dilate_mask(previous, radius=1)):
+            continue
+        rejected_component = best_matching_component(
+            candidate[frame] & ~current,
+            previous,
+        )
+        if rejected_component is None:
+            continue
+
+        rejected_events[frame] |= rejected_component
+        anchor = rejected_component
+        earliest = max(2, frame - backtrack_frames)
+        for history_frame in range(frame - 1, earliest - 1, -1):
+            matched = best_matching_component(corrected[history_frame], anchor)
+            if matched is None:
+                break
+
+            # A merged component may contain both the rejected branch and the
+            # retained future branch. Stop rather than deleting both objects.
+            retained_future = corrected[history_frame + 1]
+            if retained_future.any() and np.any(
+                matched & dilate_mask(retained_future, radius=1)
+            ):
+                break
+
+            corrected[history_frame] &= ~matched
+            backward_removed[history_frame] |= matched
+            anchor = matched
+
+    return corrected, rejected_events, backward_removed
+
+
 def overlay(frame, values, binary=False, color=(30, 50, 235)):
     frame = cv2.resize(frame, (320, 183), interpolation=cv2.INTER_AREA)
     values = cv2.resize(values.astype(np.float32), (320, 183), interpolation=cv2.INTER_NEAREST)
@@ -153,11 +225,25 @@ def main():
         normalized = mean / frame_max[:, None, None]
         thresholds = np.quantile(normalized.reshape(FRAMES, -1), args.quantile, axis=1)
         candidate = normalized >= thresholds[:, None, None]
-        trajectory = track(
+        forward_trajectory = track(
             candidate, normalized, query_indices, args.radius, args.single_component
+        )
+        trajectory, rejected_events, backward_removed = backward_prune(
+            candidate,
+            forward_trajectory,
+            args.backtrack_frames,
         )
         forbidden = candidate & ~trajectory
         forbidden[:2] = False
+        if args.removal_dilate_radius > 0:
+            dilate_kernel = np.ones(
+                (2 * args.removal_dilate_radius + 1,) * 2, np.uint8
+            )
+            for frame in range(2, FRAMES):
+                expanded = cv2.dilate(
+                    forbidden[frame].astype(np.uint8), dilate_kernel
+                ) > 0
+                forbidden[frame] = expanded & ~trajectory[frame]
         stem = f"seed{seed:06d}__step{step:02d}__{branch}__{region}"
         mask_name = f"{stem}.npz"
         np.savez_compressed(
@@ -165,6 +251,9 @@ def main():
             mean=mean,
             normalized=normalized,
             candidate=candidate,
+            forward_trajectory=forward_trajectory,
+            rejected_events=rejected_events,
+            backward_removed=backward_removed,
             trajectory=trajectory,
             forbidden=forbidden,
             query_token_indices=query_indices,
@@ -177,28 +266,70 @@ def main():
             quantile=np.float32(args.quantile),
             radius=np.int32(args.radius),
             single_component=np.bool_(args.single_component),
+            removal_dilate_radius=np.int32(args.removal_dilate_radius),
+            backtrack_frames=np.int32(args.backtrack_frames),
         )
         images = {
             "mean": f"{stem}__mean.jpg",
             "candidate": f"{stem}__candidate.jpg",
+            "forward_trajectory": f"{stem}__forward_trajectory.jpg",
+            "rejected_events": f"{stem}__rejected_events.jpg",
+            "backward_removed": f"{stem}__backward_removed.jpg",
             "trajectory": f"{stem}__trajectory.jpg",
             "forbidden": f"{stem}__forbidden.jpg",
         }
         rendered = {
-            "mean": strip(frames, normalized, f"S{step:03d} {branch} · No Intervention Top100 Mean · per-frame scale"),
-            "candidate": strip(frames, candidate, "All high-response regions · per-frame P90", True, (35, 160, 230)),
+            "mean": strip(frames, normalized, f"S{step:03d} {branch} · No Intervention Top{num_heads} Mean · per-frame scale"),
+            "candidate": strip(
+                frames,
+                candidate,
+                f"All high-response regions · per-frame P{int(round(args.quantile * 100))}",
+                True,
+                (35, 160, 230),
+            ),
+            "forward_trajectory": strip(
+                frames,
+                forward_trajectory,
+                "Forward Single-Component Trajectory · before backward correction",
+                True,
+                (55, 185, 80),
+            ),
+            "rejected_events": strip(
+                frames,
+                rejected_events,
+                "Rejected Component · triggers backward tracing",
+                True,
+                (30, 135, 245),
+            ),
+            "backward_removed": strip(
+                frames,
+                backward_removed,
+                f"Backward-Traced Components · max {args.backtrack_frames} latent frames",
+                True,
+                (180, 65, 210),
+            ),
             "trajectory": strip(
                 frames,
                 trajectory,
                 (
-                    "Single connected trajectory · continuity first · radius 2"
+                    f"Corrected Single-Component Trajectory · backtrack {args.backtrack_frames}"
                     if args.single_component
-                    else "Multi-component continuous trajectory · radius 2"
+                    else f"Multi-component continuous trajectory · radius {args.radius}"
                 ),
                 True,
                 (55, 185, 80),
             ),
-            "forbidden": strip(frames, forbidden, "F_t · high response outside continuous trajectory", True, (35, 40, 235)),
+            "forbidden": strip(
+                frames,
+                forbidden,
+                (
+                    f"Dilated F_t · radius {args.removal_dilate_radius} · trajectory protected"
+                    if args.removal_dilate_radius > 0
+                    else "F_t · high response outside continuous trajectory"
+                ),
+                True,
+                (35, 40, 235),
+            ),
         }
         for key, image in rendered.items():
             cv2.imwrite(str(args.render_root / images[key]), image, [cv2.IMWRITE_JPEG_QUALITY, 92])
@@ -207,6 +338,8 @@ def main():
             "region_name": region, "region_phrase": phrase,
             "num_heads": num_heads, "quantile": args.quantile, "radius": args.radius,
             "single_component": args.single_component,
+            "removal_dilate_radius": args.removal_dilate_radius,
+            "backtrack_frames": args.backtrack_frames,
             "mask": mask_name, "images": images,
         })
     (args.render_root / "manifest.json").write_text(
