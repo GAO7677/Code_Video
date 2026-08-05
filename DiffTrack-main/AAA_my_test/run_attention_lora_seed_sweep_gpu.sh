@@ -8,6 +8,7 @@ fi
 
 GPU="$1"
 NUM_GPUS="$2"
+SHARD_ID="${ATTENTION_SEED_SWEEP_SHARD_ID:-${GPU}}"
 DIFFTRACK="/home/gaoya/Code_Video/DiffTrack-main"
 PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 WORKER="${DIFFTRACK}/AAA_my_test/run_attention_lora_seed_sweep_worker.py"
@@ -107,7 +108,7 @@ run_profile() {
 }
 
 for index in "${!SEEDS[@]}"; do
-  if (( index % NUM_GPUS != GPU )); then
+  if (( index % NUM_GPUS != SHARD_ID )); then
     continue
   fi
   seed="${SEEDS[index]}"
@@ -120,4 +121,5 @@ for index in "${!SEEDS[@]}"; do
   done
 done
 
-printf 'gpu=%s\ncompleted=%s\n' "${GPU}" "$(date -u +%FT%TZ)" > "${ROOT}/logs/gpu${GPU}.complete"
+COMPLETE_NAME="${ATTENTION_SEED_SWEEP_COMPLETE_NAME:-gpu${GPU}.complete}"
+printf 'gpu=%s\nshard=%s\ncompleted=%s\n' "${GPU}" "${SHARD_ID}" "$(date -u +%FT%TZ)" > "${ROOT}/logs/${COMPLETE_NAME}"

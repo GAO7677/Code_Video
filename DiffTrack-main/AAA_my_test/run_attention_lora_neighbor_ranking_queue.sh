@@ -12,34 +12,27 @@ mkdir -p "${RANKING_ROOT}/logs"
 cp -n "${CURRENT}/seeds.txt" "${RANKING_ROOT}/seeds.txt"
 exec > >(tee -a "${RANKING_ROOT}/logs/queue.log") 2>&1
 
-echo "[$(date -Is)] waiting for current legacy GPU 0-5 shards"
+echo "[$(date -Is)] waiting for all current logical shards"
 while true; do
   ready=1
   for gpu in 0 1 2 3 4 5; do
     [[ -f "${CURRENT}/logs/gpu${gpu}.complete" ]] || ready=0
   done
+  [[ -f "${CURRENT}/logs/rescue_shard6.complete" ]] || ready=0
+  [[ -f "${CURRENT}/logs/rescue_shard7.complete" ]] || ready=0
   (( ready )) && break
   sleep 60
 done
-
-echo "[$(date -Is)] start current six-way rescue"
-pids=()
-for gpu in 0 1 2 3 4 5; do
-  (while ! ATTENTION_SEED_SWEEP_PILOT_SEED=-1 \
-      bash "${CURRENT_RUNNER}" "${gpu}" 6; do sleep 120; done) \
-      >> "${RANKING_ROOT}/logs/current_rescue_gpu${gpu}.log" 2>&1 &
-  pids+=("$!")
-done
-for pid in "${pids[@]}"; do wait "${pid}"; done
 printf 'completed=%s\n' "$(date -u +%FT%TZ)" > "${CURRENT}/GENERATION_COMPLETE"
 
 echo "[$(date -Is)] start neighbor-ranking 50-seed matrix"
 pids=()
-for gpu in 0 1 2 3 4 5; do
+for gpu in 0 1 2 3 5; do
   (while ! bash "${RANKING_RUNNER}" "${gpu}" 6; do sleep 120; done) \
       >> "${RANKING_ROOT}/logs/launcher_gpu${gpu}.log" 2>&1 &
   pids+=("$!")
 done
 for pid in "${pids[@]}"; do wait "${pid}"; done
+while [[ ! -f "${RANKING_ROOT}/logs/gpu4.complete" ]]; do sleep 60; done
 printf 'completed=%s\n' "$(date -u +%FT%TZ)" > "${RANKING_ROOT}/GENERATION_COMPLETE"
 echo "[$(date -Is)] neighbor-ranking matrix complete"
