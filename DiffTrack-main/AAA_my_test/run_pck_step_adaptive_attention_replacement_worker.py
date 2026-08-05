@@ -42,6 +42,8 @@ if NOISE_MODE not in {
     "probability_object_query_continuity",
     "probability_object_query_main_component_continuity",
     "probability_object_query_group_mean_continuity",
+    "probability_object_query_trajectory_probe",
+    "probability_object_query_frozen_trajectory",
     "probability_object_query_identity",
     "probability_identity",
 }:
@@ -156,10 +158,19 @@ class AdaptiveQKLogitNoise:
         self.group_mean_apply: dict[str, dict[str, Any]] = {}
         self.group_mean_masks: dict[str, dict[str, torch.Tensor]] = {}
         self.group_mean_capture_entries: dict[tuple[str, str], dict[str, Any]] = {}
+        trajectory_probe_root = os.environ.get("OBJECT_TRAJECTORY_PROBE_ROOT", "").strip()
+        self.trajectory_probe_root = Path(trajectory_probe_root) if trajectory_probe_root else None
+        trajectory_mask_root = os.environ.get("OBJECT_TRAJECTORY_MASK_ROOT", "").strip()
+        self.trajectory_mask_root = Path(trajectory_mask_root) if trajectory_mask_root else None
+        trajectory_apply_root = os.environ.get("OBJECT_TRAJECTORY_APPLY_CAPTURE_ROOT", "").strip()
+        self.trajectory_apply_capture_root = Path(trajectory_apply_root) if trajectory_apply_root else None
+        self.trajectory_masks: dict[tuple[int, str, str], torch.Tensor] = {}
         if self.noise_mode in {
             "probability_object_query_continuity",
             "probability_object_query_main_component_continuity",
             "probability_object_query_group_mean_continuity",
+            "probability_object_query_trajectory_probe",
+            "probability_object_query_frozen_trajectory",
             "probability_object_query_identity",
         }:
             from AAA_my_test.object_query_attention_capture_headwise_pck import pck_query_regions
@@ -178,6 +189,19 @@ class AdaptiveQKLogitNoise:
                             entry.get("ranking_score", entry.get("macro_pck32", 0.0))
                         )
                     break
+        if self.noise_mode == "probability_object_query_frozen_trajectory":
+            if self.trajectory_mask_root is None:
+                raise RuntimeError("OBJECT_TRAJECTORY_MASK_ROOT is required for frozen trajectory")
+            for path in sorted(self.trajectory_mask_root.glob("*.npz")):
+                with np.load(path, allow_pickle=False) as data:
+                    key = (
+                        int(np.asarray(data["step"]).item()),
+                        str(np.asarray(data["cfg_branch"]).item()),
+                        str(np.asarray(data["region_name"]).item()),
+                    )
+                    self.trajectory_masks[key] = torch.from_numpy(
+                        np.asarray(data["forbidden"], dtype=np.bool_)
+                    )
         self.original_model_fn = pipe.model_fn
         self.original_forwards: list[tuple[Any, Any]] = []
         by_block: dict[int, dict[str, list[int]]] = {}
@@ -228,25 +252,44 @@ class AdaptiveQKLogitNoise:
         branch_active = (
             CFG_BRANCH_MODE == "both" or CFG_BRANCH_MODE == self.current_cfg_branch
         )
-        if self.noise_mode == "probability_object_query_group_mean_continuity":
+        if self.noise_mode in {
+            "probability_object_query_group_mean_continuity",
+            "probability_object_query_frozen_trajectory",
+        }:
             active_step_end = int(os.environ.get("OBJECT_GROUP_ACTIVE_STEP_END", "39"))
             branch_active = branch_active and 0 <= self.current_step <= active_step_end
         if self.adaptive_prefix is None or self.current_step < 0 or not branch_active:
             self.group = None
         else:
             self.group = f"{self.adaptive_prefix}_step_{self.current_step:02d}"
-        if (
-            self.noise_mode != "probability_object_query_group_mean_continuity"
-            or self.group is None
-        ):
+        if self.group is None:
+            return self.original_model_fn(*args, **kwargs)
+
+        if self.noise_mode == "probability_object_query_frozen_trajectory":
+            self.group_mean_apply = {}
+            self.group_mean_phase = "apply"
+            result = self.original_model_fn(*args, **kwargs)
+            self._write_frozen_trajectory_apply_capture()
+            self.group_mean_phase = "idle"
+            return result
+
+        if self.noise_mode not in {
+            "probability_object_query_group_mean_continuity",
+            "probability_object_query_trajectory_probe",
+        }:
             return self.original_model_fn(*args, **kwargs)
 
         self.group_mean_probe = {}
         self.group_mean_apply = {}
         self.group_mean_masks = {}
         self.group_mean_phase = "probe"
-        self.original_model_fn(*args, **kwargs)
+        probe_result = self.original_model_fn(*args, **kwargs)
         self._finalize_group_mean_masks()
+        if self.noise_mode == "probability_object_query_trajectory_probe":
+            self._write_trajectory_probe_capture()
+            self.call_count += 1
+            self.group_mean_phase = "idle"
+            return probe_result
         self.group_mean_phase = "apply"
         result = self.original_model_fn(*args, **kwargs)
         self._finalize_group_mean_capture()
@@ -357,6 +400,132 @@ class AdaptiveQKLogitNoise:
             apply_entry["after_sum"] += region_after.sum(dim=2).reshape_as(response).sum(dim=1)
             apply_entry["heads"] += len(heads)
         return query_rows, after
+
+    def _write_trajectory_probe_capture(self) -> None:
+        if self.trajectory_probe_root is None:
+            return
+        self.trajectory_probe_root.mkdir(parents=True, exist_ok=True)
+        expected_heads = int(os.environ.get("OBJECT_GROUP_EXPECTED_HEADS", "100"))
+        seed = int(os.environ.get("ATTENTION_NOISE_SEED", "0"))
+        for name, entry in self.group_mean_probe.items():
+            if int(entry["heads"]) != expected_heads:
+                raise RuntimeError(
+                    f"Trajectory probe collected {entry['heads']} heads for {name}, expected {expected_heads}"
+                )
+            region = entry["region"]
+            mean = (entry["sum"] / expected_heads).mean(dim=0).detach().cpu().numpy()
+            filename = (
+                f"seed{seed:06d}__step{self.current_step:02d}__{self.current_cfg_branch}"
+                f"__{name}.npz"
+            )
+            np.savez_compressed(
+                self.trajectory_probe_root / filename,
+                mean=mean,
+                query_points=region["points"],
+                query_mask=region["mask"],
+                query_token_indices=region["token_indices"],
+                query_context_frame=self.object_continuity_context_frame,
+                region_name=np.asarray(name),
+                region_phrase=np.asarray(region["phrase"]),
+                step=np.int32(self.current_step),
+                cfg_branch=np.asarray(self.current_cfg_branch),
+                seed=np.int32(seed),
+                num_heads=np.int32(expected_heads),
+                query_aggregation=np.asarray("sum8_queries_then_mean100_heads"),
+            )
+
+    def _frozen_trajectory_probabilities(
+        self, selected_q, key_t, scale: float, heads: list[int], block: int
+    ):
+        latent_frames = int(os.environ.get("ATTENTION_MASK_LATENT_FRAMES", "13"))
+        sequence = int(selected_q.shape[2])
+        spatial_tokens = sequence // latent_frames
+        if sequence % latent_frames or spatial_tokens != 16 * 28:
+            raise RuntimeError(f"Expected 13x16x28 tokens, got {sequence}")
+        query_rows = sorted(
+            {
+                int(index)
+                for region in self.object_continuity_regions
+                for index in region["token_indices"]
+            }
+        )
+        row_tensor = torch.as_tensor(query_rows, device=selected_q.device, dtype=torch.long)
+        before = torch.softmax(
+            torch.matmul(selected_q[:, :, row_tensor], key_t).float() * scale, dim=-1
+        )
+        after = before.clone()
+        row_positions = {row: index for index, row in enumerate(query_rows)}
+        for region in self.object_continuity_regions:
+            name = str(region["name"])
+            mask_key = (self.current_step, self.current_cfg_branch, name)
+            if mask_key not in self.trajectory_masks:
+                raise RuntimeError(f"Missing frozen trajectory mask: {mask_key}")
+            region_rows = [int(index) for index in region["token_indices"]]
+            positions = torch.as_tensor(
+                [row_positions[index] for index in region_rows],
+                device=selected_q.device,
+                dtype=torch.long,
+            )
+            region_before = before[:, :, positions]
+            forbidden = self.trajectory_masks[mask_key].to(selected_q.device)
+            forbidden_flat = forbidden.reshape(latent_frames * spatial_tokens)
+            region_after = region_before.masked_fill(
+                forbidden_flat[None, None, None, :], 0.0
+            )
+            row_sum = region_after.sum(dim=-1, keepdim=True)
+            region_after = torch.where(
+                row_sum > 0,
+                region_after / row_sum.clamp_min(1e-12),
+                region_before,
+            )
+            after[:, :, positions] = region_after
+            before_response = region_before.sum(dim=2).reshape(
+                region_before.shape[0], region_before.shape[1], latent_frames, 16, 28
+            )
+            after_response = region_after.sum(dim=2).reshape_as(before_response)
+            entry = self.group_mean_apply.setdefault(
+                name,
+                {
+                    "before_sum": torch.zeros_like(before_response[:, 0]),
+                    "after_sum": torch.zeros_like(after_response[:, 0]),
+                    "heads": 0,
+                    "region": region,
+                },
+            )
+            entry["before_sum"] += before_response.sum(dim=1)
+            entry["after_sum"] += after_response.sum(dim=1)
+            entry["heads"] += len(heads)
+        return query_rows, after
+
+    def _write_frozen_trajectory_apply_capture(self) -> None:
+        if self.trajectory_apply_capture_root is None:
+            return
+        self.trajectory_apply_capture_root.mkdir(parents=True, exist_ok=True)
+        expected_heads = int(os.environ.get("OBJECT_GROUP_EXPECTED_HEADS", "100"))
+        seed = int(os.environ.get("ATTENTION_NOISE_SEED", "0"))
+        for name, entry in self.group_mean_apply.items():
+            if int(entry["heads"]) != expected_heads:
+                raise RuntimeError(
+                    f"Frozen apply collected {entry['heads']} heads for {name}, expected {expected_heads}"
+                )
+            before = (entry["before_sum"] / expected_heads).mean(dim=0).detach().cpu().numpy()
+            after = (entry["after_sum"] / expected_heads).mean(dim=0).detach().cpu().numpy()
+            filename = (
+                f"seed{seed:06d}__step{self.current_step:02d}__{self.current_cfg_branch}"
+                f"__{name}.npz"
+            )
+            np.savez_compressed(
+                self.trajectory_apply_capture_root / filename,
+                before=before,
+                after=after,
+                removed=np.clip(before - after, 0.0, None),
+                region_name=np.asarray(name),
+                region_phrase=np.asarray(entry["region"]["phrase"]),
+                step=np.int32(self.current_step),
+                cfg_branch=np.asarray(self.current_cfg_branch),
+                seed=np.int32(seed),
+                num_heads=np.int32(expected_heads),
+            )
 
     def _finalize_group_mean_masks(self) -> None:
         expected_heads = int(os.environ.get("OBJECT_GROUP_EXPECTED_HEADS", "100"))
@@ -734,14 +903,23 @@ class AdaptiveQKLogitNoise:
             "probability_object_query_continuity",
             "probability_object_query_main_component_continuity",
             "probability_object_query_group_mean_continuity",
+            "probability_object_query_trajectory_probe",
+            "probability_object_query_frozen_trajectory",
             "probability_object_query_identity",
         }:
-            if self.noise_mode == "probability_object_query_group_mean_continuity":
+            if self.noise_mode in {
+                "probability_object_query_group_mean_continuity",
+                "probability_object_query_trajectory_probe",
+            }:
                 continuity_rows, continuity_after = self._group_mean_object_probabilities(
                     selected_q, key_t, scale, heads, block
                 )
                 if self.group_mean_phase == "probe":
                     return original(q, k, v)
+            elif self.noise_mode == "probability_object_query_frozen_trajectory":
+                continuity_rows, continuity_after = self._frozen_trajectory_probabilities(
+                    selected_q, key_t, scale, heads, block
+                )
             else:
                 continuity_rows, continuity_after = self._object_continuity_probabilities(
                     selected_q, key_t, scale, heads, block
@@ -786,6 +964,7 @@ class AdaptiveQKLogitNoise:
             elif self.noise_mode in {
                 "probability_object_query_continuity",
                 "probability_object_query_group_mean_continuity",
+                "probability_object_query_frozen_trajectory",
                 "probability_object_query_identity",
             }:
                 probabilities = before_probabilities.clone()
@@ -1120,6 +1299,8 @@ def write_experiment_metadata() -> None:
                     "probability_object_query_continuity": "object_query_temporal_spatial_continuity",
                     "probability_object_query_main_component_continuity": "object_query_main_component_temporal_spatial_continuity",
                     "probability_object_query_group_mean_continuity": "object_query_group_mean_double_pass_temporal_spatial_continuity",
+                    "probability_object_query_trajectory_probe": "object_query_original_top100_mean_trajectory_probe",
+                    "probability_object_query_frozen_trajectory": "object_query_frozen_trajectory_mask_intervention",
                     "probability_object_query_identity": "object_query_identity_no_intervention",
                     "probability_additive": "direct_attention_probability_additive_noise",
                     "logit": "direct_qk_logit_noise",

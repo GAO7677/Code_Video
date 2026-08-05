@@ -612,6 +612,46 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/object-query-frozen-trajectory":
+            self.send_payload(
+                object_query_frozen_trajectory_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/object-query-frozen-trajectory/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                object_query_frozen_trajectory_catalog(
+                    params.get("seed", ["47326"])[0],
+                    params.get("stage", ["all_steps"])[0],
+                    params.get("step", ["39"])[0],
+                    params.get("branch", ["conditional"])[0],
+                ),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path in {
+            "/api/object-query-frozen-trajectory/image",
+            "/api/object-query-frozen-trajectory/video",
+        }:
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_frozen_trajectory_asset(
+                params.get("seed", ["47326"])[0],
+                params.get("stage", ["all_steps"])[0],
+                params.get("kind", [""])[0],
+                params.get("name", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown frozen-trajectory asset")
+            viewer.send_file_with_range(
+                self, asset, "video/mp4" if path.endswith("/video") else "image/jpeg"
+            )
+            return
         if path == "/api/object-query-group-mean-continuity/catalog":
             from urllib.parse import parse_qs
 
@@ -2555,6 +2595,9 @@ OBJECT_QUERY_TOP100_MEAN_ROOT = Path(
 OBJECT_QUERY_GROUP_MEAN_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_object_query_group_mean_case001460"
 )
+OBJECT_QUERY_FROZEN_TRAJECTORY_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_object_query_frozen_trajectory_case001460"
+)
 OBJECT_QUERY_TOP100_MEAN_SEEDS = (90094, 35075, 21890, 49530, 47326, 32466)
 
 
@@ -2759,6 +2802,90 @@ def object_query_group_mean_page():
 :root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--red:#b1432d;--green:#176a5c;--gold:#b78024;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2450px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.videos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.video,.object{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:10px}.video video{display:block;width:100%;background:#111}.object{overflow:auto;margin:14px 0}.object>h2{position:sticky;left:0;width:max-content;margin:0 0 9px}.row{margin:8px 0 18px}.row h3{position:sticky;left:0;width:max-content;margin:0 0 4px;padding:4px 9px;background:#ece4d6;border-left:6px solid var(--blue)}.row.mask h3{border-left-color:var(--gold)}.row.after h3{border-left-color:var(--green)}.row.removed h3{border-left-color:var(--red)}.explain{position:sticky;left:0;width:min(1180px,calc(100vw - 52px));margin:0 0 8px;padding:8px 11px;background:#f5f0e6;border:1px solid #d7cdbb;border-radius:7px;font:13px/1.55 "Noto Sans SC","Source Han Sans SC",sans-serif;color:#405048}.explain b{color:var(--ink)}.row img{display:block;min-width:2260px;width:100%;border:1px solid #d8cfbf}.pending{padding:52px 15px;text-align:center;border:1px dashed var(--line)}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:13px 18px;background:var(--green);color:#fff}@media(max-width:900px){header{position:static}.videos{grid-template-columns:1fr}}
 </style></head><body><button id="replay" class="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/object-query-top100-mean-overlay?v=1">Top100 Mean 对照</a><h1>Top100 Group-Mean Continuity</h1><p>Probe: SUM 8 object queries → MEAN Top100 heads；P90 候选中移除不邻接上一帧 Top-5 主连通分量的 key，再把同一 forbidden mask 回写全部 Top100 heads。</p><div class="tools"><label>Seed <select id="seed"></select></label><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="content"></section></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'90094',stage=q.get('stage')||'all_steps';const api='/api/object-query-group-mean-continuity',img=(kind,name)=>`${api}/image?seed=${seed}&stage=${stage}&kind=${kind}&name=${encodeURIComponent(name)}`,vid=kind=>`${api}/video?seed=${seed}&stage=${stage}&kind=${kind}`,row=(title,cls,kind,name,description,scale='')=>`<section class="row ${cls}"><h3>${title}${scale?` · ${scale}`:''}</h3><p class="explain">${description}</p>${name?`<img loading="lazy" src="${img(kind,name)}">`:'<div class="pending">生成/聚合中</div>'}</section>`;function sync(){const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u)}function render(d){const sel=document.getElementById('seed');if(sel.options.length!==d.seeds.length)sel.innerHTML=d.seeds.map(x=>`<option>${x}</option>`).join('');sel.value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`Original ${d.identity_ready}/2 · Group ${d.group_ready}/2 · color scale: per frame`;document.getElementById('videos').innerHTML=`<article class="video"><h2>Wan+LoRA Original</h2><p>同一 seed、40 个去噪步、49 帧，不修改任何 attention，用作视频质量与运动变化基线。</p>${d.original_video_ready?`<video controls preload="metadata" playsinline src="${vid('original')}"></video>`:'<div class="pending">等待 baseline</div>'}</article><article class="video"><h2>Top100 Group-Mean Intervention · ${stage==='all_steps'?'S000-S039':'S000-S009'}</h2><p>对 PCK@32 Top100 heads 使用组级 forbidden mask；右侧视频是该 mask 实际回写 attention 后的生成结果。</p>${d.group_video_ready?`<video controls preload="metadata" playsinline src="${vid('group')}"></video>`:'<div class="pending">等待双遍推理</div>'}</article>`;document.getElementById('content').innerHTML=d.records.length?d.records.map(r=>`<article class="object"><h2>${e(r.region_name)} · ${e(r.region_phrase)} · ${r.num_heads}/100 heads</h2>${row('1. No Intervention · Top100 Mean','', 'original',r.original_image,'<b>无干预参照。</b>每个 latent key 帧独立计算色标，不再让强帧压暗其他帧。')}${row('2. Group Before · Top100 Mean','', 'group',r.images.before,'<b>干预前的真实 input attention。</b>每个 K 帧独立缩放，但同一个 K 帧的 Before/After 共用局部 vmax，因此帧内可公平比较。','per-frame shared scale')}${row('3. Current Candidate · P90','mask','group',r.images.p90,'<b>当前帧待检查的高响应候选。</b>它是逐帧计算的二值 mask，不受连续值热力图色标影响。')}${row('4. Previous Anchor · Top-5 Main Connected Component','mask','group',r.images.main_component,'<b>上一帧连续性锚点。</b>逐帧 Top-5 后保留包含峰值的主连通分量；二值显示不做色标归一化。')}${row('5. Forbidden Mask · P90 outside radius-1 neighborhood','removed','group',r.images.forbidden,'<b>最终施加的二值 key mask。</b>当前帧 P90 中不邻接上一帧主连通分量的位置；K00/K01 不修改。')}${row('6. Group After · Top100 Mean','after','group',r.images.after,'<b>干预后的 attention。</b>逐帧缩放，并与同一帧 Before 共用 vmax；不同 K 帧之间不共享 vmax。','per-frame shared scale')}${row('7. Removed Attention Mass','removed','group',r.images.removed,'<b>被移除的注意力质量。</b>每个 K 帧独立缩放，以显示弱响应帧中实际发生的删除；颜色不能直接用于比较不同 K 帧的绝对大小。','per-frame scale')}</article>`).join(''):'<div class="pending">等待该 seed/stage 的 group-mean capture</div>'}async function load(){const d=await fetch(`${api}/catalog?seed=${seed}&stage=${stage}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;else stage=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
+def object_query_frozen_trajectory_asset(seed: str, stage: str, kind: str, name: str):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    if seed_value not in OBJECT_QUERY_TOP100_MEAN_SEEDS or stage not in {"all_steps", "steps00_09"}:
+        return None
+    seed_root = OBJECT_QUERY_FROZEN_TRAJECTORY_ROOT / "seeds" / f"seed_{seed_value:06d}"
+    if kind == "trajectory" and Path(name).name == name and name.endswith(".jpg"):
+        return seed_root / "trajectory" / "overlays" / name
+    if kind == "apply" and Path(name).name == name and name.endswith(".jpg"):
+        return seed_root / "apply" / stage / "overlays" / name
+    if kind == "original_video":
+        return (
+            Path("/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460")
+            / "seeds" / f"seed_{seed_value:06d}" / "original.mp4"
+        )
+    if kind == "intervention_video":
+        suffix = "steps_00_40" if stage == "all_steps" else "steps_00_10"
+        return (
+            seed_root / "apply" / stage / "videos" / "lora" / "cases"
+            / "0613pybullet_sample_001460_w002" / f"top100_{suffix}.mp4"
+        )
+    return None
+
+
+def object_query_frozen_trajectory_catalog(seed: str, stage: str, step: str, branch: str):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        seed_value = 47326
+    if seed_value not in OBJECT_QUERY_TOP100_MEAN_SEEDS:
+        seed_value = 47326
+    if stage not in {"all_steps", "steps00_09"}:
+        stage = "all_steps"
+    try:
+        step_value = min(39, max(0, int(step)))
+    except ValueError:
+        step_value = 39
+    if branch not in {"conditional", "unconditional"}:
+        branch = "conditional"
+    seed_root = OBJECT_QUERY_FROZEN_TRAJECTORY_ROOT / "seeds" / f"seed_{seed_value:06d}"
+    trajectory_payload = load_payload(seed_root / "trajectory" / "overlays" / "manifest.json") or {}
+    apply_payload = load_payload(seed_root / "apply" / stage / "overlays" / "manifest.json") or {}
+    trajectory = {
+        row["region_name"]: row
+        for row in trajectory_payload.get("records", [])
+        if int(row.get("step", -1)) == step_value and row.get("cfg_branch") == branch
+    }
+    applied = {
+        row["region_name"]: row
+        for row in apply_payload.get("records", [])
+        if int(row.get("step", -1)) == step_value and row.get("cfg_branch") == branch
+    }
+    records = []
+    for region in sorted(set(trajectory) | set(applied)):
+        source = trajectory.get(region, {})
+        result = applied.get(region, {})
+        records.append({
+            "region_name": region,
+            "region_phrase": (source or result).get("region_phrase", region),
+            "num_heads": max(int(source.get("num_heads", 0)), int(result.get("num_heads", 0))),
+            "quantile": source.get("quantile", 0.90),
+            "radius": source.get("radius", 2),
+            "trajectory_images": source.get("images", {}),
+            "apply_images": result.get("images", {}),
+        })
+    return {
+        "seed": seed_value, "stage": stage, "step": step_value, "branch": branch,
+        "seeds": list(OBJECT_QUERY_TOP100_MEAN_SEEDS), "records": records,
+        "probe_ready": len(trajectory), "apply_ready": len(applied),
+        "original_video_ready": bool((asset := object_query_frozen_trajectory_asset(str(seed_value), stage, "original_video", "")) and asset.is_file()),
+        "intervention_video_ready": bool((asset := object_query_frozen_trajectory_asset(str(seed_value), stage, "intervention_video", "")) and asset.is_file()),
+    }
+
+
+def object_query_frozen_trajectory_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Frozen Object Trajectory Mask</title><style>
+:root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--red:#b1432d;--green:#176a5c;--gold:#b78024;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2450px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.videos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.video,.object{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:10px}.video video{display:block;width:100%;background:#111}.object{overflow:auto;margin:14px 0}.object>h2{position:sticky;left:0;width:max-content;margin:0 0 9px}.row{margin:8px 0 18px}.row h3{position:sticky;left:0;width:max-content;margin:0 0 4px;padding:4px 9px;background:#ece4d6;border-left:6px solid var(--blue)}.row.mask h3{border-left-color:var(--gold)}.row.keep h3{border-left-color:var(--green)}.row.remove h3{border-left-color:var(--red)}.explain{position:sticky;left:0;width:min(1180px,calc(100vw - 52px));margin:0 0 8px;padding:8px 11px;background:#f5f0e6;border:1px solid #d7cdbb;border-radius:7px;font:13px/1.55 "Noto Sans SC","Source Han Sans SC",sans-serif}.row img{display:block;min-width:2260px;width:100%;border:1px solid #d8cfbf}.pending{padding:52px 15px;text-align:center;border:1px dashed var(--line)}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:13px 18px;background:var(--green);color:#fff}@media(max-width:900px){header{position:static}.videos{grid-template-columns:1fr}}
+</style></head><body><button id="replay" class="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/object-query-group-mean-continuity?v=3">上一版 Group Mean</a><h1>Original Top100 Mean → Frozen Object Trajectory</h1><p>先从完全无干预 attention 提取空间连续的对象响应轨迹，再把偏离轨迹的 P90 高响应区域作为 frozen mask 回写全部 Top100 heads。</p><div class="tools"><label>Seed <select id="seed"></select></label><label>Apply Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><label>Denoise Step <select id="step"></select></label><label>CFG Branch <select id="branch"><option value="conditional">Conditional</option><option value="unconditional">Unconditional</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="content"></section></main><script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'47326',stage=q.get('stage')||'all_steps',step=q.get('step')||'39',branch=q.get('branch')||'conditional';const api='/api/object-query-frozen-trajectory',image=(kind,name)=>`${api}/image?seed=${seed}&stage=${stage}&kind=${kind}&name=${encodeURIComponent(name)}`,video=kind=>`${api}/video?seed=${seed}&stage=${stage}&kind=${kind}`,row=(title,cls,kind,name,text)=>`<section class="row ${cls}"><h3>${title}</h3><p class="explain">${text}</p>${name?`<img loading="lazy" src="${image(kind,name)}">`:'<div class="pending">等待该步骤 capture</div>'}</section>`;function sync(){const u=new URL(location.href);for(const [k,v] of Object.entries({seed,stage,step,branch}))u.searchParams.set(k,v);history.replaceState(null,'',u)}function render(d){const ss=document.getElementById('seed');if(ss.options.length!==d.seeds.length)ss.innerHTML=d.seeds.map(x=>`<option>${x}</option>`).join('');ss.value=String(seed);const ds=document.getElementById('step');if(!ds.options.length)ds.innerHTML=Array.from({length:40},(_,i)=>`<option value="${i}">S${String(i).padStart(3,'0')}</option>`).join('');ds.value=String(step);document.getElementById('stage').value=stage;document.getElementById('branch').value=branch;document.getElementById('status').textContent=`S${String(d.step).padStart(3,'0')} ${d.branch} · trajectory ${d.probe_ready}/2 · apply ${d.apply_ready}/2`;document.getElementById('videos').innerHTML=`<article class="video"><h2>Wan+LoRA Original</h2>${d.original_video_ready?`<video controls preload="metadata" playsinline src="${video('original_video')}"></video>`:'<div class="pending">等待 baseline</div>'}</article><article class="video"><h2>Frozen Trajectory Intervention · ${stage==='all_steps'?'S000-S039':'S000-S009'}</h2>${d.intervention_video_ready?`<video controls preload="metadata" playsinline src="${video('intervention_video')}"></video>`:'<div class="pending">等待 intervention</div>'}</article>`;document.getElementById('content').innerHTML=d.records.length?d.records.map(r=>`<article class="object"><h2>${esc(r.region_name)} · ${esc(r.region_phrase)} · ${r.num_heads}/100 heads</h2>${row('1. No Intervention · Top100 Mean','', 'trajectory',r.trajectory_images.mean,'完全无干预推理中 SUM 8 object queries / MEAN Top100 heads；13 个 K 帧分别缩放。')}${row('2. All High-Response Regions · P90','mask','trajectory',r.trajectory_images.candidate,'每个 K 帧独立提取 P90 高响应候选，尚未做连续性判断。')}${row('3. Spatially Continuous Trajectory','keep','trajectory',r.trajectory_images.trajectory,'K01 由 SAM2 object query 位置初始化；K02 起保留与上一帧有效轨迹 radius=2 邻域相交的所有连通分量，连续性优先于峰值大小。')}${row('4. F_t · Frozen Removal Mask','remove','trajectory',r.trajectory_images.forbidden,'P90 候选减去连续轨迹。K00/K01 不删除；该 mask 来自 Original Probe，Apply 时不再改变。')}${row('5. Apply Before · Top100 Mean','', 'apply',r.apply_images.before,'在 intervention 推理中、frozen mask 回写之前的 Top100 Mean。')}${row('6. Apply After · Top100 Mean','keep','apply',r.apply_images.after,'对每个选中 head 的 8 个 object-query 行删除 F_t 后逐行归一化，再聚合 Top100。')}${row('7. Actual Removed Attention Mass','remove','apply',r.apply_images.removed,'实际的 max(Before−After,0)，用于验证 frozen F_t 是否真正作用到 attention。')}</article>`).join(''):'<div class="pending">等待该 seed/step/branch 数据</div>'}async function load(){const d=await fetch(`${api}/catalog?seed=${seed}&stage=${stage}&step=${step}&branch=${branch}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage','step','branch'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;if(id==='stage')stage=ev.target.value;if(id==='step')step=ev.target.value;if(id==='branch')branch=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
 </script></body></html>'''
 
 
