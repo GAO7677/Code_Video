@@ -16,6 +16,11 @@ CURRENT="/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
 SEEDS_FILE="${ROOT}/seeds.txt"
 CASE_LIST="/data/gaoya/agent-data/outputs/attention_probability_mono_scale_steps40_frames49_case001460/case_list.txt"
 CASE_KEY="0613pybullet_sample_001460_w002"
+SHARD_INDEX="${ATTENTION_NEIGHBOR_SHARD_INDEX:-${GPU}}"
+if (( SHARD_INDEX < 0 || SHARD_INDEX >= NUM_GPUS )); then
+  echo "Invalid shard index ${SHARD_INDEX}; expected 0..$((NUM_GPUS - 1))" >&2
+  exit 2
+fi
 if [[ -n "${ATTENTION_NEIGHBOR_CRITERIA:-}" ]]; then
   read -r -a CRITERIA <<< "${ATTENTION_NEIGHBOR_CRITERIA}"
 else
@@ -110,7 +115,7 @@ if [[ -n "${FIXED_SEED}" ]]; then
   for criterion in "${CRITERIA[@]}"; do
     for stage in all_steps steps00_09; do
       for profile in "${PROFILES[@]}"; do
-        if (( task_index % NUM_GPUS == GPU )); then
+        if (( task_index % NUM_GPUS == SHARD_INDEX )); then
           run_profile "${seed}" "${criterion}" "${stage}" "${profile}"
         fi
         task_index=$((task_index + 1))

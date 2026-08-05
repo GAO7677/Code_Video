@@ -17,6 +17,8 @@ TILE_HEIGHT = 90
 HEADER_HEIGHT = 42
 ALL_TOKEN_PANEL = 416
 ALL_TOKEN_HEADER = 42
+TOKEN_GRID_HEIGHT = 16
+TOKEN_GRID_WIDTH = 28
 
 
 def parse_args():
@@ -142,7 +144,23 @@ def scalar(payload, key):
     return payload[key].item() if np.asarray(payload[key]).ndim == 0 else payload[key]
 
 
-def all_token_qk_image(before, after, title):
+def object_query_rows(points, query_frame, context_shape, source_tokens, pooled_tokens):
+    frame_tokens = TOKEN_GRID_HEIGHT * TOKEN_GRID_WIDTH
+    height, width = context_shape[:2]
+    rows = []
+    for x, y in points:
+        token_x = min(TOKEN_GRID_WIDTH - 1, max(0, int(float(x) * TOKEN_GRID_WIDTH / width)))
+        token_y = min(TOKEN_GRID_HEIGHT - 1, max(0, int(float(y) * TOKEN_GRID_HEIGHT / height)))
+        source_row = int(query_frame) * frame_tokens + token_y * TOKEN_GRID_WIDTH + token_x
+        pooled_row = min(
+            int(pooled_tokens) - 1,
+            max(0, int(source_row * int(pooled_tokens) / int(source_tokens))),
+        )
+        rows.append(pooled_row)
+    return sorted(set(rows))
+
+
+def all_token_qk_image(before, after, title, query_rows, region_name):
     log_before = np.log10(np.maximum(before.astype(np.float32), 1e-12))
     log_after = np.log10(np.maximum(after.astype(np.float32), 1e-12))
     shared = np.concatenate([log_before.ravel(), log_after.ravel()])
@@ -172,6 +190,15 @@ def all_token_qk_image(before, after, title):
             canvas, label, (x + 8, 27), cv2.FONT_HERSHEY_SIMPLEX,
             .58, (28, 38, 34), 2,
         )
+        line_color = (235, 188, 55) if region_name == "object_A" else (45, 145, 245)
+        cv2.putText(
+            canvas, f"{region_name} query rows", (x + 245, 27),
+            cv2.FONT_HERSHEY_SIMPLEX, .36, line_color, 1,
+        )
+        for row in query_rows:
+            y = ALL_TOKEN_HEADER + int(row)
+            cv2.line(canvas, (x, y), (x + ALL_TOKEN_PANEL - 1, y), (12, 18, 16), 3)
+            cv2.line(canvas, (x, y), (x + ALL_TOKEN_PANEL - 1, y), line_color, 1)
     cv2.putText(
         canvas, title, (8, ALL_TOKEN_HEADER + ALL_TOKEN_PANEL - 9),
         cv2.FONT_HERSHEY_SIMPLEX, .38, (255, 255, 255), 1,
@@ -217,12 +244,21 @@ def main():
             if all_token_capture.is_file():
                 with np.load(all_token_capture) as all_token:
                     all_token_filename = (
-                        f"{all_token_capture.stem}__all_token_qk.jpg"
+                        f"{all_token_capture.stem}__{region_name}__all_token_qk.jpg"
+                    )
+                    query_rows = object_query_rows(
+                        points,
+                        int(scalar(payload, "query_latent_frame")),
+                        context_frame.shape,
+                        int(scalar(all_token, "source_tokens")),
+                        all_token["before"].shape[0],
                     )
                     image = all_token_qk_image(
                         all_token["before"], all_token["after"],
                         f"L{int(scalar(payload, 'block')):02d}/"
                         f"H{int(scalar(payload, 'head')):02d} | 5824 -> 416 bins",
+                        query_rows,
+                        region_name,
                     )
                     cv2.imwrite(
                         str(args.output_root / all_token_filename), image,

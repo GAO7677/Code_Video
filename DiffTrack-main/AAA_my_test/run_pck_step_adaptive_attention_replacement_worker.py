@@ -312,11 +312,7 @@ class AdaptiveQKLogitNoise:
                         capture_entry["max_row_sum_error"],
                         float((probabilities.sum(dim=-1) - 1.0).abs().max().item()),
                     )
-            elif self.noise_mode == "probability_exclude_current":
-            strength_label = "exclude current frame mask"
-        elif self.noise_mode == "probability_context_only":
-            strength_label = "context frames only mask"
-        elif self.noise_mode == "probability_zero":
+            elif self.noise_mode == "probability_zero":
                 probabilities = torch.zeros_like(before_probabilities)
                 if capture_entry is not None:
                     capture_entry["max_row_sum_error"] = 1.0
