@@ -370,8 +370,11 @@ ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD = r'''
 <a class="card new" href="/attention-lora-pck32-temporal-test5?v=1"><div><span>20 / TEMPORAL TEST5</span><h2>LoRA PCK@32 Top100 · 20 Cases</h2><p>逐 case 对比 Wan+LoRA Original 与 Temporal Causal 在 S000-S009、S000-S039 两个阶段的结果。</p></div><span class="go">打开 Temporal Causal 对比</span></a>
 <a class="card new" href="/object-query-continuity-overlay?v=1"><div><span>21 / OBJECT CONTINUITY</span><h2>Object Query 跨帧空间连续性</h2><p>LoRA PCK@32 Top100，分别约束 Object A/B query，使生成帧高响应仅保留与上一帧空间相邻的区域。</p></div><span class="go">打开 Object Continuity 对比</span></a>
 '''
+STEP_ALIGNMENT_PORTAL_CARD = r'''
+<a class="card new" href="/object-query-step-alignment?v=1"><div><span>22 / DENOISING ALIGNMENT</span><h2>10-Step × 40-Step Attention 对齐</h2><p>比较 Wan+LoRA 与标准 Wan2.2-TI2V Baseline 的逐 Head、Top30/50/100 Object Query Attention 相似度。</p></div><span class="go">打开去噪步对齐图谱</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -916,10 +919,199 @@ class MetricsHandler(viewer.Handler):
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
             return
+        if path == "/object-query-step-alignment":
+            self.send_payload(
+                object_query_step_alignment_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/object-query-step-alignment/catalog":
+            payload = json.dumps(
+                object_query_step_alignment_catalog(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path in {
+            "/api/object-query-step-alignment/image",
+            "/api/object-query-step-alignment/download",
+        }:
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_step_alignment_asset(
+                params.get("model", [""])[0], params.get("name", [""])[0]
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown object-query step-alignment asset")
+            content_type = (
+                "image/png"
+                if path.endswith("/image")
+                else "text/csv; charset=utf-8"
+            )
+            viewer.send_file_with_range(self, asset, content_type)
+            return
+        if path == "/api/object-query-step-alignment/video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_step_alignment_video(
+                params.get("model", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("steps", [""])[0],
+                params.get("kind", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown object-query step-alignment video")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
         super().do_GET()
 
 
 viewer.Handler = MetricsHandler
+
+
+OBJECT_QUERY_STEP_ALIGNMENT_MODELS = {
+    "lora": {
+        "label": "Wan+LoRA",
+        "detail": "LoRA PCK@32 固定物理 Head · context-video pipeline",
+        "root": Path(
+            "/data/gaoya/agent-data/outputs/object_query_attention_step10_vs_step40"
+        ),
+    },
+    "baseline": {
+        "label": "Wan2.2-TI2V-5B Baseline",
+        "detail": "标准 DiffSynth TI2V pipeline · input_image only · no LoRA",
+        "root": Path(
+            "/data/gaoya/agent-data/outputs/"
+            "object_query_attention_step10_vs_step40_baseline_official_ti2v"
+        ),
+    },
+}
+OBJECT_QUERY_STEP_ALIGNMENT_SEEDS = (47326, 90094, 32466, 35075, 21890, 49530)
+OBJECT_QUERY_STEP_ALIGNMENT_IMAGES = {
+    "best_match_curves.png",
+    "top30_mean_per_head_cosine.png",
+    "top50_mean_per_head_cosine.png",
+    "top100_mean_per_head_cosine.png",
+    "top30_cosine_of_mean_map.png",
+    "top50_cosine_of_mean_map.png",
+    "top100_cosine_of_mean_map.png",
+}
+OBJECT_QUERY_STEP_ALIGNMENT_DOWNLOADS = {
+    "topn_best_matches.csv",
+    "per_head_best_matches.csv",
+    "per_head_best_matches_by_sample.csv",
+}
+
+
+def object_query_step_alignment_asset(model: str, name: str):
+    config = OBJECT_QUERY_STEP_ALIGNMENT_MODELS.get(model)
+    safe_name = Path(name).name
+    if config is None or safe_name != name:
+        return None
+    if safe_name not in OBJECT_QUERY_STEP_ALIGNMENT_IMAGES | OBJECT_QUERY_STEP_ALIGNMENT_DOWNLOADS:
+        return None
+    return config["root"] / "analysis" / safe_name
+
+
+def object_query_step_alignment_video(model: str, seed: str, steps: str, kind: str):
+    config = OBJECT_QUERY_STEP_ALIGNMENT_MODELS.get(model)
+    if config is None or not seed.isdigit() or int(seed) not in OBJECT_QUERY_STEP_ALIGNMENT_SEEDS:
+        return None
+    if steps not in {"10", "40"} or kind not in {"original", "probe"}:
+        return None
+    model_dir = "baseline" if model == "baseline" else "lora"
+    filename = "original.mp4" if kind == "original" else "top100_steps_00_40.mp4"
+    return (
+        config["root"]
+        / "seeds"
+        / f"seed_{int(seed):06d}"
+        / f"steps{steps}"
+        / "videos"
+        / model_dir
+        / "cases"
+        / "0613pybullet_sample_001460_w002"
+        / filename
+    )
+
+
+def object_query_step_alignment_catalog():
+    import csv
+
+    models = []
+    for model, config in OBJECT_QUERY_STEP_ALIGNMENT_MODELS.items():
+        root = config["root"]
+        analysis = root / "analysis"
+        progress = []
+        for seed in OBJECT_QUERY_STEP_ALIGNMENT_SEEDS:
+            seed_root = root / "seeds" / f"seed_{seed:06d}"
+            progress.append(
+                {
+                    "seed": seed,
+                    "steps40": len(list((seed_root / "steps40" / "captures").glob("*.npz"))),
+                    "steps10": len(list((seed_root / "steps10" / "captures").glob("*.npz"))),
+                    "complete": (seed_root / "complete").is_file(),
+                }
+            )
+        summary_path = analysis / "summary.json"
+        summary = None
+        if summary_path.is_file():
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                summary = None
+        matches = []
+        matches_path = analysis / "topn_best_matches.csv"
+        if matches_path.is_file():
+            try:
+                with matches_path.open("r", encoding="utf-8", newline="") as handle:
+                    matches = list(csv.DictReader(handle))
+            except OSError:
+                matches = []
+        models.append(
+            {
+                "id": model,
+                "label": config["label"],
+                "detail": config["detail"],
+                "ready": summary is not None,
+                "summary": summary,
+                "matches": matches,
+                "progress": progress,
+                "videos": {
+                    str(seed): {
+                        str(steps): {
+                            kind: object_query_step_alignment_video(
+                                model, str(seed), str(steps), kind
+                            ).is_file()
+                            for kind in ("original", "probe")
+                        }
+                        for steps in (40, 10)
+                    }
+                    for seed in OBJECT_QUERY_STEP_ALIGNMENT_SEEDS
+                },
+                "images": sorted(
+                    name for name in OBJECT_QUERY_STEP_ALIGNMENT_IMAGES
+                    if (analysis / name).is_file()
+                ),
+                "downloads": sorted(
+                    name for name in OBJECT_QUERY_STEP_ALIGNMENT_DOWNLOADS
+                    if (analysis / name).is_file()
+                ),
+            }
+        )
+    return {
+        "case": "0613pybullet_sample_001460_w002",
+        "seeds": list(OBJECT_QUERY_STEP_ALIGNMENT_SEEDS),
+        "models": models,
+    }
+
+
+def object_query_step_alignment_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>10-Step × 40-Step Attention Alignment</title><style>
+:root{--paper:#e8e0d2;--ink:#172720;--deep:#153f35;--line:#b9ad98;--card:#fffaf0;--rust:#b9472f;--gold:#d5a237;--sea:#247d82}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#d96b3d42,transparent 32rem),radial-gradient(circle at 98% 2%,#24898240,transparent 38rem),linear-gradient(135deg,#eee7da,#ded4c3);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:9;padding:16px 24px;background:#e8e0d2ed;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:5px 0;font-size:clamp(29px,4.4vw,58px);line-height:1}header p{margin:7px 0;max-width:1100px}.tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button,.download,select{border:1px solid var(--line);background:#fffaf0;padding:8px 13px;color:var(--ink);font-weight:900;text-decoration:none;cursor:pointer}.status{font:12px ui-monospace,monospace}main{width:min(100% - 20px,2300px);margin:auto;padding:20px 0 70px}.model{margin:0 0 24px;border:1px solid var(--line);border-radius:18px;background:#fdf8eddd;overflow:hidden;box-shadow:0 16px 40px #58472b17}.model-head{padding:17px 20px;background:linear-gradient(100deg,var(--deep),#276d61);color:#fff}.model-head h2{margin:0;font-size:28px}.model-head p{margin:5px 0 0}.progress{display:grid;grid-template-columns:repeat(6,minmax(140px,1fr));gap:8px;padding:12px}.seed{padding:8px;border:1px solid #d0c5b3;background:#fff;border-radius:9px;font:11px ui-monospace,monospace}.seed.done{border-color:#3d8b70;background:#e4f2e8}.section-title{padding:9px 15px;margin:0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#eee4d3;font-size:15px;text-transform:uppercase;letter-spacing:.08em}.grid{display:grid;grid-template-columns:repeat(3,minmax(280px,1fr));gap:11px;padding:12px}.video-grid{display:grid;grid-template-columns:repeat(4,minmax(240px,1fr));gap:10px;padding:12px;overflow:auto}.video-card{margin:0;border:1px solid #d6cab7;background:#fff;padding:8px}.video-card video{display:block;width:100%;background:#111;aspect-ratio:16/9}.video-card figcaption{padding:7px 3px 2px;font-weight:900}.plot{margin:0;border:1px solid #d6cab7;background:#fff;padding:8px}.plot img{width:100%;display:block}.plot figcaption{padding:7px 4px 2px;font-weight:900}.curve{grid-column:1/-1}.curve img{max-height:620px;object-fit:contain}.pending{padding:35px;text-align:center;color:#766e61}.scroll{overflow:auto;margin:12px;border:1px solid var(--line);background:#fff}table{border-collapse:collapse;width:100%;min-width:680px;font-variant-numeric:tabular-nums}th,td{padding:8px 10px;border-bottom:1px solid #ddd4c5;text-align:center}th{background:var(--deep);color:#fff}td:first-child{font-weight:900}.downloads{display:flex;gap:8px;flex-wrap:wrap;padding:4px 12px 15px}@media(max-width:1100px){.video-grid{grid-template-columns:repeat(2,minmax(260px,1fr))}}@media(max-width:900px){header{position:static}.grid,.video-grid{grid-template-columns:1fr}.progress{grid-template-columns:repeat(2,1fr)}}
+</style></head><body><header><a href="/">返回总览</a><h1>10-Step × 40-Step<br>Object-Query Alignment</h1><p>同一物理 Head 在两种去噪日程间进行 cosine 对齐。主结果先逐 Head 计算相似度再对 TopN、Object A/B、CFG 分支与六个 seed 宏平均；辅助结果先平均 TopN attention map 再计算 cosine。</p><div class="tools"><label>Seed <select id="seed"></select></label><button id="replay">重新播放本页视频</button><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main id="main"></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),ns=[30,50,100],labels={mean_per_head_cosine:'逐 Head cosine 后平均',cosine_of_mean_map:'TopN Mean Map cosine'};let data=null;function img(model,name,title,wide=false){return `<figure class="plot ${wide?'curve':''}"><img loading="lazy" src="/api/object-query-step-alignment/image?model=${model}&name=${name}&v=${Date.now()}"><figcaption>${e(title)}</figcaption></figure>`}function table(model){const rows=(model.matches||[]).filter(r=>r.aggregation==='mean_per_head_cosine'),map=new Map(rows.map(r=>[`${r.step10}-${r.top_n}`,r]));return `<div class="scroll"><table><thead><tr><th>10-Step</th>${ns.map(n=>`<th>Top${n} 最佳 40-Step</th>`).join('')}</tr></thead><tbody>${[...Array(10)].map((_,s)=>`<tr><td>S${String(s).padStart(2,'0')}</td>${ns.map(n=>{const r=map.get(`${s}-${n}`);return `<td>${r?`S${String(r.best_step40).padStart(2,'0')} · ${Number(r.cosine).toFixed(4)}`:'—'}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`}function videos(m){const seed=document.getElementById('seed').value,availability=m.videos?.[seed]||{},specs=[[40,'original','40-Step Original'],[40,'probe','40-Step Top100 No-op Probe'],[10,'original','10-Step Original'],[10,'probe','10-Step Top100 No-op Probe']];return `<h3 class="section-title">Generated Videos · Seed ${seed}</h3><div class="video-grid">${specs.map(([steps,kind,label])=>availability?.[steps]?.[kind]?`<figure class="video-card"><video controls muted playsinline preload="metadata" src="/api/object-query-step-alignment/video?model=${m.id}&seed=${seed}&steps=${steps}&kind=${kind}"></video><figcaption>${label}</figcaption></figure>`:`<figure class="video-card"><div class="pending">${label}<br>尚未生成</div></figure>`).join('')}</div>`}function renderModel(m){const progress=m.progress.map(p=>`<div class="seed ${p.complete?'done':''}">seed ${p.seed}<br>40-step ${p.steps40}/80<br>10-step ${p.steps10}/20</div>`).join(''),videoSection=videos(m),head=`<div class="model-head"><h2>${e(m.label)}</h2><p>${e(m.detail)}</p></div><div class="progress">${progress}</div>${videoSection}`;if(!m.ready)return `<section class="model">${head}<div class="pending">Attention 对齐统计生成中。视频完成后会先于统计结果显示。</div></section>`;const primary=ns.map(n=>img(m.id,`top${n}_mean_per_head_cosine.png`,`Top${n} · ${labels.mean_per_head_cosine}`)).join(''),aux=ns.map(n=>img(m.id,`top${n}_cosine_of_mean_map.png`,`Top${n} · ${labels.cosine_of_mean_map}`)).join(''),downloads=m.downloads.map(name=>`<a class="download" href="/api/object-query-step-alignment/download?model=${m.id}&name=${name}">${e(name)}</a>`).join('');return `<section class="model">${head}<h3 class="section-title">Primary · Mean of per-head cosine</h3><div class="grid">${primary}</div><h3 class="section-title">Auxiliary · Cosine after TopN map averaging</h3><div class="grid">${aux}</div><h3 class="section-title">Best 40-step mapping curve</h3><div class="grid">${img(m.id,'best_match_curves.png','Top30 / Top50 / Top100 最佳匹配路径',true)}</div><h3 class="section-title">Primary best matches</h3>${table(m)}<div class="downloads">${downloads}</div></section>`}function render(){document.getElementById('main').innerHTML=data.models.map(renderModel).join('')}async function load(){data=await fetch('/api/object-query-step-alignment/catalog',{cache:'no-store'}).then(r=>r.json());const select=document.getElementById('seed'),current=select.value;if(!select.options.length)select.innerHTML=data.seeds.map(seed=>`<option value="${seed}">${seed}</option>`).join('');if(current&&data.seeds.map(String).includes(current))select.value=current;document.getElementById('status').textContent=`${data.case} · ${data.models.filter(m=>m.ready).length}/${data.models.length} models ready`;render()}document.getElementById('seed').addEventListener('change',render);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));document.getElementById('refresh').addEventListener('click',load);load();
+</script></body></html>'''
 
 
 def qk_noise_attention_compare_catalog():

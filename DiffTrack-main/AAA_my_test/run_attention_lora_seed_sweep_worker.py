@@ -10,6 +10,8 @@ import os
 import sys
 from pathlib import Path
 
+import torch
+
 
 HERE = Path(__file__).resolve().parent
 RANKING_CSV = Path(
@@ -31,6 +33,8 @@ NEIGHBOR_RANKING_COLUMNS = {
     "pck32": "lora_pck32",
 }
 NUM_STEPS = 40
+OFFICIAL_DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/DiffSynth-Studio-main")
+WAN22_TI2V_CHECKPOINT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
 
 
 def import_path(name: str, path: Path):
@@ -45,6 +49,7 @@ def import_path(name: str, path: Path):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--model", choices=("baseline", "lora"), default="lora")
     parser.add_argument(
         "--profile",
         choices=(
@@ -75,7 +80,48 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def seeded_generate(base, seed: int):
+def use_official_ti2v(args: argparse.Namespace) -> bool:
+    return (
+        args.model == "baseline"
+        and os.environ.get("WAN_BASELINE_PIPELINE", "").strip().lower()
+        == "official_ti2v"
+    )
+
+
+def pin_official_diffsynth() -> None:
+    root = str(OFFICIAL_DIFFSYNTH_ROOT)
+    if root in sys.path:
+        sys.path.remove(root)
+    sys.path.insert(0, root)
+    from diffsynth.pipelines.wan_video import ModelConfig, WanVideoPipeline
+
+    globals()["OfficialModelConfig"] = ModelConfig
+    globals()["OfficialWanVideoPipeline"] = WanVideoPipeline
+
+
+def build_official_ti2v_pipeline(_wan_root, device: str, lora_path):
+    if lora_path is not None:
+        raise ValueError("Official Wan2.2 TI2V baseline must not load LoRA weights")
+    shards = sorted(WAN22_TI2V_CHECKPOINT.glob("diffusion_pytorch_model*.safetensors"))
+    if not shards:
+        raise FileNotFoundError("Wan2.2 TI2V diffusion checkpoint shards are missing")
+    return OfficialWanVideoPipeline.from_pretrained(
+        torch_dtype=torch.bfloat16,
+        device=device,
+        model_configs=[
+            OfficialModelConfig(
+                path=str(WAN22_TI2V_CHECKPOINT / "models_t5_umt5-xxl-enc-bf16.pth")
+            ),
+            OfficialModelConfig(path=[str(path) for path in shards]),
+            OfficialModelConfig(path=str(WAN22_TI2V_CHECKPOINT / "Wan2.2_VAE.pth")),
+        ],
+        tokenizer_config=OfficialModelConfig(
+            path=str(WAN22_TI2V_CHECKPOINT / "google/umt5-xxl")
+        ),
+    )
+
+
+def seeded_generate(base, seed: int, include_context_video: bool = True):
     torch = base.torch
     top5 = base.top5
 
@@ -83,11 +129,10 @@ def seeded_generate(base, seed: int):
         top5.source.probe.seed_everything(seed)
         zeroer.set_variant(group, steps)
         with torch.inference_mode():
-            return pipe(
+            pipeline_kwargs = dict(
                 prompt=prompt,
                 negative_prompt="",
                 input_image=context[0],
-                context_video=context,
                 height=512,
                 width=896,
                 num_frames=top5.source.target.core.align_generation_num_frames(48),
@@ -98,6 +143,9 @@ def seeded_generate(base, seed: int):
                 ),
                 tiled=True,
             )
+            if include_context_video:
+                pipeline_kwargs["context_video"] = context
+            return pipe(**pipeline_kwargs)
 
     return generate
 
@@ -106,7 +154,7 @@ def base_argv(args: argparse.Namespace) -> list[str]:
     argv = [
         str(Path(__file__)),
         "--model",
-        "lora",
+        args.model,
         "--input-json-list",
         str(args.input_json_list),
         "--output-root",
@@ -141,6 +189,9 @@ def run_attention(args: argparse.Namespace) -> None:
         )
     stage = import_path("seed_sweep_attention_stage", HERE / filename)
     worker = stage.worker
+    official_ti2v = use_official_ti2v(args)
+    if official_ti2v:
+        worker.base.top5.source.target.core.build_pipeline = build_official_ti2v_pipeline
     if args.ranking_criterion:
         def selected_heads(ranking_pool, extreme_count):
             groups = neighbor_heads(
@@ -161,7 +212,9 @@ def run_attention(args: argparse.Namespace) -> None:
             from AAA_my_test.object_query_attention_capture import install_qk_capture
 
         install_qk_capture(worker)
-    worker.original_generate = seeded_generate(worker.base, args.seed)
+    worker.original_generate = seeded_generate(
+        worker.base, args.seed, include_context_video=not official_ti2v
+    )
     worker.base.LEGACY_ROOTS = ()
     sys.argv = base_argv(args)
     if hasattr(worker, "load_capture_prompt_cases"):
@@ -209,6 +262,11 @@ def neighbor_heads(
             "Neighbor ranking experiments require all720 and 1..360 heads"
         )
     score_column = NEIGHBOR_RANKING_COLUMNS[criterion]
+    if criterion == "pck32":
+        ranking_model = os.environ.get("ATTENTION_RANKING_MODEL", "lora").strip().lower()
+        if ranking_model not in {"baseline", "lora"}:
+            raise ValueError(f"Unsupported ATTENTION_RANKING_MODEL: {ranking_model}")
+        score_column = f"{ranking_model}_pck32"
     rows = []
     with NEIGHBOR_RANKING_CSV.open("r", encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
@@ -316,6 +374,8 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.seed <= 100000:
         raise ValueError("seed must be in [0, 100000]")
+    if use_official_ti2v(args):
+        pin_official_diffsynth()
     if args.profile == "head_output_zero":
         run_head_output_zero(args)
     else:

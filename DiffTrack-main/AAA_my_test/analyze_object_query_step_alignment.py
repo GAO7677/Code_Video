@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from pathlib import Path
 
 import matplotlib
@@ -11,7 +12,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-ROOT = Path("/data/gaoya/agent-data/outputs/object_query_attention_step10_vs_step40")
+MODEL = os.environ.get("ALIGNMENT_MODEL", "lora").strip().lower()
+if MODEL not in {"baseline", "lora"}:
+    raise ValueError(f"Unsupported ALIGNMENT_MODEL: {MODEL}")
+ROOT = Path(os.environ.get(
+    "OBJECT_STEP_ALIGNMENT_ROOT",
+    "/data/gaoya/agent-data/outputs/object_query_attention_step10_vs_step40",
+))
 RANKING = Path("/data/gaoya/agent-data/outputs/neighbor_diagonal_ranking_snapshot/all720-neighbor-diagonal.csv")
 SEEDS = (47326, 90094, 32466, 35075, 21890, 49530)
 TOP_NS = (30, 50, 100)
@@ -31,7 +38,7 @@ def load_ranking() -> tuple[list[tuple[int, int]], np.ndarray]:
     frame = pd.read_csv(RANKING)
     block_col = find_column(frame, ("block", "block_id", "layer"))
     head_col = find_column(frame, ("head", "head_id"))
-    score_col = find_column(frame, ("lora_pck32",))
+    score_col = find_column(frame, (f"{MODEL}_pck32",))
     frame = frame.sort_values(score_col, ascending=False).head(100).reset_index(drop=True)
     ids = [(int(row[block_col]), int(row[head_col])) for _, row in frame.iterrows()]
     return ids, frame[score_col].to_numpy(dtype=np.float32)
@@ -133,7 +140,7 @@ def main() -> None:
                                 "rank": rank_index + 1,
                                 "block": block,
                                 "head": head,
-                                "lora_pck32": float(pck32),
+                                f"{MODEL}_pck32": float(pck32),
                                 "step10": step10,
                                 "best_step40": best40,
                                 "cosine": float(similarities[best40]),
@@ -152,13 +159,14 @@ def main() -> None:
         "per_head_macro": per_head_macro,
         "rank_blocks": np.asarray([item[0] for item in ranked_ids], dtype=np.int16),
         "rank_heads": np.asarray([item[1] for item in ranked_ids], dtype=np.int16),
-        "rank_lora_pck32": ranked_scores,
+        "rank_pck32": ranked_scores,
     }
     top_rows: list[dict[str, object]] = []
     summary: dict[str, object] = {
         "seeds": list(SEEDS),
         "branches": sorted({label[1] for label in sample_labels}),
         "objects": list(REGIONS),
+        "model": MODEL,
         "sample_count": len(sample_labels),
         "similarity": "cosine on raw attention-probability object-query maps",
         "primary": "mean of per-head cosine similarities",
@@ -212,7 +220,7 @@ def main() -> None:
                     "rank": rank_index + 1,
                     "block": block,
                     "head": head,
-                    "lora_pck32": float(pck32),
+                    f"{MODEL}_pck32": float(pck32),
                     "step10": step10,
                     "best_step40": best40,
                     "cosine": float(similarities[best40]),
@@ -248,7 +256,7 @@ def main() -> None:
         "",
         f"- Seeds: {', '.join(map(str, SEEDS))}",
         f"- Samples averaged: {len(sample_labels)} = seed x CFG branch x object",
-        "- Ranking: fixed LoRA PCK@32 physical block/head ranking",
+        f"- Model/ranking: fixed {MODEL} PCK@32 physical block/head ranking",
         "- Primary score: cosine per physical head, then averaged over heads and samples",
         "- Auxiliary score: average TopN attention maps first, then cosine",
         "",
