@@ -29,6 +29,9 @@ for profile in "$@"; do
     uniform) mode=probability_uniform; alpha=0 ;;
     temporal_causal) mode=probability_temporal_causal; alpha=0 ;;
     strict_past) mode=probability_strict_past; alpha=0 ;;
+    strict_future) mode=probability_strict_future; alpha=0 ;;
+    exclude_current) mode=probability_exclude_current; alpha=0 ;;
+    context_only) mode=probability_context_only; alpha=0 ;;
     *) echo "Unsupported profile ${profile}" >&2; exit 2 ;;
   esac
   run_root="${ROOT}/all_steps/${profile}"
@@ -42,6 +45,7 @@ for profile in "$@"; do
   ATTENTION_NOISE_SEED="${SEED}" \
   QK_ATTENTION_NOISE_SEED="${SEED}" \
   ATTENTION_MASK_LATENT_FRAMES=13 \
+  ATTENTION_MASK_CONTEXT_LATENT_FRAMES=2 \
   QK_ATTENTION_CAPTURE_ROOT="${run_root}/heatmaps" \
   QK_ATTENTION_CAPTURE_STEP=39 \
   QK_ATTENTION_CAPTURE_MODEL=lora \
@@ -50,6 +54,7 @@ for profile in "$@"; do
   QK_ATTENTION_CAPTURE_SMALL_SIZE=416 \
   QK_ATTENTION_CAPTURE_LATENT_FRAMES=13 \
   OBJECT_QUERY_CAPTURE_PROTOCOL=headwise_pck \
+  OBJECT_QUERY_RANKING_SELECTION="/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed090094_case001460/seeds/seed_090094/pck32/all_steps/alpha090/videos/selection.json" \
   OBJECT_QUERY_REGION_CACHE="${REGION_CACHE}" \
   OBJECT_QUERY_CAPTURE_ROOT="${capture_root}" \
   "${PYTHON}" "${WORKER}" \
@@ -66,4 +71,3 @@ for profile in "$@"; do
   printf 'gpu=%s\nprofile=%s\ncompleted=%s\n' \
     "${GPU}" "${profile}" "$(date -u +%FT%TZ)" > "${run_root}/complete"
 done
-

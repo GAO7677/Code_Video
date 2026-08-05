@@ -28,9 +28,10 @@ CRITERIA = (
 STAGES = ("all_steps", "steps00_09")
 PROFILES = (
     "alpha090", "alpha150", "zero", "uniform", "temporal_causal",
-    "strict_past", "strict_future", "head_output_zero",
+    "strict_past", "strict_future", "exclude_current", "context_only", "head_output_zero",
 )
 GROUPS = ("top100", "bottom100")
+BRANCHES = ("both", "conditional", "unconditional")
 
 os.environ["ATTENTION_SEED_SWEEP_SOURCE_ROOT"] = str(SOURCE_ROOT)
 os.environ["ATTENTION_SEED_SWEEP_BENCH_ROOT"] = str(BENCH_ROOT)
@@ -48,22 +49,26 @@ def methods():
         "criterion": "original", "stage": "original",
         "profile": "original", "group": "original",
     }
-    for criterion in CRITERIA:
-        for stage in STAGES:
-            for profile in PROFILES:
-                for group in GROUPS:
-                    yield f"{criterion}__{stage}__{profile}__{group}", {
-                        "criterion": criterion, "stage": stage,
-                        "profile": profile, "group": group,
-                    }
+    for branch in BRANCHES:
+        for criterion in CRITERIA:
+            for stage in STAGES:
+                for profile in PROFILES:
+                    for group in GROUPS:
+                        yield f"{branch}__{criterion}__{stage}__{profile}__{group}", {
+                            "branch": branch, "criterion": criterion, "stage": stage,
+                            "profile": profile, "group": group,
+                        }
 
 
 def source_video(seed: int, item: dict[str, str]):
     if item["stage"] == "original":
         seed_root = CURRENT_ROOT / "seeds" / f"seed_{seed:06d}"
         return seed_root / "original.mp4", seed_root / "all_steps" / "alpha090" / "complete"
+    seed_root = SOURCE_ROOT / "seeds" / f"seed_{seed:06d}"
     run_root = (
-        SOURCE_ROOT / "seeds" / f"seed_{seed:06d}" / item["criterion"]
+        seed_root / item["criterion"] / item["stage"] / item["profile"]
+        if item["branch"] == "both"
+        else seed_root / "branches" / item["branch"] / item["criterion"]
         / item["stage"] / item["profile"]
     )
     suffix = "steps_00_40" if item["stage"] == "all_steps" else "steps_00_10"

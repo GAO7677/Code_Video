@@ -29,6 +29,9 @@ TARGET_HEIGHT = 512
 TARGET_WIDTH = 896
 QUERY_LATENT_FRAME = 1
 QUERY_PIXEL_FRAME = 4
+ALL_TOKEN_SIZE = 416
+ALL_TOKEN_BIN = (LATENT_FRAMES * SPATIAL_TOKENS) // ALL_TOKEN_SIZE
+ALL_TOKEN_QUERY_CHUNK = ALL_TOKEN_BIN * 8
 
 
 def pck_query_regions() -> tuple[list[dict], np.ndarray]:
@@ -82,6 +85,50 @@ def _configure(owner) -> None:
     owner.object_ranked_heads = ranked_heads(owner.object_capture_step)
     owner.object_query_regions, owner.object_query_context_frame = pck_query_regions()
     owner.object_capture_entries = {}
+    owner.object_all_token_entries = {}
+
+
+def _capture_all_token(owner, qh, kh, heads, group, block, scale) -> None:
+    sequence = qh.shape[2]
+    if sequence != ALL_TOKEN_SIZE * ALL_TOKEN_BIN:
+        raise RuntimeError(
+            f"Cannot pool {sequence} tokens into {ALL_TOKEN_SIZE} all-token bins"
+        )
+    for head in heads:
+        entry = owner.object_all_token_entries.setdefault(
+            (group, block, head),
+            {
+                "before": torch.zeros((ALL_TOKEN_SIZE, ALL_TOKEN_SIZE)),
+                "after": torch.zeros((ALL_TOKEN_SIZE, ALL_TOKEN_SIZE)),
+                "count": 0,
+            },
+        )
+        for start in range(0, sequence, ALL_TOKEN_QUERY_CHUNK):
+            end = min(start + ALL_TOKEN_QUERY_CHUNK, sequence)
+            query_indices = torch.arange(start, end, device=qh.device)
+            logits = (
+                torch.matmul(
+                    qh[:, head, start:end], kh[:, head].transpose(-1, -2)
+                ).float() * scale
+            )
+            before = torch.softmax(logits, dim=-1)
+            after = _after_probabilities(owner, logits, before, query_indices)
+            query_bins = (end - start) // ALL_TOKEN_BIN
+            pooled_shape = (
+                before.shape[0], query_bins, ALL_TOKEN_BIN,
+                ALL_TOKEN_SIZE, ALL_TOKEN_BIN,
+            )
+            pooled_before = (
+                before.reshape(pooled_shape).mean(dim=(0, 2, 4)).detach().cpu()
+            )
+            pooled_after = (
+                after.reshape(pooled_shape).mean(dim=(0, 2, 4)).detach().cpu()
+            )
+            bin_start = start // ALL_TOKEN_BIN
+            bin_end = end // ALL_TOKEN_BIN
+            entry["before"][bin_start:bin_end] += pooled_before
+            entry["after"][bin_start:bin_end] += pooled_after
+        entry["count"] += 1
 
 
 def _capture(owner, q, k, groups, block: int) -> None:
@@ -101,6 +148,7 @@ def _capture(owner, q, k, groups, block: int) -> None:
     qh = q.reshape(batch, sequence, num_heads, head_dim).permute(0, 2, 1, 3)
     kh = k.reshape(batch, sequence, num_heads, head_dim).permute(0, 2, 1, 3)
     scale = 1.0 / math.sqrt(head_dim)
+    _capture_all_token(owner, qh, kh, heads, group, block, scale)
     for head in heads:
         for region in owner.object_query_regions:
             indices = torch.as_tensor(
@@ -173,6 +221,32 @@ def _flush(owner, group: str | None) -> None:
             step=np.int32(owner.object_capture_step),
         )
         written.append(filename)
+    all_token_root = owner.object_capture_root / "all_token"
+    all_token_root.mkdir(parents=True, exist_ok=True)
+    all_token_keys = [
+        key for key in owner.object_all_token_entries if key[0] == prefix
+    ]
+    for key in all_token_keys:
+        _group, block, head = key
+        entry = owner.object_all_token_entries.pop(key)
+        count = max(1, int(entry["count"]))
+        before = (entry["before"] / count).numpy()
+        after = (entry["after"] / count).numpy()
+        filename = (
+            f"{owner.object_capture_case}__{prefix}"
+            f"__step{owner.object_capture_step:02d}__b{block:02d}_h{head:02d}.npz"
+        )
+        np.savez_compressed(
+            all_token_root / filename,
+            before=before,
+            after=after,
+            delta=after - before,
+            block=np.int32(block),
+            head=np.int32(head),
+            step=np.int32(owner.object_capture_step),
+            pooled_tokens=np.int32(ALL_TOKEN_SIZE),
+            source_tokens=np.int32(LATENT_FRAMES * SPATIAL_TOKENS),
+        )
     if written:
         manifest = owner.object_capture_root / f"{prefix}__manifest.json"
         manifest.write_text(
@@ -210,4 +284,3 @@ def install_qk_capture(worker) -> None:
     cls.__init__ = init
     cls._attention = attention
     cls.flush_capture = flush
-

@@ -55,6 +55,8 @@ def parse_args() -> argparse.Namespace:
             "temporal_causal",
             "strict_past",
             "strict_future",
+            "exclude_current",
+            "context_only",
             "head_output_zero",
             "identity",
         ),
@@ -244,6 +246,30 @@ def run_head_output_zero(args: argparse.Namespace) -> None:
         parent_zeroer.set_variant(self, group, steps)
 
     adaptive.StepAdaptiveExtremeHeadZeroer.set_variant = set_variant
+    cfg_branch_mode = os.environ.get("ATTENTION_CFG_BRANCH_MODE", "both").strip().lower()
+    if cfg_branch_mode not in {"both", "conditional", "unconditional"}:
+        raise ValueError(f"Unsupported ATTENTION_CFG_BRANCH_MODE: {cfg_branch_mode}")
+
+    def wrapped_model_fn(self, *model_args, **model_kwargs):
+        timestep = model_kwargs.get("timestep")
+        current_step = self._scheduler_step(timestep) if timestep is not None else -1
+        previous_step = getattr(self, "_cfg_step", -2)
+        if current_step != previous_step:
+            self._cfg_step = current_step
+            self._cfg_call_index = 0
+        else:
+            self._cfg_call_index = getattr(self, "_cfg_call_index", 0) + 1
+        branch = "conditional" if self._cfg_call_index % 2 == 0 else "unconditional"
+        branch_active = cfg_branch_mode == "both" or cfg_branch_mode == branch
+        self.current_step = current_step
+        self.group = (
+            f"{self.adaptive_prefix}_step_{current_step:02d}"
+            if self.adaptive_prefix is not None and current_step >= 0 and branch_active
+            else None
+        )
+        return self.original_model_fn(*model_args, **model_kwargs)
+
+    adaptive.StepAdaptiveExtremeHeadZeroer._wrapped_model_fn = wrapped_model_fn
     if args.ranking_criterion:
         base.select_heads = lambda ranking_pool, extreme_count: neighbor_heads(
             args.ranking_criterion, ranking_pool, extreme_count

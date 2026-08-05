@@ -550,7 +550,8 @@ class MetricsHandler(viewer.Handler):
             params = parse_qs(urlparse(self.path).query)
             payload = json.dumps(
                 attention_neighbor_seed90094_catalog(
-                    params.get("criterion", ["strict_score"])[0]
+                    params.get("criterion", ["strict_score"])[0],
+                    params.get("branch", ["both"])[0],
                 ),
                 ensure_ascii=False,
             ).encode("utf-8")
@@ -569,6 +570,7 @@ class MetricsHandler(viewer.Handler):
                 params.get("profile", [""])[0],
                 params.get("group", [""])[0],
                 params.get("name", [""])[0],
+                params.get("branch", ["both"])[0],
             )
             if asset is None or not asset.is_file():
                 raise FileNotFoundError("unknown neighbor-ranking asset")
@@ -1792,13 +1794,30 @@ ATTENTION_NEIGHBOR_PROFILES = (
     ("temporal_causal", "Temporal Causal"),
     ("strict_past", "Strict Past"),
     ("strict_future", "Strict Future"),
+    ("exclude_current", "Exclude Current Frame"),
+    ("context_only", "Context Frames Only"),
     ("head_output_zero", "Head Output Zero"),
 )
 
 
+ATTENTION_NEIGHBOR_CFG_BRANCHES = (
+    ("both", "Both CFG Branches"),
+    ("conditional", "Conditional Only"),
+    ("unconditional", "Unconditional Only"),
+)
+
+
+def attention_neighbor_seed90094_run_root(branch, criterion, stage, profile):
+    seed_root = ATTENTION_NEIGHBOR_SEED90094_ROOT / "seeds" / "seed_090094"
+    if branch == "both" or profile == "identity":
+        return seed_root / criterion / stage / profile
+    return seed_root / "branches" / branch / criterion / stage / profile
+
+
 def attention_neighbor_seed90094_asset(
-    criterion: str, stage: str, profile: str, group: str, name: str = ""
-):
+    criterion: str, stage: str, profile: str, group: str, name: str = "", branch: str = "both"):
+    if branch not in dict(ATTENTION_NEIGHBOR_CFG_BRANCHES):
+        return None
     valid_criteria = {item[0] for item in ATTENTION_NEIGHBOR_CRITERIA}
     if stage == "original" and profile == "original" and group == "original":
         return (
@@ -1812,10 +1831,7 @@ def attention_neighbor_seed90094_asset(
         return None
     if group not in {"top100", "bottom100"}:
         return None
-    run_root = (
-        ATTENTION_NEIGHBOR_SEED90094_ROOT
-        / "seeds" / "seed_090094" / criterion / stage / profile
-    )
+    run_root = attention_neighbor_seed90094_run_root(branch, criterion, stage, profile)
     if name:
         if Path(name).name != name or not name.endswith(".png"):
             return None
@@ -1827,7 +1843,9 @@ def attention_neighbor_seed90094_asset(
     )
 
 
-def attention_neighbor_seed90094_catalog(criterion: str):
+def attention_neighbor_seed90094_catalog(criterion: str, branch: str = "both"):
+    if branch not in dict(ATTENTION_NEIGHBOR_CFG_BRANCHES):
+        branch = "both"
     criteria = dict(ATTENTION_NEIGHBOR_CRITERIA)
     selected_criteria = (
         ATTENTION_NEIGHBOR_CRITERIA
@@ -1843,12 +1861,9 @@ def attention_neighbor_seed90094_catalog(criterion: str):
             capture_step = 39 if stage == "all_steps" else 9
             for group in ("top100", "bottom100"):
                 for profile, label in ATTENTION_NEIGHBOR_PROFILES:
-                    run_root = (
-                        ATTENTION_NEIGHBOR_SEED90094_ROOT
-                        / "seeds" / "seed_090094" / criterion_id / stage / profile
-                    )
+                    run_root = attention_neighbor_seed90094_run_root(branch, criterion_id, stage, profile)
                     video = attention_neighbor_seed90094_asset(
-                        criterion_id, stage, profile, group
+                        criterion_id, stage, profile, group, branch=branch
                     )
                     metadata_path = next(
                         iter(sorted((run_root / "heatmaps").glob(
@@ -1860,15 +1875,12 @@ def attention_neighbor_seed90094_catalog(criterion: str):
                     all_token = str(metadata.get("all_token_image", ""))
                     frame = str(metadata.get("frame_image", ""))
                     all_token_path = attention_neighbor_seed90094_asset(
-                        criterion_id, stage, profile, group, all_token
+                        criterion_id, stage, profile, group, all_token, branch
                     ) if all_token else None
                     frame_path = attention_neighbor_seed90094_asset(
-                        criterion_id, stage, profile, group, frame
+                        criterion_id, stage, profile, group, frame, branch
                     ) if frame else None
-                    baseline_root = (
-                        ATTENTION_NEIGHBOR_SEED90094_ROOT
-                        / "seeds" / "seed_090094" / criterion_id / stage / "identity"
-                    )
+                    baseline_root = attention_neighbor_seed90094_run_root("both", criterion_id, stage, "identity")
                     baseline_metadata_path = next(
                         iter(sorted((baseline_root / "heatmaps").glob(
                             f"*__{ATTENTION_LORA_CASE}__{group}__*step{capture_step:02d}.json"
@@ -1884,10 +1896,10 @@ def attention_neighbor_seed90094_catalog(criterion: str):
                     )
                     baseline_frame = str(baseline_metadata.get("frame_image", ""))
                     baseline_all_token_path = attention_neighbor_seed90094_asset(
-                        criterion_id, stage, "identity", group, baseline_all_token
+                        criterion_id, stage, "identity", group, baseline_all_token, "both"
                     ) if baseline_all_token else None
                     baseline_frame_path = attention_neighbor_seed90094_asset(
-                        criterion_id, stage, "identity", group, baseline_frame
+                        criterion_id, stage, "identity", group, baseline_frame, "both"
                     ) if baseline_frame else None
                     records.append({
                         "criterion": criterion_id,
@@ -1915,7 +1927,7 @@ def attention_neighbor_seed90094_catalog(criterion: str):
     seed_root = ATTENTION_NEIGHBOR_SEED90094_ROOT / "seeds" / "seed_090094"
     for criterion_id, _label in ATTENTION_NEIGHBOR_CRITERIA:
         if all(
-            (seed_root / criterion_id / stage / profile / "complete").is_file()
+            attention_neighbor_seed90094_run_root(branch, criterion_id, stage, profile).joinpath("complete").is_file()
             for stage in ("all_steps", "steps00_09")
             for profile, _ in ATTENTION_NEIGHBOR_PROFILES
         ):
@@ -1926,6 +1938,8 @@ def attention_neighbor_seed90094_catalog(criterion: str):
     return {
         "seed": 90094,
         "criterion": criterion,
+        "branch": branch,
+        "branch_label": dict(ATTENTION_NEIGHBOR_CFG_BRANCHES)[branch],
         "criterion_label": "All Rankings" if criterion == "all" else criteria[criterion],
         "criteria": [
             {"id": criterion_id, "label": label}
@@ -1943,15 +1957,23 @@ def attention_neighbor_seed90094_catalog(criterion: str):
 def attention_neighbor_seed90094_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Neighbor Ranking Seed 90094</title><style>
 :root{--ink:#192821;--paper:#ece6d9;--card:#fffdf7;--line:#bdb19d;--red:#ae432f;--green:#17695d;--dark:#18372d;--gold:#bc7e29}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 7% 0,#eca55d55,transparent 34rem),radial-gradient(circle at 96% 3%,#4f967955,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:16px 23px;background:#ece6d9ed;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(27px,4vw,47px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2300px,calc(100% - 18px));margin:auto;padding:20px 0 80px}.original{max-width:700px;background:var(--card);padding:12px;border:1px solid var(--line);border-radius:14px}.original video,.card video,.card img{display:block;width:100%;background:#141815;border:1px solid var(--line);border-radius:7px}.shell{overflow:auto;margin-top:18px;border:1px solid var(--line);border-radius:15px;padding:9px;background:#d6cebf}.matrix{display:grid;grid-template-columns:220px repeat(8,330px);gap:8px;width:max-content}.head,.row,.cell{border:1px solid var(--line);border-radius:9px}.head{padding:11px;text-align:center;background:#faf5e9;font-weight:900;border-top:5px solid var(--gold)}.row{position:sticky;left:9px;z-index:3;padding:14px;background:var(--dark);color:#fff}.row.top{border-left:7px solid var(--red)}.row.bottom{border-left:7px solid var(--green)}.row small{display:block;margin-top:7px;color:#cbd8d1}.cell{padding:8px;background:#f7f1e7}.card{padding:9px;background:var(--card);height:100%;border-radius:8px}.card h3{margin:0 0 7px}.pill{display:inline-block;margin:2px;padding:4px 7px;border-radius:99px;background:#e8e0d2;font:10px ui-monospace,monospace}.maps{display:grid;gap:7px;margin-top:8px}.note{font-size:11px;color:#685f54;margin-top:7px}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);color:#766f63}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;background:var(--dark);color:#fff;padding:13px 19px}@media(max-width:800px){header{position:static}.matrix{grid-template-columns:170px repeat(8,280px)}}
-</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a><h1>Neighbor Ranking · Seed 90094</h1><p>同一实验横向比较 8 种 Ranking · Wan+LoRA · 001460_w002 · 40 steps / 49 frames</p><div class="tools"><label>Experiment <select id="profile"></select></label><button id="refresh">手动刷新</button><span class="status" id="status">读取中</span></div></header><main><h2>Original</h2><section id="original" class="original"></section><div class="shell"><section id="matrix" class="matrix"></section></div></main><script>
-const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let profile=q.get('profile')||'alpha090';const profiles=[['alpha090','alpha = 0.9'],['alpha150','alpha = 1.5'],['zero','A = 0'],['uniform','A = 1/N_K'],['temporal_causal','Temporal Causal'],['strict_past','Strict Past'],['strict_future','Strict Future'],['head_output_zero','Head Output Zero']];const src=(criterion,stage,group)=>`/api/attention-neighbor-ranking-seed90094/video?criterion=${criterion}&stage=${stage}&profile=${profile}&group=${group}`,image=(r,name,sourceProfile=r.profile)=>`/api/attention-neighbor-ranking-seed90094/image?criterion=${r.criterion}&stage=${r.stage}&profile=${sourceProfile}&group=${r.group}&name=${encodeURIComponent(name)}`;function card(r){const baseline=r.baseline_heatmap_ready?`<div class="maps"><strong>No Intervention Attention</strong><img loading="lazy" src="${image(r,r.baseline_all_token,'identity')}" alt="No intervention all-token attention"><img loading="lazy" src="${image(r,r.baseline_frame,'identity')}" alt="No intervention frame attention"></div>`:'<div class="note">No Intervention Attention 热力图生成中</div>';const maps=r.heatmap_ready?`<div class="maps"><strong>Intervention Before / After</strong><img loading="lazy" src="${image(r,r.all_token)}" alt="All-token Before/After"><img loading="lazy" src="${image(r,r.frame)}" alt="Frame Before/After"></div>`:r.heatmap_expected?'<div class="note">扰动前后热力图生成中</div>':'<div class="note">Head Output Zero 不改变 Attention</div>';return `<article class="card"><h3>${e(r.criterion_label)}</h3><span class="pill">${e(r.group.toUpperCase())}</span><span class="pill">${r.stage==='all_steps'?'S000-S039':'S000-S009'}</span>${r.video_ready?`<video controls preload="metadata" playsinline src="${src(r.criterion,r.stage,r.group)}"></video>`:'<div class="pending">视频生成中</div>'}${baseline}${maps}</article>`}function render(d){const s=document.getElementById('profile');if(!s.options.length)s.innerHTML=profiles.map(x=>`<option value="${e(x[0])}">${e(x[1])}</option>`).join('');s.value=profile;document.getElementById('status').textContent=`${d.completed_criteria}/${d.total_criteria} rankings complete · ${d.ready_records}/${d.expected_records} total videos ready`;document.getElementById('original').innerHTML=d.original_ready?`<video controls preload="metadata" playsinline src="${src('strict_score','original','original')}"></video>`:'<div class="pending">Original missing</div>';let html='<div class="head">Experiment x Stage</div>'+d.criteria.map(x=>`<div class="head">${e(x.label)}</div>`).join('');for(const stage of ['all_steps','steps00_09'])for(const group of ['top100','bottom100']){html+=`<div class="row ${group.startsWith('top')?'top':'bottom'}"><strong>${e(profiles.find(x=>x[0]===profile)?.[1]||profile)}</strong><small>${group.toUpperCase()} · ${stage==='all_steps'?'S000-S039':'S000-S009'}</small></div>`;for(const criterion of d.criteria){const r=d.records.find(x=>x.criterion===criterion.id&&x.stage===stage&&x.group===group&&x.profile===profile);html+=`<div class="cell">${card(r)}</div>`}}document.getElementById('matrix').innerHTML=html}async function load(){const d=await fetch('/api/attention-neighbor-ranking-seed90094/catalog?criterion=all',{cache:'no-store'}).then(r=>r.json());render(d)}document.getElementById('profile').addEventListener('change',ev=>{profile=ev.target.value;const u=new URL(location.href);u.searchParams.set('profile',profile);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a><h1>Neighbor Ranking · Seed 90094</h1><p>同一实验横向比较 8 种 Ranking · Wan+LoRA · 001460_w002 · 40 steps / 49 frames</p><div class="tools"><label>CFG Branch <select id="branch"><option value="both">Both CFG Branches</option><option value="conditional">Conditional Only</option><option value="unconditional">Unconditional Only</option></select></label><label>Experiment <select id="profile"></select></label><button id="refresh">手动刷新</button><span class="status" id="status">读取中</span></div></header><main><h2>Original</h2><section id="original" class="original"></section><div class="shell"><section id="matrix" class="matrix"></section></div></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let profile=q.get('profile')||'alpha090',branch=q.get('branch')||'both';const branchLabels={both:'Both CFG Branches',conditional:'Conditional Only',unconditional:'Unconditional Only'};const profiles=[['alpha090','alpha = 0.9'],['alpha150','alpha = 1.5'],['zero','A = 0'],['uniform','A = 1/N_K'],['temporal_causal','Temporal Causal'],['strict_past','Strict Past'],['strict_future','Strict Future'],['exclude_current','Exclude Current Frame'],['context_only','Context Frames Only'],['head_output_zero','Head Output Zero']];const src=(criterion,stage,group)=>`/api/attention-neighbor-ranking-seed90094/video?criterion=${criterion}&stage=${stage}&profile=${profile}&group=${group}&branch=${branch}`,image=(r,name,sourceProfile=r.profile,sourceBranch=branch)=>`/api/attention-neighbor-ranking-seed90094/image?criterion=${r.criterion}&stage=${r.stage}&profile=${sourceProfile}&group=${r.group}&name=${encodeURIComponent(name)}&branch=${sourceBranch}`;function card(r){const baseline=r.baseline_heatmap_ready?`<div class="maps"><strong>No Intervention Attention · Both CFG</strong><img loading="lazy" src="${image(r,r.baseline_all_token,'identity')}" alt="No intervention all-token attention"><img loading="lazy" src="${image(r,r.baseline_frame,'identity')}" alt="No intervention frame attention"></div>`:'<div class="note">No Intervention Attention 热力图生成中</div>';const maps=r.heatmap_ready?`<div class="maps"><strong>Intervention Before / After · ${e(branchLabels[branch])}</strong><img loading="lazy" src="${image(r,r.all_token)}" alt="All-token Before/After"><img loading="lazy" src="${image(r,r.frame)}" alt="Frame Before/After"></div>`:r.heatmap_expected?'<div class="note">扰动前后热力图生成中</div>':'<div class="note">Head Output Zero 不改变 Attention</div>';return `<article class="card"><h3>${e(r.criterion_label)}</h3><span class="pill">${e(branchLabels[branch])}</span><span class="pill">${e(r.group.toUpperCase())}</span><span class="pill">${r.stage==='all_steps'?'S000-S039':'S000-S009'}</span>${r.video_ready?`<video controls preload="metadata" playsinline src="${src(r.criterion,r.stage,r.group)}"></video>`:'<div class="pending">视频生成中</div>'}${baseline}${maps}</article>`}function render(d){document.getElementById('branch').value=branch;const s=document.getElementById('profile');if(!s.options.length)s.innerHTML=profiles.map(x=>`<option value="${e(x[0])}">${e(x[1])}</option>`).join('');s.value=profile;document.getElementById('status').textContent=`${d.completed_criteria}/${d.total_criteria} rankings complete · ${d.ready_records}/${d.expected_records} total videos ready`;document.getElementById('original').innerHTML=d.original_ready?`<video controls preload="metadata" playsinline src="${src('strict_score','original','original')}"></video>`:'<div class="pending">Original missing</div>';let html='<div class="head">Experiment x Stage</div>'+d.criteria.map(x=>`<div class="head">${e(x.label)}</div>`).join('');for(const stage of ['all_steps','steps00_09'])for(const group of ['top100','bottom100']){html+=`<div class="row ${group.startsWith('top')?'top':'bottom'}"><strong>${e(profiles.find(x=>x[0]===profile)?.[1]||profile)}</strong><small>${group.toUpperCase()} · ${stage==='all_steps'?'S000-S039':'S000-S009'}</small></div>`;for(const criterion of d.criteria){const r=d.records.find(x=>x.criterion===criterion.id&&x.stage===stage&&x.group===group&&x.profile===profile);html+=`<div class="cell">${card(r)}</div>`}}document.getElementById('matrix').innerHTML=html}async function load(){const d=await fetch(`/api/attention-neighbor-ranking-seed90094/catalog?criterion=all&branch=${encodeURIComponent(branch)}`,{cache:'no-store'}).then(r=>r.json());render(d)}document.getElementById('branch').addEventListener('change',ev=>{branch=ev.target.value;const u=new URL(location.href);u.searchParams.set('branch',branch);history.replaceState(null,'',u);load()});document.getElementById('profile').addEventListener('change',ev=>{profile=ev.target.value;const u=new URL(location.href);u.searchParams.set('profile',profile);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
 </script></body></html>'''
+
+
+OBJECT_QUERY_OVERLAY_PROFILES = tuple(
+    item for item in SEED_SWEEP_PROFILES if item[0] != "head_output_zero"
+) + (
+    ("exclude_current", "Exclude Current Frame"),
+    ("context_only", "Context Frames Only"),
+)
 
 
 def object_query_attention_overlay_asset(stage: str, profile: str, name: str):
     if (
         stage not in {"all_steps", "steps00_09"}
-        or profile not in {item[0] for item in SEED_SWEEP_PROFILES}
+        or profile not in {item[0] for item in OBJECT_QUERY_OVERLAY_PROFILES}
         or Path(name).name != name
         or not name.endswith(".jpg")
     ):
@@ -1962,7 +1984,7 @@ def object_query_attention_overlay_asset(stage: str, profile: str, name: str):
 def object_query_attention_overlay_catalog(
     stage: str, profile: str, group: str
 ):
-    allowed_profiles = {item[0] for item in SEED_SWEEP_PROFILES}
+    allowed_profiles = {item[0] for item in OBJECT_QUERY_OVERLAY_PROFILES}
     if stage not in {"all_steps", "steps00_09"}:
         stage = "all_steps"
     if profile not in allowed_profiles:
@@ -1999,7 +2021,7 @@ def object_query_attention_overlay_catalog(
         "group": group,
         "profiles": [
             {"id": profile_id, "label": label}
-            for profile_id, label in SEED_SWEEP_PROFILES
+            for profile_id, label in OBJECT_QUERY_OVERLAY_PROFILES
         ],
         "records": records,
     }
@@ -2008,7 +2030,7 @@ def object_query_attention_overlay_catalog(
 def object_query_attention_overlay_video_asset(
     stage: str, profile: str, group: str, kind: str
 ):
-    allowed_profiles = {item[0] for item in SEED_SWEEP_PROFILES}
+    allowed_profiles = {item[0] for item in OBJECT_QUERY_OVERLAY_PROFILES}
     if stage != "all_steps" or profile not in allowed_profiles:
         return None
     if group not in {"top100", "bottom100"}:
@@ -2034,7 +2056,7 @@ def object_query_attention_overlay_page():
 :root{--paper:#eee8dc;--ink:#17251f;--line:#bcb19d;--card:#fffdf8;--red:#ad422e;--green:#17685c}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 5% 0,#e99e5555,transparent 32rem),radial-gradient(circle at 98% 4%,#4b937655,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:10;padding:17px 24px;background:#eee8dced;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(27px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;flex-wrap:wrap;align-items:center}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#58675f}main{width:min(2280px,calc(100% - 18px));margin:auto;padding:20px 0 70px}.video-panel,.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:15px}.video-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.video-grid figure{margin:0}.video-grid figcaption{font-weight:900;margin:0 0 6px}.video-panel video{display:block;width:100%;background:#131714}.panel.top{border-left:7px solid var(--red)}.panel.bottom{border-left:7px solid var(--green)}.panel h2{margin:0 0 8px}.meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}.pill{padding:5px 8px;background:#e8e1d3;border-radius:99px;font:11px ui-monospace,monospace}.images{display:grid;gap:14px}.images figure{margin:0}.images img{display:block;width:100%;min-width:1900px;border:1px solid var(--line);background:#111}.images figcaption{font-weight:900;margin:4px 0}.compare-stack{display:grid;gap:8px;padding-bottom:5px}.compare-stack figure{min-width:1900px}.compare-stack figcaption{position:sticky;left:0;width:max-content;padding:3px 9px;background:var(--ink);color:#fff;border-radius:4px;z-index:1}.delta-row{border-top:1px dashed var(--line);padding-top:8px}.scroll{overflow:auto}.pending{padding:50px;border:1px dashed var(--line);background:var(--card)}@media(max-width:800px){header{position:static}.video-grid{grid-template-columns:1fr}}
 </style></head><body><header><a href="/attention-additive-lora-seed-sweep?v=1&seed=90094">返回 Seed Sweep</a><h1>Head-wise PCK Object Query Overlay</h1><p>Seed 90094 · SAM2 context F04 · Q latent 1 · Object A sphere / Object B box · 每个对象的 8 个 query 热力图直接求和叠加 × 13 key latent frames</p><div class="tools"><label>Stage <select id="stage"><option value="all_steps">S000-S039</option></select></label><label>Experiment <select id="profile"></select></label><label>Group <select id="group"><option value="top100">Top10 Heads</option><option value="bottom100">Bottom10 Heads</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="video" class="video-panel"></section><section id="records"></section></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),params=new URL(location.href).searchParams;let stage=params.get('stage')||'all_steps',profile=params.get('profile')||'alpha090',group=params.get('group')||'top100';const image=(name)=>`/api/object-query-attention-overlay/image?stage=${stage}&profile=${profile}&name=${encodeURIComponent(name)}`,video=(kind)=>`/api/object-query-attention-overlay/video?stage=${stage}&profile=${profile}&group=${group}&kind=${kind}`;
-function syncUrl(){const u=new URL(location.href);u.searchParams.set('stage',stage);u.searchParams.set('profile',profile);u.searchParams.set('group',group);history.replaceState(null,'',u)}function render(d){const profileSelect=document.getElementById('profile');if(profileSelect.options.length!==d.profiles.length)profileSelect.innerHTML=d.profiles.map(x=>`<option value="${e(x.id)}">${e(x.label)}</option>`).join('');profileSelect.value=profile;document.getElementById('stage').value=stage;document.getElementById('group').value=group;document.getElementById('status').textContent=`${d.records.filter(x=>x.ready).length}/${d.records.length||20} object-head records ready`;document.getElementById('video').innerHTML=`<h2>对应生成视频</h2><div class="video-grid"><figure><figcaption>Wan+LoRA Baseline · No Attention Intervention</figcaption><video controls preload="metadata" playsinline src="${video('baseline')}"></video></figure><figure><figcaption>${group==='top100'?'Top10':'Bottom10'} · ${e(profile)} Attention Intervention</figcaption><video controls preload="metadata" playsinline src="${video('intervention')}"></video></figure></div>`;document.getElementById('records').innerHTML=d.records.length?d.records.map(r=>`<article class="panel ${group.startsWith('top')?'top':'bottom'}"><h2>L${String(r.block).padStart(2,'0')} / H${String(r.head).padStart(2,'0')} · ${e(r.region_name)} (${e(r.region_phrase)})</h2><div class="meta"><span class="pill">Combined Object PCK@32 ${Number(r.pck32).toFixed(3)}</span><span class="pill">Q=F${String(r.query_pixel_frame).padStart(2,'0')} / latent ${r.query_latent_frame}</span><span class="pill">Σ ${r.query_count} SAM2 queries</span><span class="pill">S${String(r.step).padStart(3,'0')}</span><span class="pill">${group==='top100'?'Top10':'Bottom10'}</span></div>${r.ready?`<div class="images"><figure><figcaption>8 Query Attention 求和叠加 · Before / After 相邻</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.before_after)}"></div></figure><figure class="delta-row"><figcaption>Σ |Delta|</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.abs_delta)}"></div></figure></div>`:'<div class="pending">Head-wise PCK capture / overlay 生成中</div>'}</article>`).join(''):'<div class="pending">该组合正在捕获，点击手动刷新查看。</div>'}
+function syncUrl(){const u=new URL(location.href);u.searchParams.set('stage',stage);u.searchParams.set('profile',profile);u.searchParams.set('group',group);history.replaceState(null,'',u)}function render(d){const profileSelect=document.getElementById('profile');if(profileSelect.options.length!==d.profiles.length)profileSelect.innerHTML=d.profiles.map(x=>`<option value="${e(x.id)}">${e(x.label)}</option>`).join('');profileSelect.value=profile;document.getElementById('stage').value=stage;document.getElementById('group').value=group;document.getElementById('status').textContent=`${d.records.filter(x=>x.ready).length}/${d.records.length||20} object-head records ready`;document.getElementById('video').innerHTML=`<h2>对应生成视频</h2><div class="video-grid"><figure><figcaption>Wan+LoRA Baseline · No Attention Intervention</figcaption><video controls preload="metadata" playsinline src="${video('baseline')}"></video></figure><figure><figcaption>${group==='top100'?'Top10':'Bottom10'} · ${e(profile)} Attention Intervention</figcaption><video controls preload="metadata" playsinline src="${video('intervention')}"></video></figure></div>`;document.getElementById('records').innerHTML=d.records.length?d.records.map(r=>`<article class="panel ${group.startsWith('top')?'top':'bottom'}"><h2>L${String(r.block).padStart(2,'0')} / H${String(r.head).padStart(2,'0')} · ${e(r.region_name)} (${e(r.region_phrase)})</h2><div class="meta"><span class="pill">LoRA PCK@32 ${Number(r.pck32).toFixed(3)}</span><span class="pill">Q=F${String(r.query_pixel_frame).padStart(2,'0')} / latent ${r.query_latent_frame}</span><span class="pill">Σ ${r.query_count} SAM2 queries</span><span class="pill">S${String(r.step).padStart(3,'0')}</span><span class="pill">${group==='top100'?'Top10':'Bottom10'}</span></div>${r.ready?`<div class="images"><figure><figcaption>8 Query Attention 求和叠加 · Before / After 相邻</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.before_after)}"></div></figure><figure><figcaption>该 Head 全 token Q@K · Before / After / |Delta|</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.all_token_qk)}"></div></figure><figure class="delta-row"><figcaption>Σ |Delta|</figcaption><div class="scroll"><img loading="lazy" src="${image(r.images.abs_delta)}"></div></figure></div>`:'<div class="pending">Head-wise PCK capture / overlay 生成中</div>'}</article>`).join(''):'<div class="pending">该组合正在捕获，点击手动刷新查看。</div>'}
 async function load(){const d=await fetch(`/api/object-query-attention-overlay/catalog?stage=${stage}&profile=${profile}&group=${group}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['stage','profile','group'])document.getElementById(id).addEventListener('change',ev=>{if(id==='stage')stage=ev.target.value;if(id==='profile')profile=ev.target.value;if(id==='group')group=ev.target.value;syncUrl();load()});document.getElementById('refresh').addEventListener('click',load);load();
 </script></body></html>'''
 

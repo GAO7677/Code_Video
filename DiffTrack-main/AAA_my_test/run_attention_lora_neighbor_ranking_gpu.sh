@@ -16,16 +16,21 @@ CURRENT="/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
 SEEDS_FILE="${ROOT}/seeds.txt"
 CASE_LIST="/data/gaoya/agent-data/outputs/attention_probability_mono_scale_steps40_frames49_case001460/case_list.txt"
 CASE_KEY="0613pybullet_sample_001460_w002"
-CRITERIA=(strict_score allblock_purity allblock_min_purity balanced uniformity joint mass pck32)
+if [[ -n "${ATTENTION_NEIGHBOR_CRITERIA:-}" ]]; then
+  read -r -a CRITERIA <<< "${ATTENTION_NEIGHBOR_CRITERIA}"
+else
+  CRITERIA=(strict_score allblock_purity allblock_min_purity balanced uniformity joint mass pck32)
+fi
 if [[ -n "${ATTENTION_NEIGHBOR_PROFILES:-}" ]]; then
   read -r -a PROFILES <<< "${ATTENTION_NEIGHBOR_PROFILES}"
 else
-  PROFILES=(alpha090 alpha150 zero uniform temporal_causal strict_past strict_future head_output_zero)
+  PROFILES=(alpha090 alpha150 zero uniform temporal_causal strict_past strict_future exclude_current context_only head_output_zero)
 fi
 
 export CUDA_VISIBLE_DEVICES="${GPU}"
 mkdir -p "${ROOT}/logs"
 FIXED_SEED="${ATTENTION_RANKING_FIXED_SEED:-}"
+CFG_BRANCH_MODE="${ATTENTION_CFG_BRANCH_MODE:-both}"
 if [[ -n "${FIXED_SEED}" ]]; then
   SEEDS=("${FIXED_SEED}")
 else
@@ -46,7 +51,12 @@ link_original() {
 run_profile() {
   local seed="$1" criterion="$2" stage="$3" profile="$4"
   local seed_root="${ROOT}/seeds/seed_$(printf '%06d' "${seed}")"
-  local run_root="${seed_root}/${criterion}/${stage}/${profile}"
+  local run_root
+  if [[ "${CFG_BRANCH_MODE}" == "both" ]]; then
+    run_root="${seed_root}/${criterion}/${stage}/${profile}"
+  else
+    run_root="${seed_root}/branches/${CFG_BRANCH_MODE}/${criterion}/${stage}/${profile}"
+  fi
   local complete="${run_root}/complete"
   [[ -f "${complete}" ]] && return
   mkdir -p "${run_root}/heatmaps" "${run_root}/videos"
@@ -61,16 +71,20 @@ run_profile() {
     temporal_causal) mode=probability_temporal_causal; alpha=0 ;;
     strict_past) mode=probability_strict_past; alpha=0 ;;
     strict_future) mode=probability_strict_future; alpha=0 ;;
+    exclude_current) mode=probability_exclude_current; alpha=0 ;;
+    context_only) mode=probability_context_only; alpha=0 ;;
     head_output_zero) mode=head_output_zero; alpha=0 ;;
     identity) mode=probability_identity; alpha=0 ;;
     *) echo "Unknown profile ${profile}" >&2; exit 2 ;;
   esac
   cd "${DIFFTRACK}"
   ATTENTION_NOISE_MODE="${mode}" \
+  ATTENTION_CFG_BRANCH_MODE="${CFG_BRANCH_MODE}" \
   ATTENTION_NOISE_ALPHA="${alpha}" \
   ATTENTION_NOISE_SEED="${seed}" \
   QK_ATTENTION_NOISE_SEED="${seed}" \
   ATTENTION_MASK_LATENT_FRAMES=13 \
+  ATTENTION_MASK_CONTEXT_LATENT_FRAMES="${ATTENTION_MASK_CONTEXT_LATENT_FRAMES:-2}" \
   QK_ATTENTION_CAPTURE_ROOT="${run_root}/heatmaps" \
   QK_ATTENTION_CAPTURE_STEP="${capture_step}" \
   QK_ATTENTION_CAPTURE_MODEL=lora \
@@ -85,8 +99,8 @@ run_profile() {
       --ranking-criterion "${criterion}" \
       --input-json-list "${CASE_LIST}" \
       --output-root "${run_root}/videos"
-  printf 'seed=%s\ngpu=%s\ncriterion=%s\nstage=%s\nprofile=%s\ncompleted=%s\n' \
-    "${seed}" "${GPU}" "${criterion}" "${stage}" "${profile}" \
+  printf 'seed=%s\ngpu=%s\ncfg_branch=%s\ncriterion=%s\nstage=%s\nprofile=%s\ncompleted=%s\n' \
+    "${seed}" "${GPU}" "${CFG_BRANCH_MODE}" "${criterion}" "${stage}" "${profile}" \
     "$(date -u +%FT%TZ)" > "${complete}"
 }
 

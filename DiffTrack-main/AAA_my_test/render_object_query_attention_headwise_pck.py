@@ -15,6 +15,8 @@ LATENT_FRAMES = 13
 TILE_WIDTH = 160
 TILE_HEIGHT = 90
 HEADER_HEIGHT = 42
+ALL_TOKEN_PANEL = 416
+ALL_TOKEN_HEADER = 42
 
 
 def parse_args():
@@ -140,6 +142,43 @@ def scalar(payload, key):
     return payload[key].item() if np.asarray(payload[key]).ndim == 0 else payload[key]
 
 
+def all_token_qk_image(before, after, title):
+    log_before = np.log10(np.maximum(before.astype(np.float32), 1e-12))
+    log_after = np.log10(np.maximum(after.astype(np.float32), 1e-12))
+    shared = np.concatenate([log_before.ravel(), log_after.ravel()])
+    low, high = np.percentile(shared, [0.5, 99.5])
+    delta = np.abs(after.astype(np.float32) - before.astype(np.float32))
+    delta_high = float(np.percentile(delta, 99.5)) or 1e-12
+
+    def colored(values, vmin, vmax, colormap):
+        scale = max(float(vmax - vmin), 1e-12)
+        normalized = np.clip((values - vmin) / scale, 0.0, 1.0)
+        return cv2.applyColorMap(np.uint8(normalized * 255), colormap)
+
+    panels = (
+        (colored(log_before, low, high, cv2.COLORMAP_MAGMA), "Before log10(A)"),
+        (colored(log_after, low, high, cv2.COLORMAP_MAGMA), "After log10(A)"),
+        (colored(delta, 0.0, delta_high, cv2.COLORMAP_VIRIDIS), "|After - Before|"),
+    )
+    canvas = np.full(
+        (ALL_TOKEN_HEADER + ALL_TOKEN_PANEL, 3 * ALL_TOKEN_PANEL, 3),
+        242,
+        dtype=np.uint8,
+    )
+    for index, (panel, label) in enumerate(panels):
+        x = index * ALL_TOKEN_PANEL
+        canvas[ALL_TOKEN_HEADER:, x:x + ALL_TOKEN_PANEL] = panel
+        cv2.putText(
+            canvas, label, (x + 8, 27), cv2.FONT_HERSHEY_SIMPLEX,
+            .58, (28, 38, 34), 2,
+        )
+    cv2.putText(
+        canvas, title, (8, ALL_TOKEN_HEADER + ALL_TOKEN_PANEL - 9),
+        cv2.FONT_HERSHEY_SIMPLEX, .38, (255, 255, 255), 1,
+    )
+    return canvas
+
+
 def main():
     args = parse_args()
     args.output_root.mkdir(parents=True, exist_ok=True)
@@ -168,6 +207,28 @@ def main():
             region_name = str(scalar(payload, "region_name"))
             region_phrase = str(scalar(payload, "region_phrase"))
             outputs = {}
+            all_token_capture = (
+                args.capture_root / "all_token" /
+                f"{name.split('__', 1)[0]}__{group}"
+                f"__step{int(scalar(payload, 'step')):02d}"
+                f"__b{int(scalar(payload, 'block')):02d}"
+                f"_h{int(scalar(payload, 'head')):02d}.npz"
+            )
+            if all_token_capture.is_file():
+                with np.load(all_token_capture) as all_token:
+                    all_token_filename = (
+                        f"{all_token_capture.stem}__all_token_qk.jpg"
+                    )
+                    image = all_token_qk_image(
+                        all_token["before"], all_token["after"],
+                        f"L{int(scalar(payload, 'block')):02d}/"
+                        f"H{int(scalar(payload, 'head')):02d} | 5824 -> 416 bins",
+                    )
+                    cv2.imwrite(
+                        str(args.output_root / all_token_filename), image,
+                        [cv2.IMWRITE_JPEG_QUALITY, 94],
+                    )
+                    outputs["all_token_qk"] = all_token_filename
             for kind, values, vmax, is_delta in (
                 ("before", before_sum, probability_vmax, False),
                 ("after", after_sum, probability_vmax, False),

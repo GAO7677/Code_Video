@@ -31,6 +31,25 @@ TARGET_WIDTH = 896
 
 
 def ranked_heads(step: int) -> dict[str, dict[tuple[int, int], dict]]:
+    selection_path = os.environ.get("OBJECT_QUERY_RANKING_SELECTION", "").strip()
+    if selection_path:
+        payload = json.loads(Path(selection_path).read_text(encoding="utf-8"))
+
+        def selected(group: str):
+            rows = payload[f"{group}_step_{step:02d}"][:10]
+            return {
+                (int(row["block"]), int(row["head"])): {
+                    "block": int(row["block"]),
+                    "head": int(row["head"]),
+                    "pck32": float(row["macro_pck32"]),
+                }
+                for row in rows
+            }
+
+        return {
+            "top100": selected("top100"),
+            "bottom100": selected("bottom100"),
+        }
     rows = []
     with RANKING_CSV.open("r", encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
@@ -125,6 +144,8 @@ def _after_probabilities(owner, logits: torch.Tensor, before: torch.Tensor, quer
         "probability_temporal_causal",
         "probability_strict_past",
         "probability_strict_future",
+        "probability_exclude_current",
+        "probability_context_only",
     }:
         key_frames = torch.arange(before.shape[-1], device=before.device) // SPATIAL_TOKENS
         query_frames = torch.as_tensor(query_indices, device=before.device) // SPATIAL_TOKENS
@@ -132,8 +153,17 @@ def _after_probabilities(owner, logits: torch.Tensor, before: torch.Tensor, quer
             allowed = key_frames.unsqueeze(0) <= query_frames.unsqueeze(1)
         elif mode == "probability_strict_past":
             allowed = key_frames.unsqueeze(0) < query_frames.unsqueeze(1)
-        else:
+        elif mode == "probability_strict_future":
             allowed = key_frames.unsqueeze(0) > query_frames.unsqueeze(1)
+        elif mode == "probability_exclude_current":
+            allowed = key_frames.unsqueeze(0) != query_frames.unsqueeze(1)
+        else:
+            context_frames = int(
+                os.environ.get("ATTENTION_MASK_CONTEXT_LATENT_FRAMES", "2")
+            )
+            allowed = (key_frames < context_frames).unsqueeze(0).expand(
+                len(query_frames), -1
+            )
         result = torch.zeros_like(before)
         valid_rows = allowed.any(dim=-1)
         if valid_rows.any():

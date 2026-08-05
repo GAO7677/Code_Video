@@ -25,6 +25,9 @@ SIGMA = 0.30
 QUERY_CHUNK = 128
 NOISE_MODE = os.environ.get("ATTENTION_NOISE_MODE", "logit").strip().lower()
 ATTENTION_ALPHA = float(os.environ.get("ATTENTION_NOISE_ALPHA", "0.30"))
+CFG_BRANCH_MODE = os.environ.get("ATTENTION_CFG_BRANCH_MODE", "both").strip().lower()
+if CFG_BRANCH_MODE not in {"both", "conditional", "unconditional"}:
+    raise ValueError(f"Unsupported ATTENTION_CFG_BRANCH_MODE: {CFG_BRANCH_MODE}")
 if NOISE_MODE not in {
     "logit",
     "probability_additive",
@@ -33,6 +36,8 @@ if NOISE_MODE not in {
     "probability_temporal_causal",
     "probability_strict_past",
     "probability_strict_future",
+    "probability_exclude_current",
+    "probability_context_only",
     "probability_identity",
 }:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
@@ -123,6 +128,9 @@ class AdaptiveQKLogitNoise:
         self.adaptive_prefix: str | None = None
         self.active_steps: set[int] = set()
         self.current_step = -1
+        self.current_cfg_branch = "conditional"
+        self._cfg_step = -1
+        self._cfg_call_index = 0
         self.call_count = 0
         self.noise_context = "unset"
         capture_root = os.environ.get("QK_ATTENTION_CAPTURE_ROOT", "").strip()
@@ -172,7 +180,18 @@ class AdaptiveQKLogitNoise:
     def _wrapped_model_fn(self, *args, **kwargs):
         timestep = kwargs.get("timestep")
         self.current_step = self._scheduler_step(timestep) if timestep is not None else -1
-        if self.adaptive_prefix is None or self.current_step < 0:
+        if self.current_step != self._cfg_step:
+            self._cfg_step = self.current_step
+            self._cfg_call_index = 0
+        else:
+            self._cfg_call_index += 1
+        self.current_cfg_branch = (
+            "conditional" if self._cfg_call_index % 2 == 0 else "unconditional"
+        )
+        branch_active = (
+            CFG_BRANCH_MODE == "both" or CFG_BRANCH_MODE == self.current_cfg_branch
+        )
+        if self.adaptive_prefix is None or self.current_step < 0 or not branch_active:
             self.group = None
         else:
             self.group = f"{self.adaptive_prefix}_step_{self.current_step:02d}"
@@ -243,6 +262,8 @@ class AdaptiveQKLogitNoise:
                 "probability_temporal_causal",
                 "probability_strict_past",
                 "probability_strict_future",
+                "probability_exclude_current",
+                "probability_context_only",
             }:
                 latent_frames = int(os.environ.get("ATTENTION_MASK_LATENT_FRAMES", "7"))
                 if sequence % latent_frames != 0:
@@ -260,8 +281,22 @@ class AdaptiveQKLogitNoise:
                     allowed = key_frames.unsqueeze(0) <= query_frames.unsqueeze(1)
                 elif self.noise_mode == "probability_strict_past":
                     allowed = key_frames.unsqueeze(0) < query_frames.unsqueeze(1)
-                else:
+                elif self.noise_mode == "probability_strict_future":
                     allowed = key_frames.unsqueeze(0) > query_frames.unsqueeze(1)
+                elif self.noise_mode == "probability_exclude_current":
+                    allowed = key_frames.unsqueeze(0) != query_frames.unsqueeze(1)
+                else:
+                    context_frames = int(
+                        os.environ.get("ATTENTION_MASK_CONTEXT_LATENT_FRAMES", "2")
+                    )
+                    if not 0 < context_frames <= latent_frames:
+                        raise RuntimeError(
+                            f"Invalid context latent frame count {context_frames}; "
+                            f"expected 1..{latent_frames}"
+                        )
+                    allowed = (key_frames < context_frames).unsqueeze(0).expand(
+                        end - start, -1
+                    )
                 expanded = allowed.unsqueeze(0).unsqueeze(0)
                 valid_rows = allowed.any(dim=-1)
                 probabilities = torch.zeros_like(before_probabilities)
@@ -277,7 +312,11 @@ class AdaptiveQKLogitNoise:
                         capture_entry["max_row_sum_error"],
                         float((probabilities.sum(dim=-1) - 1.0).abs().max().item()),
                     )
-            elif self.noise_mode == "probability_zero":
+            elif self.noise_mode == "probability_exclude_current":
+            strength_label = "exclude current frame mask"
+        elif self.noise_mode == "probability_context_only":
+            strength_label = "context frames only mask"
+        elif self.noise_mode == "probability_zero":
                 probabilities = torch.zeros_like(before_probabilities)
                 if capture_entry is not None:
                     capture_entry["max_row_sum_error"] = 1.0
@@ -441,6 +480,7 @@ class AdaptiveQKLogitNoise:
             "group": group,
             "step": self.capture_step,
             "intervention": self.noise_mode,
+            "cfg_branch_mode": CFG_BRANCH_MODE,
             "sigma": SIGMA if self.noise_mode == "logit" else None,
             "alpha": self.attention_alpha if self.noise_mode == "probability_additive" else None,
             "noise_scale_per_attention_element": (
@@ -497,6 +537,8 @@ def generate_with_context(pipe, zeroer, context, prompt, group, steps):
     zeroer.set_noise_context(prompt, group)
     result = original_generate(pipe, zeroer, context, prompt, group, steps)
     zeroer.flush_capture(group)
+    if NOISE_MODE == "probability_identity" and group is not None:
+        zeroer.call_count += 1
     return result
 
 
@@ -515,11 +557,14 @@ def write_experiment_metadata() -> None:
         json.dumps(
             {
                 "intervention": {
+                    "probability_identity": "no_attention_intervention",
                     "probability_zero": "direct_attention_probability_zero",
                     "probability_uniform": "direct_attention_probability_uniform",
                     "probability_temporal_causal": "temporal_causal_attention_mask",
                     "probability_strict_past": "strict_past_attention_mask",
                     "probability_strict_future": "strict_future_attention_mask",
+                    "probability_exclude_current": "exclude_current_frame_attention_mask",
+                    "probability_context_only": "context_frames_only_attention_mask",
                     "probability_additive": "direct_attention_probability_additive_noise",
                     "logit": "direct_qk_logit_noise",
                 }[NOISE_MODE],

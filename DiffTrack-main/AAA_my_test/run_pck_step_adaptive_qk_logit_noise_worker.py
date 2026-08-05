@@ -25,6 +25,9 @@ SIGMA = 0.30
 QUERY_CHUNK = 128
 NOISE_MODE = os.environ.get("ATTENTION_NOISE_MODE", "logit").strip().lower()
 ATTENTION_ALPHA = float(os.environ.get("ATTENTION_NOISE_ALPHA", "0.30"))
+CFG_BRANCH_MODE = os.environ.get("ATTENTION_CFG_BRANCH_MODE", "both").strip().lower()
+if CFG_BRANCH_MODE not in {"both", "conditional", "unconditional"}:
+    raise ValueError(f"Unsupported ATTENTION_CFG_BRANCH_MODE: {CFG_BRANCH_MODE}")
 if NOISE_MODE not in {"logit", "probability_additive", "probability_mono_scale"}:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
 if NOISE_MODE == "probability_mono_scale" and ATTENTION_ALPHA < 0:
@@ -116,6 +119,9 @@ class AdaptiveQKLogitNoise:
         self.adaptive_prefix: str | None = None
         self.active_steps: set[int] = set()
         self.current_step = -1
+        self.current_cfg_branch = "conditional"
+        self._cfg_step = -1
+        self._cfg_call_index = 0
         self.call_count = 0
         self.noise_context = "unset"
         capture_root = os.environ.get("QK_ATTENTION_CAPTURE_ROOT", "").strip()
@@ -174,7 +180,18 @@ class AdaptiveQKLogitNoise:
     def _wrapped_model_fn(self, *args, **kwargs):
         timestep = kwargs.get("timestep")
         self.current_step = self._scheduler_step(timestep) if timestep is not None else -1
-        if self.adaptive_prefix is None or self.current_step < 0:
+        if self.current_step != self._cfg_step:
+            self._cfg_step = self.current_step
+            self._cfg_call_index = 0
+        else:
+            self._cfg_call_index += 1
+        self.current_cfg_branch = (
+            "conditional" if self._cfg_call_index % 2 == 0 else "unconditional"
+        )
+        branch_active = (
+            CFG_BRANCH_MODE == "both" or CFG_BRANCH_MODE == self.current_cfg_branch
+        )
+        if self.adaptive_prefix is None or self.current_step < 0 or not branch_active:
             self.group = None
         else:
             self.group = f"{self.adaptive_prefix}_step_{self.current_step:02d}"
