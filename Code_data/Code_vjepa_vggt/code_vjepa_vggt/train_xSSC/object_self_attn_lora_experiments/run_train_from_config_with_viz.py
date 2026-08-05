@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import importlib.util
 import json
 import math
 import os
@@ -101,15 +102,99 @@ def _bootstrap_runtime_modules() -> None:
     exp = _exp
     train_xssc_context_slots = _slots
 
+
+class _TinyVaeVideoDecoder:
+    def __init__(self, checkpoint: Path, *, parallel: bool) -> None:
+        self.checkpoint = checkpoint.expanduser().resolve()
+        self.parallel = parallel
+        self._model: Any | None = None
+
+    def _load_model(self, pipe) -> Any:
+        if self._model is not None:
+            return self._model
+        taehv_py = self.checkpoint.parent / "taehv.py"
+        if not taehv_py.is_file():
+            taehv_py = Path("/home/gaoya/Code_Video/taehv/taehv.py")
+        if not taehv_py.is_file():
+            raise FileNotFoundError(f"Cannot find taehv.py for tiny VAE: {taehv_py}")
+        if not self.checkpoint.is_file():
+            raise FileNotFoundError(f"Cannot find tiny VAE checkpoint: {self.checkpoint}")
+
+        spec = importlib.util.spec_from_file_location("_codex_taehv", str(taehv_py))
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Cannot import tiny VAE module from {taehv_py}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        model = module.TAEHV(checkpoint_path=str(self.checkpoint)).eval()
+        model = model.to(device=pipe.device, dtype=pipe.torch_dtype)
+        self._model = model
+        print(
+            f"Tiny VAE decoder: {self.checkpoint} on {pipe.device} ({pipe.torch_dtype})",
+            flush=True,
+        )
+        return model
+
+    def decode(self, pipe, latents: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        model = self._load_model(pipe)
+        output = {}
+        with torch.no_grad():
+            for name, latent in latents.items():
+                value = latent.detach().to(device=pipe.device, dtype=pipe.torch_dtype)
+                if value.ndim != 5:
+                    raise ValueError(f"Expected latent [B,C,T,H,W], got {tuple(value.shape)}")
+                value_ntchw = value.permute(0, 2, 1, 3, 4).contiguous()
+                if int(value_ntchw.shape[2]) != int(model.latent_channels):
+                    raise ValueError(
+                        "Tiny VAE latent channel mismatch: "
+                        f"got {value_ntchw.shape[2]}, expected {model.latent_channels} "
+                        f"for {self.checkpoint.name}"
+                    )
+                decoded = model.decode_video(
+                    value_ntchw,
+                    parallel=self.parallel,
+                    show_progress_bar=False,
+                )
+                output[name] = (
+                    decoded.permute(0, 2, 1, 3, 4)
+                    .contiguous()
+                    .mul(2.0)
+                    .sub(1.0)
+                    .clamp_(-1.0, 1.0)
+                    .cpu()
+                )
+        return output
+
+
 class _VizIndex:
-    def __init__(self, root: Path, keep_last: int, fps: int, quality: int) -> None:
+    def __init__(
+        self,
+        root: Path,
+        keep_last: int,
+        fps: int,
+        quality: int,
+        decoder: str,
+        tiny_vae_checkpoint: Path,
+        tiny_vae_parallel: bool,
+    ) -> None:
         self.root = root
         self.keep_last = keep_last
         self.fps = fps
         self.quality = quality
+        self.decoder = decoder
+        self.tiny_vae = _TinyVaeVideoDecoder(
+            tiny_vae_checkpoint,
+            parallel=tiny_vae_parallel,
+        )
         self.records: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._step = 0
+
+    def decode_latents(self, pipe, latents: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        if self.decoder == "wan":
+            return vis_single.decode_latents(pipe, latents)
+        if self.decoder == "tiny-vae":
+            return self.tiny_vae.decode(pipe, latents)
+        raise ValueError(f"Unsupported decoder: {self.decoder}")
 
     def _record_dir(self, step: int) -> Path:
         return self.root / f"step_{step:07d}"
@@ -210,7 +295,7 @@ function replayAll() {{
 </head>
 <body>
 <h1>Wan2.2 xSSC: 每次去噪 v → x0 可视化</h1>
-<p id="meta">保存路径: <code>{html.escape(str(self.root))}</code>；每步保存1张，可滚动查看最近 {self.keep_last} 条。</p>
+<p id="meta">保存路径: <code>{html.escape(str(self.root))}</code>；decoder: <code>{html.escape(str(self.decoder))}</code>；每步保存1张，可滚动查看最近 {self.keep_last} 条。</p>
 <div class="toolbar">
   <button type="button" onclick="refreshPage()">手动刷新</button>
   <button type="button" onclick="replayAll()">全部重新播放</button>
@@ -282,7 +367,7 @@ def _resolve_source_fps(inputs: dict[str, Any], fallback_fps: int) -> int:
         if math.isfinite(fps) and fps > 0:
             return max(1, int(round(fps)))
     except Exception:
-        traceback.print_exc()
+        pass
     return int(fallback_fps)
 
 
@@ -327,7 +412,7 @@ def _build_visualized_loss_record(*, pipe, step: int, loss: torch.Tensor, timest
     step_root = viz._record_dir(step)
     step_root.mkdir(parents=True, exist_ok=True)
     with torch.no_grad():
-        videos = vis_single.decode_latents(
+        videos = viz.decode_latents(
             pipe,
             {
                 "ground_truth_x0": input_latents[:1].detach().to(
@@ -573,6 +658,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--viz-fps", type=int, default=6)
     parser.add_argument("--viz-quality", type=int, default=5)
     parser.add_argument(
+        "--viz-decoder",
+        choices=("wan", "tiny-vae"),
+        default="wan",
+        help="Decode visualization latents with the full Wan VAE or the downloaded tiny VAE.",
+    )
+    parser.add_argument(
+        "--tiny-vae-checkpoint",
+        type=Path,
+        default=Path("/home/gaoya/Code_Video/taehv/taew2_2.pth"),
+        help="Tiny VAE checkpoint. Wan2.2 5B should use taew2_2.pth.",
+    )
+    parser.add_argument(
+        "--tiny-vae-parallel",
+        action="store_true",
+        help="Decode tiny VAE frames in parallel; faster but uses more VRAM.",
+    )
+    parser.add_argument(
         "--viz-high-noise",
         action="store_true",
         help="Visualize an extra high-noise forward pass without changing training loss.",
@@ -604,6 +706,9 @@ def parse_worker_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--viz-keep-last", type=int, required=True)
     parser.add_argument("--viz-fps", type=int, required=True)
     parser.add_argument("--viz-quality", type=int, required=True)
+    parser.add_argument("--viz-decoder", choices=("wan", "tiny-vae"), required=True)
+    parser.add_argument("--tiny-vae-checkpoint", type=Path, required=True)
+    parser.add_argument("--tiny-vae-parallel", action="store_true")
     parser.add_argument("--viz-high-noise", action="store_true")
     parser.add_argument("--viz-high-noise-top-ratio", type=float, required=True)
     return parser.parse_known_args()
@@ -642,6 +747,9 @@ def _worker_main() -> None:
             keep_last=args.viz_keep_last,
             fps=args.viz_fps,
             quality=args.viz_quality,
+            decoder=args.viz_decoder,
+            tiny_vae_checkpoint=args.tiny_vae_checkpoint,
+            tiny_vae_parallel=bool(args.tiny_vae_parallel),
         )
         viz.write_index()
         server, _ = _serve_background(args.viz_host, args.viz_port, args.viz_output)
@@ -800,9 +908,15 @@ def main() -> None:
         str(args.viz_fps),
         "--viz-quality",
         str(args.viz_quality),
+        "--viz-decoder",
+        str(args.viz_decoder),
+        "--tiny-vae-checkpoint",
+        str(args.tiny_vae_checkpoint),
         "--viz-high-noise-top-ratio",
         str(args.viz_high_noise_top_ratio),
     ]
+    if args.tiny_vae_parallel:
+        worker_prefix.append("--tiny-vae-parallel")
     if args.viz_high_noise:
         worker_prefix.append("--viz-high-noise")
     command = command[:token_index] + worker_prefix + command[token_index + 1 :]
