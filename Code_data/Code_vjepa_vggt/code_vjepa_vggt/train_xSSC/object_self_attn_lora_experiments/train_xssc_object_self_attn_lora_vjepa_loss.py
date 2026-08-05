@@ -95,7 +95,7 @@ def _load_tiny_vae(
     decoder.requires_grad_(False)
     decoder.eval()
     decoder.to(device=device, dtype=dtype)
-    return decoder
+    return decoder, taehv.apply_model_with_memblocks
 
 
 class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
@@ -115,6 +115,12 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         tiny_vae_root: str,
         tiny_vae_checkpoint: str,
         tiny_vae_parallel: bool,
+        vjepa_range_penalty_weight: float,
+        vjepa_frame_sampling: str,
+        vjepa_local_sampling_probability: float,
+        vjepa_local_context_frames: int,
+        vjepa_gradient_diagnostics_every_n_forwards: int,
+        vjepa_gradient_accumulation_steps: int,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -125,7 +131,20 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         self.vjepa_num_frames = int(vjepa_num_frames)
         self.vjepa_input_size = int(vjepa_input_size)
         self.tiny_vae_parallel = bool(tiny_vae_parallel)
+        self.vjepa_range_penalty_weight = float(vjepa_range_penalty_weight)
+        self.vjepa_frame_sampling = str(vjepa_frame_sampling)
+        self.vjepa_local_sampling_probability = float(
+            vjepa_local_sampling_probability
+        )
+        self.vjepa_local_context_frames = int(vjepa_local_context_frames)
+        self.vjepa_gradient_diagnostics_every_n_forwards = int(
+            vjepa_gradient_diagnostics_every_n_forwards
+        )
+        self.vjepa_gradient_accumulation_steps = int(
+            vjepa_gradient_accumulation_steps
+        )
         self._vjepa_forward_count = 0
+        self._last_vjepa_gradient_diagnostic_forward = 0
 
         if self.vjepa_loss_weight <= 0.0:
             raise ValueError("vjepa_loss_weight must be positive")
@@ -137,10 +156,26 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             raise ValueError("vjepa_num_frames must be a positive even integer")
         if self.vjepa_input_size != 384:
             raise ValueError("V-JEPA2.1 ViT-L requires vjepa_input_size=384")
+        if self.vjepa_range_penalty_weight < 0.0:
+            raise ValueError("vjepa_range_penalty_weight must be non-negative")
+        if self.vjepa_frame_sampling not in {"global", "local", "mixed"}:
+            raise ValueError("vjepa_frame_sampling must be global/local/mixed")
+        if not 0.0 <= self.vjepa_local_sampling_probability <= 1.0:
+            raise ValueError("vjepa_local_sampling_probability must be in [0, 1]")
+        if not 0 < self.vjepa_local_context_frames < self.vjepa_num_frames:
+            raise ValueError(
+                "vjepa_local_context_frames must be in [1, vjepa_num_frames)"
+            )
+        if self.vjepa_gradient_diagnostics_every_n_forwards <= 0:
+            raise ValueError(
+                "vjepa_gradient_diagnostics_every_n_forwards must be positive"
+            )
+        if self.vjepa_gradient_accumulation_steps <= 0:
+            raise ValueError("vjepa_gradient_accumulation_steps must be positive")
 
         model_device = self.pipe.dit.patch_embedding.weight.device
         tiny_dtype = self.pipe.torch_dtype
-        tiny_vae = _load_tiny_vae(
+        tiny_vae, tiny_vae_apply = _load_tiny_vae(
             tiny_vae_root,
             tiny_vae_checkpoint,
             model_device,
@@ -154,6 +189,7 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         # These frozen auxiliaries are deliberately unregistered. DDP must not
         # broadcast them, and LoRA checkpoints must not traverse or save them.
         object.__setattr__(self, "_tiny_vae", tiny_vae)
+        object.__setattr__(self, "_tiny_vae_apply", tiny_vae_apply)
         object.__setattr__(self, "_vjepa_encoder", vjepa_encoder)
 
     def train(self, mode: bool = True):
@@ -164,7 +200,7 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             self._vjepa_encoder.eval()
         return self
 
-    def _decode_tiny_vae(self, latents: torch.Tensor) -> torch.Tensor:
+    def _decode_tiny_vae_raw(self, latents: torch.Tensor) -> torch.Tensor:
         latent_ntchw = latents.permute(0, 2, 1, 3, 4).contiguous()
         device_type = latent_ntchw.device.type
         autocast_enabled = device_type == "cuda"
@@ -173,24 +209,82 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             dtype=self.pipe.torch_dtype,
             enabled=autocast_enabled,
         ):
-            return self._tiny_vae.decode_video(
+            video = self._tiny_vae_apply(
+                self._tiny_vae.decoder,
                 latent_ntchw,
-                parallel=self.tiny_vae_parallel,
-                show_progress_bar=False,
+                self.tiny_vae_parallel,
+                False,
             )
+            if self._tiny_vae.patch_size > 1:
+                video = F.pixel_shuffle(video, self._tiny_vae.patch_size)
+        skip_trim = (
+            self._tiny_vae.is_cogvideox
+            and latent_ntchw.shape[1] % 2 == 0
+        )
+        if not skip_trim:
+            video = video[:, self._tiny_vae.frames_to_trim :]
+        return video
 
-    def _preprocess_vjepa(self, video: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def _context_frame_cutoff(captured_inputs: dict, time_steps: int) -> int:
+        raw_indices = captured_inputs.get("context_frame_indices")
+        if isinstance(raw_indices, torch.Tensor):
+            raw_indices = raw_indices.detach().flatten().tolist()
+        if raw_indices:
+            raw_num_frames = int(captured_inputs.get("num_frames") or time_steps)
+            if raw_num_frames <= 1 or time_steps <= 1:
+                return 0
+            scale = (time_steps - 1) / (raw_num_frames - 1)
+            return max(
+                max(0, min(time_steps - 1, round(int(index) * scale)))
+                for index in raw_indices
+            )
+        if (
+            captured_inputs.get("num_clean_prefix_latents", 0)
+            or "first_frame_latents" in captured_inputs
+        ):
+            return 0
+        return -1
+
+    def _select_vjepa_frame_indices(
+        self,
+        *,
+        time_steps: int,
+        context_cutoff: int,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, bool]:
+        use_local = self.vjepa_frame_sampling == "local"
+        if self.vjepa_frame_sampling == "mixed":
+            use_local = bool(
+                torch.rand((), device=device).item()
+                < self.vjepa_local_sampling_probability
+            )
+        if use_local and time_steps >= self.vjepa_num_frames:
+            max_start = time_steps - self.vjepa_num_frames
+            desired_start = context_cutoff - self.vjepa_local_context_frames + 1
+            start = max(0, min(max_start, desired_start))
+            return torch.arange(
+                start,
+                start + self.vjepa_num_frames,
+                device=device,
+                dtype=torch.long,
+            ), True
+        return torch.linspace(
+            0,
+            time_steps - 1,
+            steps=self.vjepa_num_frames,
+            device=device,
+        ).round().to(torch.long), False
+
+    def _preprocess_vjepa(
+        self,
+        video: torch.Tensor,
+        frame_indices: torch.Tensor,
+    ) -> torch.Tensor:
         if video.ndim != 5 or int(video.shape[2]) != 3:
             raise ValueError(
                 f"Tiny VAE video must be [B,T,3,H,W], got {tuple(video.shape)}"
             )
-        time_steps = int(video.shape[1])
-        frame_indices = torch.linspace(
-            0,
-            time_steps - 1,
-            steps=self.vjepa_num_frames,
-            device=video.device,
-        ).round().to(torch.long)
         frames = video.index_select(1, frame_indices).float()
         batch, selected_frames, channels, height, width = frames.shape
 
@@ -235,18 +329,119 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             )
         return features
 
+    @staticmethod
+    def _future_vjepa_tokens(
+        features: torch.Tensor,
+        frame_indices: torch.Tensor,
+        context_cutoff: int,
+        tubelet_size: int = 2,
+    ) -> tuple[torch.Tensor, float]:
+        if frame_indices.numel() % tubelet_size:
+            raise ValueError("Selected V-JEPA frames must divide into tubelets")
+        temporal_tokens = int(frame_indices.numel()) // tubelet_size
+        if features.ndim != 3 or int(features.shape[1]) % temporal_tokens:
+            raise ValueError(
+                "Cannot reshape V-JEPA tokens into temporal groups: "
+                f"features={tuple(features.shape)}, T={temporal_tokens}"
+            )
+        tubelets = frame_indices.view(temporal_tokens, tubelet_size)
+        future_mask = (tubelets > int(context_cutoff)).all(dim=1)
+        if not bool(future_mask.any()):
+            raise ValueError(
+                "V-JEPA frame selection produced no future-only tubelets"
+            )
+        spatial_tokens = int(features.shape[1]) // temporal_tokens
+        grouped = features.view(
+            features.shape[0],
+            temporal_tokens,
+            spatial_tokens,
+            features.shape[-1],
+        )
+        selected = grouped[:, future_mask]
+        return selected, float(future_mask.float().mean().item())
+
+    def _normalized_vjepa_timestep_weight(
+        self,
+        pipe,
+        timestep: torch.Tensor,
+    ) -> tuple[torch.Tensor, float, float]:
+        raw_weight = pipe.scheduler.training_weight(timestep).detach().float()
+        sigmas = pipe.scheduler.sigmas.detach().float()
+        all_weights = pipe.scheduler.linear_timesteps_weights.detach().float()
+        gate = (sigmas >= self.vjepa_sigma_min) & (
+            sigmas <= self.vjepa_sigma_max
+        )
+        if not bool(gate.any()):
+            raise RuntimeError("V-JEPA sigma gate contains no scheduler timesteps")
+        normalizer = all_weights[gate].mean()
+        normalized = raw_weight / normalizer.clamp_min(1e-12)
+        return (
+            normalized.to(device=pipe.device, dtype=torch.float32),
+            float(raw_weight.item()),
+            float(normalizer.item()),
+        )
+
+    @staticmethod
+    def _output_gradient_diagnostics(
+        main_loss: torch.Tensor,
+        weighted_aux_loss: torch.Tensor,
+        model_output: torch.Tensor,
+    ) -> dict[str, float]:
+        main_grad = torch.autograd.grad(
+            main_loss,
+            model_output,
+            retain_graph=True,
+            create_graph=False,
+        )[0].detach().float()
+        aux_grad = torch.autograd.grad(
+            weighted_aux_loss,
+            model_output,
+            retain_graph=True,
+            create_graph=False,
+        )[0].detach().float()
+        main_norm = torch.linalg.vector_norm(main_grad)
+        aux_norm = torch.linalg.vector_norm(aux_grad)
+        denominator = (main_norm * aux_norm).clamp_min(1e-20)
+        cosine = (main_grad * aux_grad).sum() / denominator
+        return {
+            "train/vjepa_grad_diag_applied": 1.0,
+            "train/grad_v_main_norm": float(main_norm.item()),
+            "train/grad_v_vjepa_norm": float(aux_norm.item()),
+            "train/grad_v_vjepa_to_main_ratio": float(
+                (aux_norm / main_norm.clamp_min(1e-20)).item()
+            ),
+            "train/grad_v_main_vjepa_cosine": float(cosine.item()),
+        }
+
     def _vjepa_feature_loss(
         self,
         pred_x0_latents: torch.Tensor,
         target_x0_latents: torch.Tensor,
-    ) -> torch.Tensor:
+        captured_inputs: dict,
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
         with torch.no_grad():
-            target_video = self._decode_tiny_vae(target_x0_latents)
-            target_input = self._preprocess_vjepa(target_video)
+            target_raw = self._decode_tiny_vae_raw(target_x0_latents)
+            context_cutoff = self._context_frame_cutoff(
+                captured_inputs,
+                int(target_raw.shape[1]),
+            )
+            frame_indices, sampling_local = self._select_vjepa_frame_indices(
+                time_steps=int(target_raw.shape[1]),
+                context_cutoff=context_cutoff,
+                device=target_raw.device,
+            )
+            target_video = target_raw.clamp(0.0, 1.0)
+            target_input = self._preprocess_vjepa(target_video, frame_indices)
             target_features = self._encode_vjepa(target_input).detach()
 
-        pred_video = self._decode_tiny_vae(pred_x0_latents)
-        pred_input = self._preprocess_vjepa(pred_video)
+        pred_raw = self._decode_tiny_vae_raw(pred_x0_latents)
+        pred_clipped = pred_raw.clamp(0.0, 1.0)
+        pred_video = pred_raw + (pred_clipped - pred_raw).detach()
+        range_loss = (
+            F.relu(-pred_raw).square().mean()
+            + F.relu(pred_raw - 1.0).square().mean()
+        )
+        pred_input = self._preprocess_vjepa(pred_video, frame_indices)
         pred_features = self._encode_vjepa(pred_input)
         if pred_features.shape != target_features.shape:
             raise RuntimeError(
@@ -255,11 +450,34 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 f"target={tuple(target_features.shape)}"
             )
 
+        pred_features, future_fraction = self._future_vjepa_tokens(
+            pred_features,
+            frame_indices,
+            context_cutoff,
+        )
+        target_features, _ = self._future_vjepa_tokens(
+            target_features,
+            frame_indices,
+            context_cutoff,
+        )
         pred_features = F.normalize(pred_features.float(), dim=-1)
         target_features = F.normalize(target_features.float(), dim=-1)
         # Mean token-wise squared L2 distance. This is normalized feature MSE
         # summed over channels, keeping the scale independent of feature width.
-        return (pred_features - target_features).square().sum(dim=-1).mean()
+        feature_loss = (
+            (pred_features - target_features).square().sum(dim=-1).mean()
+        )
+        metrics = {
+            "train/vjepa_sampling_local": float(sampling_local),
+            "train/vjepa_future_token_fraction": future_fraction,
+            "train/vjepa_pred_below_zero_fraction": float(
+                (pred_raw.detach() < 0.0).float().mean().item()
+            ),
+            "train/vjepa_pred_above_one_fraction": float(
+                (pred_raw.detach() > 1.0).float().mean().item()
+            ),
+        }
+        return feature_loss, range_loss, metrics
 
     @staticmethod
     def _restore_condition_latents(
@@ -365,8 +583,12 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         metrics["train/vjepa_sigma"] = sigma_value
         metrics["train/vjepa_loss_applied"] = float(apply_vjepa)
         metrics["train/vjepa_loss_weight"] = self.vjepa_loss_weight
+        metrics["train/vjepa_grad_diag_applied"] = 0.0
         if not apply_vjepa:
             metrics["train/loss_vjepa"] = 0.0
+            metrics["train/loss_vjepa_range"] = 0.0
+            metrics["train/loss_vjepa_combined"] = 0.0
+            metrics["train/vjepa_weighted_contribution"] = 0.0
             return total, metrics
 
         sigma_tensor = sigma.to(
@@ -382,9 +604,63 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             target_x0,
             record["inputs"],
         )
-        loss_vjepa = self._vjepa_feature_loss(pred_x0, target_x0)
-        total = total + self.vjepa_loss_weight * loss_vjepa
+        loss_vjepa, range_loss, feature_metrics = self._vjepa_feature_loss(
+            pred_x0,
+            target_x0,
+            record["inputs"],
+        )
+        combined_vjepa = (
+            loss_vjepa + self.vjepa_range_penalty_weight * range_loss
+        )
+        (
+            timestep_weight,
+            raw_timestep_weight,
+            timestep_weight_normalizer,
+        ) = self._normalized_vjepa_timestep_weight(
+            pipe,
+            record["timestep"],
+        )
+        weighted_aux = (
+            self.vjepa_loss_weight
+            * timestep_weight.to(device=combined_vjepa.device)
+            * combined_vjepa
+        )
+        should_diagnose = (
+            self._vjepa_forward_count
+            - self._last_vjepa_gradient_diagnostic_forward
+            >= self.vjepa_gradient_diagnostics_every_n_forwards
+            and self._vjepa_forward_count
+            % self.vjepa_gradient_accumulation_steps
+            == 0
+        )
+        if should_diagnose:
+            metrics.update(
+                self._output_gradient_diagnostics(
+                    total,
+                    weighted_aux,
+                    record["model_output"],
+                )
+            )
+            self._last_vjepa_gradient_diagnostic_forward = (
+                self._vjepa_forward_count
+            )
+        total = total + weighted_aux
         metrics["train/loss_vjepa"] = float(loss_vjepa.detach().item())
+        metrics["train/loss_vjepa_range"] = float(range_loss.detach().item())
+        metrics["train/loss_vjepa_combined"] = float(
+            combined_vjepa.detach().item()
+        )
+        metrics["train/vjepa_timestep_weight_raw"] = raw_timestep_weight
+        metrics["train/vjepa_timestep_weight_normalizer"] = (
+            timestep_weight_normalizer
+        )
+        metrics["train/vjepa_timestep_weight"] = float(
+            timestep_weight.detach().item()
+        )
+        metrics["train/vjepa_weighted_contribution"] = float(
+            weighted_aux.detach().item()
+        )
+        metrics.update(feature_metrics)
         metrics["train/loss_total"] = float(total.detach().item())
         return total, metrics
 
@@ -404,6 +680,23 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--tiny_vae_root", required=True)
     group.add_argument("--tiny_vae_checkpoint", required=True)
     group.add_argument("--tiny_vae_parallel", action="store_true")
+    group.add_argument("--vjepa_range_penalty_weight", type=float, required=True)
+    group.add_argument(
+        "--vjepa_frame_sampling",
+        choices=("global", "local", "mixed"),
+        required=True,
+    )
+    group.add_argument(
+        "--vjepa_local_sampling_probability",
+        type=float,
+        required=True,
+    )
+    group.add_argument("--vjepa_local_context_frames", type=int, required=True)
+    group.add_argument(
+        "--vjepa_gradient_diagnostics_every_n_forwards",
+        type=int,
+        required=True,
+    )
     return parser
 
 
@@ -424,6 +717,18 @@ def build_model(args: argparse.Namespace, accelerator):
             "tiny_vae_root": args.tiny_vae_root,
             "tiny_vae_checkpoint": args.tiny_vae_checkpoint,
             "tiny_vae_parallel": args.tiny_vae_parallel,
+            "vjepa_range_penalty_weight": args.vjepa_range_penalty_weight,
+            "vjepa_frame_sampling": args.vjepa_frame_sampling,
+            "vjepa_local_sampling_probability": (
+                args.vjepa_local_sampling_probability
+            ),
+            "vjepa_local_context_frames": args.vjepa_local_context_frames,
+            "vjepa_gradient_diagnostics_every_n_forwards": (
+                args.vjepa_gradient_diagnostics_every_n_forwards
+            ),
+            "vjepa_gradient_accumulation_steps": (
+                args.gradient_accumulation_steps
+            ),
         },
     )
 
@@ -438,6 +743,16 @@ def log_stage_summary(accelerator, model, args: argparse.Namespace) -> None:
             f"every_n_forwards={args.vjepa_every_n_forwards}, "
             f"frames={args.vjepa_num_frames}, input={args.vjepa_input_size}, "
             f"tiny_vae_parallel={args.tiny_vae_parallel}"
+        )
+        accelerator.print(
+            "V-JEPA refinements: "
+            f"range_penalty={args.vjepa_range_penalty_weight:g}, "
+            f"sampling={args.vjepa_frame_sampling}, "
+            f"local_probability={args.vjepa_local_sampling_probability:g}, "
+            f"local_context_frames={args.vjepa_local_context_frames}, "
+            "future_tokens_only=True, wan_timestep_weight=True, "
+            "gradient_diagnostics_every_n_forwards="
+            f"{args.vjepa_gradient_diagnostics_every_n_forwards}"
         )
 
 

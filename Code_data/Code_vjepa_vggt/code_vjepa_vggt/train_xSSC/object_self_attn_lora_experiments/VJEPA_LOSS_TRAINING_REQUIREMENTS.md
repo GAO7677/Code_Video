@@ -22,6 +22,16 @@
 - Tiny VAE sequential decode to reduce peak memory.
 - V-JEPA runs in FP32 because the current V-JEPA2.1 attention path showed a
   query/key/value dtype mismatch in BF16.
+- Tiny VAE RGB uses clamp in the forward pass with a straight-through gradient,
+  plus a `0.1` range-violation penalty inside the auxiliary objective.
+- V-JEPA auxiliary loss uses Wan's native timestep weight normalized over the
+  configured sigma gate.
+- Only future-only temporal tubelets contribute feature loss; the full clip is
+  still encoded so future tokens can attend to clean context.
+- Frame sampling mixes global uniform clips and local context-boundary clips at
+  equal probability.
+- Main/auxiliary `pred_v` output-gradient norms and cosine are measured every
+  400 micro-forwards when the auxiliary branch is active.
 
 ## Strict review findings and safeguards
 

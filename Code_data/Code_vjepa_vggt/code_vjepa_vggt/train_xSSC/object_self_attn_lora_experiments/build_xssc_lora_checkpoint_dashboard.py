@@ -1303,7 +1303,7 @@ MERGED_METHODS = [
     },
     {
         "key": "t_head100_lora_pck32_no_object",
-        "label": "T-head100 (LoRA-PCK32 Top100) + No-Object",
+        "label": "Motion-head100 (LoRA-PCK32 Top100) + No-Object",
         "color": "#0072B2",
     },
     {

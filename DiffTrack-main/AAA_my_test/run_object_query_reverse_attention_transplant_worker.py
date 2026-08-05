@@ -19,7 +19,19 @@ from AAA_my_test import run_attention_lora_seed_sweep_worker as launcher
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("donor", "replacement"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=(
+            "donor",
+            "target",
+            "replacement",
+            "sigma_replacement",
+            "same_index_replacement",
+            "delta_mask_removal",
+            "similarity_delta_mask_removal",
+        ),
+        required=True,
+    )
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--donor-root", type=Path, required=True)
     parser.add_argument("--mapping-csv", type=Path, required=True)
@@ -40,8 +52,11 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
             self.reverse_entries: dict[tuple[int, int, str], torch.Tensor] = {}
             self.reverse_capture_entries: dict[tuple[int, int, str], dict[str, object]] = {}
             self.reverse_donor_cache: dict[tuple[str, int], dict[tuple[int, int, str], torch.Tensor]] = {}
+            self.reverse_target_root = capture_root.parent / "target_rows"
+            self.reverse_target_cache: dict[tuple[str, int], dict[tuple[int, int, str], torch.Tensor]] = {}
             self.reverse_mapping = {}
-            if mode == "replacement":
+            self.reverse_sigma_schedule: dict[str, dict[int, float]] = {}
+            if mode in {"replacement", "similarity_delta_mask_removal"}:
                 with mapping_csv.open(newline="") as handle:
                     for row in csv.DictReader(handle):
                         if int(row["seed"]) != seed:
@@ -56,10 +71,43 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                         self.reverse_mapping[key] = (int(row["best_step10"]), float(row["cosine"]))
                 if len(self.reverse_mapping) != 2 * 2 * 40 * 100:
                     raise RuntimeError(f"Expected 16000 reverse mappings, got {len(self.reverse_mapping)}")
+            if mode in {
+                "sigma_replacement",
+                "same_index_replacement",
+                "delta_mask_removal",
+                "similarity_delta_mask_removal",
+            }:
+                for branch in ("conditional", "unconditional"):
+                    schedule = {}
+                    for step10 in range(10):
+                        path = donor_root / f"step_{step10:02d}__{branch}.npz"
+                        with np.load(path, allow_pickle=False) as data:
+                            schedule[step10] = float(data["sigma"].item())
+                    self.reverse_sigma_schedule[branch] = schedule
+
+        def _matched_sigma_step(self, branch: str) -> tuple[int, float]:
+            schedule = self.reverse_sigma_schedule[branch]
+            target = math.log(max(float(self.current_sigma), 1e-12))
+            step10 = min(
+                schedule,
+                key=lambda step: abs(math.log(max(schedule[step], 1e-12)) - target),
+            )
+            return int(step10), float(schedule[step10])
 
         def _wrapped_model_fn(self, *args, **kwargs):
             timestep = kwargs.get("timestep")
             self.current_step = self._scheduler_step(timestep) if timestep is not None else -1
+            self.current_timestep_value = (
+                float(timestep.detach().flatten()[0].cpu().item()) if timestep is not None else float("nan")
+            )
+            sigmas = getattr(self.pipe.scheduler, "sigmas", None)
+            if self.current_step >= 0 and sigmas is None:
+                raise RuntimeError("Wan scheduler does not expose sigmas")
+            self.current_sigma = (
+                float(sigmas[self.current_step].detach().cpu().item())
+                if self.current_step >= 0
+                else float("nan")
+            )
             if self.current_step != self._cfg_step:
                 self._cfg_step = self.current_step
                 self._cfg_call_index = 0
@@ -75,9 +123,12 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
             self.reverse_capture_entries = {}
             result = self.original_model_fn(*args, **kwargs)
             if self.group is not None:
-                if self.reverse_mode == "donor":
+                if self.reverse_mode in {"donor", "target"}:
                     self._write_reverse_donor()
-                else:
+                elif self.reverse_mode in {"delta_mask_removal", "similarity_delta_mask_removal"}:
+                    if self.reverse_mode == "similarity_delta_mask_removal" or self.current_step < 10:
+                        self._write_delta_capture()
+                elif self.reverse_mode != "same_index_replacement" or self.current_step < 10:
                     self._write_reverse_capture()
             return result
 
@@ -110,6 +161,25 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
             self.reverse_donor_cache[cache_key] = loaded
             return loaded
 
+        def _load_target(self, branch: str, step40: int):
+            cache_key = (branch, step40)
+            if cache_key in self.reverse_target_cache:
+                return self.reverse_target_cache[cache_key]
+            path = self.reverse_target_root / f"step_{step40:02d}__{branch}.npz"
+            if not path.is_file():
+                raise FileNotFoundError(f"Missing frozen 40-step target cache: {path}")
+            loaded = {}
+            with np.load(path, allow_pickle=False) as data:
+                blocks = data["blocks"].astype(np.int64)
+                heads = data["heads"].astype(np.int64)
+                names = data["region_names"].astype(str)
+                for region_index, name in enumerate(names):
+                    values = torch.from_numpy(data[f"attention_{region_index}"].astype(np.float32))
+                    for rank, (block, head) in enumerate(zip(blocks, heads)):
+                        loaded[(int(block), int(head), str(name))] = values[rank]
+            self.reverse_target_cache[cache_key] = loaded
+            return loaded
+
         def _attention(self, q, k, v, original, groups, block):
             heads = sorted(set(groups.get(self.group or "", ())))
             if not heads or self.current_step not in self.active_steps:
@@ -122,7 +192,7 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
             key_t = selected_k.transpose(-1, -2)
             scale = 1.0 / math.sqrt(head_dim)
 
-            if self.reverse_mode == "donor":
+            if self.reverse_mode in {"donor", "target"}:
                 output = original(q, k, v)
                 for region in self.object_continuity_regions:
                     name = str(region["name"])
@@ -136,6 +206,10 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                 return output
 
             output = original(q, k, v)
+            if self.reverse_mode in {"same_index_replacement", "delta_mask_removal"} and self.current_step >= 10:
+                return output
+            if self.reverse_mode in {"delta_mask_removal", "similarity_delta_mask_removal"}:
+                return self._delta_mask_attention(output, qh, kh, vh, heads, block, head_dim)
             output_h = output.reshape(output.shape[0], output.shape[1], qh.shape[1], head_dim)
             branch = str(self.current_cfg_branch)
             for region in self.object_continuity_regions:
@@ -149,10 +223,19 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                 matched_steps = []
                 cosine_scores = []
                 for head in heads:
-                    mapping_key = (branch, name, int(self.current_step), int(block), int(head))
-                    if mapping_key not in self.reverse_mapping:
-                        raise KeyError(f"Missing reverse mapping {mapping_key}")
-                    step10, cosine = self.reverse_mapping[mapping_key]
+                    if self.reverse_mode == "replacement":
+                        mapping_key = (branch, name, int(self.current_step), int(block), int(head))
+                        if mapping_key not in self.reverse_mapping:
+                            raise KeyError(f"Missing reverse mapping {mapping_key}")
+                        step10, cosine = self.reverse_mapping[mapping_key]
+                        sigma10 = float("nan")
+                    elif self.reverse_mode == "same_index_replacement":
+                        step10 = int(self.current_step)
+                        sigma10 = float(self.reverse_sigma_schedule[branch][step10])
+                        cosine = float("nan")
+                    else:
+                        step10, sigma10 = self._matched_sigma_step(branch)
+                        cosine = float("nan")
                     donor = self._load_donor(branch, step10).get((int(block), int(head), name))
                     if donor is None:
                         raise KeyError(f"Missing donor L{block:02d}/H{head:02d} {name} S{step10:02d} {branch}")
@@ -172,6 +255,99 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                         "before": target[:, local_index].mean(dim=(0, 1)).to(torch.float16).cpu(),
                         "donor": donor[local_index].mean(dim=0).to(torch.float16).cpu(),
                         "step10": matched_steps[local_index],
+                        "sigma10": sigma10,
+                        "cosine": cosine_scores[local_index],
+                    }
+            return output_h.reshape_as(output)
+
+        def _delta_mask_attention(self, output, qh, kh, vh, heads, block, head_dim):
+            output_h = output.reshape(output.shape[0], output.shape[1], qh.shape[1], head_dim)
+            selected_q = qh[:, heads]
+            selected_k = kh[:, heads]
+            selected_v = vh[:, heads]
+            key_t = selected_k.transpose(-1, -2)
+            scale = 1.0 / math.sqrt(head_dim)
+            branch = str(self.current_cfg_branch)
+            step = int(self.current_step)
+            for region in self.object_continuity_regions:
+                name = str(region["name"])
+                indices = torch.as_tensor(region["token_indices"], device=qh.device, dtype=torch.long)
+                live = torch.softmax(
+                    torch.matmul(selected_q[:, :, indices], key_t).float() * scale,
+                    dim=-1,
+                )
+                raw_masks = []
+                dilated_masks = []
+                references = []
+                frozen_targets = []
+                positive_deltas = []
+                matched_steps = []
+                matched_sigmas = []
+                cosine_scores = []
+                for local_index, head in enumerate(heads):
+                    key = (int(block), int(head), name)
+                    if self.reverse_mode == "similarity_delta_mask_removal":
+                        mapping_key = (branch, name, step, int(block), int(head))
+                        if mapping_key not in self.reverse_mapping:
+                            raise KeyError(f"Missing reverse mapping {mapping_key}")
+                        step10, cosine = self.reverse_mapping[mapping_key]
+                    else:
+                        step10, cosine = step, float("nan")
+                    sigma10 = float(self.reverse_sigma_schedule[branch][step10])
+                    reference = self._load_donor(branch, step10).get(key)
+                    frozen_target = self._load_target(branch, step).get(key)
+                    if reference is None or frozen_target is None:
+                        raise KeyError(
+                            f"Missing delta-mask source L{block:02d}/H{head:02d} {name} "
+                            f"A40-S{step:02d}/A10-S{step10:02d} {branch}"
+                        )
+                    if reference.shape != frozen_target.shape:
+                        raise RuntimeError(f"A10 shape {tuple(reference.shape)} != A40 shape {tuple(frozen_target.shape)}")
+                    positive = (frozen_target.float() - reference.float()).clamp_min(0)
+                    if positive.shape[-1] != 13 * 16 * 28:
+                        raise RuntimeError(f"Expected 5824 key tokens, got {positive.shape[-1]}")
+                    maps = positive.reshape(positive.shape[0], 13, 16, 28)
+                    raw = torch.zeros_like(maps, dtype=torch.bool)
+                    for query_index in range(maps.shape[0]):
+                        for frame_index in range(13):
+                            values = maps[query_index, frame_index]
+                            positives = values[values > 0]
+                            if positives.numel():
+                                threshold = torch.quantile(positives, 0.95)
+                                raw[query_index, frame_index] = values > threshold
+                    dilated = torch.nn.functional.max_pool2d(
+                        raw.float().reshape(-1, 1, 16, 28),
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                    ).reshape_as(raw) > 0
+                    raw_masks.append(raw.reshape_as(positive))
+                    dilated_masks.append(dilated.reshape_as(positive))
+                    references.append(reference.float())
+                    frozen_targets.append(frozen_target.float())
+                    positive_deltas.append(positive)
+                    matched_steps.append(step10)
+                    matched_sigmas.append(sigma10)
+                    cosine_scores.append(cosine)
+                raw_mask = torch.stack(raw_masks).to(device=qh.device)
+                dilated_mask = torch.stack(dilated_masks).to(device=qh.device)
+                after = live.masked_fill(dilated_mask.unsqueeze(0), 0)
+                normalizer = after.sum(dim=-1, keepdim=True)
+                after = torch.where(normalizer > 1e-12, after / normalizer.clamp_min(1e-12), live)
+                replacement = torch.matmul(after.to(selected_v.dtype), selected_v)
+                for local_index, head in enumerate(heads):
+                    output_h[:, indices, head, :] = replacement[:, local_index].to(output_h.dtype)
+                    self.reverse_capture_entries[(int(block), int(head), name)] = {
+                        "before": live[:, local_index].mean(dim=(0, 1)).to(torch.float16).cpu(),
+                        "donor": after[:, local_index].mean(dim=(0, 1)).to(torch.float16).cpu(),
+                        "reference10": references[local_index].mean(dim=0).to(torch.float16).cpu(),
+                        "target40": frozen_targets[local_index].mean(dim=0).to(torch.float16).cpu(),
+                        "positive_delta": positive_deltas[local_index].mean(dim=0).to(torch.float16).cpu(),
+                        "raw_mask": raw_masks[local_index].float().mean(dim=0).to(torch.float16).cpu(),
+                        "dilated_mask": dilated_masks[local_index].float().mean(dim=0).to(torch.float16).cpu(),
+                        "removed": (live[:, local_index] - after[:, local_index]).clamp_min(0).mean(dim=(0, 1)).to(torch.float16).cpu(),
+                        "step10": matched_steps[local_index],
+                        "sigma10": matched_sigmas[local_index],
                         "cosine": cosine_scores[local_index],
                     }
             return output_h.reshape_as(output)
@@ -192,6 +368,8 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                 "heads": np.asarray([item[1] for item in head_ids], dtype=np.int16),
                 "region_names": np.asarray(names),
                 "step": np.asarray(self.current_step, dtype=np.int16),
+                "timestep": np.asarray(self.current_timestep_value, dtype=np.float32),
+                "sigma": np.asarray(self.current_sigma, dtype=np.float32),
                 "branch": np.asarray(self.current_cfg_branch),
                 "protocol": np.asarray("per_query_row_post_softmax_frozen_donor"),
             }
@@ -211,10 +389,12 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
             donor = []
             matched = []
             cosine = []
+            matched_sigma = []
             for block, head in head_ids:
                 before.append(np.stack([self.reverse_capture_entries[(block, head, name)]["before"].numpy() for name in names]))
                 donor.append(np.stack([self.reverse_capture_entries[(block, head, name)]["donor"].numpy() for name in names]))
                 matched.append([self.reverse_capture_entries[(block, head, name)]["step10"] for name in names])
+                matched_sigma.append([self.reverse_capture_entries[(block, head, name)]["sigma10"] for name in names])
                 cosine.append([self.reverse_capture_entries[(block, head, name)]["cosine"] for name in names])
             before_array = np.stack(before)
             donor_array = np.stack(donor)
@@ -228,11 +408,76 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                 heads=np.asarray([item[1] for item in head_ids], dtype=np.int16),
                 region_names=np.asarray(names),
                 matched_step10=np.asarray(matched, dtype=np.int16),
+                matched_sigma10=np.asarray(matched_sigma, dtype=np.float32),
                 cosine=np.asarray(cosine, dtype=np.float32),
                 step40=np.asarray(self.current_step, dtype=np.int16),
+                timestep40=np.asarray(self.current_timestep_value, dtype=np.float32),
+                sigma40=np.asarray(self.current_sigma, dtype=np.float32),
                 branch=np.asarray(self.current_cfg_branch),
                 qkv_modified=np.asarray(False),
-                intervention=np.asarray("post_softmax_object_query_row_transplant_A10_at_V40"),
+                intervention=np.asarray(
+                    "post_softmax_object_query_row_transplant_sigma_matched_A10_at_V40"
+                    if self.reverse_mode == "sigma_replacement"
+                    else (
+                        "post_softmax_object_query_row_transplant_same_index_S00_S09_A10_at_V40"
+                        if self.reverse_mode == "same_index_replacement"
+                        else "post_softmax_object_query_row_transplant_similarity_matched_A10_at_V40"
+                    )
+                ),
+            )
+
+        def _write_delta_capture(self):
+            names, head_ids = self._complete_head_ids(self.reverse_capture_entries)
+            self.reverse_capture_root.mkdir(parents=True, exist_ok=True)
+
+            def stacked(field):
+                return np.stack(
+                    [
+                        np.stack([self.reverse_capture_entries[(block, head, name)][field].numpy() for name in names])
+                        for block, head in head_ids
+                    ]
+                )
+
+            def metadata(field, dtype):
+                return np.asarray(
+                    [
+                        [self.reverse_capture_entries[(block, head, name)][field] for name in names]
+                        for block, head in head_ids
+                    ],
+                    dtype=dtype,
+                )
+
+            before = stacked("before")
+            after = stacked("donor")
+            np.savez_compressed(
+                self.reverse_capture_root / f"step_{self.current_step:02d}__{self.current_cfg_branch}.npz",
+                before=before,
+                after=after,
+                delta=after - before,
+                reference10=stacked("reference10"),
+                target40=stacked("target40"),
+                positive_delta=stacked("positive_delta"),
+                raw_mask=stacked("raw_mask"),
+                dilated_mask=stacked("dilated_mask"),
+                removed=stacked("removed"),
+                blocks=np.asarray([item[0] for item in head_ids], dtype=np.int16),
+                heads=np.asarray([item[1] for item in head_ids], dtype=np.int16),
+                region_names=np.asarray(names),
+                matched_step10=metadata("step10", np.int16),
+                matched_sigma10=metadata("sigma10", np.float32),
+                cosine=metadata("cosine", np.float32),
+                step40=np.asarray(self.current_step, dtype=np.int16),
+                timestep40=np.asarray(self.current_timestep_value, dtype=np.float32),
+                sigma40=np.asarray(self.current_sigma, dtype=np.float32),
+                branch=np.asarray(self.current_cfg_branch),
+                threshold_percentile=np.asarray(95, dtype=np.int16),
+                dilation_radius=np.asarray(1, dtype=np.int16),
+                qkv_modified=np.asarray(False),
+                intervention=np.asarray(
+                    "frozen_similarity_matched_positive_delta_P95_spatial_dilate1_remove_and_renormalize"
+                    if self.reverse_mode == "similarity_delta_mask_removal"
+                    else "frozen_same_index_positive_delta_P95_spatial_dilate1_remove_and_renormalize"
+                ),
             )
 
     return ReverseMatchedAttentionTransplanter
@@ -288,6 +533,19 @@ def main() -> None:
                 "objects": ["object_A", "object_B"],
                 "qkv_modified": False,
                 "replacement": "A40[object_query_rows] <- matched A10 donor; output = A_donor @ V40",
+                "matching": (
+                    "nearest_log_sigma"
+                    if args.mode == "sigma_replacement"
+                    else (
+                        "same_step_index_positive_delta_P95_dilate1"
+                        if args.mode == "delta_mask_removal"
+                        else (
+                            "similarity_matched_positive_delta_P95_dilate1"
+                            if args.mode == "similarity_delta_mask_removal"
+                            else ("same_step_index_S00_S09" if args.mode == "same_index_replacement" else "attention_cosine")
+                        )
+                    )
+                ),
                 "mapping_csv": str(args.mapping_csv),
                 "donor_root": str(args.donor_root),
                 "capture_root": str(args.capture_root),

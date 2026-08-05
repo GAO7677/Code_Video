@@ -270,7 +270,7 @@
     },
     {
       "key": "t_head100_lora_pck32_no_object",
-      "label": "T-head100 (LoRA-PCK32 Top100) + No-Object",
+      "label": "Motion-head100 (LoRA-PCK32 Top100) + No-Object",
       "color": "#0072B2",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/lora_pck32_top100_t_head_no_object_gpu67_formal/pck32_top100_from_scratch_20260805T100041Z/checkpoints"

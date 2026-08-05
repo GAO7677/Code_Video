@@ -176,6 +176,33 @@ def validate_config(config: dict, config_dir: Path) -> dict:
             )
         if not isinstance(require(config, "vjepa_loss.tiny_vae_parallel"), bool):
             raise TypeError("vjepa_loss.tiny_vae_parallel must be a boolean")
+        if float(require(config, "vjepa_loss.range_penalty_weight")) < 0.0:
+            raise ValueError("vjepa_loss.range_penalty_weight must be non-negative")
+        frame_sampling = str(require(config, "vjepa_loss.frame_sampling"))
+        if frame_sampling not in {"global", "local", "mixed"}:
+            raise ValueError(
+                "vjepa_loss.frame_sampling must be global/local/mixed"
+            )
+        local_probability = float(
+            require(config, "vjepa_loss.local_sampling_probability")
+        )
+        if not 0.0 <= local_probability <= 1.0:
+            raise ValueError(
+                "vjepa_loss.local_sampling_probability must be in [0, 1]"
+            )
+        local_context_frames = int(
+            require(config, "vjepa_loss.local_context_frames")
+        )
+        if not 0 < local_context_frames < num_frames:
+            raise ValueError(
+                "vjepa_loss.local_context_frames must be in [1, num_frames)"
+            )
+        if int(
+            require(config, "vjepa_loss.gradient_diagnostics_every_n_forwards")
+        ) <= 0:
+            raise ValueError(
+                "vjepa_loss.gradient_diagnostics_every_n_forwards must be positive"
+            )
 
     path_keys = [
         "paths.project_root",
@@ -431,6 +458,19 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
                 "--vjepa_checkpoint": vjepa_loss["vjepa_checkpoint"],
                 "--tiny_vae_root": vjepa_loss["tiny_vae_root"],
                 "--tiny_vae_checkpoint": vjepa_loss["tiny_vae_checkpoint"],
+                "--vjepa_range_penalty_weight": vjepa_loss[
+                    "range_penalty_weight"
+                ],
+                "--vjepa_frame_sampling": vjepa_loss["frame_sampling"],
+                "--vjepa_local_sampling_probability": vjepa_loss[
+                    "local_sampling_probability"
+                ],
+                "--vjepa_local_context_frames": vjepa_loss[
+                    "local_context_frames"
+                ],
+                "--vjepa_gradient_diagnostics_every_n_forwards": vjepa_loss[
+                    "gradient_diagnostics_every_n_forwards"
+                ],
             }
         )
     if not adaptation["enable_object_branch"]:
