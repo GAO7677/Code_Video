@@ -11,17 +11,26 @@ NUM_GPUS="$2"
 DIFFTRACK="/home/gaoya/Code_Video/DiffTrack-main"
 PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 WORKER="${DIFFTRACK}/AAA_my_test/run_attention_lora_seed_sweep_worker.py"
-ROOT="/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed_sweep_case001460"
+ROOT="${ATTENTION_NEIGHBOR_RANKING_ROOT:-/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed_sweep_case001460}"
 CURRENT="/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
 SEEDS_FILE="${ROOT}/seeds.txt"
 CASE_LIST="/data/gaoya/agent-data/outputs/attention_probability_mono_scale_steps40_frames49_case001460/case_list.txt"
 CASE_KEY="0613pybullet_sample_001460_w002"
 CRITERIA=(strict_score allblock_purity allblock_min_purity balanced uniformity joint mass pck32)
-PROFILES=(alpha090 alpha150 zero uniform temporal_causal strict_past strict_future head_output_zero)
+if [[ -n "${ATTENTION_NEIGHBOR_PROFILES:-}" ]]; then
+  read -r -a PROFILES <<< "${ATTENTION_NEIGHBOR_PROFILES}"
+else
+  PROFILES=(alpha090 alpha150 zero uniform temporal_causal strict_past strict_future head_output_zero)
+fi
 
 export CUDA_VISIBLE_DEVICES="${GPU}"
 mkdir -p "${ROOT}/logs"
-mapfile -t SEEDS < "${SEEDS_FILE}"
+FIXED_SEED="${ATTENTION_RANKING_FIXED_SEED:-}"
+if [[ -n "${FIXED_SEED}" ]]; then
+  SEEDS=("${FIXED_SEED}")
+else
+  mapfile -t SEEDS < "${SEEDS_FILE}"
+fi
 
 link_original() {
   local seed="$1" run_root="$2"
@@ -53,6 +62,7 @@ run_profile() {
     strict_past) mode=probability_strict_past; alpha=0 ;;
     strict_future) mode=probability_strict_future; alpha=0 ;;
     head_output_zero) mode=head_output_zero; alpha=0 ;;
+    identity) mode=probability_identity; alpha=0 ;;
     *) echo "Unknown profile ${profile}" >&2; exit 2 ;;
   esac
   cd "${DIFFTRACK}"
@@ -80,16 +90,32 @@ run_profile() {
     "$(date -u +%FT%TZ)" > "${complete}"
 }
 
-for index in "${!SEEDS[@]}"; do
-  (( index % NUM_GPUS == GPU )) || continue
-  seed="${SEEDS[index]}"
+if [[ -n "${FIXED_SEED}" ]]; then
+  task_index=0
+  seed="${FIXED_SEED}"
   for criterion in "${CRITERIA[@]}"; do
     for stage in all_steps steps00_09; do
       for profile in "${PROFILES[@]}"; do
-        run_profile "${seed}" "${criterion}" "${stage}" "${profile}"
+        if (( task_index % NUM_GPUS == GPU )); then
+          run_profile "${seed}" "${criterion}" "${stage}" "${profile}"
+        fi
+        task_index=$((task_index + 1))
       done
     done
   done
-done
+else
+  for index in "${!SEEDS[@]}"; do
+    (( index % NUM_GPUS == GPU )) || continue
+    seed="${SEEDS[index]}"
+    for criterion in "${CRITERIA[@]}"; do
+      for stage in all_steps steps00_09; do
+        for profile in "${PROFILES[@]}"; do
+          run_profile "${seed}" "${criterion}" "${stage}" "${profile}"
+        done
+      done
+    done
+  done
+fi
 
-printf 'gpu=%s\ncompleted=%s\n' "${GPU}" "$(date -u +%FT%TZ)" > "${ROOT}/logs/gpu${GPU}.complete"
+COMPLETE_NAME="${ATTENTION_NEIGHBOR_COMPLETE_NAME:-gpu${GPU}.complete}"
+printf 'gpu=%s\ncompleted=%s\n' "${GPU}" "$(date -u +%FT%TZ)" > "${ROOT}/logs/${COMPLETE_NAME}"

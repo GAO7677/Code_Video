@@ -33,6 +33,7 @@ if NOISE_MODE not in {
     "probability_temporal_causal",
     "probability_strict_past",
     "probability_strict_future",
+    "probability_identity",
 }:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
 
@@ -236,7 +237,9 @@ class AdaptiveQKLogitNoise:
                 device=logits.device,
                 dtype=torch.float32,
             )
-            if self.noise_mode in {
+            if self.noise_mode == "probability_identity":
+                probabilities = before_probabilities
+            elif self.noise_mode in {
                 "probability_temporal_causal",
                 "probability_strict_past",
                 "probability_strict_future",
@@ -323,6 +326,8 @@ class AdaptiveQKLogitNoise:
             capture_entry["selected"].update((block, head) for head in heads)
             capture_entry["forward_calls"] += 1
         fused_output = original(q, k, v)
+        if self.noise_mode == "probability_identity":
+            return fused_output
         output_heads = fused_output.reshape(batch, sequence, num_heads, head_dim).permute(0, 2, 1, 3).clone()
         output_heads[:, heads] = selected_output
         self.call_count += 1

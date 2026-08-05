@@ -46,6 +46,9 @@ ATTENTION_LORA_STEPS00_09_ROOT = Path(
 ATTENTION_LORA_SEED_SWEEP_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
 )
+ATTENTION_NEIGHBOR_SEED90094_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed090094_case001460"
+)
 OBJECT_QUERY_OVERLAY_PILOT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/"
     "object_query_attention_overlay_headwise_pck_case001460_seed090094"
@@ -362,6 +365,7 @@ MONO_SCALE_LORA_VIDEO_PORTAL_CARD = r'''
 ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD = r'''
 <a class="card new" href="/attention-additive-lora-seed-sweep?v=1"><div><span>16 / LORA 50-SEED SWEEP</span><h2>001460 · 50 Seeds × 全实验</h2><p>查看 Wan+LoRA Top/Bottom100 在全时间步与 S000-S009 的六类干预结果，seed 可下拉选择。</p></div><span class="go">打开 50-Seed 对比</span></a>
 <a class="card new" href="/object-query-attention-overlay?v=1"><div><span>17 / OBJECT QUERY OVERLAY</span><h2>Top/Bottom10 · 13×13 Latent 时间轴</h2><p>将动态物体 Query tokens 的 Before、After 与 |Delta| attention overlay 到对应视频帧。</p></div><span class="go">打开 Object Query 对比</span></a>
+<a class="card new" href="/attention-neighbor-ranking-seed90094?v=1"><div><span>18 / NEIGHBOR RANKING</span><h2>Seed 90094 · 8种 Head 排名</h2><p>比较 Wan+LoRA 在八种 Neighbor/Diagonal 排名 Top100、Bottom100 下的完整注意力干预矩阵。</p></div><span class="go">打开 Neighbor Ranking</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + "</section>", 1
@@ -526,18 +530,64 @@ class MetricsHandler(viewer.Handler):
             return
         if path == "/attention-additive-lora-seed-sweep":
             self.send_payload(
-                attention_lora_seed_sweep_page().encode("utf-8"),
+                (
+                    attention_neighbor_seed90094_page()
+                    if getattr(self.server, "server_port", 0) == 61882
+                    else attention_lora_seed_sweep_page()
+                ).encode("utf-8"),
                 "text/html; charset=utf-8",
             )
+            return
+        if path == "/attention-neighbor-ranking-seed90094":
+            self.send_payload(
+                attention_neighbor_seed90094_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/attention-neighbor-ranking-seed90094/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                attention_neighbor_seed90094_catalog(
+                    params.get("criterion", ["strict_score"])[0]
+                ),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path in {
+            "/api/attention-neighbor-ranking-seed90094/video",
+            "/api/attention-neighbor-ranking-seed90094/image",
+        }:
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = attention_neighbor_seed90094_asset(
+                params.get("criterion", ["strict_score"])[0],
+                params.get("stage", [""])[0],
+                params.get("profile", [""])[0],
+                params.get("group", [""])[0],
+                params.get("name", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown neighbor-ranking asset")
+            content_type = "video/mp4" if path.endswith("/video") else "image/png"
+            viewer.send_file_with_range(self, asset, content_type)
             return
         if path == "/api/attention-additive-lora-seed-sweep/catalog":
             from urllib.parse import parse_qs
 
             params = parse_qs(urlparse(self.path).query)
-            payload = json.dumps(
-                attention_lora_seed_sweep_catalog(params.get("seed", [""])[0]),
-                ensure_ascii=False,
-            ).encode("utf-8")
+            if getattr(self.server, "server_port", 0) == 61882:
+                catalog = attention_neighbor_seed90094_catalog(
+                    params.get("criterion", ["strict_score"])[0]
+                )
+            else:
+                catalog = attention_lora_seed_sweep_catalog(
+                    params.get("seed", [""])[0]
+                )
+            payload = json.dumps(catalog, ensure_ascii=False).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
             return
         if path in {
@@ -547,13 +597,21 @@ class MetricsHandler(viewer.Handler):
             from urllib.parse import parse_qs
 
             params = parse_qs(urlparse(self.path).query)
-            asset = attention_lora_seed_sweep_asset(
-                params.get("seed", [""])[0],
-                params.get("stage", [""])[0],
-                params.get("profile", [""])[0],
-                params.get("group", [""])[0],
-                params.get("name", [""])[0],
-            )
+            if getattr(self.server, "server_port", 0) == 61882:
+                asset = attention_neighbor_seed90094_asset(
+                    params.get("criterion", ["strict_score"])[0],
+                    params.get("stage", [""])[0],
+                    params.get("profile", [""])[0],
+                    params.get("group", [""])[0],
+                )
+            else:
+                asset = attention_lora_seed_sweep_asset(
+                    params.get("seed", [""])[0],
+                    params.get("stage", [""])[0],
+                    params.get("profile", [""])[0],
+                    params.get("group", [""])[0],
+                    params.get("name", [""])[0],
+                )
             if asset is None or not asset.is_file():
                 raise FileNotFoundError("unknown seed-sweep asset")
             content_type = "video/mp4" if path.endswith("/video") else "image/png"
@@ -1713,6 +1771,180 @@ const video=(stage,profile,group)=>`/api/attention-additive-lora-seed-sweep/vide
 function card(r){const maps=r.heatmap_ready?`<div class="maps"><img loading="lazy" src="${image(r,r.all_token)}"><img loading="lazy" src="${image(r,r.frame)}"></div>`:r.heatmap_expected?'<div class="note">热力图等待生成</div>':'<div class="note">Attention 不变，仅 Head 输出置零</div>';return `<article class="card ${r.group.startsWith('top')?'top':'bottom'}"><h3>${e(r.label)}</h3><span class="pill">${e(r.group.toUpperCase())}</span><span class="pill">${r.stage==='all_steps'?'S000-S039':'S000-S009'}</span>${r.video_ready?`<video controls preload="metadata" playsinline src="${video(r.stage,r.profile,r.group)}"></video>`:'<div class="pending">视频生成中</div>'}${maps}</article>`}
 function render(d){current=String(d.selected_seed);const select=document.getElementById('seed');if(select.options.length!==d.seeds.length)select.innerHTML=d.seeds.map(x=>`<option value="${x}">${x}</option>`).join('');select.value=current;document.getElementById('status').textContent=`${d.completed_seeds}/${d.total_seeds} seeds complete · 当前 ${d.ready_records}/${d.expected_records} experiments ready`;document.getElementById('original').innerHTML=d.original_ready?`<video controls preload="metadata" playsinline src="${video('original','original','original')}"></video>`:'<div class="pending">Original 生成中</div>';let html='<div class="head">Head组 × 阶段</div>'+profiles.map(x=>`<div class="head">${e(x[1])}</div>`).join('');for(const stage of ['all_steps','steps00_09'])for(const group of ['top100','bottom100']){html+=`<div class="row-head ${group.startsWith('top')?'top':'bottom'}"><strong>${group.toUpperCase()}</strong><small>${stage==='all_steps'?'全时间步 S000-S039':'仅前10步 S000-S009'}</small></div>`;for(const [profile] of profiles){const r=d.records.find(x=>x.stage===stage&&x.group===group&&x.profile===profile);html+=`<div class="cell">${card(r)}</div>`}}document.getElementById('matrix').innerHTML=html}
 async function load(){const d=await fetch(`/api/attention-additive-lora-seed-sweep/catalog?seed=${encodeURIComponent(current)}`,{cache:'no-store'}).then(r=>r.json());render(d)}document.getElementById('seed').addEventListener('change',ev=>{current=ev.target.value;const u=new URL(location.href);u.searchParams.set('seed',current);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
+ATTENTION_NEIGHBOR_CRITERIA = (
+    ("strict_score", "Strict Combined"),
+    ("allblock_purity", "All-block Diagonal Purity"),
+    ("allblock_min_purity", "Weakest-block Purity"),
+    ("balanced", "Neighbor Balanced"),
+    ("uniformity", "Uniformity"),
+    ("joint", "Quality x Uniformity"),
+    ("mass", "Three-frame Mass"),
+    ("pck32", "LoRA PCK@32"),
+)
+ATTENTION_NEIGHBOR_PROFILES = (
+    ("alpha090", "alpha = 0.9"),
+    ("alpha150", "alpha = 1.5"),
+    ("zero", "A = 0"),
+    ("uniform", "A = 1/N_K"),
+    ("temporal_causal", "Temporal Causal"),
+    ("strict_past", "Strict Past"),
+    ("strict_future", "Strict Future"),
+    ("head_output_zero", "Head Output Zero"),
+)
+
+
+def attention_neighbor_seed90094_asset(
+    criterion: str, stage: str, profile: str, group: str, name: str = ""
+):
+    valid_criteria = {item[0] for item in ATTENTION_NEIGHBOR_CRITERIA}
+    if stage == "original" and profile == "original" and group == "original":
+        return (
+            ATTENTION_LORA_SEED_SWEEP_ROOT / "seeds" / "seed_090094" / "original.mp4"
+        )
+    if criterion not in valid_criteria:
+        return None
+    if stage not in {"all_steps", "steps00_09"}:
+        return None
+    if profile not in {item[0] for item in ATTENTION_NEIGHBOR_PROFILES} | {"identity"}:
+        return None
+    if group not in {"top100", "bottom100"}:
+        return None
+    run_root = (
+        ATTENTION_NEIGHBOR_SEED90094_ROOT
+        / "seeds" / "seed_090094" / criterion / stage / profile
+    )
+    if name:
+        if Path(name).name != name or not name.endswith(".png"):
+            return None
+        return run_root / "heatmaps" / name
+    suffix = "steps_00_40" if stage == "all_steps" else "steps_00_10"
+    return (
+        run_root / "videos" / "lora" / "cases" / ATTENTION_LORA_CASE
+        / f"{group}_{suffix}.mp4"
+    )
+
+
+def attention_neighbor_seed90094_catalog(criterion: str):
+    criteria = dict(ATTENTION_NEIGHBOR_CRITERIA)
+    selected_criteria = (
+        ATTENTION_NEIGHBOR_CRITERIA
+        if criterion == "all"
+        else tuple(item for item in ATTENTION_NEIGHBOR_CRITERIA if item[0] == criterion)
+    )
+    if not selected_criteria:
+        criterion = "strict_score"
+        selected_criteria = (ATTENTION_NEIGHBOR_CRITERIA[0],)
+    records = []
+    for criterion_id, criterion_label in selected_criteria:
+        for stage in ("all_steps", "steps00_09"):
+            capture_step = 39 if stage == "all_steps" else 9
+            for group in ("top100", "bottom100"):
+                for profile, label in ATTENTION_NEIGHBOR_PROFILES:
+                    run_root = (
+                        ATTENTION_NEIGHBOR_SEED90094_ROOT
+                        / "seeds" / "seed_090094" / criterion_id / stage / profile
+                    )
+                    video = attention_neighbor_seed90094_asset(
+                        criterion_id, stage, profile, group
+                    )
+                    metadata_path = next(
+                        iter(sorted((run_root / "heatmaps").glob(
+                            f"*__{ATTENTION_LORA_CASE}__{group}__*step{capture_step:02d}.json"
+                        ))),
+                        None,
+                    )
+                    metadata = load_payload(metadata_path) if metadata_path else {}
+                    all_token = str(metadata.get("all_token_image", ""))
+                    frame = str(metadata.get("frame_image", ""))
+                    all_token_path = attention_neighbor_seed90094_asset(
+                        criterion_id, stage, profile, group, all_token
+                    ) if all_token else None
+                    frame_path = attention_neighbor_seed90094_asset(
+                        criterion_id, stage, profile, group, frame
+                    ) if frame else None
+                    baseline_root = (
+                        ATTENTION_NEIGHBOR_SEED90094_ROOT
+                        / "seeds" / "seed_090094" / criterion_id / stage / "identity"
+                    )
+                    baseline_metadata_path = next(
+                        iter(sorted((baseline_root / "heatmaps").glob(
+                            f"*__{ATTENTION_LORA_CASE}__{group}__*step{capture_step:02d}.json"
+                        ))),
+                        None,
+                    )
+                    baseline_metadata = (
+                        load_payload(baseline_metadata_path)
+                        if baseline_metadata_path else {}
+                    )
+                    baseline_all_token = str(
+                        baseline_metadata.get("all_token_image", "")
+                    )
+                    baseline_frame = str(baseline_metadata.get("frame_image", ""))
+                    baseline_all_token_path = attention_neighbor_seed90094_asset(
+                        criterion_id, stage, "identity", group, baseline_all_token
+                    ) if baseline_all_token else None
+                    baseline_frame_path = attention_neighbor_seed90094_asset(
+                        criterion_id, stage, "identity", group, baseline_frame
+                    ) if baseline_frame else None
+                    records.append({
+                        "criterion": criterion_id,
+                        "criterion_label": criterion_label,
+                        "stage": stage,
+                        "profile": profile,
+                        "label": label,
+                        "group": group,
+                        "video_ready": bool(video and video.is_file() and video.stat().st_size),
+                        "heatmap_expected": profile != "head_output_zero",
+                        "heatmap_ready": bool(
+                            all_token_path and all_token_path.is_file()
+                            and frame_path and frame_path.is_file()
+                        ),
+                        "all_token": all_token,
+                        "frame": frame,
+                        "baseline_heatmap_ready": bool(
+                            baseline_all_token_path and baseline_all_token_path.is_file()
+                            and baseline_frame_path and baseline_frame_path.is_file()
+                        ),
+                        "baseline_all_token": baseline_all_token,
+                        "baseline_frame": baseline_frame,
+                    })
+    completed = 0
+    seed_root = ATTENTION_NEIGHBOR_SEED90094_ROOT / "seeds" / "seed_090094"
+    for criterion_id, _label in ATTENTION_NEIGHBOR_CRITERIA:
+        if all(
+            (seed_root / criterion_id / stage / profile / "complete").is_file()
+            for stage in ("all_steps", "steps00_09")
+            for profile, _ in ATTENTION_NEIGHBOR_PROFILES
+        ):
+            completed += 1
+    original = attention_neighbor_seed90094_asset(
+        "strict_score", "original", "original", "original"
+    )
+    return {
+        "seed": 90094,
+        "criterion": criterion,
+        "criterion_label": "All Rankings" if criterion == "all" else criteria[criterion],
+        "criteria": [
+            {"id": criterion_id, "label": label}
+            for criterion_id, label in ATTENTION_NEIGHBOR_CRITERIA
+        ],
+        "completed_criteria": completed,
+        "total_criteria": len(ATTENTION_NEIGHBOR_CRITERIA),
+        "ready_records": sum(record["video_ready"] for record in records),
+        "expected_records": len(records),
+        "original_ready": bool(original and original.is_file() and original.stat().st_size),
+        "records": records,
+    }
+
+
+def attention_neighbor_seed90094_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Neighbor Ranking Seed 90094</title><style>
+:root{--ink:#192821;--paper:#ece6d9;--card:#fffdf7;--line:#bdb19d;--red:#ae432f;--green:#17695d;--dark:#18372d;--gold:#bc7e29}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 7% 0,#eca55d55,transparent 34rem),radial-gradient(circle at 96% 3%,#4f967955,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:16px 23px;background:#ece6d9ed;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(27px,4vw,47px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2300px,calc(100% - 18px));margin:auto;padding:20px 0 80px}.original{max-width:700px;background:var(--card);padding:12px;border:1px solid var(--line);border-radius:14px}.original video,.card video,.card img{display:block;width:100%;background:#141815;border:1px solid var(--line);border-radius:7px}.shell{overflow:auto;margin-top:18px;border:1px solid var(--line);border-radius:15px;padding:9px;background:#d6cebf}.matrix{display:grid;grid-template-columns:220px repeat(8,330px);gap:8px;width:max-content}.head,.row,.cell{border:1px solid var(--line);border-radius:9px}.head{padding:11px;text-align:center;background:#faf5e9;font-weight:900;border-top:5px solid var(--gold)}.row{position:sticky;left:9px;z-index:3;padding:14px;background:var(--dark);color:#fff}.row.top{border-left:7px solid var(--red)}.row.bottom{border-left:7px solid var(--green)}.row small{display:block;margin-top:7px;color:#cbd8d1}.cell{padding:8px;background:#f7f1e7}.card{padding:9px;background:var(--card);height:100%;border-radius:8px}.card h3{margin:0 0 7px}.pill{display:inline-block;margin:2px;padding:4px 7px;border-radius:99px;background:#e8e0d2;font:10px ui-monospace,monospace}.maps{display:grid;gap:7px;margin-top:8px}.note{font-size:11px;color:#685f54;margin-top:7px}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);color:#766f63}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;background:var(--dark);color:#fff;padding:13px 19px}@media(max-width:800px){header{position:static}.matrix{grid-template-columns:170px repeat(8,280px)}}
+</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a><h1>Neighbor Ranking · Seed 90094</h1><p>同一实验横向比较 8 种 Ranking · Wan+LoRA · 001460_w002 · 40 steps / 49 frames</p><div class="tools"><label>Experiment <select id="profile"></select></label><button id="refresh">手动刷新</button><span class="status" id="status">读取中</span></div></header><main><h2>Original</h2><section id="original" class="original"></section><div class="shell"><section id="matrix" class="matrix"></section></div></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let profile=q.get('profile')||'alpha090';const profiles=[['alpha090','alpha = 0.9'],['alpha150','alpha = 1.5'],['zero','A = 0'],['uniform','A = 1/N_K'],['temporal_causal','Temporal Causal'],['strict_past','Strict Past'],['strict_future','Strict Future'],['head_output_zero','Head Output Zero']];const src=(criterion,stage,group)=>`/api/attention-neighbor-ranking-seed90094/video?criterion=${criterion}&stage=${stage}&profile=${profile}&group=${group}`,image=(r,name,sourceProfile=r.profile)=>`/api/attention-neighbor-ranking-seed90094/image?criterion=${r.criterion}&stage=${r.stage}&profile=${sourceProfile}&group=${r.group}&name=${encodeURIComponent(name)}`;function card(r){const baseline=r.baseline_heatmap_ready?`<div class="maps"><strong>No Intervention Attention</strong><img loading="lazy" src="${image(r,r.baseline_all_token,'identity')}" alt="No intervention all-token attention"><img loading="lazy" src="${image(r,r.baseline_frame,'identity')}" alt="No intervention frame attention"></div>`:'<div class="note">No Intervention Attention 热力图生成中</div>';const maps=r.heatmap_ready?`<div class="maps"><strong>Intervention Before / After</strong><img loading="lazy" src="${image(r,r.all_token)}" alt="All-token Before/After"><img loading="lazy" src="${image(r,r.frame)}" alt="Frame Before/After"></div>`:r.heatmap_expected?'<div class="note">扰动前后热力图生成中</div>':'<div class="note">Head Output Zero 不改变 Attention</div>';return `<article class="card"><h3>${e(r.criterion_label)}</h3><span class="pill">${e(r.group.toUpperCase())}</span><span class="pill">${r.stage==='all_steps'?'S000-S039':'S000-S009'}</span>${r.video_ready?`<video controls preload="metadata" playsinline src="${src(r.criterion,r.stage,r.group)}"></video>`:'<div class="pending">视频生成中</div>'}${baseline}${maps}</article>`}function render(d){const s=document.getElementById('profile');if(!s.options.length)s.innerHTML=profiles.map(x=>`<option value="${e(x[0])}">${e(x[1])}</option>`).join('');s.value=profile;document.getElementById('status').textContent=`${d.completed_criteria}/${d.total_criteria} rankings complete · ${d.ready_records}/${d.expected_records} total videos ready`;document.getElementById('original').innerHTML=d.original_ready?`<video controls preload="metadata" playsinline src="${src('strict_score','original','original')}"></video>`:'<div class="pending">Original missing</div>';let html='<div class="head">Experiment x Stage</div>'+d.criteria.map(x=>`<div class="head">${e(x.label)}</div>`).join('');for(const stage of ['all_steps','steps00_09'])for(const group of ['top100','bottom100']){html+=`<div class="row ${group.startsWith('top')?'top':'bottom'}"><strong>${e(profiles.find(x=>x[0]===profile)?.[1]||profile)}</strong><small>${group.toUpperCase()} · ${stage==='all_steps'?'S000-S039':'S000-S009'}</small></div>`;for(const criterion of d.criteria){const r=d.records.find(x=>x.criterion===criterion.id&&x.stage===stage&&x.group===group&&x.profile===profile);html+=`<div class="cell">${card(r)}</div>`}}document.getElementById('matrix').innerHTML=html}async function load(){const d=await fetch('/api/attention-neighbor-ranking-seed90094/catalog?criterion=all',{cache:'no-store'}).then(r=>r.json());render(d)}document.getElementById('profile').addEventListener('change',ev=>{profile=ev.target.value;const u=new URL(location.href);u.searchParams.set('profile',profile);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
 </script></body></html>'''
 
 

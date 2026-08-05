@@ -6,15 +6,17 @@ import os
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SOURCE_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed_sweep_case001460"
-)
+SOURCE_ROOT = Path(os.environ.get(
+    "ATTENTION_NEIGHBOR_RANKING_SOURCE_ROOT",
+    "/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed_sweep_case001460",
+))
 CURRENT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
 )
-BENCH_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed_sweep_metrics_case001460"
-)
+BENCH_ROOT = Path(os.environ.get(
+    "ATTENTION_NEIGHBOR_RANKING_BENCH_ROOT",
+    "/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed_sweep_metrics_case001460",
+))
 INPUT_JSON = Path(
     "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons/0613pybullet_sample_001460_w002.json"
 )

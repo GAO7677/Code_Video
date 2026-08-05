@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
             "strict_past",
             "strict_future",
             "head_output_zero",
+            "identity",
         ),
         required=True,
     )
