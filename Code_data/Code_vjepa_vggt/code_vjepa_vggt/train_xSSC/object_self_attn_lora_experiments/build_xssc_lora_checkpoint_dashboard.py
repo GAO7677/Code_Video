@@ -21,6 +21,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from build_project_provenance_page import build_project_info_page
+
 
 METHOD_PLOT_STYLES = {
     "object_only": {"marker": "P", "linestyle": "--"},
@@ -1794,6 +1796,7 @@ def build_master_hub(
     watch_root = Path(config["paths"]["watch_root"]).resolve()
     baseline_gallery = Path(config["paths"]["baseline_gallery_root"]).resolve()
     hub_root.mkdir(parents=True, exist_ok=True)
+    build_project_info_page(config, hub_root / "project-info")
     link_directory(watch_root / "site" / "videos", hub_root / "gallery")
     phys_gallery = watch_root / "site" / "physiciq-videos"
     if phys_gallery.is_dir():
@@ -2072,7 +2075,13 @@ def build_master_hub(
 <body>
   <header><h1>xSSC LoRA 训练可视化总览</h1>
     <p>{escape('、'.join(method['label'] for method in config['methods']))}</p></header>
-  <main><div class="section-title">训练与推理</div><div class="entries">
+  <main><div class="section-title">项目</div><div class="entries">
+    <section class="entry"><div><h2>项目与权重溯源</h2>
+      <div class="meta">完整方法流程、上游训练数据、训练模块与参数量、每个checkpoint配置链和Head分类依据</div>
+      <a href="project-info/">查看项目信息</a></div>
+      <div class="status">自动更新<strong>配置可追溯</strong><small>含Head证据入口</small></div>
+    </section>
+  </div><div class="section-title" style="margin-top:18px">训练与推理</div><div class="entries">
     <section class="entry"><div><h2>Checkpoint 自动评测</h2>
       <div class="meta">自动发现权重、生成 test_5、计算完整指标并绘制训练 step 曲线</div>
       <a href="checkpoint-watch/">进入自动评测</a></div>

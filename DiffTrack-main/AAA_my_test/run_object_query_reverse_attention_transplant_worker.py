@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-json-list", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--mask-kernel", type=int, choices=(1, 2, 3), default=1)
+    parser.add_argument("--no-renorm", action="store_true")
     return parser.parse_args()
 
 
@@ -57,6 +58,7 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
             self.reverse_target_root = capture_root.parent / "target_rows"
             self.reverse_target_cache: dict[tuple[str, int], dict[tuple[int, int, str], torch.Tensor]] = {}
             self.delta_mask_kernel = int(os.environ.get("ATTENTION_DELTA_MASK_KERNEL", "1"))
+            self.delta_mask_renormalize = os.environ.get("ATTENTION_DELTA_MASK_NO_RENORM", "0") != "1"
             self.reverse_mapping = {}
             self.reverse_sigma_schedule: dict[str, dict[int, float]] = {}
             if mode in {"replacement", "similarity_delta_mask_removal"}:
@@ -360,8 +362,9 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                 raw_mask = torch.stack(raw_masks).to(device=qh.device)
                 dilated_mask = torch.stack(dilated_masks).to(device=qh.device)
                 after = live.masked_fill(dilated_mask.unsqueeze(0), 0)
-                normalizer = after.sum(dim=-1, keepdim=True)
-                after = torch.where(normalizer > 1e-12, after / normalizer.clamp_min(1e-12), live)
+                if self.delta_mask_renormalize:
+                    normalizer = after.sum(dim=-1, keepdim=True)
+                    after = torch.where(normalizer > 1e-12, after / normalizer.clamp_min(1e-12), live)
                 replacement = torch.matmul(after.to(selected_v.dtype), selected_v)
                 for local_index, head in enumerate(heads):
                     output_h[:, indices, head, :] = replacement[:, local_index].to(output_h.dtype)
@@ -379,6 +382,7 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                         "cosine": cosine_scores[local_index],
                         "mask_source_step": mask_source_step,
                         "mask_kernel": self.delta_mask_kernel,
+                        "renormalized": self.delta_mask_renormalize,
                     }
             return output_h.reshape_as(output)
 
@@ -504,6 +508,10 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                     self.reverse_capture_entries[(head_ids[0][0], head_ids[0][1], names[0])]["mask_kernel"],
                     dtype=np.int16,
                 ),
+                renormalized=np.asarray(
+                    self.reverse_capture_entries[(head_ids[0][0], head_ids[0][1], names[0])]["renormalized"],
+                    dtype=np.bool_,
+                ),
                 step40=np.asarray(self.current_step, dtype=np.int16),
                 timestep40=np.asarray(self.current_timestep_value, dtype=np.float32),
                 sigma40=np.asarray(self.current_sigma, dtype=np.float32),
@@ -528,6 +536,7 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
 def main() -> None:
     args = parse_args()
     os.environ["ATTENTION_DELTA_MASK_KERNEL"] = str(args.mask_kernel)
+    os.environ["ATTENTION_DELTA_MASK_NO_RENORM"] = "1" if args.no_renorm else "0"
     os.environ["ATTENTION_NOISE_MODE"] = "probability_object_query_identity"
     os.environ["ATTENTION_NUM_INFERENCE_STEPS"] = "10" if args.mode == "donor" else "40"
     os.environ["ATTENTION_EXTREME_COUNT"] = "100"

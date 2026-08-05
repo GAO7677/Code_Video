@@ -59,6 +59,7 @@ def main() -> None:
             matched_sigmas = data["matched_sigma10"].astype(np.float32)
             mask_source_step = int(data["mask_source_step"].item()) if "mask_source_step" in data else step40
             mask_kernel = int(data["mask_kernel"].item()) if "mask_kernel" in data else 1
+            renormalized = bool(data["renormalized"].item()) if "renormalized" in data else True
         for region_index, name in enumerate(names):
             maps = {key: value[region_index].reshape(13, 16, 28) for key, value in arrays.items()}
             before_norm, after_norm = normalize_pair(maps["before"], maps["after"])
@@ -71,7 +72,8 @@ def main() -> None:
                 [
                     header(
                         width,
-                        f"Positive-Delta P95 + Mask{mask_kernel}x{mask_kernel} | {branch} | {name} | "
+                        f"Positive-Delta P95 + Mask{mask_kernel}x{mask_kernel} | "
+                        f"{'RENORM' if renormalized else 'NO-RENORM'} | {branch} | {name} | "
                         f"apply A40 S{step40:02d} sigma={sigma40:.6g} | mask source A40 S{mask_source_step:02d} "
                         f"- A10 ({distribution}) {sigma_note}",
                     ),
@@ -86,7 +88,12 @@ def main() -> None:
                         cv2.COLORMAP_HOT,
                     ),
                     strip(frames, before_norm, "LIVE A40 BEFORE", cv2.COLORMAP_TURBO),
-                    strip(frames, after_norm, "AFTER REMOVE + RENORMALIZE", cv2.COLORMAP_TURBO),
+                    strip(
+                        frames,
+                        after_norm,
+                        "AFTER REMOVE + RENORMALIZE" if renormalized else "AFTER REMOVE · NO RENORMALIZATION",
+                        cv2.COLORMAP_TURBO,
+                    ),
                     strip(frames, normalize_delta(maps["removed"]), "REMOVED ATTENTION MASS", cv2.COLORMAP_MAGMA),
                 ],
                 axis=0,
