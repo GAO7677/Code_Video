@@ -294,10 +294,19 @@ def main() -> None:
                 ]
                 write_pending(config, remaining)
 
+    queues = [[] for _ in args.gpus]
+    for index, task in enumerate(tasks):
+        queues[index % len(args.gpus)].append(task)
+
+    def gpu_worker(gpu_id: int, queue: list[dict[str, Any]]) -> None:
+        for task in queue:
+            worker(task, gpu_id)
+
     with ThreadPoolExecutor(max_workers=len(args.gpus)) as executor:
         futures = [
-            executor.submit(worker, task, args.gpus[index % len(args.gpus)])
-            for index, task in enumerate(tasks)
+            executor.submit(gpu_worker, gpu_id, queue)
+            for gpu_id, queue in zip(args.gpus, queues)
+            if queue
         ]
         for future in as_completed(futures):
             future.result()

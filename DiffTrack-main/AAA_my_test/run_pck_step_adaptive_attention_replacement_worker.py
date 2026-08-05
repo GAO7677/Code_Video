@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import numpy as np
 
 
 BASE_WORKER = Path(__file__).with_name("run_pck_extreme_head_zero_ablation_worker.py")
@@ -38,6 +39,7 @@ if NOISE_MODE not in {
     "probability_strict_future",
     "probability_exclude_current",
     "probability_context_only",
+    "probability_object_query_continuity",
     "probability_identity",
 }:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
@@ -141,6 +143,25 @@ class AdaptiveQKLogitNoise:
         self.noise_mode = NOISE_MODE
         self.attention_alpha = ATTENTION_ALPHA
         self.capture_groups: dict[str, dict[str, Any]] = {}
+        self.object_continuity_regions = []
+        self.object_continuity_context_frame = None
+        self.object_continuity_entries: dict[tuple, dict[str, Any]] = {}
+        self.object_continuity_capture_root = None
+        self.object_continuity_capture_heads: dict[tuple[int, int], float] = {}
+        if self.noise_mode == "probability_object_query_continuity":
+            from AAA_my_test.object_query_attention_capture_headwise_pck import pck_query_regions
+
+            self.object_continuity_regions, self.object_continuity_context_frame = pck_query_regions()
+            capture_root = os.environ.get("OBJECT_CONTINUITY_CAPTURE_ROOT", "").strip()
+            self.object_continuity_capture_root = Path(capture_root) if capture_root else None
+            for name, entries in groups.items():
+                if name.startswith("top100_step_"):
+                    for entry in entries[:10]:
+                        key = (int(entry["block"]), int(entry["head"]))
+                        self.object_continuity_capture_heads[key] = float(
+                            entry.get("ranking_score", entry.get("macro_pck32", 0.0))
+                        )
+                    break
         self.original_model_fn = pipe.model_fn
         self.original_forwards: list[tuple[Any, Any]] = []
         by_block: dict[int, dict[str, list[int]]] = {}
@@ -205,6 +226,149 @@ class AdaptiveQKLogitNoise:
         )
         return int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:8], "little")
 
+    def _object_continuity_probabilities(
+        self, selected_q, key_t, scale: float, heads: list[int], block: int
+    ):
+        latent_frames = int(os.environ.get("ATTENTION_MASK_LATENT_FRAMES", "13"))
+        context_frames = int(os.environ.get("ATTENTION_MASK_CONTEXT_LATENT_FRAMES", "2"))
+        sequence = int(selected_q.shape[2])
+        if sequence % latent_frames != 0:
+            raise RuntimeError(
+                f"Sequence {sequence} is not divisible by {latent_frames} latent frames"
+            )
+        spatial_tokens = sequence // latent_frames
+        if spatial_tokens != 16 * 28:
+            raise RuntimeError(f"Expected 16x28 spatial tokens, got {spatial_tokens}")
+        query_rows = sorted(
+            {
+                int(index)
+                for region in self.object_continuity_regions
+                for index in region["token_indices"]
+            }
+        )
+        row_tensor = torch.as_tensor(query_rows, device=selected_q.device, dtype=torch.long)
+        logits = torch.matmul(selected_q[:, :, row_tensor], key_t).float() * scale
+        before = torch.softmax(logits, dim=-1)
+        after = before.clone()
+        row_positions = {row: index for index, row in enumerate(query_rows)}
+        quantile = float(os.environ.get("OBJECT_CONTINUITY_HIGH_QUANTILE", "0.90"))
+        radius = int(os.environ.get("OBJECT_CONTINUITY_NEIGHBOR_RADIUS", "1"))
+        capture_step = int(os.environ.get("OBJECT_CONTINUITY_CAPTURE_STEP", "39"))
+
+        for region in self.object_continuity_regions:
+            region_rows = [int(index) for index in region["token_indices"]]
+            positions = torch.as_tensor(
+                [row_positions[index] for index in region_rows],
+                device=selected_q.device,
+                dtype=torch.long,
+            )
+            region_before = before[:, :, positions]
+            response = region_before.mean(dim=2).reshape(
+                region_before.shape[0], region_before.shape[1], latent_frames, 16, 28
+            )
+            thresholds = torch.quantile(
+                response.flatten(-2), quantile, dim=-1, keepdim=True
+            ).unsqueeze(-1)
+            high = response >= thresholds
+            rejected = torch.zeros_like(high)
+            previous = high[:, :, context_frames - 1]
+            kernel = 2 * radius + 1
+            for frame in range(context_frames, latent_frames):
+                neighboring = torch.nn.functional.max_pool2d(
+                    previous.float(), kernel_size=kernel, stride=1, padding=radius
+                ) > 0
+                kept = high[:, :, frame] & neighboring
+                rejected[:, :, frame] = high[:, :, frame] & ~neighboring
+                previous = kept
+            rejected_flat = rejected.flatten(-2).reshape(
+                rejected.shape[0], rejected.shape[1], latent_frames * spatial_tokens
+            )
+            region_after = region_before.masked_fill(rejected_flat.unsqueeze(2), 0.0)
+            row_sum = region_after.sum(dim=-1, keepdim=True)
+            region_after = torch.where(
+                row_sum > 0,
+                region_after / row_sum.clamp_min(1e-12),
+                region_before,
+            )
+            after[:, :, positions] = region_after
+
+            if (
+                self.object_continuity_capture_root is not None
+                and self.current_step == capture_step
+            ):
+                prefix = (self.group or "").split("_step_", 1)[0]
+                for head_offset, head in enumerate(heads):
+                    score = self.object_continuity_capture_heads.get((block, head))
+                    if score is None:
+                        continue
+                    key = (prefix, block, head, region["name"])
+                    entry = self.object_continuity_entries.setdefault(
+                        key,
+                        {
+                            "before": torch.zeros((latent_frames, 16, 28)),
+                            "after": torch.zeros((latent_frames, 16, 28)),
+                            "removed": torch.zeros((latent_frames, 16, 28)),
+                            "count": 0,
+                            "region": region,
+                            "pck32": score,
+                        },
+                    )
+                    before_map = response[:, head_offset].mean(dim=0).detach().cpu()
+                    after_map = region_after[:, head_offset].mean(dim=(0, 1)).reshape(
+                        latent_frames, 16, 28
+                    ).detach().cpu()
+                    entry["before"] += before_map
+                    entry["after"] += after_map
+                    entry["removed"] += (before_map - after_map).clamp_min(0)
+                    entry["count"] += 1
+        return query_rows, after
+
+    def flush_object_continuity_capture(self, group: str | None) -> None:
+        if not group or self.object_continuity_capture_root is None:
+            return
+        prefix = group.split("_step_", 1)[0]
+        keys = [key for key in self.object_continuity_entries if key[0] == prefix]
+        if not keys:
+            return
+        self.object_continuity_capture_root.mkdir(parents=True, exist_ok=True)
+        capture_step = int(os.environ.get("OBJECT_CONTINUITY_CAPTURE_STEP", "39"))
+        case = os.environ.get("QK_ATTENTION_CAPTURE_CASE", "case")
+        seed = int(os.environ.get("ATTENTION_NOISE_SEED", "0"))
+        for key in keys:
+            _prefix, block, head, region_name = key
+            entry = self.object_continuity_entries.pop(key)
+            count = max(1, int(entry["count"]))
+            region = entry["region"]
+            filename = (
+                f"{case}__seed{seed:06d}__{prefix}__{region_name}"
+                f"__step{capture_step:02d}__b{block:02d}_h{head:02d}.npz"
+            )
+            np.savez_compressed(
+                self.object_continuity_capture_root / filename,
+                before=(entry["before"] / count).numpy(),
+                after=(entry["after"] / count).numpy(),
+                removed=(entry["removed"] / count).numpy(),
+                query_points=region["points"],
+                query_mask=region["mask"],
+                query_token_indices=region["token_indices"],
+                query_context_frame=self.object_continuity_context_frame,
+                query_latent_frame=np.int32(1),
+                query_pixel_frame=np.int32(4),
+                region_name=np.asarray(region_name),
+                region_phrase=np.asarray(region["phrase"]),
+                pck32=np.float32(entry["pck32"]),
+                block=np.int32(block),
+                head=np.int32(head),
+                step=np.int32(capture_step),
+                seed=np.int32(seed),
+                high_quantile=np.float32(
+                    float(os.environ.get("OBJECT_CONTINUITY_HIGH_QUANTILE", "0.90"))
+                ),
+                neighbor_radius=np.int32(
+                    int(os.environ.get("OBJECT_CONTINUITY_NEIGHBOR_RADIUS", "1"))
+                ),
+            )
+
     def _attention(self, q, k, v, original, groups: dict[str, list[int]], block: int):
         heads = sorted(set(groups.get(self.group or "", ())))
         if not heads or self.current_step not in self.active_steps:
@@ -221,6 +385,12 @@ class AdaptiveQKLogitNoise:
         key_t = selected_k.transpose(-1, -2)
         selected_output = torch.empty_like(selected_q)
         scale = 1.0 / math.sqrt(head_dim)
+        continuity_rows = []
+        continuity_after = None
+        if self.noise_mode == "probability_object_query_continuity":
+            continuity_rows, continuity_after = self._object_continuity_probabilities(
+                selected_q, key_t, scale, heads, block
+            )
         capture_prefix = (self.group or "").split("_step_", 1)[0]
         capture_enabled = (
             self.capture_root is not None
@@ -258,6 +428,21 @@ class AdaptiveQKLogitNoise:
             )
             if self.noise_mode == "probability_identity":
                 probabilities = before_probabilities
+            elif self.noise_mode == "probability_object_query_continuity":
+                probabilities = before_probabilities.clone()
+                pairs = [
+                    (row - start, index)
+                    for index, row in enumerate(continuity_rows)
+                    if start <= row < end
+                ]
+                if pairs:
+                    local_rows = torch.as_tensor(
+                        [pair[0] for pair in pairs], device=logits.device, dtype=torch.long
+                    )
+                    source_rows = torch.as_tensor(
+                        [pair[1] for pair in pairs], device=logits.device, dtype=torch.long
+                    )
+                    probabilities[:, :, local_rows] = continuity_after[:, :, source_rows]
             elif self.noise_mode in {
                 "probability_temporal_causal",
                 "probability_strict_past",
@@ -364,7 +549,15 @@ class AdaptiveQKLogitNoise:
         if self.noise_mode == "probability_identity":
             return fused_output
         output_heads = fused_output.reshape(batch, sequence, num_heads, head_dim).permute(0, 2, 1, 3).clone()
-        output_heads[:, heads] = selected_output
+        if self.noise_mode == "probability_object_query_continuity":
+            row_tensor = torch.as_tensor(
+                continuity_rows, device=output_heads.device, dtype=torch.long
+            )
+            selected_heads_output = output_heads[:, heads].clone()
+            selected_heads_output[:, :, row_tensor] = selected_output[:, :, row_tensor]
+            output_heads[:, heads] = selected_heads_output
+        else:
+            output_heads[:, heads] = selected_output
         self.call_count += 1
         return output_heads.permute(0, 2, 1, 3).reshape(batch, sequence, -1)
 
@@ -532,6 +725,7 @@ def generate_with_context(pipe, zeroer, context, prompt, group, steps):
             _CAPTURE_PROMPT_POSITIONS[prompt] = position + 1
     zeroer.set_noise_context(prompt, group)
     result = original_generate(pipe, zeroer, context, prompt, group, steps)
+    zeroer.flush_object_continuity_capture(group)
     zeroer.flush_capture(group)
     if NOISE_MODE == "probability_identity" and group is not None:
         zeroer.call_count += 1
@@ -561,6 +755,7 @@ def write_experiment_metadata() -> None:
                     "probability_strict_future": "strict_future_attention_mask",
                     "probability_exclude_current": "exclude_current_frame_attention_mask",
                     "probability_context_only": "context_frames_only_attention_mask",
+                    "probability_object_query_continuity": "object_query_temporal_spatial_continuity",
                     "probability_additive": "direct_attention_probability_additive_noise",
                     "logit": "direct_qk_logit_noise",
                 }[NOISE_MODE],

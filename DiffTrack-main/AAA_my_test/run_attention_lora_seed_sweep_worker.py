@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
             "strict_future",
             "exclude_current",
             "context_only",
+            "object_query_continuity",
             "head_output_zero",
             "identity",
         ),
