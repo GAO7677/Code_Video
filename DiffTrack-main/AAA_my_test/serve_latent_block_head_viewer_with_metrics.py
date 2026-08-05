@@ -46,6 +46,13 @@ ATTENTION_LORA_STEPS00_09_ROOT = Path(
 ATTENTION_LORA_SEED_SWEEP_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
 )
+ATTENTION_LORA_TEST5_10SEED_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_test5_20case_10seed"
+)
+ATTENTION_LORA_TEST5_10SEED_METRIC_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "attention_lora_seed_sweep_metrics_test5_20case_10seed"
+)
 ATTENTION_NEIGHBOR_SEED90094_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed090094_case001460"
 )
@@ -364,6 +371,7 @@ MONO_SCALE_LORA_VIDEO_PORTAL_CARD = r'''
 '''
 ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD = r'''
 <a class="card new" href="/attention-additive-lora-seed-sweep?v=1"><div><span>16 / LORA 50-SEED SWEEP</span><h2>001460 · 50 Seeds × 全实验</h2><p>查看 Wan+LoRA Top/Bottom100 在全时间步与 S000-S009 的六类干预结果，seed 可下拉选择。</p></div><span class="go">打开 50-Seed 对比</span></a>
+<a class="card new" href="/attention-additive-lora-test5-10seed?v=1"><div><span>16B / TEST5 10-SEED SWEEP</span><h2>20 Cases × 10 Seeds × 全实验</h2><p>固定同一组 10 seeds，逐 case 比较 32 个 Attention 干预配置、Original、Q@K 热力图及自动指标进度。</p></div><span class="go">打开多 Case Sweep</span></a>
 <a class="card new" href="/object-query-attention-overlay?v=1"><div><span>17 / OBJECT QUERY OVERLAY</span><h2>Top/Bottom10 · 13×13 Latent 时间轴</h2><p>将动态物体 Query tokens 的 Before、After 与 |Delta| attention overlay 到对应视频帧。</p></div><span class="go">打开 Object Query 对比</span></a>
 <a class="card new" href="/attention-neighbor-ranking-seed90094?v=1"><div><span>18 / NEIGHBOR RANKING</span><h2>Seed 90094 · 8种 Head 排名</h2><p>比较 Wan+LoRA 在八种 Neighbor/Diagonal 排名 Top100、Bottom100 下的完整注意力干预矩阵。</p></div><span class="go">打开 Neighbor Ranking</span></a>
 <a class="card new" href="/attention-lora-pck32-seed90094?v=1"><div><span>19 / LORA PCK@32</span><h2>Seed 90094 · PCK@32 全实验</h2><p>固定 LoRA PCK@32 排名，在单页展示全部 Attention 实验、CFG 分支、阶段及 Top/Bottom100。</p></div><span class="go">打开 PCK@32 全实验</span></a>
@@ -543,6 +551,12 @@ class MetricsHandler(viewer.Handler):
                     if getattr(self.server, "server_port", 0) == 61882
                     else attention_lora_seed_sweep_page()
                 ).encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/attention-additive-lora-test5-10seed":
+            self.send_payload(
+                attention_lora_test5_10seed_page().encode("utf-8"),
                 "text/html; charset=utf-8",
             )
             return
@@ -834,6 +848,38 @@ class MetricsHandler(viewer.Handler):
                 )
             payload = json.dumps(catalog, ensure_ascii=False).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/attention-additive-lora-test5-10seed/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                attention_lora_test5_10seed_catalog(
+                    params.get("case", [""])[0]
+                ),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path in {
+            "/api/attention-additive-lora-test5-10seed/video",
+            "/api/attention-additive-lora-test5-10seed/image",
+        }:
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = attention_lora_test5_10seed_asset(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("stage", [""])[0],
+                params.get("profile", [""])[0],
+                params.get("group", [""])[0],
+                params.get("name", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown test5 10-seed sweep asset")
+            content_type = "video/mp4" if path.endswith("/video") else "image/png"
+            viewer.send_file_with_range(self, asset, content_type)
             return
         if path in {
             "/api/attention-additive-lora-seed-sweep/video",
@@ -2747,6 +2793,229 @@ def attention_lora_seed_sweep_catalog(requested_seed: str = ""):
         "expected_records": len(records),
         "records": records,
     }
+
+
+def _attention_lora_test5_10seed_manifest():
+    path = ATTENTION_LORA_TEST5_10SEED_ROOT / "experiment_manifest.json"
+    if not path.is_file():
+        return {"cases": [], "seeds": []}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"cases": [], "seeds": []}
+    return payload if isinstance(payload, dict) else {"cases": [], "seeds": []}
+
+
+def _attention_lora_test5_10seed_cases():
+    manifest = _attention_lora_test5_10seed_manifest()
+    return [
+        str(record["case_key"])
+        for record in manifest.get("cases", [])
+        if isinstance(record, dict) and record.get("case_key")
+    ]
+
+
+def _attention_lora_test5_10seed_seeds():
+    manifest = _attention_lora_test5_10seed_manifest()
+    return [int(seed) for seed in manifest.get("seeds", [])]
+
+
+def attention_lora_test5_10seed_asset(
+    case_key: str,
+    seed_text: str,
+    stage: str,
+    profile: str,
+    group: str,
+    name: str,
+):
+    if case_key not in set(_attention_lora_test5_10seed_cases()):
+        return None
+    try:
+        seed = int(seed_text)
+    except ValueError:
+        return None
+    if seed not in _attention_lora_test5_10seed_seeds():
+        return None
+    seed_root = (
+        ATTENTION_LORA_TEST5_10SEED_ROOT
+        / "cases"
+        / case_key
+        / "seeds"
+        / f"seed_{seed:06d}"
+    )
+    if profile == "original" and stage == "original" and group == "original":
+        return seed_root / "original.mp4"
+    if (
+        stage not in {"all_steps", "steps00_09"}
+        or profile not in {item[0] for item in SEED_SWEEP_PROFILES}
+        or group not in {"top100", "bottom100"}
+    ):
+        return None
+    run_root = seed_root / stage / profile
+    if name:
+        if Path(name).name != name or not name.endswith(".png"):
+            return None
+        return run_root / "heatmaps" / name
+    suffix = "steps_00_40" if stage == "all_steps" else "steps_00_10"
+    return (
+        run_root
+        / "videos"
+        / "lora"
+        / "cases"
+        / case_key
+        / f"{group}_{suffix}.mp4"
+    )
+
+
+def attention_lora_test5_10seed_catalog(requested_case: str = ""):
+    cases = _attention_lora_test5_10seed_cases()
+    seeds = _attention_lora_test5_10seed_seeds()
+    case_key = requested_case if requested_case in cases else (cases[0] if cases else "")
+    seed_catalogs = []
+    for seed in seeds:
+        original = attention_lora_test5_10seed_asset(
+            case_key, str(seed), "original", "original", "original", ""
+        )
+        records = []
+        for stage in ("all_steps", "steps00_09"):
+            capture_step = 39 if stage == "all_steps" else 9
+            for profile, label in SEED_SWEEP_PROFILES:
+                run_root = (
+                    ATTENTION_LORA_TEST5_10SEED_ROOT
+                    / "cases"
+                    / case_key
+                    / "seeds"
+                    / f"seed_{seed:06d}"
+                    / stage
+                    / profile
+                )
+                for group in ("top100", "bottom100"):
+                    video = attention_lora_test5_10seed_asset(
+                        case_key, str(seed), stage, profile, group, ""
+                    )
+                    metadata_path = next(
+                        iter(
+                            sorted(
+                                (run_root / "heatmaps").glob(
+                                    f"*__{case_key}__{group}__*step{capture_step:02d}.json"
+                                )
+                            )
+                        ),
+                        None,
+                    )
+                    metadata = {}
+                    if metadata_path is not None:
+                        try:
+                            metadata = json.loads(
+                                metadata_path.read_text(encoding="utf-8")
+                            )
+                        except (OSError, json.JSONDecodeError):
+                            metadata = {}
+                    all_token = str(metadata.get("all_token_image", ""))
+                    frame = str(metadata.get("frame_image", ""))
+                    all_token_path = (
+                        attention_lora_test5_10seed_asset(
+                            case_key, str(seed), stage, profile, group, all_token
+                        )
+                        if all_token
+                        else None
+                    )
+                    frame_path = (
+                        attention_lora_test5_10seed_asset(
+                            case_key, str(seed), stage, profile, group, frame
+                        )
+                        if frame
+                        else None
+                    )
+                    records.append(
+                        {
+                            "stage": stage,
+                            "profile": profile,
+                            "label": label,
+                            "group": group,
+                            "video_ready": bool(video and video.is_file()),
+                            "all_token": all_token,
+                            "frame": frame,
+                            "heatmap_ready": bool(
+                                all_token_path
+                                and frame_path
+                                and all_token_path.is_file()
+                                and frame_path.is_file()
+                            ),
+                            "heatmap_expected": profile != "head_output_zero",
+                        }
+                    )
+        seed_catalogs.append(
+            {
+                "seed": seed,
+                "original_ready": bool(original and original.is_file()),
+                "ready_records": sum(record["video_ready"] for record in records),
+                "records": records,
+            }
+        )
+
+    case_progress = []
+    complete_profiles = 0
+    expected_profiles = len(cases) * len(seeds) * 16
+    for candidate in cases:
+        candidate_complete = 0
+        for seed in seeds:
+            seed_root = (
+                ATTENTION_LORA_TEST5_10SEED_ROOT
+                / "cases"
+                / candidate
+                / "seeds"
+                / f"seed_{seed:06d}"
+            )
+            candidate_complete += sum(1 for _ in seed_root.glob("*/*/complete"))
+        complete_profiles += candidate_complete
+        case_progress.append(
+            {
+                "case": candidate,
+                "complete_profiles": candidate_complete,
+                "expected_profiles": len(seeds) * 16,
+                "metrics_complete": (
+                    ATTENTION_LORA_TEST5_10SEED_METRIC_ROOT
+                    / "cases"
+                    / candidate
+                    / "METRICS_COMPLETE"
+                ).is_file(),
+            }
+        )
+    return {
+        "case": case_key,
+        "cases": cases,
+        "seeds": seeds,
+        "profiles": [
+            {"id": profile, "label": label}
+            for profile, label in SEED_SWEEP_PROFILES
+        ],
+        "seed_catalogs": seed_catalogs,
+        "case_progress": case_progress,
+        "complete_profiles": complete_profiles,
+        "expected_profiles": expected_profiles,
+        "complete_intervention_videos": complete_profiles * 2,
+        "expected_intervention_videos": expected_profiles * 2,
+        "metrics_complete_cases": sum(
+            record["metrics_complete"] for record in case_progress
+        ),
+    }
+
+
+def attention_lora_test5_10seed_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wan+LoRA Test5 · 20 Cases × 10 Seeds</title><style>
+:root{--ink:#1e2824;--muted:#626b66;--paper:#f2f1ed;--card:#fff;--line:#cfd4d1;--green:#166a5d;--red:#b24432;--blue:#315f78;--gold:#a87522}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Arial,"Noto Sans SC",sans-serif}header{position:sticky;top:0;z-index:10;padding:14px 20px;background:#fffffff2;border-bottom:1px solid var(--line)}header a{color:var(--green);font-weight:700}h1{margin:5px 0;font-size:26px;letter-spacing:0}header p{margin:4px 0;color:var(--muted)}.tools,.families,.conditions,.summary{display:flex;gap:8px;align-items:center;flex-wrap:wrap}select,button{padding:7px 10px;border:1px solid #aeb7b2;border-radius:4px;background:#fff;color:var(--ink);font-weight:700}.status{font:12px ui-monospace,monospace;color:var(--muted)}.summary{margin-top:9px}.pill{padding:5px 8px;border:1px solid var(--line);background:#f7f8f7;font:11px ui-monospace,monospace}.filters,main{width:min(2200px,calc(100% - 20px));margin:auto}.filters{padding:13px 0;border-bottom:1px solid var(--line)}.filter-row{display:flex;align-items:flex-start;gap:12px;margin:7px 0}.filter-row b{min-width:92px;font-size:12px;padding-top:8px}.experiment.active{background:#213c34;color:#fff;border-color:#213c34}.condition.active{background:var(--blue);color:#fff;border-color:var(--blue)}.condition.top.active{background:var(--red);border-color:var(--red)}.condition.bottom.active{background:var(--green);border-color:var(--green)}main{padding:15px 0 70px}.selection{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:10px}.selection h2{margin:0;font-size:20px}.seed-grid{display:grid;grid-template-columns:repeat(2,minmax(420px,1fr));gap:10px}.card{padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--card)}.card.top{border-top:4px solid var(--red)}.card.bottom{border-top:4px solid var(--green)}.card h3{display:flex;justify-content:space-between;margin:0 0 8px;font:700 14px ui-monospace,monospace}.video-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.video-pair figure{margin:0;min-width:0}.video-pair figcaption{margin-bottom:5px;font-size:11px;font-weight:700}.card video,.card img{display:block;width:100%;background:#111}.pending{min-height:190px;display:grid;place-items:center;border:1px dashed var(--line);color:var(--muted)}details{margin-top:7px}details summary{cursor:pointer;font-size:12px;font-weight:700}.maps{display:grid;gap:6px;margin-top:6px}.replay{position:fixed;right:18px;bottom:18px;z-index:20;background:#213c34;color:#fff;border:0;padding:11px 15px}@media(max-width:1000px){header{position:static}.seed-grid,.video-pair{grid-template-columns:1fr}.filter-row{display:block}.filter-row b{display:block}}
+</style></head><body><button class="replay" id="replay">重新播放当前页</button><header><a href="/">返回总览</a><h1>Wan+LoRA · Test5 20 Cases × 10 Seeds</h1><p>同一组固定 seeds · 8 profiles × 2 stages × Top/Bottom100 · 40-step / 49-frame</p><div class="tools"><label>Case <select id="case"></select></label><button id="refresh">刷新进度</button><span id="status" class="status">读取中</span></div><div id="summary" class="summary"></div></header><section class="filters"><div class="filter-row"><b>实验</b><div id="experiments" class="families"></div></div><div class="filter-row"><b>阶段 / Head</b><div id="conditions" class="conditions"></div></div></section><main><div class="selection"><div><h2 id="title"></h2><p id="subtitle"></p></div><span id="count" class="status"></span></div><section id="grid" class="seed-grid"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let caseKey=q.get('case')||'',profile=q.get('experiment')||'alpha090',stage=q.get('stage')||'all_steps',group=q.get('group')||'top100',data=null;
+const labels={alpha090:'α = 0.9',alpha150:'α = 1.5',zero:'A = 0',uniform:'A = 1/N_K',temporal_causal:'Temporal Causal',strict_past:'Strict Past Only',strict_future:'Strict Future Only',head_output_zero:'Head Output Zero'};
+function sync(){const u=new URL(location.href);u.searchParams.set('case',caseKey);u.searchParams.set('experiment',profile);u.searchParams.set('stage',stage);u.searchParams.set('group',group);history.replaceState(null,'',u)}
+function video(seed,s,p,g){return `/api/attention-additive-lora-test5-10seed/video?case=${encodeURIComponent(caseKey)}&seed=${seed}&stage=${s}&profile=${p}&group=${g}`}
+function image(seed,r,name){return `/api/attention-additive-lora-test5-10seed/image?case=${encodeURIComponent(caseKey)}&seed=${seed}&stage=${r.stage}&profile=${r.profile}&group=${r.group}&name=${encodeURIComponent(name)}`}
+function buttons(){document.getElementById('experiments').innerHTML=Object.entries(labels).map(([id,label])=>`<button class="experiment ${id===profile?'active':''}" data-profile="${id}">${e(label)}</button>`).join('');document.getElementById('conditions').innerHTML=[['all_steps','S000-S039'],['steps00_09','S000-S009']].map(([id,label])=>`<button class="condition ${id===stage?'active':''}" data-stage="${id}">${label}</button>`).join('')+[['top100','Top100'],['bottom100','Bottom100']].map(([id,label])=>`<button class="condition ${id} ${id===group?'active':''}" data-group="${id}">${label}</button>`).join('');document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=()=>{profile=b.dataset.profile;sync();buttons();render()});document.querySelectorAll('[data-stage]').forEach(b=>b.onclick=()=>{stage=b.dataset.stage;sync();buttons();render()});document.querySelectorAll('[data-group]').forEach(b=>b.onclick=()=>{group=b.dataset.group;sync();buttons();render()})}
+function render(){if(!data)return;const select=document.getElementById('case');select.innerHTML=data.cases.map(value=>`<option value="${e(value)}">${e(value)}</option>`).join('');select.value=caseKey;const label=labels[profile],stageLabel=stage==='all_steps'?'S000-S039':'S000-S009';document.getElementById('title').textContent=`${label} · ${group.toUpperCase()} · ${stageLabel}`;document.getElementById('subtitle').textContent=caseKey;let ready=0,originals=0;document.getElementById('grid').innerHTML=data.seed_catalogs.map(seedData=>{const r=seedData.records.find(item=>item.stage===stage&&item.profile===profile&&item.group===group),experimentReady=Boolean(r&&r.video_ready);if(experimentReady)ready++;if(seedData.original_ready)originals++;const original=seedData.original_ready?`<video controls preload="none" playsinline src="${video(seedData.seed,'original','original','original')}"></video>`:'<div class="pending">Original 等待生成</div>',experiment=experimentReady?`<video controls preload="none" playsinline src="${video(seedData.seed,stage,profile,group)}"></video>`:'<div class="pending">干预视频等待生成</div>',maps=r&&r.heatmap_ready?`<details><summary>Q@K 干预前后热力图</summary><div class="maps"><img loading="lazy" src="${image(seedData.seed,r,r.all_token)}"><img loading="lazy" src="${image(seedData.seed,r,r.frame)}"></div></details>`:`<div class="status">${r&&r.heatmap_expected?'热力图等待生成':'该配置不改变 Attention'}</div>`;return `<article class="card ${group==='top100'?'top':'bottom'}"><h3><span>Seed ${seedData.seed}</span><span>${experimentReady?'READY':'PENDING'}</span></h3><div class="video-pair"><figure><figcaption>Original · 同 Seed</figcaption>${original}</figure><figure><figcaption>${e(label)} · ${group.toUpperCase()} · ${stageLabel}</figcaption>${experiment}</figure></div>${maps}</article>`}).join('');document.getElementById('count').textContent=`干预 ${ready}/${data.seeds.length} · Original ${originals}/${data.seeds.length}`;document.getElementById('status').textContent=`${data.complete_intervention_videos}/${data.expected_intervention_videos} intervention videos`;document.getElementById('summary').innerHTML=`<span class="pill">Profiles ${data.complete_profiles}/${data.expected_profiles}</span><span class="pill">Metrics cases ${data.metrics_complete_cases}/${data.cases.length}</span><span class="pill">Cases ${data.cases.length}</span><span class="pill">Seeds ${data.seeds.length}</span>`;buttons()}
+async function load(){document.getElementById('status').textContent='正在扫描产物';const url=`/api/attention-additive-lora-test5-10seed/catalog?case=${encodeURIComponent(caseKey)}`;data=await fetch(url,{cache:'no-store'}).then(r=>r.json());caseKey=data.case;sync();render()}
+document.getElementById('case').addEventListener('change',ev=>{caseKey=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));buttons();load();setInterval(load,60000);
+</script></body></html>'''
 
 
 def attention_lora_seed_sweep_page():
