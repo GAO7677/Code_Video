@@ -287,6 +287,7 @@ class AdaptiveQKLogitNoise:
         self._finalize_group_mean_masks()
         if self.noise_mode == "probability_object_query_trajectory_probe":
             self._write_trajectory_probe_capture()
+            self._write_step_alignment_capture()
             self.call_count += 1
             self.group_mean_phase = "idle"
             return probe_result
@@ -323,6 +324,72 @@ class AdaptiveQKLogitNoise:
                 ).squeeze(1) > 0
             )
         return component.reshape_as(response)
+
+    def _capture_step_alignment_head_probabilities(
+        self,
+        block: int,
+        heads: list[int],
+        region_name: str,
+        response: torch.Tensor,
+    ) -> None:
+        """Collect compact per-head object-query maps without recomputing Q@K."""
+        capture_root = os.environ.get("OBJECT_STEP_ALIGNMENT_CAPTURE_ROOT", "").strip()
+        if not capture_root:
+            return
+
+        branch = str(getattr(self, "current_cfg_branch", "unknown"))
+        if not hasattr(self, "_step_alignment_entries"):
+            self._step_alignment_entries = {}
+        branch_entries = self._step_alignment_entries.setdefault(branch, {})
+        per_head = response.detach().float().mean(dim=0).cpu()
+        for local_index, head in enumerate(heads):
+            branch_entries[(int(block), int(head), str(region_name))] = per_head[local_index]
+
+    def _write_step_alignment_capture(self) -> None:
+        capture_root = os.environ.get("OBJECT_STEP_ALIGNMENT_CAPTURE_ROOT", "").strip()
+        if not capture_root:
+            return
+
+        branch = str(getattr(self, "current_cfg_branch", "unknown"))
+        entries = getattr(self, "_step_alignment_entries", {}).pop(branch, {})
+        if not entries:
+            return
+
+        if not hasattr(self, "_step_alignment_write_counts"):
+            self._step_alignment_write_counts = {}
+        step = int(self._step_alignment_write_counts.get(branch, 0))
+        self._step_alignment_write_counts[branch] = step + 1
+
+        region_names = sorted({key[2] for key in entries})
+        head_ids = sorted({(key[0], key[1]) for key in entries})
+        maps = []
+        complete_ids = []
+        for block, head in head_ids:
+            region_maps = []
+            for region_name in region_names:
+                value = entries.get((block, head, region_name))
+                if value is None:
+                    region_maps = []
+                    break
+                region_maps.append(value.numpy())
+            if region_maps:
+                complete_ids.append((block, head))
+                maps.append(np.stack(region_maps, axis=0))
+        if not maps:
+            return
+
+        output_dir = Path(capture_root)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        safe_branch = branch.replace("/", "_").replace(" ", "_")
+        np.savez(
+            output_dir / f"step_{step:02d}__{safe_branch}.npz",
+            attention=np.stack(maps, axis=0).astype(np.float32, copy=False),
+            blocks=np.asarray([item[0] for item in complete_ids], dtype=np.int16),
+            heads=np.asarray([item[1] for item in complete_ids], dtype=np.int16),
+            region_names=np.asarray(region_names),
+            step=np.asarray(step, dtype=np.int16),
+            branch=np.asarray(branch),
+        )
 
     def _group_mean_object_probabilities(
         self, selected_q, key_t, scale: float, heads: list[int], block: int
@@ -362,6 +429,12 @@ class AdaptiveQKLogitNoise:
             )
             name = str(region["name"])
             if self.group_mean_phase == "probe":
+                self._capture_step_alignment_head_probabilities(
+                    block=block,
+                    heads=heads,
+                    region_name=name,
+                    response=response / max(len(region_rows), 1),
+                )
                 entry = self.group_mean_probe.setdefault(
                     name,
                     {"sum": torch.zeros_like(response[:, 0]), "heads": 0, "region": region},

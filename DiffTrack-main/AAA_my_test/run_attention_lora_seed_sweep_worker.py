@@ -93,7 +93,9 @@ def seeded_generate(base, seed: int):
                 num_frames=top5.source.target.core.align_generation_num_frames(48),
                 seed=seed,
                 cfg_scale=5.0,
-                num_inference_steps=40,
+                num_inference_steps=int(
+                    os.environ.get("ATTENTION_NUM_INFERENCE_STEPS", "40")
+                ),
                 tiled=True,
             )
 
@@ -202,8 +204,10 @@ def adaptive_heads(_ranking_pool: str, extreme_count: int) -> dict[str, list[dic
 def neighbor_heads(
     criterion: str, ranking_pool: str, extreme_count: int
 ) -> dict[str, list[dict]]:
-    if ranking_pool != "all720" or extreme_count != 100:
-        raise ValueError("Neighbor ranking experiments require all720 and 100 heads")
+    if ranking_pool != "all720" or not 1 <= extreme_count <= 360:
+        raise ValueError(
+            "Neighbor ranking experiments require all720 and 1..360 heads"
+        )
     score_column = NEIGHBOR_RANKING_COLUMNS[criterion]
     rows = []
     with NEIGHBOR_RANKING_CSV.open("r", encoding="utf-8", newline="") as handle:
