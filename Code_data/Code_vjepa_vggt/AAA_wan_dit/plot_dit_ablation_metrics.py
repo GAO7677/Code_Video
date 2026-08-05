@@ -32,13 +32,19 @@ METHOD_PATTERN = re.compile(
 )
 TRAINING_CHECKPOINT_PATTERN = re.compile(
     r"^xssc_lora_("
+    r"object_only|"
     r"full_sa|full_sa_resume|"
     r"s_head59|s_head59_resume|"
     r"t_head70|t_head70_resume|"
     r"t_head70_no_object|"
     r"t_head70_slot_dedup_merge|"
+    r"t_head70_slot_dedup_merge_xssc_step050000|"
+    r"t_head100_lora_pck32_no_object|"
     r"slot_dedup_merge|"
-    r"full_sa_no_object"
+    r"slot_dedup_merge_xssc_step050000|"
+    r"full_sa_no_object|"
+    r"full_sa_no_object_pybullet100|"
+    r"full_sa_no_object_kubric100"
     r")_step-(\d+)_steps\d+_\d+x\d+_ctx\d+_\d+f(?:_.+)?$"
 )
 TRAINING_VARIANT_ALIASES = {
@@ -88,55 +94,141 @@ MODE_COLORS = {
     "lora_off": "#5D6D7E",
 }
 TRAINING_VARIANT_LABELS = {
+    "object_only": "Object-only",
     "full_sa": "Full-SA + Object",
     "s_head59": "S-head59 + Object",
     "t_head70": "T-head70 + Object",
     "t_head70_no_object": "T-head70 + No-Object",
     "t_head70_slot_dedup_merge": "T-head70 + Object + Slot-Dedup",
+    "t_head70_slot_dedup_merge_xssc_step050000": (
+        "T-head70 + Object + Slot-Dedup (xSSC-50k)"
+    ),
+    "t_head100_lora_pck32_no_object": (
+        "Motion-head100 (LoRA-PCK32 Top100) + No-Object"
+    ),
     "slot_dedup_merge": "Full-SA + Object + Slot-Dedup",
+    "slot_dedup_merge_xssc_step050000": (
+        "Full-SA + Object + Slot-Dedup (xSSC-50k)"
+    ),
     "full_sa_no_object": "Full-SA + No-Object",
+    "full_sa_no_object_pybullet100": "Full-SA + No-Object (PyBullet 100%)",
+    "full_sa_no_object_kubric100": "Full-SA + No-Object (Kubric 100%)",
 }
 TRAINING_VARIANT_COLORS = {
+    "object_only": "#4D4D4D",
     "full_sa": "#D62728",
     "s_head59": "#2CA02C",
     "t_head70": "#9467BD",
     "t_head70_no_object": "#E377C2",
     "t_head70_slot_dedup_merge": "#17BECF",
+    "t_head70_slot_dedup_merge_xssc_step050000": "#00B894",
+    "t_head100_lora_pck32_no_object": "#0072B2",
     "slot_dedup_merge": "#1F77B4",
+    "slot_dedup_merge_xssc_step050000": "#8C564B",
     "full_sa_no_object": "#FF7F0E",
+    "full_sa_no_object_pybullet100": "#00A6A6",
+    "full_sa_no_object_kubric100": "#F28E2B",
 }
 TRAINING_VARIANT_MARKERS = {
+    "object_only": "P",
     "full_sa": "o",
     "s_head59": "s",
     "t_head70": "^",
     "t_head70_no_object": "h",
     "t_head70_slot_dedup_merge": "v",
+    "t_head70_slot_dedup_merge_xssc_step050000": "<",
+    "t_head100_lora_pck32_no_object": "8",
     "slot_dedup_merge": "D",
+    "slot_dedup_merge_xssc_step050000": ">",
     "full_sa_no_object": "X",
+    "full_sa_no_object_pybullet100": "p",
+    "full_sa_no_object_kubric100": "*",
 }
 TRAINING_VARIANT_LINESTYLES = {
+    "object_only": "--",
     "full_sa": "-",
     "s_head59": "--",
     "t_head70": "-.",
     "t_head70_no_object": (0, (3, 2)),
     "t_head70_slot_dedup_merge": (0, (3, 1, 1, 1)),
+    "t_head70_slot_dedup_merge_xssc_step050000": (0, (5, 1, 1, 1)),
+    "t_head100_lora_pck32_no_object": (0, (1, 1)),
     "slot_dedup_merge": ":",
+    "slot_dedup_merge_xssc_step050000": (0, (5, 2, 1, 2)),
     "full_sa_no_object": (0, (5, 1)),
+    "full_sa_no_object_pybullet100": (0, (4, 1)),
+    "full_sa_no_object_kubric100": (0, (2, 1)),
 }
 TRAINING_VARIANT_ORDER = {
     variant: index
     for index, variant in enumerate(
         (
+            "object_only",
             "full_sa",
             "s_head59",
             "t_head70",
             "t_head70_no_object",
             "t_head70_slot_dedup_merge",
+            "t_head70_slot_dedup_merge_xssc_step050000",
+            "t_head100_lora_pck32_no_object",
             "slot_dedup_merge",
+            "slot_dedup_merge_xssc_step050000",
             "full_sa_no_object",
+            "full_sa_no_object_pybullet100",
+            "full_sa_no_object_kubric100",
         )
     )
 }
+
+BASELINE_SPECS = (
+    {
+        "key": "wan22_base",
+        "label": "Wan2.2-TI2V-5B",
+        "color": "#222222",
+        "result_dir": Path(
+            "/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/"
+            "physicIQ/basemodel/"
+            "wan2p2_ti2v5B_aligned49_steps40_512x896_49f_defaultnegprompt"
+        ),
+    },
+    {
+        "key": "openvid_pybullet_lora_step500",
+        "label": "OpenVid+PyBullet LoRA · step 500",
+        "color": "#E69F00",
+        "result_dir": Path(
+            "/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/"
+            "physicIQ/loramodel/"
+            "wan_openvid_0613pybullet_lorav2v_step000500_aligned49_steps40_"
+            "512x896_ctx08_49f_defaultnegprompt"
+        ),
+    },
+    {
+        "key": "openvid_lora_step10000",
+        "label": "OpenVid LoRA · step 10000",
+        "color": "#0072B2",
+        "result_dir": Path(
+            "/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/"
+            "physicIQ/loramodel/"
+            "wan_openvid_lorav2v_step10000_aligned49_steps40_512x896_ctx08_"
+            "49f_defaultnegprompt"
+        ),
+    },
+    {
+        "key": "physrvg",
+        "label": "PhysRVG",
+        "color": "#CC79A7",
+        "result_dir": Path(
+            "/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/"
+            "physicIQ/physRVG_steps40_512x896_08_49f"
+        ),
+    },
+)
+
+INTERACTIVE_METRIC_PRIORITY = (
+    "physics_iq_with_context",
+    "videophy2_pc",
+    "cosmos_reason1",
+)
 
 
 def nested_score(*keys: str) -> Callable[[dict[str, Any]], float | None]:
@@ -318,6 +410,18 @@ class TrainingCheckpoint:
 @dataclass(frozen=True)
 class TrainingMetricStat:
     checkpoint: TrainingCheckpoint
+    metric: Metric
+    count: int
+    mean: float | None
+    complete: bool
+
+
+@dataclass(frozen=True)
+class BaselineMetricStat:
+    key: str
+    label: str
+    color: str
+    result_dir: Path
     metric: Metric
     count: int
     mean: float | None
@@ -569,6 +673,35 @@ def compute_training_stats(
     return stats
 
 
+def compute_baseline_stats(
+    allowed_input_jsons: set[Path], expected_cases: int
+) -> list[BaselineMetricStat]:
+    stats: list[BaselineMetricStat] = []
+    for spec in BASELINE_SPECS:
+        result_dir = spec["result_dir"].expanduser().resolve()
+        payloads = load_allowed_payloads(result_dir, allowed_input_jsons)
+        for metric in METRICS:
+            values = [
+                value
+                for payload in payloads.values()
+                if (value := metric.extract(payload)) is not None
+            ]
+            count = len(values)
+            stats.append(
+                BaselineMetricStat(
+                    key=str(spec["key"]),
+                    label=str(spec["label"]),
+                    color=str(spec["color"]),
+                    result_dir=result_dir,
+                    metric=metric,
+                    count=count,
+                    mean=float(np.mean(values)) if values else None,
+                    complete=count == expected_cases,
+                )
+            )
+    return stats
+
+
 def write_stats_csv(
     path: Path,
     stats: list[MetricStat],
@@ -657,6 +790,39 @@ def write_training_stats_csv(
                     "complete_67": stat.complete,
                     "mean": "" if stat.mean is None else f"{stat.mean:.8f}",
                     "result_dir": str(stat.checkpoint.result_dir),
+                }
+            )
+
+
+def write_baseline_stats_csv(
+    path: Path, stats: list[BaselineMetricStat], expected_cases: int
+) -> None:
+    fieldnames = (
+        "baseline_id",
+        "baseline_label",
+        "metric",
+        "direction",
+        "score_count",
+        "expected_count",
+        "complete_67",
+        "mean",
+        "result_dir",
+    )
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for stat in stats:
+            writer.writerow(
+                {
+                    "baseline_id": stat.key,
+                    "baseline_label": stat.label,
+                    "metric": stat.metric.key,
+                    "direction": stat.metric.direction,
+                    "score_count": stat.count,
+                    "expected_count": expected_cases,
+                    "complete_67": stat.complete,
+                    "mean": "" if stat.mean is None else f"{stat.mean:.8f}",
+                    "result_dir": str(stat.result_dir),
                 }
             )
 
@@ -1005,44 +1171,198 @@ def write_plot_index(
     path: Path,
     plots: dict[str, dict[str, str]],
     training_plot: dict[str, str] | None,
+    training_stats: list[TrainingMetricStat],
+    baseline_stats: list[BaselineMetricStat],
+    expected_cases: int,
+    metrics: tuple[Metric, ...],
 ) -> None:
-    sections: list[str] = []
+    metric_priority = {
+        key: index for index, key in enumerate(INTERACTIVE_METRIC_PRIORITY)
+    }
+    interactive_metrics = tuple(
+        sorted(
+            metrics,
+            key=lambda metric: (
+                metric_priority.get(metric.key, len(metric_priority)),
+                next(
+                    index
+                    for index, candidate in enumerate(metrics)
+                    if candidate.key == metric.key
+                ),
+            ),
+        )
+    )
+    indexed = {
+        (stat.checkpoint.variant, stat.checkpoint.step, stat.metric.key): stat
+        for stat in training_stats
+    }
+    checkpoints = sorted(
+        {stat.checkpoint for stat in training_stats},
+        key=lambda checkpoint: checkpoint.sort_key,
+    )
+    methods = []
+    for variant in sorted(
+        {checkpoint.variant for checkpoint in checkpoints},
+        key=TRAINING_VARIANT_ORDER.__getitem__,
+    ):
+        points = []
+        for checkpoint in (
+            item for item in checkpoints if item.variant == variant
+        ):
+            point_metrics = {}
+            for metric in interactive_metrics:
+                stat = indexed.get((variant, checkpoint.step, metric.key))
+                if stat is None:
+                    continue
+                point_metrics[metric.key] = {
+                    "mean": stat.mean,
+                    "count": stat.count,
+                    "complete": stat.complete,
+                }
+            points.append(
+                {
+                    "step": checkpoint.step,
+                    "result_dir": str(checkpoint.result_dir),
+                    "metrics": point_metrics,
+                }
+            )
+        methods.append(
+            {
+                "key": variant,
+                "label": TRAINING_VARIANT_LABELS[variant],
+                "color": TRAINING_VARIANT_COLORS[variant],
+                "points": points,
+            }
+        )
+
+    baseline_index = {
+        (stat.key, stat.metric.key): stat for stat in baseline_stats
+    }
+    baselines = []
+    for spec in BASELINE_SPECS:
+        key = str(spec["key"])
+        baseline_metrics = {}
+        for metric in interactive_metrics:
+            stat = baseline_index.get((key, metric.key))
+            if stat is None:
+                continue
+            baseline_metrics[metric.key] = {
+                "mean": stat.mean,
+                "count": stat.count,
+                "complete": stat.complete,
+            }
+        baselines.append(
+            {
+                "key": key,
+                "label": str(spec["label"]),
+                "color": str(spec["color"]),
+                "result_dir": str(spec["result_dir"].resolve()),
+                "metrics": baseline_metrics,
+            }
+        )
+
+    payload = {
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "expected_cases": expected_cases,
+        "metrics": [
+            {
+                "key": metric.key,
+                "title": metric.title,
+                "direction": metric.direction,
+            }
+            for metric in interactive_metrics
+        ],
+        "methods": methods,
+        "baselines": baselines,
+    }
+    payload_text = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+    (path.parent / "interactive_training_metrics.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    static_links: list[str] = []
     if training_plot is not None:
-        training_png_path = Path(training_plot["png"])
-        training_png = training_png_path.name
-        training_png_version = training_png_path.stat().st_mtime_ns
-        training_pdf = Path(training_plot["pdf"]).name
-        sections.append(
-            f"<section><h2>Wan+xSSC training checkpoints</h2>"
-            f"<p><a href='{training_pdf}'>PDF</a></p>"
-            f"<img src='{training_png}?v={training_png_version}' "
-            f"alt='Wan+xSSC training checkpoint metrics'>"
-            f"</section>"
+        static_links.append(
+            f'<a href="{Path(training_plot["png"]).name}">训练曲线 PNG</a>'
+            f'<a href="{Path(training_plot["pdf"]).name}">训练曲线 PDF</a>'
         )
     for model, files in plots.items():
-        png_path = Path(files["png"])
-        png_name = png_path.name
-        png_version = png_path.stat().st_mtime_ns
-        pdf_name = Path(files["pdf"]).name
-        sections.append(
-            f"<section><h2>{MODEL_LABELS[model]} block ablations</h2>"
-            f"<p><a href='{pdf_name}'>PDF</a></p>"
-            f"<img src='{png_name}?v={png_version}' "
-            f"alt='{MODEL_LABELS[model]} block ablation metrics'>"
-            f"</section>"
+        static_links.append(
+            f'<a href="{Path(files["png"]).name}">'
+            f'{MODEL_LABELS[model]} 消融 PNG</a>'
         )
+    template = r'''<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PhysicIQ checkpoint 指标曲线</title>
+  <style>
+    :root{--ink:#202428;--muted:#626b70;--line:#d8dcdf;--surface:#fff;--bg:#f4f5f6;--accent:#0b6f73}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,"Noto Sans SC",sans-serif}
+    header{background:#fff;border-bottom:1px solid var(--line);padding:20px 24px}header>div,main{max-width:1760px;margin:auto}
+    h1{margin:0 0 7px;font-size:25px;letter-spacing:0}h2{font-size:16px;letter-spacing:0;margin:0 0 10px}
+    p{margin:0;color:var(--muted);font-size:13px;line-height:1.55}main{padding:18px 24px 32px}
+    .controls{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:18px;padding:16px 0 18px;border-bottom:1px solid var(--line)}
+    .checks{display:flex;flex-wrap:wrap;gap:8px 14px}.check{display:inline-flex;align-items:center;gap:7px;font-size:13px;line-height:20px;cursor:pointer}
+    .check input{width:15px;height:15px;margin:0;accent-color:var(--accent)}.swatch{width:18px;height:3px;background:var(--c);display:inline-block}
+    .swatch.base{height:0;border-top:2px dashed var(--c);background:none}.commands{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:11px}
+    button{border:1px solid #aeb6ba;background:#fff;color:var(--ink);padding:6px 10px;border-radius:4px;cursor:pointer;font-size:12px}button:hover{border-color:var(--accent);color:var(--accent)}
+    #status{margin-left:4px;color:var(--muted);font-size:12px}.charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:18px}
+    .chart{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:13px;min-width:0}.chart h3{font-size:14px;margin:0 0 2px;letter-spacing:0}
+    .chart .direction{font-size:11px;color:var(--muted)}svg{display:block;width:100%;height:auto;min-height:270px}.legend{display:flex;flex-wrap:wrap;gap:6px 13px;margin:2px 4px 0;font-size:10px;color:#4b5357}
+    .legend span{display:inline-flex;align-items:center;gap:5px}.empty{padding:90px 16px;text-align:center;color:var(--muted);font-size:13px}
+    details{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:var(--muted);font-size:12px}.downloads{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px}.downloads a{font-size:12px;color:#155ca2}
+    @media(max-width:1200px){.charts{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:900px){.controls,.charts{grid-template-columns:1fr}main,header{padding-left:12px;padding-right:12px}}
+  </style>
+</head>
+<body>
+<header><div><h1>PhysicIQ · Checkpoint 指标曲线</h1><p>选择一个或多个训练方案；每条实线连接该方案全部 67/67 完整 checkpoint。四组对照结果作为虚线基线横贯训练 step。</p></div></header>
+<main>
+  <section class="controls">
+    <div><h2>训练方案（可多选）</h2><div id="methodChecks" class="checks"></div><div class="commands"><button id="selectNoObject">全部 No-Object</button><button id="selectDedup">全部 Slot-Dedup</button><button id="selectOther">其余方案</button><button id="selectAll">全选</button><button id="clearAll">清空</button><span id="status"></span></div></div>
+    <div><h2>Baseline 横线</h2><div id="baselineChecks" class="checks"></div></div>
+  </section>
+  <section id="charts" class="charts"></section>
+  <details><summary>数据与历史静态图</summary><div class="downloads"><a href="interactive_training_metrics.json">交互数据 JSON</a><a href="xssc_lora_training_step_metric_stats.csv">checkpoint CSV</a><a href="physiciq_baseline_metric_stats.csv">baseline CSV</a>__STATIC_LINKS__</div></details>
+</main>
+<script>
+const DATA=__PAYLOAD__;
+const NS="http://www.w3.org/2000/svg";
+const methodRoot=document.getElementById("methodChecks"), baselineRoot=document.getElementById("baselineChecks"), charts=document.getElementById("charts"), statusEl=document.getElementById("status");
+function checkbox(root,item,type,checked){const label=document.createElement("label");label.className="check";const input=document.createElement("input");input.type="checkbox";input.dataset.type=type;input.value=item.key;input.checked=checked;const swatch=document.createElement("i");swatch.className="swatch"+(type==="baseline"?" base":"");swatch.style.setProperty("--c",item.color);label.append(input,swatch,document.createTextNode(item.label));root.append(label);input.addEventListener("change",render);return input}
+let saved=[];try{saved=JSON.parse(localStorage.getItem("physiciq-selected-methods")||"[]")}catch(e){}
+const validSaved=saved.filter(key=>DATA.methods.some(item=>item.key===key));
+const methodInputs=DATA.methods.map((item,index)=>checkbox(methodRoot,item,"method",validSaved.length?validSaved.includes(item.key):index===0));
+const baselineInputs=DATA.baselines.map(item=>checkbox(baselineRoot,item,"baseline",true));
+document.getElementById("selectAll").onclick=()=>{methodInputs.forEach(input=>input.checked=true);render()};
+document.getElementById("clearAll").onclick=()=>{methodInputs.forEach(input=>input.checked=false);render()};
+function selectGroup(predicate){methodInputs.forEach(input=>{const method=DATA.methods.find(item=>item.key===input.value);input.checked=Boolean(method&&predicate(method))});render()}
+document.getElementById("selectNoObject").onclick=()=>selectGroup(method=>method.key.includes("no_object"));
+document.getElementById("selectDedup").onclick=()=>selectGroup(method=>method.key.includes("slot_dedup"));
+document.getElementById("selectOther").onclick=()=>selectGroup(method=>!method.key.includes("no_object")&&!method.key.includes("slot_dedup"));
+function svgEl(tag,attrs={},text=""){const node=document.createElementNS(NS,tag);Object.entries(attrs).forEach(([key,value])=>node.setAttribute(key,String(value)));if(text)node.textContent=text;return node}
+function fmt(value){if(Math.abs(value)>=10)return value.toFixed(2);if(Math.abs(value)>=1)return value.toFixed(3);return value.toFixed(4)}
+function selected(inputs){return new Set(inputs.filter(input=>input.checked).map(input=>input.value))}
+function chart(metric,methods,baselines){const records=[];methods.forEach(method=>method.points.forEach(point=>{const stat=point.metrics[metric.key];if(stat&&stat.complete&&Number.isFinite(stat.mean))records.push({method,step:point.step,value:stat.mean,count:stat.count})}));const baseRecords=baselines.map(base=>({base,stat:base.metrics[metric.key]})).filter(row=>row.stat&&row.stat.complete&&Number.isFinite(row.stat.mean));if(!records.length&&!baseRecords.length)return null;
+  const article=document.createElement("article");article.className="chart";const heading=document.createElement("h3");heading.textContent=metric.title;const direction=document.createElement("div");direction.className="direction";direction.textContent=metric.direction==="higher"?"越高越好 ↑":"越低越好 ↓";article.append(heading,direction);
+  const W=760,H=330,M={l:62,r:18,t:18,b:48},iw=W-M.l-M.r,ih=H-M.t-M.b;const steps=records.map(row=>row.step);let xmin=steps.length?Math.min(...steps):0,xmax=steps.length?Math.max(...steps):1;if(xmin===xmax){const pad=Math.max(1,Math.round(Math.abs(xmin)*.05));xmin-=pad;xmax+=pad}const values=records.map(row=>row.value).concat(baseRecords.map(row=>row.stat.mean));let ymin=Math.min(...values),ymax=Math.max(...values);let ypad=(ymax-ymin)*.1;if(!ypad)ypad=Math.max(Math.abs(ymin)*.05,.01);ymin-=ypad;ymax+=ypad;
+  const x=value=>M.l+(value-xmin)/(xmax-xmin)*iw,y=value=>M.t+(ymax-value)/(ymax-ymin)*ih;const svg=svgEl("svg",{viewBox:`0 0 ${W} ${H}`,role:"img","aria-label":metric.title});
+  for(let i=0;i<5;i++){const value=ymin+(ymax-ymin)*i/4,py=y(value);svg.append(svgEl("line",{x1:M.l,y1:py,x2:W-M.r,y2:py,stroke:"#e1e4e6","stroke-width":1}),svgEl("text",{x:M.l-9,y:py+4,"text-anchor":"end",fill:"#697176","font-size":10},fmt(value)))}
+  const unique=[...new Set(steps)].sort((a,b)=>a-b);const tickSteps=unique.length<=8?unique:unique.filter((_,i)=>i===0||i===unique.length-1||i%Math.ceil(unique.length/7)===0);tickSteps.forEach(step=>{const px=x(step);svg.append(svgEl("line",{x1:px,y1:M.t,x2:px,y2:H-M.b,stroke:"#eef0f1","stroke-width":1}),svgEl("text",{x:px,y:H-M.b+18,"text-anchor":"middle",fill:"#697176","font-size":10},String(step)))});svg.append(svgEl("line",{x1:M.l,y1:H-M.b,x2:W-M.r,y2:H-M.b,stroke:"#788086"}),svgEl("line",{x1:M.l,y1:M.t,x2:M.l,y2:H-M.b,stroke:"#788086"}),svgEl("text",{x:M.l+iw/2,y:H-9,"text-anchor":"middle",fill:"#697176","font-size":10},"Training step"));
+  baseRecords.forEach(({base,stat})=>{const line=svgEl("line",{x1:M.l,y1:y(stat.mean),x2:W-M.r,y2:y(stat.mean),stroke:base.color,"stroke-width":2,"stroke-dasharray":"8 5",opacity:.9});line.append(svgEl("title",{},`${base.label}: ${fmt(stat.mean)} (${stat.count}/${DATA.expected_cases})`));svg.append(line)});
+  methods.forEach(method=>{const rows=records.filter(row=>row.method.key===method.key).sort((a,b)=>a.step-b.step);if(!rows.length)return;svg.append(svgEl("polyline",{points:rows.map(row=>`${x(row.step)},${y(row.value)}`).join(" "),fill:"none",stroke:method.color,"stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"}));rows.forEach(row=>{const circle=svgEl("circle",{cx:x(row.step),cy:y(row.value),r:4,fill:method.color,stroke:"#fff","stroke-width":1.2});circle.append(svgEl("title",{},`${method.label} · step ${row.step}: ${fmt(row.value)} (${row.count}/${DATA.expected_cases})`));svg.append(circle)})});article.append(svg);
+  const legend=document.createElement("div");legend.className="legend";methods.filter(method=>records.some(row=>row.method.key===method.key)).forEach(method=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch" style="--c:${method.color}"></i>${method.label}`;legend.append(item)});baseRecords.forEach(({base})=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch base" style="--c:${base.color}"></i>${base.label}`;legend.append(item)});article.append(legend);return article}
+function render(){const methodKeys=selected(methodInputs),baselineKeys=selected(baselineInputs),methods=DATA.methods.filter(item=>methodKeys.has(item.key)),baselines=DATA.baselines.filter(item=>baselineKeys.has(item.key));try{localStorage.setItem("physiciq-selected-methods",JSON.stringify([...methodKeys]))}catch(e){}statusEl.textContent=`已选 ${methods.length}/${DATA.methods.length} 个方案`;charts.replaceChildren();let count=0;DATA.metrics.forEach(metric=>{const node=chart(metric,methods,baselines);if(node){charts.append(node);count++}});if(!count){const empty=document.createElement("div");empty.className="empty";empty.textContent="当前选择没有完整指标。";charts.append(empty)}}
+render();
+</script>
+</body></html>
+'''
     path.write_text(
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>Wan metric plots</title><style>"
-        "body{font-family:Arial,sans-serif;margin:24px;color:#202428;background:#f4f5f6}"
-        "main{max-width:1800px;margin:auto}section{margin:0 0 28px;padding:16px;"
-        "background:#fff;border:1px solid #d8dcdf;border-radius:6px}"
-        "h1,h2{letter-spacing:0}img{display:block;width:100%;height:auto}"
-        "a{color:#155ca2}</style></head><body><main>"
-        "<h1>Wan metric plots</h1>"
-        + "".join(sections)
-        + "</main></body></html>\n",
+        template.replace("__PAYLOAD__", payload_text).replace(
+            "__STATIC_LINKS__", "".join(static_links)
+        ),
         encoding="utf-8",
     )
 
@@ -1091,6 +1411,10 @@ def main() -> None:
         allowed_input_jsons,
         args.expected_cases,
     )
+    baseline_stats = compute_baseline_stats(
+        allowed_input_jsons,
+        args.expected_cases,
+    )
     missing_result_dirs = [
         str(method.result_dir) for method in methods if not method.result_dir.is_dir()
     ]
@@ -1101,6 +1425,7 @@ def main() -> None:
     ]
     csv_path = output_dir / "dit_ablation_metric_stats.csv"
     training_csv_path = output_dir / "xssc_lora_training_step_metric_stats.csv"
+    baseline_csv_path = output_dir / "physiciq_baseline_metric_stats.csv"
     manifest_path = output_dir / "dit_ablation_metric_plot_manifest.json"
 
     write_stats_csv(
@@ -1114,6 +1439,11 @@ def main() -> None:
         training_stats,
         args.expected_cases,
         complete_only=args.complete_only,
+    )
+    write_baseline_stats_csv(
+        baseline_csv_path,
+        baseline_stats,
+        args.expected_cases,
     )
     plotted_metrics = (
         tuple(
@@ -1182,6 +1512,15 @@ def main() -> None:
         "plotted_metrics": [metric.key for metric in plotted_metrics],
         "stats_csv": str(csv_path),
         "training_stats_csv": str(training_csv_path),
+        "baseline_stats_csv": str(baseline_csv_path),
+        "baselines": [
+            {
+                "key": spec["key"],
+                "label": spec["label"],
+                "result_dir": str(spec["result_dir"].resolve()),
+            }
+            for spec in BASELINE_SPECS
+        ],
         "plots": plots,
         "training_plot": training_plot,
         "metric_completeness": metric_completeness,
@@ -1191,7 +1530,15 @@ def main() -> None:
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    write_plot_index(output_dir / "index.html", plots, training_plot)
+    write_plot_index(
+        output_dir / "index.html",
+        plots,
+        training_plot,
+        training_stats,
+        baseline_stats,
+        args.expected_cases,
+        plotted_metrics,
+    )
 
     print(f"Methods: {len(methods)}")
     print(f"Training checkpoints: {len(training_checkpoints)}")
@@ -1216,6 +1563,7 @@ def main() -> None:
         print(f"Training stats CSV: {training_csv_path}")
         print(f"Training PNG: {training_plot['png']}")
         print(f"Training PDF: {training_plot['pdf']}")
+    print(f"Baseline stats CSV: {baseline_csv_path}")
     for model in model_ids:
         print(f"{MODEL_LABELS[model]} PNG: {plots[model]['png']}")
         print(f"{MODEL_LABELS[model]} PDF: {plots[model]['pdf']}")

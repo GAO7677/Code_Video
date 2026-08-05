@@ -12,26 +12,26 @@
 
 训练时采用49帧视频训练，显存约占36.95GiB / 47.99GiB，推理时可以跑189帧
 
+### 1.1 相关可视化页面
+
+| 页面 | 简要说明 |
+|---|---|
+| [Wan2.2 Legacy TI2V Test5](http://127.0.0.1:8092/wan22-ti2v-legacy-test5?v=1) | 历史 Wan2.2-TI2V 基线视频墙：使用 `legacy_diffsynth.WanVideoPipeline`，仅输入 prompt 和首帧，不使用 context video；配置为 seed 42、CFG 5、40 去噪步、49 帧、704x1280。用于检查未做 Head 干预时的原始生成结果。 |
+| [Wan+LoRA 50-Seed Attention Sweep](http://127.0.0.1:8092/attention-additive-lora-seed-sweep?v=1&experiment=alpha090&stage=all_steps&group=top100) | 对 `0613pybullet_sample_001460_w002` 的 50 个 seed 比较原始 Wan+LoRA 与 Attention 干预结果。当前链接选择 Top100 Heads、全部 40 个去噪步和 `alpha=0.9` 加性缩放，并展示同 seed 视频及干预前后热力图，用于判断 Head 干预效果是否跨 seed 稳定。 |
+| [Neighbor Diagonal Ranking](http://127.0.0.1:8092/neighbor-diagonal-ranking?v=4) | 在 S039 对 30 blocks x 24 heads 共 720 个 Head 排名。严格分数同时要求相邻三帧的时间对角线响应均衡，以及所有目标帧块内部具有稳定的空间对角线纯度；页面提供三模型切换、30x24 矩阵、PCK@32 和逐 Head Q@K 热力图。 |
+| [All-Steps Rankings](http://127.0.0.1:8092/all-steps/rankings?v=4) | 覆盖 40 steps x 30 blocks x 24 heads 共 28,800 个组合，按目标物体或背景的 PCK@8/16/32 与平均位置误差排序；同时展示 GT、LoRA、Baseline 三模型等权综合排名、单模型全局排名及逐步 30x24 热力图，用于定位运动追踪能力主要出现在哪个去噪阶段、Block 和 Head。 |
 
 
 ## 2. 训练阶段
 
-```text
-Wan2.2 TI2V-5B (Baseline)
-  -> 通用数据+仿真数据 进行v2v适配：OpenVid(85%) + MOVI-D (8%) + Genesis rigid(6%) LoRA, step-010000
-  -> 仿真数据集继续微调
-```
 
 
 ### 2.1 v2v适配训练
 
-OpenVid LoRA 覆盖 Wan 的 30 个block：
+使wan可以接受任意输入帧数的video，对Wan 的 30 个block微调lora：
 - 输入 24 帧，384x672，mixed context sampling 
-- LoRA rank=32 
 - 4 GPU，每卡 batch=1，gradient accumulation=4
-- Self-Attention：Q/K/V/O LoRA。
-- 文本 Cross-Attention：Q/K/V/O LoRA。
-- FFN：`ffn.0` 和 `ffn.2` LoRA。
+- Self-Attention, Text Cross-Attention, FFN, LoRA rank=32 
 - 可训练参数 80.609M。
 - step-010000
 
