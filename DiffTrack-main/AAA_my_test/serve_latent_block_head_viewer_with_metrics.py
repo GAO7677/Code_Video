@@ -594,6 +594,77 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/physiq025-object-query-continuity-comparison":
+            self.send_payload(
+                physiq025_object_query_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/object-query-top100-mean-overlay":
+            self.send_payload(
+                object_query_top100_mean_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/object-query-top100-mean-overlay/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                object_query_top100_mean_catalog(
+                    params.get("seed", ["90094"])[0],
+                    params.get("stage", ["all_steps"])[0],
+                ),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/object-query-top100-mean-overlay/image":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_top100_mean_asset(
+                params.get("seed", ["90094"])[0],
+                params.get("stage", ["all_steps"])[0],
+                params.get("method", [""])[0],
+                params.get("name", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown Top100 mean object-query overlay")
+            viewer.send_file_with_range(self, asset, "image/jpeg")
+            return
+        if path == "/api/physiq025-object-query-continuity-comparison/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                physiq025_object_query_catalog(
+                    params.get("seed", [""])[0],
+                    params.get("stage", ["all_steps"])[0],
+                ),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path in {
+            "/api/physiq025-object-query-continuity-comparison/video",
+            "/api/physiq025-object-query-continuity-comparison/image",
+        }:
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = physiq025_object_query_asset(
+                params.get("seed", [""])[0],
+                params.get("stage", ["all_steps"])[0],
+                params.get("method", [""])[0],
+                params.get("kind", [""])[0],
+                params.get("name", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown PhysicIQ025 object-query asset")
+            content_type = "video/mp4" if path.endswith("/video") else "image/jpeg"
+            viewer.send_file_with_range(self, asset, content_type)
+            return
         if path == "/api/object-query-continuity-overlay/catalog":
             from urllib.parse import parse_qs
 
@@ -2295,9 +2366,233 @@ async function load(){const d=await fetch(`/api/object-query-continuity-overlay/
 
 def object_query_continuity_comparison_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Object Query Continuity · Old vs New</title><style>
-:root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--old:#b44d31;--new:#176a5c;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2500px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.videos{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.video,.head,.object,.method{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px}.video.original{border-top:7px solid var(--blue)}.video.old{border-top:7px solid var(--old)}.video.new{border-top:7px solid var(--new)}video{display:block;width:100%;background:#111714}.head{margin:14px 0}.head>h2{margin:0 0 7px}.objects{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.object{overflow:auto}.object>h3{position:sticky;left:0;width:max-content;margin:0 0 7px;padding:4px 8px;background:var(--ink);color:#fff}.identity{border-left:6px solid var(--blue);margin-bottom:9px}.methods{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.method.old{border-top:6px solid var(--old)}.method.new{border-top:6px solid var(--new)}.method h3{position:sticky;left:0;width:max-content;margin:0 0 7px}.row{margin:6px 0 12px}.row h4{position:sticky;left:0;width:max-content;margin:0 0 4px;padding:3px 7px;background:#ece4d6}.row img{display:block;min-width:2240px;width:100%;border:1px solid #d8cfbf}.pending{padding:48px 15px;text-align:center;border:1px dashed var(--line)}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:13px 18px;background:var(--new);color:white}@media(max-width:1000px){header{position:static}.videos,.objects,.methods{grid-template-columns:1fr}}
+:root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--old:#b44d31;--new:#176a5c;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2500px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.videos{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.video,.head,.object,.method{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px}.video.original{border-top:7px solid var(--blue)}.video.old{border-top:7px solid var(--old)}.video.new{border-top:7px solid var(--new)}video{display:block;width:100%;background:#111714}.head{margin:14px 0}.head>h2{margin:0 0 7px}.objects{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.object{overflow:auto}.object>h3{position:sticky;left:0;width:max-content;margin:0 0 7px;padding:4px 8px;background:var(--ink);color:#fff}.identity{border-left:6px solid var(--blue);margin-bottom:9px}.methods{display:grid;grid-template-columns:1fr;gap:12px}.pair{padding:8px;border:1px solid var(--line);border-radius:10px;background:#f7f1e7}.pair>h3{position:sticky;left:0;width:max-content;margin:0 0 7px;padding:4px 9px;background:var(--ink);color:#fff}.row{margin:6px 0 12px;padding-left:7px}.row.old{border-left:6px solid var(--old)}.row.new{border-left:6px solid var(--new)}.row h4{position:sticky;left:0;width:max-content;margin:0 0 4px;padding:3px 7px;background:#ece4d6}.row img{display:block;min-width:2240px;width:100%;border:1px solid #d8cfbf}.pending{padding:48px 15px;text-align:center;border:1px dashed var(--line)}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:13px 18px;background:var(--new);color:white}@media(max-width:1000px){header{position:static}.videos,.objects,.methods{grid-template-columns:1fr}}
 </style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/object-query-continuity-overlay?v=5">旧方案页面</a><h1>Object Query Continuity · Old vs New</h1><p>旧：P90 链式邻接。新：上一帧 P99/Top-5 主连通分量约束当前帧 P90；主连通分量逐帧独立计算。</p><div class="tools"><label>Seed <select id="seed"><option>90094</option><option>35075</option><option>21890</option><option>49530</option><option>47326</option><option>32466</option></select></label><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="records"></section></main><script>
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'90094',stage=q.get('stage')||'all_steps';const asset=(kind,name='')=>`/api/object-query-continuity-overlay/${kind.includes('intervention')||kind==='baseline'?'video':'image'}?seed=${seed}&stage=${stage}&kind=${kind}${name?`&name=${encodeURIComponent(name)}`:''}`,video=(cls,title,kind,ready)=>`<article class="video ${cls}"><h2>${title}</h2>${ready?`<video controls preload="metadata" playsinline src="${asset(kind)}"></video>`:'<div class="pending">生成中</div>'}</article>`,row=(title,name,kind)=>`<div class="row"><h4>${title}</h4>${name?`<img loading="lazy" src="${asset(kind,name)}">`:'<div class="pending">capture 生成中</div>'}</div>`,method=(title,cls,r,prefix,kind)=>`<section class="method ${cls}"><h3>${title}</h3>${row('Before',r[`${prefix}before_image`],kind)}${row('Per-frame P90 Mask',r[`${prefix}p90_mask_image`],kind)}${row('P99 / Top-5 Main Connected Component',r[`${prefix}main_component_image`],kind)}${row('After',r[`${prefix}after_image`],kind)}${row('Removed Attention Mass',r[`${prefix}removed_image`],kind)}</section>`;function sync(){const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u)}function render(d){document.getElementById('seed').value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`Identity ${d.identity_ready}/20 · Old ${d.intervention_ready}/20 · New ${d.new_intervention_ready}/20`;document.getElementById('videos').innerHTML=video('original','Wan+LoRA Original','baseline',d.baseline_ready)+video('old','旧方案 · P90 Chain','intervention',d.video_ready)+video('new','新方案 · Top-5 Main Component','new_intervention',d.new_video_ready);const groups=new Map;for(const r of d.records){const key=`${r.block}:${r.head}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r)}document.getElementById('records').innerHTML=groups.size?[...groups.values()].map(rows=>{const f=rows[0];return `<article class="head"><h2>L${String(f.block).padStart(2,'0')} / H${String(f.head).padStart(2,'0')} · PCK@32 ${Number(f.pck32).toFixed(3)}</h2><div class="objects">${rows.map(r=>`<section class="object"><h3>${esc(r.region_name)} · ${esc(r.region_phrase)}</h3><div class="identity">${row('No Intervention · Original Attention',r.identity_image,'identity_overlay')}</div><div class="methods">${method('旧方案 · P90-to-P90 Chain','old',r,'','overlay')}${method('新方案 · Previous Top-5 Main Component','new',r,'new_','new_overlay')}</div></section>`).join('')}</div></article>`}).join(''):'<div class="pending">等待 capture</div>'}async function load(){const d=await fetch(`/api/object-query-continuity-overlay/catalog?seed=${seed}&stage=${stage}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;else stage=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'90094',stage=q.get('stage')||'all_steps';const asset=(kind,name='')=>`/api/object-query-continuity-overlay/${kind.includes('intervention')||kind==='baseline'?'video':'image'}?seed=${seed}&stage=${stage}&kind=${kind}${name?`&name=${encodeURIComponent(name)}`:''}`,video=(cls,title,kind,ready)=>`<article class="video ${cls}"><h2>${title}</h2>${ready?`<video controls preload="metadata" playsinline src="${asset(kind)}"></video>`:'<div class="pending">生成中</div>'}</article>`,row=(title,name,kind,cls='')=>`<div class="row ${cls}"><h4>${title}</h4>${name?`<img loading="lazy" src="${asset(kind,name)}">`:'<div class="pending">capture 生成中</div>'}</div>`,scheme=(title,cls,identity,before,after,mask,removed,kind,maskTitle)=>`<section class="pair"><h3>${title}</h3>${row('No Intervention · Original Attention',identity,'identity_overlay',cls)}${row('Before',before,kind,cls)}${row('After',after,kind,cls)}${row(maskTitle,mask,kind,cls)}${row('Removed Attention Mass',removed,kind,cls)}</section>`;function sync(){const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u)}function render(d){document.getElementById('seed').value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`Identity ${d.identity_ready}/20 · Old ${d.intervention_ready}/20 · New ${d.new_intervention_ready}/20`;document.getElementById('videos').innerHTML=video('original','Wan+LoRA Original','baseline',d.baseline_ready)+video('old','旧方案 · P90 Chain','intervention',d.video_ready)+video('new','新方案 · Top-5 Main Component','new_intervention',d.new_video_ready);const groups=new Map;for(const r of d.records){const key=`${r.block}:${r.head}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r)}document.getElementById('records').innerHTML=groups.size?[...groups.values()].map(rows=>{const f=rows[0];return `<article class="head"><h2>L${String(f.block).padStart(2,'0')} / H${String(f.head).padStart(2,'0')} · PCK@32 ${Number(f.pck32).toFixed(3)}</h2><div class="objects">${rows.map(r=>`<section class="object"><h3>${esc(r.region_name)} · ${esc(r.region_phrase)}</h3><div class="methods">${scheme('旧方案 · P90 Chain','old',r.identity_image,r.before_image,r.after_image,r.p90_mask_image,r.removed_image,'overlay','Mask · Per-frame P90')}${scheme('新方案 · Previous Top-5 Main Component','new',r.identity_image,r.new_before_image,r.new_after_image,r.new_main_component_image,r.new_removed_image,'new_overlay','Mask · P99 / Top-5 Main Connected Component')}</div></section>`).join('')}</div></article>`}).join(''):'<div class="pending">等待 capture</div>'}async function load(){const d=await fetch(`/api/object-query-continuity-overlay/catalog?seed=${seed}&stage=${stage}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;else stage=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
+PHYSIQ025_OBJECT_QUERY_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_object_query_physiq025_10seed"
+)
+PHYSIQ025_OBJECT_QUERY_SEEDS_FILE = Path(
+    "/data/gaoya/agent-data/inputs/object_query_physiq025/seeds.txt"
+)
+PHYSIQ025_OBJECT_QUERY_CASE = (
+    "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed"
+)
+
+
+def physiq025_object_query_seeds():
+    if not PHYSIQ025_OBJECT_QUERY_SEEDS_FILE.is_file():
+        return []
+    return [
+        int(line.strip())
+        for line in PHYSIQ025_OBJECT_QUERY_SEEDS_FILE.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def physiq025_object_query_asset(
+    seed: str, stage: str, method: str, kind: str, name: str = ""
+):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    if seed_value not in physiq025_object_query_seeds():
+        return None
+    seed_root = PHYSIQ025_OBJECT_QUERY_ROOT / "seeds" / f"seed_{seed_value:06d}"
+    if kind == "baseline":
+        return seed_root / "original.mp4"
+    if stage not in {"all_steps", "steps00_09"}:
+        return None
+    if kind == "intervention" and method in {"old", "new"}:
+        suffix = "steps_00_40" if stage == "all_steps" else "steps_00_10"
+        return (
+            seed_root / method / stage / "videos" / "lora" / "cases"
+            / PHYSIQ025_OBJECT_QUERY_CASE / f"top100_{suffix}.mp4"
+        )
+    if kind == "overlay" and method in {"old", "new"}:
+        if Path(name).name == name and name.endswith(".jpg"):
+            return seed_root / method / stage / "overlays" / name
+    if kind == "identity_overlay" and method == "identity":
+        if Path(name).name == name and name.endswith(".jpg"):
+            step_tag = "step39" if stage == "all_steps" else "step09"
+            return seed_root / "identity" / step_tag / "overlays" / name
+    return None
+
+
+def physiq025_object_query_catalog(seed: str, stage: str):
+    seeds = physiq025_object_query_seeds()
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        seed_value = seeds[0] if seeds else 0
+    if seed_value not in seeds and seeds:
+        seed_value = seeds[0]
+    if stage not in {"all_steps", "steps00_09"}:
+        stage = "all_steps"
+    seed_root = PHYSIQ025_OBJECT_QUERY_ROOT / "seeds" / f"seed_{seed_value:06d}"
+
+    def records(path):
+        if not path.is_file():
+            return []
+        return json.loads(path.read_text(encoding="utf-8")).get("records", [])
+
+    old_rows = records(seed_root / "old" / stage / "overlays" / "manifest.json")
+    new_rows = records(seed_root / "new" / stage / "overlays" / "manifest.json")
+    step_tag = "step39" if stage == "all_steps" else "step09"
+    identity_rows = records(
+        seed_root / "identity" / step_tag / "overlays" / "manifest.json"
+    )
+
+    def indexed(rows):
+        return {
+            (int(row["block"]), int(row["head"]), row["region_name"]): row
+            for row in rows
+        }
+
+    old, new, identity = indexed(old_rows), indexed(new_rows), indexed(identity_rows)
+    merged = []
+    for key in sorted(set(old) | set(new) | set(identity)):
+        old_row, new_row, identity_row = old.get(key, {}), new.get(key, {}), identity.get(key, {})
+        row = dict(old_row or new_row or identity_row)
+        identity_images = identity_row.get("images", {})
+        row["identity_image"] = identity_images.get("identity") or identity_row.get("image")
+        for prefix, source in (("old_", old_row), ("new_", new_row)):
+            images = source.get("images", {})
+            row[prefix + "before_image"] = images.get("before")
+            row[prefix + "after_image"] = images.get("after")
+            row[prefix + "mask_image"] = images.get(
+                "p90_mask" if prefix == "old_" else "main_component"
+            )
+            row[prefix + "removed_image"] = images.get("removed")
+        merged.append(row)
+    merged.sort(
+        key=lambda row: (
+            -float(row.get("pck32", 0)), int(row["block"]),
+            int(row["head"]), row["region_name"],
+        )
+    )
+    return {
+        "seed": seed_value,
+        "stage": stage,
+        "seeds": seeds,
+        "records": merged,
+        "identity_ready": len(identity_rows),
+        "old_ready": len(old_rows),
+        "new_ready": len(new_rows),
+        "baseline_ready": bool(
+            (physiq025_object_query_asset(str(seed_value), stage, "identity", "baseline") or Path()).is_file()
+        ),
+        "old_video_ready": bool(
+            (physiq025_object_query_asset(str(seed_value), stage, "old", "intervention") or Path()).is_file()
+        ),
+        "new_video_ready": bool(
+            (physiq025_object_query_asset(str(seed_value), stage, "new", "intervention") or Path()).is_file()
+        ),
+    }
+
+
+def physiq025_object_query_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PhysicIQ025 Object Query · Old vs New</title><style>
+:root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--old:#b44d31;--new:#176a5c;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2500px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.videos{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.video,.head,.object,.scheme{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px}.video.original{border-top:7px solid var(--blue)}.video.old,.scheme.old{border-top:7px solid var(--old)}.video.new,.scheme.new{border-top:7px solid var(--new)}video{display:block;width:100%;background:#111714}.head{margin:14px 0}.head>h2{margin:0 0 7px}.objects{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.object{overflow:auto}.object>h3{position:sticky;left:0;width:max-content;margin:0 0 7px;padding:4px 8px;background:var(--ink);color:#fff}.schemes{display:grid;grid-template-columns:1fr;gap:12px}.scheme>h3{position:sticky;left:0;width:max-content;margin:0 0 7px}.row{margin:6px 0 12px}.row h4{position:sticky;left:0;width:max-content;margin:0 0 4px;padding:3px 7px;background:#ece4d6}.row img{display:block;min-width:2240px;width:100%;border:1px solid #d8cfbf}.pending{padding:48px 15px;text-align:center;border:1px dashed var(--line)}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:13px 18px;background:var(--new);color:white}@media(max-width:1000px){header{position:static}.videos,.objects{grid-template-columns:1fr}}
+</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a><h1>PhysicIQ025 · Object Query Continuity</h1><p>Wan+LoRA · Object A=brown tennis ball · Object B=orange block · Random 10 seeds · PCK@32 Top100</p><div class="tools"><label>Seed <select id="seed"></select></label><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="records"></section></main><script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'',stage=q.get('stage')||'all_steps';const api='/api/physiq025-object-query-continuity-comparison',asset=(type,method,kind,name='')=>`${api}/${type}?seed=${seed}&stage=${stage}&method=${method}&kind=${kind}${name?`&name=${encodeURIComponent(name)}`:''}`,video=(cls,title,method,kind,ready)=>`<article class="video ${cls}"><h2>${title}</h2>${ready?`<video controls preload="metadata" playsinline src="${asset('video',method,kind)}"></video>`:'<div class="pending">生成中</div>'}</article>`,row=(title,name,method,kind)=>`<div class="row"><h4>${title}</h4>${name?`<img loading="lazy" src="${asset('image',method,kind,name)}">`:'<div class="pending">capture 生成中</div>'}</div>`,scheme=(title,cls,r,prefix,method,maskTitle)=>`<section class="scheme ${cls}"><h3>${title}</h3>${row('No Intervention · Original Attention',r.identity_image,'identity','identity_overlay')}${row('Before',r[`${prefix}before_image`],method,'overlay')}${row('After',r[`${prefix}after_image`],method,'overlay')}${row(maskTitle,r[`${prefix}mask_image`],method,'overlay')}${row('Removed Attention Mass',r[`${prefix}removed_image`],method,'overlay')}</section>`;function sync(){const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u)}function render(d){if(!seed)seed=String(d.seed);const sel=document.getElementById('seed');if(sel.options.length!==d.seeds.length)sel.innerHTML=d.seeds.map(x=>`<option>${x}</option>`).join('');sel.value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`Identity ${d.identity_ready}/20 · Old ${d.old_ready}/20 · New ${d.new_ready}/20`;document.getElementById('videos').innerHTML=video('original','Wan+LoRA Original','identity','baseline',d.baseline_ready)+video('old','旧方案 · P90 Chain','old','intervention',d.old_video_ready)+video('new','新方案 · Top-5 Main Component','new','intervention',d.new_video_ready);const groups=new Map;for(const r of d.records){const key=`${r.block}:${r.head}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r)}document.getElementById('records').innerHTML=groups.size?[...groups.values()].map(rows=>{const f=rows[0];return `<article class="head"><h2>L${String(f.block).padStart(2,'0')} / H${String(f.head).padStart(2,'0')} · PCK@32 ${Number(f.pck32).toFixed(3)}</h2><div class="objects">${rows.map(r=>`<section class="object"><h3>${esc(r.region_name)} · ${esc(r.region_phrase)}</h3><div class="schemes">${scheme('旧方案 · P90 Chain','old',r,'old_','old','Mask · Per-frame P90')}${scheme('新方案 · Previous Top-5 Main Component','new',r,'new_','new','Mask · P99 / Top-5 Main Connected Component')}</div></section>`).join('')}</div></article>`}).join(''):'<div class="pending">等待该 seed 的 capture</div>'}async function load(){const d=await fetch(`${api}/catalog?seed=${seed}&stage=${stage}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;else stage=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
+OBJECT_QUERY_TOP100_MEAN_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_object_query_top100_mean_case001460"
+)
+OBJECT_QUERY_TOP100_MEAN_SEEDS = (90094, 35075, 21890, 49530, 47326, 32466)
+
+
+def object_query_top100_mean_asset(
+    seed: str, stage: str, method: str, name: str
+):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    if (
+        seed_value not in OBJECT_QUERY_TOP100_MEAN_SEEDS
+        or stage not in {"all_steps", "steps00_09"}
+        or method not in {"identity", "old", "new"}
+        or Path(name).name != name
+        or not name.endswith(".jpg")
+    ):
+        return None
+    seed_root = OBJECT_QUERY_TOP100_MEAN_ROOT / "seeds" / f"seed_{seed_value:06d}"
+    method_stage = ("step39" if stage == "all_steps" else "step09") if method == "identity" else stage
+    return seed_root / method / method_stage / "mean_overlays" / name
+
+
+def object_query_top100_mean_catalog(seed: str, stage: str):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        seed_value = OBJECT_QUERY_TOP100_MEAN_SEEDS[0]
+    if seed_value not in OBJECT_QUERY_TOP100_MEAN_SEEDS:
+        seed_value = OBJECT_QUERY_TOP100_MEAN_SEEDS[0]
+    if stage not in {"all_steps", "steps00_09"}:
+        stage = "all_steps"
+    seed_root = OBJECT_QUERY_TOP100_MEAN_ROOT / "seeds" / f"seed_{seed_value:06d}"
+
+    def rows(method):
+        method_stage = ("step39" if stage == "all_steps" else "step09") if method == "identity" else stage
+        manifest = seed_root / method / method_stage / "mean_overlays" / "manifest.json"
+        if not manifest.is_file():
+            return []
+        return json.loads(manifest.read_text(encoding="utf-8")).get("records", [])
+
+    identity_rows, old_rows, new_rows = rows("identity"), rows("old"), rows("new")
+    by_method = {
+        method: {row["region_name"]: row for row in method_rows}
+        for method, method_rows in (
+            ("identity", identity_rows), ("old", old_rows), ("new", new_rows)
+        )
+    }
+    records = []
+    regions = sorted(set().union(*(set(value) for value in by_method.values())))
+    for region in regions:
+        identity = by_method["identity"].get(region, {})
+        old = by_method["old"].get(region, {})
+        new = by_method["new"].get(region, {})
+        row = {
+            "region_name": region,
+            "region_phrase": (identity or old or new).get("region_phrase", region),
+            "num_heads": max(
+                int(identity.get("num_heads", 0)), int(old.get("num_heads", 0)),
+                int(new.get("num_heads", 0)),
+            ),
+            "original_image": identity.get("images", {}).get("original"),
+            "old_before_image": old.get("images", {}).get("before"),
+            "old_after_image": old.get("images", {}).get("after"),
+            "new_before_image": new.get("images", {}).get("before"),
+            "new_after_image": new.get("images", {}).get("after"),
+            "original_vmax": identity.get("shared_vmax"),
+            "old_vmax": old.get("shared_vmax"),
+            "new_vmax": new.get("shared_vmax"),
+        }
+        records.append(row)
+    return {
+        "seed": seed_value,
+        "stage": stage,
+        "seeds": list(OBJECT_QUERY_TOP100_MEAN_SEEDS),
+        "records": records,
+        "identity_ready": len(identity_rows),
+        "old_ready": len(old_rows),
+        "new_ready": len(new_rows),
+    }
+
+
+def object_query_top100_mean_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Top100 Head Mean Object Query Attention</title><style>
+:root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--old:#b44d31;--new:#176a5c;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2450px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.object{overflow:auto;margin:14px 0;padding:10px;background:var(--card);border:1px solid var(--line);border-radius:13px}.object>h2{position:sticky;left:0;width:max-content;margin:0 0 9px}.row{margin:8px 0 15px}.row h3{position:sticky;left:0;width:max-content;margin:0 0 5px;padding:4px 9px;background:#ece4d6;border-left:6px solid var(--blue)}.row.old h3{border-left-color:var(--old)}.row.new h3{border-left-color:var(--new)}.row img{display:block;min-width:2260px;width:100%;border:1px solid #d8cfbf}.pending{padding:52px 15px;text-align:center;border:1px dashed var(--line)}@media(max-width:900px){header{position:static}}
+</style></head><body><header><a href="/">返回总览</a> · <a href="/object-query-continuity-comparison?v=4">逐 Head 对比</a><h1>Top100 Head Mean · Object Query Attention</h1><p>0613pybullet_sample_001460_w002 · 每个 Head 内 SUM 8 Object Queries，再对完整 PCK@32 Top100 Head 求平均。</p><div class="tools"><label>Seed <select id="seed"><option>90094</option><option>35075</option><option>21890</option><option>49530</option><option>47326</option><option>32466</option></select></label><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main id="content"></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'90094',stage=q.get('stage')||'all_steps';const api='/api/object-query-top100-mean-overlay',src=(method,name)=>`${api}/image?seed=${seed}&stage=${stage}&method=${method}&name=${encodeURIComponent(name)}`,fmt=v=>v==null?'pending':Number(v).toExponential(3),row=(title,cls,method,name,vmax)=>`<section class="row ${cls}"><h3>${title} · vmax=${fmt(vmax)}</h3>${name?`<img loading="lazy" src="${src(method,name)}">`:'<div class="pending">生成/聚合中</div>'}</section>`;function render(d){document.getElementById('seed').value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`Original ${d.identity_ready}/2 · Old ${d.old_ready}/2 · New ${d.new_ready}/2`;document.getElementById('content').innerHTML=d.records.length?d.records.map(r=>`<article class="object"><h2>${e(r.region_name)} · ${e(r.region_phrase)} · ${r.num_heads}/100 heads</h2>${row('No Intervention · Top100 Mean','', 'identity',r.original_image,r.original_vmax)}${row('旧方案 Before · Top100 Mean','old','old',r.old_before_image,r.old_vmax)}${row('旧方案 After · Top100 Mean','old','old',r.old_after_image,r.old_vmax)}${row('新方案 Before · Top100 Mean','new','new',r.new_before_image,r.new_vmax)}${row('新方案 After · Top100 Mean','new','new',r.new_after_image,r.new_vmax)}</article>`).join(''):'<div class="pending">等待该 seed/stage 的 Top100 capture</div>'}async function load(){const d=await fetch(`${api}/catalog?seed=${seed}&stage=${stage}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;else stage=ev.target.value;const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);load();
 </script></body></html>'''
 
 

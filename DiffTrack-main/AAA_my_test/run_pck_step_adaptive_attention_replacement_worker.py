@@ -160,9 +160,12 @@ class AdaptiveQKLogitNoise:
             self.object_continuity_regions, self.object_continuity_context_frame = pck_query_regions()
             capture_root = os.environ.get("OBJECT_CONTINUITY_CAPTURE_ROOT", "").strip()
             self.object_continuity_capture_root = Path(capture_root) if capture_root else None
+            capture_head_limit = int(
+                os.environ.get("OBJECT_CONTINUITY_CAPTURE_HEAD_LIMIT", "10")
+            )
             for name, entries in groups.items():
                 if name.startswith("top100_step_"):
-                    for entry in entries[:10]:
+                    for entry in entries[:capture_head_limit]:
                         key = (int(entry["block"]), int(entry["head"]))
                         self.object_continuity_capture_heads[key] = float(
                             entry.get("ranking_score", entry.get("macro_pck32", 0.0))
