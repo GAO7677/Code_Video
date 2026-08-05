@@ -34,6 +34,10 @@ METHOD_PLOT_STYLES = {
     "t_head70": {"marker": "^", "linestyle": "-."},
     "t_head70_resume": {"marker": "^", "linestyle": "-."},
     "t_head70_no_object": {"marker": "h", "linestyle": (0, (3, 2))},
+    "t_head100_lora_pck32_no_object": {
+        "marker": "8",
+        "linestyle": (0, (1, 1)),
+    },
     "t_head70_slot_dedup_merge": {
         "marker": "v",
         "linestyle": (0, (3, 1, 1, 1)),
@@ -1296,6 +1300,11 @@ MERGED_METHODS = [
         "key": "t_head70_no_object",
         "label": "T-head70 + No-Object",
         "color": "#E377C2",
+    },
+    {
+        "key": "t_head100_lora_pck32_no_object",
+        "label": "T-head100 (LoRA-PCK32 Top100) + No-Object",
+        "color": "#0072B2",
     },
     {
         "key": "full_sa_no_object_pybullet100",

@@ -372,6 +372,8 @@ ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD = r'''
 '''
 STEP_ALIGNMENT_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-step-alignment?v=1"><div><span>22 / DENOISING ALIGNMENT</span><h2>10-Step × 40-Step Attention 对齐</h2><p>比较 Wan+LoRA 与标准 Wan2.2-TI2V Baseline 的逐 Head、Top30/50/100 Object Query Attention 相似度。</p></div><span class="go">打开去噪步对齐图谱</span></a>
+<a class="card new" href="/wan22-ti2v-baseline-seeds?v=1"><div><span>23 / OFFICIAL TI2V SEEDS</span><h2>Wan2.2-TI2V Baseline 全 Seed 视频</h2><p>单页展示 prompt + 首帧官方 TI2V 推理的全部六个 seed，并排比较 40-step 与 10-step。</p></div><span class="go">打开 Baseline Seed 视频墙</span></a>
+<a class="card new" href="/wan22-ti2v-legacy-test5?v=1"><div><span>24 / LEGACY TI2V TEST5</span><h2>Wan2.2-TI2V 旧批次视频墙</h2><p>同页展示 legacy DiffSynth、seed 42、40-step、704×1280、49帧生成的全部 test_5 case。</p></div><span class="go">打开 Legacy Test5 视频墙</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + "</section>", 1
@@ -925,6 +927,72 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/wan22-ti2v-baseline-seeds":
+            self.send_payload(
+                wan22_ti2v_baseline_seeds_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/wan22-ti2v-legacy-test5":
+            self.send_payload(
+                wan22_ti2v_legacy_test5_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/wan22-ti2v-legacy-pck50":
+            self.send_payload(
+                wan22_ti2v_legacy_pck50_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/wan22-ti2v-legacy-pck50/catalog":
+            payload = json.dumps(
+                wan22_ti2v_legacy_pck50_catalog(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/wan22-ti2v-legacy-pck50/video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_pck50_video(
+                params.get("case", [""])[0], params.get("seed", [""])[0]
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown legacy TI2V PCK50 video")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
+        if path == "/api/wan22-ti2v-legacy-pck50/heatmap":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = wan22_ti2v_legacy_pck50_heatmap(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("rank", ["0"])[0],
+                params.get("region", ["object_A"])[0],
+            )
+            if payload is None:
+                raise FileNotFoundError("legacy TI2V PCK50 heatmap is not ready")
+            self.send_payload(payload, "image/jpeg")
+            return
+        if path == "/api/wan22-ti2v-legacy-test5/catalog":
+            payload = json.dumps(
+                wan22_ti2v_legacy_test5_catalog(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/wan22-ti2v-legacy-test5/video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_test5_asset(
+                params.get("name", [""])[0]
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown legacy TI2V test5 video")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
         if path == "/api/object-query-step-alignment/catalog":
             payload = json.dumps(
                 object_query_step_alignment_catalog(), ensure_ascii=False
@@ -974,19 +1042,216 @@ OBJECT_QUERY_STEP_ALIGNMENT_MODELS = {
     "lora": {
         "label": "Wan+LoRA",
         "detail": "LoRA PCK@32 固定物理 Head · context-video pipeline",
+        "attention_capture": True,
         "root": Path(
             "/data/gaoya/agent-data/outputs/object_query_attention_step10_vs_step40"
         ),
     },
     "baseline": {
         "label": "Wan2.2-TI2V-5B Baseline",
-        "detail": "标准 DiffSynth TI2V pipeline · input_image only · no LoRA",
+        "detail": "官方 DiffSynth 示例批处理 · prompt + 首帧 · 无 context_video · 无 attention hook",
+        "attention_capture": False,
+        "video_root": Path(
+            "/data/gaoya/agent-data/outputs/wan22_ti2v_official_first_frame_seed_sweep"
+        ),
         "root": Path(
             "/data/gaoya/agent-data/outputs/"
             "object_query_attention_step10_vs_step40_baseline_official_ti2v"
         ),
     },
 }
+WAN22_TI2V_LEGACY_TEST5_ROOT = Path(
+    "/data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B_frame49"
+)
+WAN22_TI2V_LEGACY_PCK50_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_pck50"
+)
+WAN22_TI2V_LEGACY_PCK50_CACHE = Path(
+    "/data/gaoya/agent-data/cache/wan22_ti2v_legacy_firstlatent_regions_704x1280"
+)
+WAN22_TI2V_LEGACY_PCK50_SEEDS = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds.txt"
+)
+WAN22_TI2V_LEGACY_PCK50_CASES = (
+    "0613pybullet_sample_000301_w000",
+    "0613pybullet_sample_000331_w001",
+    "0613pybullet_sample_001455_w000",
+    "0613pybullet_sample_000336_w001",
+    "0613pybullet_sample_001460_w002",
+    "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed",
+)
+
+
+def wan22_ti2v_legacy_pck50_catalog():
+    seeds = [
+        int(value)
+        for value in WAN22_TI2V_LEGACY_PCK50_SEEDS.read_text().splitlines()
+        if value.strip()
+    ] if WAN22_TI2V_LEGACY_PCK50_SEEDS.is_file() else []
+    summary_path = WAN22_TI2V_LEGACY_PCK50_ROOT / "aggregate" / "summary.json"
+    summary = {}
+    if summary_path.is_file():
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            summary = {}
+    progress = []
+    availability = {}
+    objects = {}
+    for case in WAN22_TI2V_LEGACY_PCK50_CASES:
+        pck_count = 0
+        heatmap_count = 0
+        availability[case] = {}
+        for seed in seeds:
+            run = WAN22_TI2V_LEGACY_PCK50_ROOT / "runs" / case / f"seed_{seed:05d}"
+            heatmap = WAN22_TI2V_LEGACY_PCK50_ROOT / "heatmaps" / case / f"seed_{seed:05d}"
+            pck_ready = (run / "complete.json").is_file()
+            heatmap_ready = (heatmap / "complete.json").is_file()
+            pck_count += int(pck_ready)
+            heatmap_count += int(heatmap_ready)
+            availability[case][str(seed)] = {
+                "pck": pck_ready,
+                "video": (run / "generated.mp4").is_file(),
+                "heatmap": heatmap_ready,
+            }
+        region_path = WAN22_TI2V_LEGACY_PCK50_CACHE / case / "regions.json"
+        names = []
+        if region_path.is_file():
+            try:
+                region_payload = json.loads(region_path.read_text(encoding="utf-8"))
+                names = [
+                    region["region_name"]
+                    for region in region_payload.get("regions", [])
+                    if region.get("region_type") == "object"
+                ]
+            except (OSError, json.JSONDecodeError):
+                names = []
+        objects[case] = names or ["object_A"]
+        progress.append({"case": case, "pck": pck_count, "heatmap": heatmap_count})
+    return {
+        "protocol": "Legacy DiffSynth Wan2.2-TI2V-5B · prompt + first frame · first latent query",
+        "matrix": "6 cases x 50 seeds x 40 steps x 30 blocks x 24 heads",
+        "cases": list(WAN22_TI2V_LEGACY_PCK50_CASES),
+        "seeds": seeds,
+        "progress": progress,
+        "availability": availability,
+        "objects": objects,
+        "summary": summary,
+    }
+
+
+def wan22_ti2v_legacy_pck50_video(case: str, seed: str):
+    if case not in WAN22_TI2V_LEGACY_PCK50_CASES:
+        return None
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    return WAN22_TI2V_LEGACY_PCK50_ROOT / "runs" / case / f"seed_{seed_value:05d}" / "generated.mp4"
+
+
+def wan22_ti2v_legacy_pck50_heatmap(case: str, seed: str, rank: str, region: str):
+    import cv2
+    import numpy as np
+
+    if case not in WAN22_TI2V_LEGACY_PCK50_CASES:
+        return None
+    try:
+        seed_value, rank_value = int(seed), int(rank)
+    except ValueError:
+        return None
+    heatmap_dir = WAN22_TI2V_LEGACY_PCK50_ROOT / "heatmaps" / case / f"seed_{seed_value:05d}"
+    metadata_path = heatmap_dir / "metadata.json"
+    maps_path = heatmap_dir / "attention_maps.npy"
+    video_path = wan22_ti2v_legacy_pck50_video(case, seed)
+    if not metadata_path.is_file() or not maps_path.is_file() or video_path is None or not video_path.is_file():
+        return None
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    regions = metadata.get("regions", [])
+    if region not in regions or not 0 <= rank_value < len(metadata.get("entries", [])):
+        return None
+    maps = np.load(maps_path, mmap_mode="r")
+    selected = np.asarray(maps[rank_value, regions.index(region)], dtype=np.float32)
+    anchors = metadata.get("latent_anchor_pixel_frames", list(range(len(selected))))
+    capture = cv2.VideoCapture(str(video_path))
+    frames = []
+    while True:
+        ok, frame = capture.read()
+        if not ok:
+            break
+        frames.append(frame)
+    capture.release()
+    if not frames:
+        return None
+    entry = metadata["entries"][rank_value]
+    panels = []
+    for latent_index, probability in enumerate(selected):
+        normalized = probability - float(np.nanmin(probability))
+        normalized /= max(float(np.nanmax(normalized)), 1.0e-12)
+        color = cv2.applyColorMap((normalized * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
+        pixel_index = min(int(anchors[latent_index]), len(frames) - 1)
+        frame = cv2.resize(frames[pixel_index], (480, 264), interpolation=cv2.INTER_AREA)
+        color = cv2.resize(color, (480, 264), interpolation=cv2.INTER_NEAREST)
+        panel = cv2.addWeighted(frame, 0.55, color, 0.45, 0)
+        label = (
+            f"K{latent_index:02d}/F{pixel_index:02d} | S{entry['step']:02d} "
+            f"L{entry['block']:02d} H{entry['head']:02d}"
+        )
+        cv2.putText(panel, label, (10, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
+        cv2.putText(panel, label, (10, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+        panels.append(panel)
+    columns = 4
+    blank = np.full_like(panels[0], 245)
+    while len(panels) % columns:
+        panels.append(blank.copy())
+    rows = [np.concatenate(panels[index : index + columns], axis=1) for index in range(0, len(panels), columns)]
+    montage = np.concatenate(rows, axis=0)
+    title = np.full((64, montage.shape[1], 3), (232, 224, 210), dtype=np.uint8)
+    text_label = (
+        f"Rank {rank_value + 1} | {region} | per-frame color scale | "
+        f"PCK@32 {entry.get('pck32', 0):.2f}%"
+    )
+    cv2.putText(title, text_label, (18, 41), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (23, 68, 58), 2)
+    ok, encoded = cv2.imencode(".jpg", np.concatenate([title, montage], axis=0), [cv2.IMWRITE_JPEG_QUALITY, 91])
+    return None if not ok else encoded.tobytes()
+
+
+def wan22_ti2v_legacy_test5_asset(name: str):
+    safe_name = Path(name).name
+    if safe_name != name or not safe_name.endswith(".mp4"):
+        return None
+    return WAN22_TI2V_LEGACY_TEST5_ROOT / safe_name
+
+
+def wan22_ti2v_legacy_test5_catalog():
+    manifest_path = WAN22_TI2V_LEGACY_TEST5_ROOT / "batch_manifest.json"
+    manifest = {}
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+    videos = []
+    for path in sorted(WAN22_TI2V_LEGACY_TEST5_ROOT.glob("*.mp4")):
+        metadata_path = path.with_suffix(".json")
+        metadata = {}
+        if metadata_path.is_file():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                metadata = {}
+        videos.append(
+            {
+                "name": path.name,
+                "case": path.stem,
+                "bytes": path.stat().st_size,
+                "prompt": metadata.get("input_caption", ""),
+                "seed": metadata.get("seed", manifest.get("seed")),
+                "steps": metadata.get("step", manifest.get("sampling_steps")),
+                "backend": metadata.get("backend", manifest.get("backend")),
+            }
+        )
+    return {"manifest": manifest, "videos": videos}
 OBJECT_QUERY_STEP_ALIGNMENT_SEEDS = (47326, 90094, 32466, 35075, 21890, 49530)
 OBJECT_QUERY_STEP_ALIGNMENT_IMAGES = {
     "best_match_curves.png",
@@ -1020,6 +1285,16 @@ def object_query_step_alignment_video(model: str, seed: str, steps: str, kind: s
         return None
     if steps not in {"10", "40"} or kind not in {"original", "probe"}:
         return None
+    if model == "baseline":
+        if kind != "original":
+            return None
+        return (
+            config["video_root"]
+            / "seeds"
+            / f"seed_{int(seed):06d}"
+            / f"steps{steps}"
+            / "original.mp4"
+        )
     model_dir = "baseline" if model == "baseline" else "lora"
     filename = "original.mp4" if kind == "original" else "top100_steps_00_40.mp4"
     return (
@@ -1033,6 +1308,15 @@ def object_query_step_alignment_video(model: str, seed: str, steps: str, kind: s
         / "0613pybullet_sample_001460_w002"
         / filename
     )
+
+
+def object_query_step_alignment_video_exists(
+    model: str, seed: int, steps: int, kind: str
+) -> bool:
+    asset = object_query_step_alignment_video(
+        model, str(seed), str(steps), kind
+    )
+    return asset is not None and asset.is_file()
 
 
 def object_query_step_alignment_catalog():
@@ -1073,6 +1357,7 @@ def object_query_step_alignment_catalog():
                 "id": model,
                 "label": config["label"],
                 "detail": config["detail"],
+                "attention_capture": config["attention_capture"],
                 "ready": summary is not None,
                 "summary": summary,
                 "matches": matches,
@@ -1080,9 +1365,9 @@ def object_query_step_alignment_catalog():
                 "videos": {
                     str(seed): {
                         str(steps): {
-                            kind: object_query_step_alignment_video(
-                                model, str(seed), str(steps), kind
-                            ).is_file()
+                            kind: object_query_step_alignment_video_exists(
+                                model, seed, steps, kind
+                            )
                             for kind in ("original", "probe")
                         }
                         for steps in (40, 10)
@@ -1106,11 +1391,34 @@ def object_query_step_alignment_catalog():
     }
 
 
+def wan22_ti2v_legacy_test5_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wan2.2 Legacy TI2V Test5</title><style>
+:root{--paper:#ece4d6;--ink:#182720;--deep:#17443a;--line:#bcae99;--card:#fffaf0;--orange:#bd4c31}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 2% 0,#d7633e46,transparent 34rem),radial-gradient(circle at 98% 2%,#26887543,transparent 39rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:16px 22px;background:#ece4d6ef;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:5px 0;font-size:clamp(31px,4.6vw,62px);line-height:1}.lead{max-width:1150px;margin:8px 0}.tools,.meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}button,.pill{padding:7px 11px;border:1px solid var(--line);background:var(--card);font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(100% - 18px,2100px);margin:auto;padding:18px 0 70px}.grid{display:grid;grid-template-columns:repeat(3,minmax(300px,1fr));gap:12px}.card{overflow:hidden;border:1px solid var(--line);border-radius:14px;background:#fffaf0;box-shadow:0 13px 35px #53412817}.card h2{margin:0;padding:11px 13px;background:var(--deep);color:#fff;font:900 15px ui-monospace,monospace}.card video{display:block;width:100%;aspect-ratio:1280/704;background:#111}.caption{padding:10px 12px;min-height:72px;font-size:12px;line-height:1.45}.case-meta{padding:0 12px 12px;font:11px ui-monospace,monospace;color:#6d675d}.empty{padding:50px;text-align:center}@media(max-width:1150px){.grid{grid-template-columns:repeat(2,minmax(300px,1fr))}}@media(max-width:720px){header{position:static}.grid{grid-template-columns:1fr}}
+</style></head><body><header><a href="/">返回总览</a><h1>Wan2.2-TI2V<br>Legacy Test5 Wall</h1><p class="lead">该页展示历史目录中的全部现有视频。生成入口为 AAAinfer/wanti2v.py，backend 为 legacy_diffsynth.WanVideoPipeline；输入是 JSON prompt 与 input_image 首帧，不使用 context_video。</p><div class="tools"><button id="replay">重新播放全部</button><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div><div id="meta" class="meta"></div></header><main><section id="grid" class="grid"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));async function load(){const d=await fetch('/api/wan22-ti2v-legacy-test5/catalog',{cache:'no-store'}).then(r=>r.json()),m=d.manifest||{};document.getElementById('status').textContent=`${d.videos.length} videos ready`;document.getElementById('meta').innerHTML=[`backend ${m.backend_impl||m.backend||'unknown'}`,`${m.height||'?'}×${m.width||'?'}`,`${m.frame_num||'?'} frames`,`${m.sampling_steps||'?'} steps`,`seed ${m.seed??'?'}`,`CFG ${m.cfg_scale??'?'}`].map(x=>`<span class="pill">${e(x)}</span>`).join('');document.getElementById('grid').innerHTML=d.videos.length?d.videos.map(v=>`<article class="card"><h2>${e(v.case)}</h2><video controls muted playsinline preload="metadata" src="/api/wan22-ti2v-legacy-test5/video?name=${encodeURIComponent(v.name)}"></video><div class="caption">${e(v.prompt||'No prompt metadata')}</div><div class="case-meta">seed ${e(v.seed)} · ${e(v.steps)} steps · ${e(v.backend)} backend · ${(Number(v.bytes)/1048576).toFixed(1)} MiB</div></article>`).join(''):'<div class="empty">目录中暂无 MP4</div>'}document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
+def wan22_ti2v_legacy_pck50_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Legacy TI2V First-Latent PCK50</title><style>
+:root{--paper:#ece4d5;--ink:#17261f;--deep:#17443a;--line:#baad98;--card:#fffaf0;--rust:#b7482f;--gold:#d29c35}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 0 0,#d65f3c44,transparent 34rem),radial-gradient(circle at 100% 0,#27897942,transparent 40rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:15px 22px;background:#ece4d5f2;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:4px 0;font-size:clamp(29px,4.4vw,58px);line-height:1}.lead{max-width:1200px;margin:7px 0}.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}button,select{padding:8px 11px;border:1px solid var(--line);background:var(--card);font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(100% - 18px,2100px);margin:auto;padding:18px 0 70px}.progress{display:grid;grid-template-columns:repeat(3,minmax(280px,1fr));gap:9px;margin-bottom:15px}.case-progress{padding:10px 12px;border:1px solid var(--line);background:#fff9ee;border-radius:10px;font:12px ui-monospace,monospace}.workspace,.ranking{padding:15px;margin:14px 0;border:1px solid var(--line);border-radius:16px;background:#fffaf0e8;box-shadow:0 13px 34px #58442b16}.viewer{display:grid;grid-template-columns:minmax(340px,.72fr) minmax(650px,1.6fr);gap:12px;margin-top:13px}figure{margin:0;border:1px solid #d4c8b5;background:#fff;padding:8px}video,img{display:block;width:100%;background:#111}video{aspect-ratio:1280/704}figcaption{padding:8px 3px 2px;font-weight:900}.pending{display:grid;place-items:center;min-height:250px;background:#f0eadf;color:#766d60}.tables{display:grid;grid-template-columns:1fr 1fr;gap:12px}.scroll{overflow:auto;border:1px solid var(--line);background:#fff}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{padding:8px 10px;border-bottom:1px solid #ddd2c0;text-align:center}th{background:var(--deep);color:#fff}tr:first-child td{background:#fff0c8;font-weight:900}@media(max-width:1050px){header{position:static}.progress,.tables,.viewer{grid-template-columns:1fr}}</style></head><body><header><a href="/">返回总览</a><h1>Legacy TI2V<br>First-Latent PCK50</h1><p class="lead">首个 latent frame 固定为 object query；逐个验证 6 case × 50 seed × 40 step × 30 block × 24 head。Conditional 分支、不跨 Head 平均，PCK@32 对可见 object-query token/latent 比较做 micro aggregation。</p><div class="tools"><label>Case <select id="case"></select></label><label>Seed <select id="seed"></select></label><label>Global Top10 <select id="rank"></select></label><label>Object <select id="region"></select></label><button id="refresh">手动刷新</button><button id="replay">重新播放</button><span id="status" class="status">读取中</span></div></header><main><section id="progress" class="progress"></section><section class="workspace"><h2>Object-query attention overlay</h2><div id="viewer" class="viewer"></div></section><section class="ranking"><h2>PCK@32 Ranking</h2><div id="tables" class="tables"></div></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data=null;const $=id=>document.getElementById(id);function options(node,values,label){const old=node.value;node.innerHTML=values.map((v,i)=>`<option value="${e(v.value??v)}">${e(label?label(v,i):v.label??v)}</option>`).join('');if([...node.options].some(o=>o.value===old))node.value=old}function table(rows,kind){return `<div class="scroll"><table><thead><tr><th>#</th>${kind==='combo'?'<th>Step</th>':''}<th>Block</th><th>Head</th><th>PCK@32</th><th>N</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td>${kind==='combo'?`<td>S${String(r.step).padStart(2,'0')}</td>`:''}<td>L${String(r.block).padStart(2,'0')}</td><td>H${String(r.head).padStart(2,'0')}</td><td>${r.pck32==null?'—':Number(r.pck32).toFixed(2)+'%'}</td><td>${r.comparisons||0}</td></tr>`).join('')}</tbody></table></div>`}function syncRegions(){const c=$('case').value;options($('region'),data.objects[c]||['object_A'])}function render(){const c=$('case').value,s=$('seed').value,r=Number($('rank').value||0),region=$('region').value,a=data.availability?.[c]?.[s]||{},top=data.summary?.top_step_block_head||[],entry=top[r];$('progress').innerHTML=data.progress.map(p=>`<div class="case-progress"><b>${e(p.case)}</b><br>PCK ${p.pck}/50 · Top10 heatmap ${p.heatmap}/50</div>`).join('');$('status').textContent=`${data.summary?.completed_runs||0}/${data.summary?.expected_runs||300} PCK runs · ${data.summary?.final?'FINAL RANKING':'incremental ranking'}`;const video=a.video?`<figure><video controls muted playsinline preload="metadata" src="/api/wan22-ti2v-legacy-pck50/video?case=${encodeURIComponent(c)}&seed=${s}"></video><figcaption>${e(c)} · seed ${s} · 40-step / 49-frame</figcaption></figure>`:`<figure><div class="pending">该 seed 视频尚未生成</div><figcaption>Generated video</figcaption></figure>`;const heat=a.heatmap&&entry?`<figure><img src="/api/wan22-ti2v-legacy-pck50/heatmap?case=${encodeURIComponent(c)}&seed=${s}&rank=${r}&region=${encodeURIComponent(region)}&v=${Date.now()}"><figcaption>Rank ${r+1} · S${String(entry.step).padStart(2,'0')} / L${String(entry.block).padStart(2,'0')} / H${String(entry.head).padStart(2,'0')} · ${e(region)} · 每帧独立色标</figcaption></figure>`:`<figure><div class="pending">等待最终 Top10 与该 seed 热力图重跑</div><figcaption>Object-query heatmap</figcaption></figure>`;$('viewer').innerHTML=video+heat;$('tables').innerHTML=`<div><h3>Step × Block × Head · Global Top10</h3>${table(top,'combo')}</div><div><h3>Block × Head · 跨全部 40 Steps</h3>${table(data.summary?.top_block_head_across_steps||[],'head')}</div>`}async function load(){data=await fetch('/api/wan22-ti2v-legacy-pck50/catalog',{cache:'no-store'}).then(r=>r.json());options($('case'),data.cases);options($('seed'),data.seeds);options($('rank'),(data.summary?.top_step_block_head||[]).map((x,i)=>({value:i,label:`#${i+1} S${String(x.step).padStart(2,'0')} L${String(x.block).padStart(2,'0')} H${String(x.head).padStart(2,'0')}`})));syncRegions();render()}$('case').addEventListener('change',()=>{syncRegions();render()});['seed','rank','region'].forEach(id=>$(id).addEventListener('change',render));$('refresh').addEventListener('click',load);$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
+def wan22_ti2v_baseline_seeds_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wan2.2-TI2V Baseline Seed Wall</title><style>
+:root{--ink:#17261f;--paper:#e9e1d3;--line:#baad98;--deep:#17443a;--card:#fffaf0;--rust:#b7472f}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 0 0,#d45e3745,transparent 34rem),radial-gradient(circle at 100% 2%,#288a7c42,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:16px 22px;background:#e9e1d3ef;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:5px 0;font-size:clamp(30px,4.5vw,60px);line-height:1}.lead{max-width:1100px;margin:8px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}button{padding:8px 13px;border:1px solid var(--line);background:var(--card);font-weight:900;cursor:pointer}.status{font:12px ui-monospace,monospace}main{width:min(100% - 18px,1900px);margin:auto;padding:18px 0 70px}.matrix-head,.seed-row{display:grid;grid-template-columns:150px repeat(2,minmax(360px,1fr));gap:10px}.matrix-head{position:sticky;top:174px;z-index:5;padding:9px;background:var(--deep);color:#fff;border-radius:13px 13px 0 0}.matrix-head div{padding:6px;font-weight:900;text-align:center}.seed-row{padding:10px;margin-top:10px;border:1px solid var(--line);border-radius:14px;background:#fff9eddb;box-shadow:0 12px 34px #57442915}.seed-label{display:flex;align-items:center;justify-content:center;font:900 18px ui-monospace,monospace;color:var(--deep)}figure{margin:0;border:1px solid #d4c8b5;background:#fff;padding:8px}video{display:block;width:100%;aspect-ratio:16/9;background:#111}figcaption{padding:7px 3px 2px;font-weight:900}.pending{display:grid;place-items:center;min-height:210px;color:#746c60;background:#f2ede4}.badge{display:inline-block;margin-left:8px;padding:3px 7px;border-radius:99px;background:#327b63;color:#fff;font-size:10px}@media(max-width:850px){header{position:static}.matrix-head{display:none}.seed-row{grid-template-columns:1fr}.seed-label{justify-content:flex-start;padding:5px}.seed-label:before{content:'Seed ';margin-right:5px}}
+</style></head><body><header><a href="/">返回总览</a><h1>Wan2.2-TI2V<br>Baseline Seed Wall</h1><p class="lead">标准 DiffSynth Wan2.2-TI2V-5B pipeline；每个样本仅输入 JSON prompt 与首帧 input_image，不传 context_video，不加载 LoRA，不捕获 attention。</p><div class="tools"><button id="replay">重新播放全部</button><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><div class="matrix-head"><div>Seed</div><div>40-Step · 49 Frames</div><div>10-Step · 49 Frames</div></div><div id="rows"></div></main><script>
+function card(seed,steps,ready){return ready?`<figure><video controls muted playsinline preload="metadata" src="/api/object-query-step-alignment/video?model=baseline&seed=${seed}&steps=${steps}&kind=original"></video><figcaption>${steps}-Step Official TI2V <span class="badge">READY</span></figcaption></figure>`:`<figure><div class="pending">${steps}-Step 尚未生成</div><figcaption>${steps}-Step Official TI2V</figcaption></figure>`}async function load(){const d=await fetch('/api/object-query-step-alignment/catalog',{cache:'no-store'}).then(r=>r.json()),m=d.models.find(x=>x.id==='baseline');let ready=0,total=0;document.getElementById('rows').innerHTML=d.seeds.map(seed=>{const v=m?.videos?.[seed]||{};ready+=Number(!!v?.[40]?.original)+Number(!!v?.[10]?.original);total+=2;return `<section class="seed-row"><div class="seed-label">${seed}</div>${card(seed,40,!!v?.[40]?.original)}${card(seed,10,!!v?.[10]?.original)}</section>`}).join('');document.getElementById('status').textContent=`${d.case} · ${ready}/${total} videos ready`}document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
 def object_query_step_alignment_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>10-Step × 40-Step Attention Alignment</title><style>
 :root{--paper:#e8e0d2;--ink:#172720;--deep:#153f35;--line:#b9ad98;--card:#fffaf0;--rust:#b9472f;--gold:#d5a237;--sea:#247d82}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#d96b3d42,transparent 32rem),radial-gradient(circle at 98% 2%,#24898240,transparent 38rem),linear-gradient(135deg,#eee7da,#ded4c3);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:9;padding:16px 24px;background:#e8e0d2ed;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:5px 0;font-size:clamp(29px,4.4vw,58px);line-height:1}header p{margin:7px 0;max-width:1100px}.tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button,.download,select{border:1px solid var(--line);background:#fffaf0;padding:8px 13px;color:var(--ink);font-weight:900;text-decoration:none;cursor:pointer}.status{font:12px ui-monospace,monospace}main{width:min(100% - 20px,2300px);margin:auto;padding:20px 0 70px}.model{margin:0 0 24px;border:1px solid var(--line);border-radius:18px;background:#fdf8eddd;overflow:hidden;box-shadow:0 16px 40px #58472b17}.model-head{padding:17px 20px;background:linear-gradient(100deg,var(--deep),#276d61);color:#fff}.model-head h2{margin:0;font-size:28px}.model-head p{margin:5px 0 0}.progress{display:grid;grid-template-columns:repeat(6,minmax(140px,1fr));gap:8px;padding:12px}.seed{padding:8px;border:1px solid #d0c5b3;background:#fff;border-radius:9px;font:11px ui-monospace,monospace}.seed.done{border-color:#3d8b70;background:#e4f2e8}.section-title{padding:9px 15px;margin:0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#eee4d3;font-size:15px;text-transform:uppercase;letter-spacing:.08em}.grid{display:grid;grid-template-columns:repeat(3,minmax(280px,1fr));gap:11px;padding:12px}.video-grid{display:grid;grid-template-columns:repeat(4,minmax(240px,1fr));gap:10px;padding:12px;overflow:auto}.video-card{margin:0;border:1px solid #d6cab7;background:#fff;padding:8px}.video-card video{display:block;width:100%;background:#111;aspect-ratio:16/9}.video-card figcaption{padding:7px 3px 2px;font-weight:900}.plot{margin:0;border:1px solid #d6cab7;background:#fff;padding:8px}.plot img{width:100%;display:block}.plot figcaption{padding:7px 4px 2px;font-weight:900}.curve{grid-column:1/-1}.curve img{max-height:620px;object-fit:contain}.pending{padding:35px;text-align:center;color:#766e61}.scroll{overflow:auto;margin:12px;border:1px solid var(--line);background:#fff}table{border-collapse:collapse;width:100%;min-width:680px;font-variant-numeric:tabular-nums}th,td{padding:8px 10px;border-bottom:1px solid #ddd4c5;text-align:center}th{background:var(--deep);color:#fff}td:first-child{font-weight:900}.downloads{display:flex;gap:8px;flex-wrap:wrap;padding:4px 12px 15px}@media(max-width:1100px){.video-grid{grid-template-columns:repeat(2,minmax(260px,1fr))}}@media(max-width:900px){header{position:static}.grid,.video-grid{grid-template-columns:1fr}.progress{grid-template-columns:repeat(2,1fr)}}
 </style></head><body><header><a href="/">返回总览</a><h1>10-Step × 40-Step<br>Object-Query Alignment</h1><p>同一物理 Head 在两种去噪日程间进行 cosine 对齐。主结果先逐 Head 计算相似度再对 TopN、Object A/B、CFG 分支与六个 seed 宏平均；辅助结果先平均 TopN attention map 再计算 cosine。</p><div class="tools"><label>Seed <select id="seed"></select></label><button id="replay">重新播放本页视频</button><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main id="main"></main><script>
-const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),ns=[30,50,100],labels={mean_per_head_cosine:'逐 Head cosine 后平均',cosine_of_mean_map:'TopN Mean Map cosine'};let data=null;function img(model,name,title,wide=false){return `<figure class="plot ${wide?'curve':''}"><img loading="lazy" src="/api/object-query-step-alignment/image?model=${model}&name=${name}&v=${Date.now()}"><figcaption>${e(title)}</figcaption></figure>`}function table(model){const rows=(model.matches||[]).filter(r=>r.aggregation==='mean_per_head_cosine'),map=new Map(rows.map(r=>[`${r.step10}-${r.top_n}`,r]));return `<div class="scroll"><table><thead><tr><th>10-Step</th>${ns.map(n=>`<th>Top${n} 最佳 40-Step</th>`).join('')}</tr></thead><tbody>${[...Array(10)].map((_,s)=>`<tr><td>S${String(s).padStart(2,'0')}</td>${ns.map(n=>{const r=map.get(`${s}-${n}`);return `<td>${r?`S${String(r.best_step40).padStart(2,'0')} · ${Number(r.cosine).toFixed(4)}`:'—'}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`}function videos(m){const seed=document.getElementById('seed').value,availability=m.videos?.[seed]||{},specs=[[40,'original','40-Step Original'],[40,'probe','40-Step Top100 No-op Probe'],[10,'original','10-Step Original'],[10,'probe','10-Step Top100 No-op Probe']];return `<h3 class="section-title">Generated Videos · Seed ${seed}</h3><div class="video-grid">${specs.map(([steps,kind,label])=>availability?.[steps]?.[kind]?`<figure class="video-card"><video controls muted playsinline preload="metadata" src="/api/object-query-step-alignment/video?model=${m.id}&seed=${seed}&steps=${steps}&kind=${kind}"></video><figcaption>${label}</figcaption></figure>`:`<figure class="video-card"><div class="pending">${label}<br>尚未生成</div></figure>`).join('')}</div>`}function renderModel(m){const progress=m.progress.map(p=>`<div class="seed ${p.complete?'done':''}">seed ${p.seed}<br>40-step ${p.steps40}/80<br>10-step ${p.steps10}/20</div>`).join(''),videoSection=videos(m),head=`<div class="model-head"><h2>${e(m.label)}</h2><p>${e(m.detail)}</p></div><div class="progress">${progress}</div>${videoSection}`;if(!m.ready)return `<section class="model">${head}<div class="pending">Attention 对齐统计生成中。视频完成后会先于统计结果显示。</div></section>`;const primary=ns.map(n=>img(m.id,`top${n}_mean_per_head_cosine.png`,`Top${n} · ${labels.mean_per_head_cosine}`)).join(''),aux=ns.map(n=>img(m.id,`top${n}_cosine_of_mean_map.png`,`Top${n} · ${labels.cosine_of_mean_map}`)).join(''),downloads=m.downloads.map(name=>`<a class="download" href="/api/object-query-step-alignment/download?model=${m.id}&name=${name}">${e(name)}</a>`).join('');return `<section class="model">${head}<h3 class="section-title">Primary · Mean of per-head cosine</h3><div class="grid">${primary}</div><h3 class="section-title">Auxiliary · Cosine after TopN map averaging</h3><div class="grid">${aux}</div><h3 class="section-title">Best 40-step mapping curve</h3><div class="grid">${img(m.id,'best_match_curves.png','Top30 / Top50 / Top100 最佳匹配路径',true)}</div><h3 class="section-title">Primary best matches</h3>${table(m)}<div class="downloads">${downloads}</div></section>`}function render(){document.getElementById('main').innerHTML=data.models.map(renderModel).join('')}async function load(){data=await fetch('/api/object-query-step-alignment/catalog',{cache:'no-store'}).then(r=>r.json());const select=document.getElementById('seed'),current=select.value;if(!select.options.length)select.innerHTML=data.seeds.map(seed=>`<option value="${seed}">${seed}</option>`).join('');if(current&&data.seeds.map(String).includes(current))select.value=current;document.getElementById('status').textContent=`${data.case} · ${data.models.filter(m=>m.ready).length}/${data.models.length} models ready`;render()}document.getElementById('seed').addEventListener('change',render);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));document.getElementById('refresh').addEventListener('click',load);load();
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),ns=[30,50,100],labels={mean_per_head_cosine:'逐 Head cosine 后平均',cosine_of_mean_map:'TopN Mean Map cosine'};let data=null;function img(model,name,title,wide=false){return `<figure class="plot ${wide?'curve':''}"><img loading="lazy" src="/api/object-query-step-alignment/image?model=${model}&name=${name}&v=${Date.now()}"><figcaption>${e(title)}</figcaption></figure>`}function table(model){const rows=(model.matches||[]).filter(r=>r.aggregation==='mean_per_head_cosine'),map=new Map(rows.map(r=>[`${r.step10}-${r.top_n}`,r]));return `<div class="scroll"><table><thead><tr><th>10-Step</th>${ns.map(n=>`<th>Top${n} 最佳 40-Step</th>`).join('')}</tr></thead><tbody>${[...Array(10)].map((_,s)=>`<tr><td>S${String(s).padStart(2,'0')}</td>${ns.map(n=>{const r=map.get(`${s}-${n}`);return `<td>${r?`S${String(r.best_step40).padStart(2,'0')} · ${Number(r.cosine).toFixed(4)}`:'—'}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`}function videos(m){const seed=document.getElementById('seed').value,availability=m.videos?.[seed]||{},specs=[[40,'original','40-Step Original'],[40,'probe','40-Step Top100 No-op Probe'],[10,'original','10-Step Original'],[10,'probe','10-Step Top100 No-op Probe']];return `<h3 class="section-title">Generated Videos · Seed ${seed}</h3><div class="video-grid">${specs.map(([steps,kind,label])=>availability?.[steps]?.[kind]?`<figure class="video-card"><video controls muted playsinline preload="metadata" src="/api/object-query-step-alignment/video?model=${m.id}&seed=${seed}&steps=${steps}&kind=${kind}"></video><figcaption>${label}</figcaption></figure>`:`<figure class="video-card"><div class="pending">${label}<br>${kind==='probe'&&!m.attention_capture?'官方纯推理不执行 Attention Probe':'尚未生成'}</div></figure>`).join('')}</div>`}function renderModel(m){const progress=m.progress.map(p=>`<div class="seed ${p.complete?'done':''}">seed ${p.seed}<br>40-step ${p.steps40}/80<br>10-step ${p.steps10}/20</div>`).join(''),videoSection=videos(m),head=`<div class="model-head"><h2>${e(m.label)}</h2><p>${e(m.detail)}</p></div>${m.attention_capture?`<div class="progress">${progress}</div>`:''}${videoSection}`;if(!m.ready)return `<section class="model">${head}<div class="pending">${m.attention_capture?'Attention 对齐统计生成中。视频完成后会先于统计结果显示。':'本模型仅运行官方首帧 TI2V 推理，不捕获或统计 attention。'}</div></section>`;const primary=ns.map(n=>img(m.id,`top${n}_mean_per_head_cosine.png`,`Top${n} · ${labels.mean_per_head_cosine}`)).join(''),aux=ns.map(n=>img(m.id,`top${n}_cosine_of_mean_map.png`,`Top${n} · ${labels.cosine_of_mean_map}`)).join(''),downloads=m.downloads.map(name=>`<a class="download" href="/api/object-query-step-alignment/download?model=${m.id}&name=${name}">${e(name)}</a>`).join('');return `<section class="model">${head}<h3 class="section-title">Primary · Mean of per-head cosine</h3><div class="grid">${primary}</div><h3 class="section-title">Auxiliary · Cosine after TopN map averaging</h3><div class="grid">${aux}</div><h3 class="section-title">Best 40-step mapping curve</h3><div class="grid">${img(m.id,'best_match_curves.png','Top30 / Top50 / Top100 最佳匹配路径',true)}</div><h3 class="section-title">Primary best matches</h3>${table(m)}<div class="downloads">${downloads}</div></section>`}function render(){document.getElementById('main').innerHTML=data.models.map(renderModel).join('')}async function load(){data=await fetch('/api/object-query-step-alignment/catalog',{cache:'no-store'}).then(r=>r.json());const select=document.getElementById('seed'),current=select.value;if(!select.options.length)select.innerHTML=data.seeds.map(seed=>`<option value="${seed}">${seed}</option>`).join('');if(current&&data.seeds.map(String).includes(current))select.value=current;document.getElementById('status').textContent=`${data.case} · ${data.models.filter(m=>m.ready).length}/${data.models.length} attention models ready`;render()}document.getElementById('seed').addEventListener('change',render);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));document.getElementById('refresh').addEventListener('click',load);load();
 </script></body></html>'''
 
 
