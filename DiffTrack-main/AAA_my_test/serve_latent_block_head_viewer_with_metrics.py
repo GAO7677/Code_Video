@@ -367,6 +367,7 @@ ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-attention-overlay?v=1"><div><span>17 / OBJECT QUERY OVERLAY</span><h2>Top/Bottom10 · 13×13 Latent 时间轴</h2><p>将动态物体 Query tokens 的 Before、After 与 |Delta| attention overlay 到对应视频帧。</p></div><span class="go">打开 Object Query 对比</span></a>
 <a class="card new" href="/attention-neighbor-ranking-seed90094?v=1"><div><span>18 / NEIGHBOR RANKING</span><h2>Seed 90094 · 8种 Head 排名</h2><p>比较 Wan+LoRA 在八种 Neighbor/Diagonal 排名 Top100、Bottom100 下的完整注意力干预矩阵。</p></div><span class="go">打开 Neighbor Ranking</span></a>
 <a class="card new" href="/attention-lora-pck32-seed90094?v=1"><div><span>19 / LORA PCK@32</span><h2>Seed 90094 · PCK@32 全实验</h2><p>固定 LoRA PCK@32 排名，在单页展示全部 Attention 实验、CFG 分支、阶段及 Top/Bottom100。</p></div><span class="go">打开 PCK@32 全实验</span></a>
+<a class="card new" href="/attention-lora-pck32-temporal-test5?v=1"><div><span>20 / TEMPORAL TEST5</span><h2>LoRA PCK@32 Top100 · 20 Cases</h2><p>逐 case 对比 Wan+LoRA Original 与 Temporal Causal 在 S000-S009、S000-S039 两个阶段的结果。</p></div><span class="go">打开 Temporal Causal 对比</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + "</section>", 1
@@ -556,6 +557,29 @@ class MetricsHandler(viewer.Handler):
                 attention_lora_pck32_seed90094_page().encode("utf-8"),
                 "text/html; charset=utf-8",
             )
+            return
+        if path == "/attention-lora-pck32-temporal-test5":
+            self.send_payload(
+                attention_lora_pck32_temporal_test5_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/attention-lora-pck32-temporal-test5/catalog":
+            payload = json.dumps(
+                attention_lora_pck32_temporal_test5_catalog(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/attention-lora-pck32-temporal-test5/video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = attention_lora_pck32_temporal_test5_asset(
+                params.get("case", [""])[0], params.get("kind", [""])[0]
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown temporal test5 video")
+            viewer.send_file_with_range(self, asset, "video/mp4")
             return
         if path == "/api/attention-neighbor-ranking-seed90094/catalog":
             from urllib.parse import parse_qs
@@ -1779,13 +1803,19 @@ def attention_lora_seed_sweep_catalog(requested_seed: str = ""):
 
 def attention_lora_seed_sweep_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wan+LoRA 50-Seed Sweep</title><style>
-:root{--ink:#1a2822;--paper:#eee8dc;--card:#fffdf8;--line:#bdb3a0;--red:#ae432f;--green:#17695d;--dark:#19362d;--gold:#bb7b28}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 0,#eaa76755,transparent 34rem),radial-gradient(circle at 96% 3%,#52977c55,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:17px 24px;background:#eee8dced;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#53635b}main{width:min(2300px,calc(100% - 20px));margin:auto;padding:20px 0 80px}.original{max-width:700px;background:var(--card);border:1px solid var(--line);border-radius:15px;padding:13px}.original video,.card video,.card img{display:block;width:100%;background:#151916;border:1px solid var(--line);border-radius:7px}.matrix-shell{overflow:auto;margin-top:20px;border:1px solid var(--line);border-radius:16px;padding:9px;background:#d8d0c1}.matrix{display:grid;grid-template-columns:230px repeat(8,330px);gap:8px;width:max-content}.head,.row-head,.cell{border:1px solid var(--line);border-radius:10px}.head{padding:12px;text-align:center;background:#f9f4e9;font-weight:900;border-top:5px solid var(--gold)}.row-head{position:sticky;left:9px;z-index:4;padding:15px;background:var(--dark);color:#fff}.row-head.top{border-left:7px solid var(--red)}.row-head.bottom{border-left:7px solid var(--green)}.row-head small{display:block;color:#cbd8d1;margin-top:8px}.cell{padding:8px;background:#f6f1e7}.card{height:100%;padding:10px;background:var(--card);border-radius:10px}.card.top{border-left:5px solid var(--red)}.card.bottom{border-left:5px solid var(--green)}.card h3{margin:0 0 7px;font-size:16px}.pill{display:inline-block;margin:3px;padding:4px 7px;border-radius:99px;background:#e9e2d4;font:10px ui-monospace,monospace}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:7px;color:#746e62}.maps{display:grid;gap:7px;margin-top:8px}.note{font-size:11px;color:#665f55}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;background:var(--dark);color:#fff;padding:13px 19px}@media(max-width:800px){header{position:static}.matrix{grid-template-columns:170px repeat(6,280px)}main{width:calc(100% - 10px)}}
-</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/attention-additive-lora-seed-sweep-metrics?v=1">指标表</a><h1>Wan+LoRA · 50-Seed Sweep</h1><p>0613pybullet_sample_001460_w002 · 40步 · 49帧 · 仅 seed 改变</p><div class="tools"><label>Seed <select id="seed"></select></label><button id="refresh">手动刷新</button><span class="status" id="status">读取中</span></div></header><main><h2>Original</h2><section id="original" class="original"></section><div class="matrix-shell"><section id="matrix" class="matrix"></section></div></main><script>
-const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let current=q.get('seed')||'';const profiles=[['alpha090','α = 0.9'],['alpha150','α = 1.5'],['zero','A = 0'],['uniform','A = 1/N_K'],['temporal_causal','Temporal Causal'],['strict_past','Strict Past Only'],['strict_future','Strict Future Only'],['head_output_zero','Head Output Zero']];
-const video=(stage,profile,group)=>`/api/attention-additive-lora-seed-sweep/video?seed=${encodeURIComponent(current)}&stage=${stage}&profile=${profile}&group=${group}`;const image=(r,name)=>`/api/attention-additive-lora-seed-sweep/image?seed=${encodeURIComponent(current)}&stage=${r.stage}&profile=${r.profile}&group=${r.group}&name=${encodeURIComponent(name)}`;
-function card(r){const maps=r.heatmap_ready?`<div class="maps"><img loading="lazy" src="${image(r,r.all_token)}"><img loading="lazy" src="${image(r,r.frame)}"></div>`:r.heatmap_expected?'<div class="note">热力图等待生成</div>':'<div class="note">Attention 不变，仅 Head 输出置零</div>';return `<article class="card ${r.group.startsWith('top')?'top':'bottom'}"><h3>${e(r.label)}</h3><span class="pill">${e(r.group.toUpperCase())}</span><span class="pill">${r.stage==='all_steps'?'S000-S039':'S000-S009'}</span>${r.video_ready?`<video controls preload="metadata" playsinline src="${video(r.stage,r.profile,r.group)}"></video>`:'<div class="pending">视频生成中</div>'}${maps}</article>`}
-function render(d){current=String(d.selected_seed);const select=document.getElementById('seed');if(select.options.length!==d.seeds.length)select.innerHTML=d.seeds.map(x=>`<option value="${x}">${x}</option>`).join('');select.value=current;document.getElementById('status').textContent=`${d.completed_seeds}/${d.total_seeds} seeds complete · 当前 ${d.ready_records}/${d.expected_records} experiments ready`;document.getElementById('original').innerHTML=d.original_ready?`<video controls preload="metadata" playsinline src="${video('original','original','original')}"></video>`:'<div class="pending">Original 生成中</div>';let html='<div class="head">Head组 × 阶段</div>'+profiles.map(x=>`<div class="head">${e(x[1])}</div>`).join('');for(const stage of ['all_steps','steps00_09'])for(const group of ['top100','bottom100']){html+=`<div class="row-head ${group.startsWith('top')?'top':'bottom'}"><strong>${group.toUpperCase()}</strong><small>${stage==='all_steps'?'全时间步 S000-S039':'仅前10步 S000-S009'}</small></div>`;for(const [profile] of profiles){const r=d.records.find(x=>x.stage===stage&&x.group===group&&x.profile===profile);html+=`<div class="cell">${card(r)}</div>`}}document.getElementById('matrix').innerHTML=html}
-async function load(){const d=await fetch(`/api/attention-additive-lora-seed-sweep/catalog?seed=${encodeURIComponent(current)}`,{cache:'no-store'}).then(r=>r.json());render(d)}document.getElementById('seed').addEventListener('change',ev=>{current=ev.target.value;const u=new URL(location.href);u.searchParams.set('seed',current);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+:root{--ink:#1a2822;--paper:#eee8dc;--card:#fffdf8;--line:#bdb3a0;--red:#ae432f;--green:#17695d;--dark:#19362d;--gold:#bb7b28;--blue:#315f78}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 0,#eaa76755,transparent 34rem),radial-gradient(circle at 96% 3%,#52977c55,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:14px 24px;background:#eee8df2;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools,.families,.conditions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}button{padding:8px 12px;border:1px solid var(--line);border-radius:7px;background:#fffdf8;color:var(--ink);font-weight:900;cursor:pointer}.status{font:12px ui-monospace,monospace;color:#53635b}.filters{width:min(2300px,calc(100% - 20px));margin:16px auto 0;display:grid;gap:10px}.filter-row{padding:12px;border:1px solid var(--line);border-radius:13px;background:#f8f3e9}.filter-row h3{margin:0 0 8px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#696054}.family{display:flex;align-items:center;gap:7px;padding:4px 8px 4px 4px;border-right:1px solid var(--line)}.family b{font-size:11px;color:#6e675e}.experiment.active{background:var(--dark);border-color:var(--dark);color:#fff}.condition.active{background:var(--blue);border-color:var(--blue);color:#fff}.condition.top.active{background:var(--red);border-color:var(--red)}.condition.bottom.active{background:var(--green);border-color:var(--green)}main{width:min(2300px,calc(100% - 20px));margin:auto;padding:18px 0 80px}.selection{display:flex;justify-content:space-between;align-items:end;gap:15px;margin-bottom:12px}.selection h2{margin:0;font-size:clamp(22px,3vw,35px)}.selection p{margin:4px 0 0;color:#685f54}.seed-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:11px}.card{padding:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 25px #4d3f2820}.card.top{border-top:5px solid var(--red)}.card.bottom{border-top:5px solid var(--green)}.card.focus{outline:4px solid var(--gold);outline-offset:2px}.card h3{display:flex;justify-content:space-between;gap:8px;margin:0 0 8px;font:900 15px ui-monospace,monospace}.card video,.card img{display:block;width:100%;background:#151916;border:1px solid var(--line);border-radius:7px}.pill{display:inline-block;margin:3px;padding:4px 7px;border-radius:99px;background:#e9e2d4;font:10px ui-monospace,monospace}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:7px;color:#746e62}.maps{display:grid;gap:7px;margin-top:8px}.maps summary{cursor:pointer;font-weight:900;color:var(--blue)}.maps img{margin-top:7px}.note{font-size:11px;color:#665f55;margin-top:7px}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;background:var(--dark);color:#fff;padding:13px 19px;box-shadow:0 8px 22px #162b25aa}@media(max-width:800px){header{position:static}.family{border:0}.seed-grid{grid-template-columns:1fr}main,.filters{width:calc(100% - 10px)}.selection{display:block}}
+</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/attention-additive-lora-seed-sweep-metrics?v=1">指标表</a><h1>Wan+LoRA · 50-Seed Sweep</h1><p>0613pybullet_sample_001460_w002 · 40步 · 49帧 · 同一实验的不同 seed 聚合展示</p><div class="tools"><button id="refresh">手动刷新当前实验</button><span class="status" id="status">读取中</span></div></header><section class="filters"><div class="filter-row"><h3>按实验种类选择</h3><div id="experiments" class="families"></div></div><div id="conditionRow" class="filter-row"><h3>实验条件</h3><div id="conditions" class="conditions"></div></div></section><main><div class="selection"><div><h2 id="title">实验结果</h2><p id="subtitle"></p></div><span class="status" id="count"></span></div><section id="grid" class="seed-grid"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),params=new URL(location.href).searchParams,focusSeed=params.get('seed')||'';
+const families=[['Baseline',[['original','Original / No-op']] ],['Attention 加性扰动',[['alpha090','α = 0.9'],['alpha150','α = 1.5']]],['概率替换',[['zero','A = 0'],['uniform','A = 1/N_K']]],['时序 Mask',[['temporal_causal','Temporal Causal'],['strict_past','Strict Past Only'],['strict_future','Strict Future Only']]],['输出消融',[['head_output_zero','Head Output Zero']]]];
+const profileLabels=Object.fromEntries(families.flatMap(x=>x[1]));let profile=params.get('experiment')||'alpha090',stage=params.get('stage')||'all_steps',group=params.get('group')||'top100',catalogs=[],generation=0;
+const video=(seed,s,p,g)=>`/api/attention-additive-lora-seed-sweep/video?seed=${encodeURIComponent(seed)}&stage=${s}&profile=${p}&group=${g}`;const image=(seed,r,name)=>`/api/attention-additive-lora-seed-sweep/image?seed=${encodeURIComponent(seed)}&stage=${r.stage}&profile=${r.profile}&group=${r.group}&name=${encodeURIComponent(name)}`;
+function syncUrl(){const u=new URL(location.href);u.searchParams.set('experiment',profile);if(profile!=='original'){u.searchParams.set('stage',stage);u.searchParams.set('group',group)}history.replaceState(null,'',u)}
+function renderButtons(){document.getElementById('experiments').innerHTML=families.map(([family,items])=>`<div class="family"><b>${e(family)}</b>${items.map(([id,label])=>`<button class="experiment ${id===profile?'active':''}" data-profile="${id}">${e(label)}</button>`).join('')}</div>`).join('');document.getElementById('conditions').innerHTML=[['all_steps','S000-S039'],['steps00_09','S000-S009']].map(([id,label])=>`<button class="condition ${id===stage?'active':''}" data-stage="${id}">${label}</button>`).join('')+[['top100','Top100'],['bottom100','Bottom100']].map(([id,label])=>`<button class="condition ${id} ${id===group?'active':''}" data-group="${id}">${label}</button>`).join('');document.getElementById('conditionRow').hidden=profile==='original';document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=()=>{profile=b.dataset.profile;syncUrl();renderButtons();render()});document.querySelectorAll('[data-stage]').forEach(b=>b.onclick=()=>{stage=b.dataset.stage;syncUrl();renderButtons();render()});document.querySelectorAll('[data-group]').forEach(b=>b.onclick=()=>{group=b.dataset.group;syncUrl();renderButtons();render()})}
+function heatmaps(seed,r){if(profile==='original')return '';if(r.heatmap_ready)return `<details class="maps"><summary>扰动前后热力图</summary><img loading="lazy" src="${image(seed,r,r.all_token)}"><img loading="lazy" src="${image(seed,r,r.frame)}"></details>`;return r.heatmap_expected?'<div class="note">热力图等待生成</div>':'<div class="note">Attention 不变，仅 Head 输出置零</div>'}
+function render(){renderButtons();const label=profileLabels[profile]||profile,stageLabel=stage==='all_steps'?'S000-S039':'S000-S009',groupLabel=group.toUpperCase();document.getElementById('title').textContent=profile==='original'?label:`${label} · ${groupLabel} · ${stageLabel}`;document.getElementById('subtitle').textContent=`Case 0613pybullet_sample_001460_w002 · ${catalogs.length} seeds 放在同一实验分组内`;let ready=0;document.getElementById('grid').innerHTML=catalogs.map(d=>{const seed=String(d.selected_seed),r=profile==='original'?null:d.records.find(x=>x.stage===stage&&x.group===group&&x.profile===profile),isReady=profile==='original'?d.original_ready:Boolean(r&&r.video_ready);if(isReady)ready++;const src=profile==='original'?video(seed,'original','original','original'):video(seed,stage,profile,group);return `<article class="card ${profile==='original'?'':group.startsWith('top')?'top':'bottom'} ${seed===focusSeed?'focus':''}" id="seed-${seed}"><h3><span>Seed ${e(seed)}</span><span>${isReady?'READY':'PENDING'}</span></h3><span class="pill">${e(label)}</span>${profile==='original'?'':`<span class="pill">${groupLabel}</span><span class="pill">${stageLabel}</span>`}${isReady?`<video controls preload="none" playsinline src="${src}"></video>`:'<div class="pending">视频生成中</div>'}${r?heatmaps(seed,r):''}</article>`}).join('');document.getElementById('count').textContent=`${ready}/${catalogs.length} videos ready`;document.getElementById('status').textContent=`已汇总 ${catalogs.length} seeds · 当前实验 ${ready}/${catalogs.length} 完成`}
+async function fetchCatalog(seed,token){const d=await fetch(`/api/attention-additive-lora-seed-sweep/catalog?seed=${encodeURIComponent(seed)}`,{cache:'no-store'}).then(r=>r.json());if(token!==generation)throw new Error('stale');return d}
+async function load(){const token=++generation;document.getElementById('status').textContent='正在读取 seed 清单';try{const first=await fetchCatalog(focusSeed,token),seeds=first.seeds||[];const bySeed=new Map([[String(first.selected_seed),first]]),queue=seeds.filter(x=>String(x)!==String(first.selected_seed));let done=1;async function worker(){while(queue.length){const seed=queue.shift(),d=await fetchCatalog(seed,token);bySeed.set(String(d.selected_seed),d);done++;document.getElementById('status').textContent=`正在汇总 ${done}/${seeds.length} seeds`}}await Promise.all(Array.from({length:Math.min(8,queue.length)},worker));catalogs=seeds.map(x=>bySeed.get(String(x))).filter(Boolean);render();if(focusSeed){const target=document.getElementById(`seed-${focusSeed}`);if(target)target.scrollIntoView({block:'center'})}}catch(err){if(err.message!=='stale')document.getElementById('status').textContent=`读取失败: ${err.message}`}}
+document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));renderButtons();load();
 </script></body></html>'''
 
 
@@ -1995,6 +2025,85 @@ function card(r,branch){if(!r)return '<div class="pending">等待任务记录</d
 function matrix(d,branch,label){let html='<div class="head">Group × Stage</div>'+profiles.map(x=>`<div class="head">${e(x[1])}</div>`).join('');for(const stage of ['all_steps','steps00_09'])for(const group of ['top100','bottom100']){html+=`<div class="row ${group.startsWith('top')?'top':'bottom'}"><strong>${group.toUpperCase()}</strong><small>${stage==='all_steps'?'全时间步 S000-S039':'仅前10步 S000-S009'}</small></div>`;for(const [profile] of profiles){const r=d.records.find(x=>x.criterion==='pck32'&&x.stage===stage&&x.group===group&&x.profile===profile);html+=`<div class="cell">${card(r,branch)}</div>`}}return `<section class="branch ${branch}"><h2 class="branch-title">${e(label)}</h2><div class="shell"><div class="matrix">${html}</div></div></section>`}
 async function load(){document.getElementById('status').textContent='读取三个 CFG 分支...';const data=await Promise.all(branches.map(([branch])=>fetch(`/api/attention-neighbor-ranking-seed90094/catalog?criterion=pck32&branch=${branch}`,{cache:'no-store'}).then(r=>r.json())));const ready=data.reduce((n,d)=>n+d.ready_records,0),expected=data.reduce((n,d)=>n+d.expected_records,0);document.getElementById('status').textContent=`${ready}/${expected} videos ready · 3 CFG branches · 10 experiments`;document.getElementById('original').innerHTML=data[0].original_ready?`<video controls preload="metadata" playsinline src="${video('original','original','original','both')}"></video>`:'<div class="pending">Original missing</div>';document.getElementById('branches').innerHTML=branches.map(([branch,label],i)=>matrix(data[i],branch,label)).join('')}
 document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+
+
+ATTENTION_LORA_PCK32_TEMPORAL_TEST5_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_pck32_temporal_test5_seed000851"
+)
+ATTENTION_LORA_PCK32_TEMPORAL_TEST5_LIST = Path(
+    "/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt"
+)
+ATTENTION_LORA_PCK32_TEMPORAL_TEST5_BASELINE = Path(
+    "/data/gaoya/agent-data/outputs/attention_probability_noise_unified_steps40_frames49_test5/"
+    "lora/alpha090_count100/videos/lora/cases"
+)
+
+
+def attention_lora_pck32_temporal_test5_cases():
+    cases = []
+    seen = set()
+    for line in ATTENTION_LORA_PCK32_TEMPORAL_TEST5_LIST.read_text(
+        encoding="utf-8"
+    ).splitlines():
+        case = Path(line.strip()).stem
+        if case and case not in seen:
+            seen.add(case)
+            cases.append(case)
+    return cases
+
+
+def attention_lora_pck32_temporal_test5_asset(case: str, kind: str):
+    if case not in set(attention_lora_pck32_temporal_test5_cases()):
+        return None
+    if kind == "original":
+        return ATTENTION_LORA_PCK32_TEMPORAL_TEST5_BASELINE / case / "original.mp4"
+    filenames = {
+        "steps00_09": "top100_steps_00_10.mp4",
+        "all_steps": "top100_steps_00_40.mp4",
+    }
+    if kind not in filenames:
+        return None
+    return (
+        ATTENTION_LORA_PCK32_TEMPORAL_TEST5_ROOT
+        / kind
+        / "temporal_causal"
+        / "videos"
+        / "lora"
+        / "cases"
+        / case
+        / filenames[kind]
+    )
+
+
+def attention_lora_pck32_temporal_test5_catalog():
+    records = []
+    for case in attention_lora_pck32_temporal_test5_cases():
+        ready = {}
+        for kind in ("original", "steps00_09", "all_steps"):
+            asset = attention_lora_pck32_temporal_test5_asset(case, kind)
+            ready[kind] = bool(asset and asset.is_file() and asset.stat().st_size)
+        records.append({"case": case, "ready": ready})
+    return {
+        "seed": 851,
+        "model": "Wan+LoRA",
+        "criterion": "LoRA PCK@32 Top100",
+        "records": records,
+        "ready_interventions": sum(
+            record["ready"][kind]
+            for record in records
+            for kind in ("steps00_09", "all_steps")
+        ),
+        "expected_interventions": len(records) * 2,
+    }
+
+
+def attention_lora_pck32_temporal_test5_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LoRA PCK@32 Temporal Causal · Test5</title><style>
+:root{--ink:#15241e;--paper:#eee8dc;--card:#fffdf8;--line:#b8ad98;--green:#17685b;--rust:#af472f;--gold:#bd7d29}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 5% 0,#e99d5555,transparent 34rem),radial-gradient(circle at 97% 4%,#4b947755,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:17px 24px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#506159}main{width:min(1900px,calc(100% - 20px));margin:auto;padding:24px 0 90px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card{padding:13px;border:1px solid var(--line);border-radius:15px;background:var(--card);box-shadow:0 10px 28px #2b251515}.card.original{border-top:7px solid var(--gold)}.card.short{border-top:7px solid var(--rust)}.card.full{border-top:7px solid var(--green)}.card h2{margin:0 0 5px}.meta{margin-bottom:10px;font:11px ui-monospace,monospace;color:#625c52}.card video{display:block;width:100%;background:#131714;border-radius:8px}.pending{min-height:300px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:8px;color:#746d61}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;padding:13px 19px;background:var(--green);color:#fff;box-shadow:0 8px 24px #0003}@media(max-width:950px){header{position:static}.grid{grid-template-columns:1fr}}
+</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/attention-lora-pck32-seed90094?v=1">PCK@32 矩阵</a><h1>Temporal Causal · Test5</h1><p>Wan+LoRA · Seed 851 · LoRA PCK@32 Top100 · 40 steps / 49 frames</p><div class="tools"><label>Case <select id="case"></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="grid" class="grid"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let current=q.get('case')||'';const src=kind=>`/api/attention-lora-pck32-temporal-test5/video?case=${encodeURIComponent(current)}&kind=${kind}`;function card(kind,title,meta,ready,cls){return `<article class="card ${cls}"><h2>${e(title)}</h2><div class="meta">${e(meta)}</div>${ready?`<video controls preload="metadata" playsinline src="${src(kind)}"></video>`:'<div class="pending">视频生成中</div>'}</article>`}function render(d){const cases=d.records.map(x=>x.case);if(!current||!cases.includes(current))current=cases[0]||'';const select=document.getElementById('case');if(select.options.length!==cases.length)select.innerHTML=cases.map(x=>`<option value="${e(x)}">${e(x)}</option>`).join('');select.value=current;const r=d.records.find(x=>x.case===current);document.getElementById('status').textContent=`${d.ready_interventions}/${d.expected_interventions} intervention videos ready · ${cases.length} unique cases`;document.getElementById('grid').innerHTML=card('original','Wan+LoRA Original','No Attention Intervention · Seed 851',r?.ready.original,'original')+card('steps00_09','Temporal Causal · S000-S009','LoRA PCK@32 Top100 · only first 10 denoising steps',r?.ready.steps00_09,'short')+card('all_steps','Temporal Causal · S000-S039','LoRA PCK@32 Top100 · all 40 denoising steps',r?.ready.all_steps,'full')}
+async function load(){const d=await fetch('/api/attention-lora-pck32-temporal-test5/catalog',{cache:'no-store'}).then(r=>r.json());render(d)}document.getElementById('case').addEventListener('change',ev=>{current=ev.target.value;const u=new URL(location.href);u.searchParams.set('case',current);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
 </script></body></html>'''
 
 

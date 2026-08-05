@@ -178,8 +178,11 @@ def main() -> None:
     variants = [("original", None, ())]
     top_group = f"top{args.extreme_count}"
     bottom_group = f"bottom{args.extreme_count}"
-    variants += [(f"{top_group}_{name}", top_group, steps) for name, steps in STAGE_RANGES]
-    variants += [(f"{bottom_group}_{name}", bottom_group, steps) for name, steps in STAGE_RANGES]
+    group_filter = os.environ.get("ATTENTION_GROUP_FILTER", "").strip()
+    if group_filter != "bottom":
+        variants += [(f"{top_group}_{name}", top_group, steps) for name, steps in STAGE_RANGES]
+    if group_filter != "top":
+        variants += [(f"{bottom_group}_{name}", bottom_group, steps) for name, steps in STAGE_RANGES]
     completed = []
     try:
         for case_index, case in enumerate(assigned, start=1):

@@ -137,9 +137,18 @@ def run_attention(args: argparse.Namespace) -> None:
     stage = import_path("seed_sweep_attention_stage", HERE / filename)
     worker = stage.worker
     if args.ranking_criterion:
-        worker.base.select_heads = lambda ranking_pool, extreme_count: neighbor_heads(
-            args.ranking_criterion, ranking_pool, extreme_count
-        )
+        def selected_heads(ranking_pool, extreme_count):
+            groups = neighbor_heads(
+                args.ranking_criterion, ranking_pool, extreme_count
+            )
+            group_filter = os.environ.get("ATTENTION_GROUP_FILTER", "").strip()
+            if group_filter == "top":
+                return {key: value for key, value in groups.items() if key.startswith("top")}
+            if group_filter == "bottom":
+                return {key: value for key, value in groups.items() if key.startswith("bottom")}
+            return groups
+
+        worker.base.select_heads = selected_heads
     if os.environ.get("OBJECT_QUERY_CAPTURE_ROOT", "").strip():
         if os.environ.get("OBJECT_QUERY_CAPTURE_PROTOCOL") == "headwise_pck":
             from AAA_my_test.object_query_attention_capture_headwise_pck import install_qk_capture
