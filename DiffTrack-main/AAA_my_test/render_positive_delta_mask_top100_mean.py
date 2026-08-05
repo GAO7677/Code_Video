@@ -57,6 +57,8 @@ def main() -> None:
             sigma40 = float(data["sigma40"].item())
             matched_steps = data["matched_step10"].astype(np.int64)
             matched_sigmas = data["matched_sigma10"].astype(np.float32)
+            mask_source_step = int(data["mask_source_step"].item()) if "mask_source_step" in data else step40
+            mask_kernel = int(data["mask_kernel"].item()) if "mask_kernel" in data else 1
         for region_index, name in enumerate(names):
             maps = {key: value[region_index].reshape(13, 16, 28) for key, value in arrays.items()}
             before_norm, after_norm = normalize_pair(maps["before"], maps["after"])
@@ -69,14 +71,20 @@ def main() -> None:
                 [
                     header(
                         width,
-                        f"Positive-Delta P95 + Dilate1 | {branch} | {name} | "
-                        f"A40 S{step40:02d} sigma={sigma40:.6g} - matched A10 ({distribution}) {sigma_note}",
+                        f"Positive-Delta P95 + Mask{mask_kernel}x{mask_kernel} | {branch} | {name} | "
+                        f"apply A40 S{step40:02d} sigma={sigma40:.6g} | mask source A40 S{mask_source_step:02d} "
+                        f"- A10 ({distribution}) {sigma_note}",
                     ),
                     strip(frames, normalized_single(maps["target40"]), "FROZEN NO-INTERVENTION A40", cv2.COLORMAP_TURBO),
                     strip(frames, normalized_single(maps["reference10"]), "10-STEP REFERENCE", cv2.COLORMAP_TURBO),
                     strip(frames, normalize_delta(maps["positive_delta"]), "POSITIVE DELTA A40-A10", cv2.COLORMAP_MAGMA),
                     strip(frames, maps["raw_mask"].clip(0, 1), "RAW P95 REMOVE MASK", cv2.COLORMAP_HOT),
-                    strip(frames, maps["dilated_mask"].clip(0, 1), "DILATED REMOVE MASK r=1", cv2.COLORMAP_HOT),
+                    strip(
+                        frames,
+                        maps["dilated_mask"].clip(0, 1),
+                        f"APPLIED REMOVE MASK {mask_kernel}x{mask_kernel}",
+                        cv2.COLORMAP_HOT,
+                    ),
                     strip(frames, before_norm, "LIVE A40 BEFORE", cv2.COLORMAP_TURBO),
                     strip(frames, after_norm, "AFTER REMOVE + RENORMALIZE", cv2.COLORMAP_TURBO),
                     strip(frames, normalize_delta(maps["removed"]), "REMOVED ATTENTION MASS", cv2.COLORMAP_MAGMA),

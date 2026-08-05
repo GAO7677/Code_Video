@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
             "same_index_replacement",
             "delta_mask_removal",
             "similarity_delta_mask_removal",
+            "s09_fixed_delta_mask_removal",
         ),
         required=True,
     )
@@ -38,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--capture-root", type=Path, required=True)
     parser.add_argument("--input-json-list", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--mask-kernel", type=int, choices=(1, 2, 3), default=1)
     return parser.parse_args()
 
 
@@ -54,6 +56,7 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
             self.reverse_donor_cache: dict[tuple[str, int], dict[tuple[int, int, str], torch.Tensor]] = {}
             self.reverse_target_root = capture_root.parent / "target_rows"
             self.reverse_target_cache: dict[tuple[str, int], dict[tuple[int, int, str], torch.Tensor]] = {}
+            self.delta_mask_kernel = int(os.environ.get("ATTENTION_DELTA_MASK_KERNEL", "1"))
             self.reverse_mapping = {}
             self.reverse_sigma_schedule: dict[str, dict[int, float]] = {}
             if mode in {"replacement", "similarity_delta_mask_removal"}:
@@ -76,6 +79,7 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                 "same_index_replacement",
                 "delta_mask_removal",
                 "similarity_delta_mask_removal",
+                "s09_fixed_delta_mask_removal",
             }:
                 for branch in ("conditional", "unconditional"):
                     schedule = {}
@@ -125,7 +129,11 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
             if self.group is not None:
                 if self.reverse_mode in {"donor", "target"}:
                     self._write_reverse_donor()
-                elif self.reverse_mode in {"delta_mask_removal", "similarity_delta_mask_removal"}:
+                elif self.reverse_mode in {
+                    "delta_mask_removal",
+                    "similarity_delta_mask_removal",
+                    "s09_fixed_delta_mask_removal",
+                }:
                     if self.reverse_mode == "similarity_delta_mask_removal" or self.current_step < 10:
                         self._write_delta_capture()
                 elif self.reverse_mode != "same_index_replacement" or self.current_step < 10:
@@ -206,9 +214,17 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                 return output
 
             output = original(q, k, v)
-            if self.reverse_mode in {"same_index_replacement", "delta_mask_removal"} and self.current_step >= 10:
+            if self.reverse_mode in {
+                "same_index_replacement",
+                "delta_mask_removal",
+                "s09_fixed_delta_mask_removal",
+            } and self.current_step >= 10:
                 return output
-            if self.reverse_mode in {"delta_mask_removal", "similarity_delta_mask_removal"}:
+            if self.reverse_mode in {
+                "delta_mask_removal",
+                "similarity_delta_mask_removal",
+                "s09_fixed_delta_mask_removal",
+            }:
                 return self._delta_mask_attention(output, qh, kh, vh, heads, block, head_dim)
             output_h = output.reshape(output.shape[0], output.shape[1], qh.shape[1], head_dim)
             branch = str(self.current_cfg_branch)
@@ -269,6 +285,7 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
             scale = 1.0 / math.sqrt(head_dim)
             branch = str(self.current_cfg_branch)
             step = int(self.current_step)
+            mask_source_step = 9 if self.reverse_mode == "s09_fixed_delta_mask_removal" else step
             for region in self.object_continuity_regions:
                 name = str(region["name"])
                 indices = torch.as_tensor(region["token_indices"], device=qh.device, dtype=torch.long)
@@ -292,10 +309,10 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                             raise KeyError(f"Missing reverse mapping {mapping_key}")
                         step10, cosine = self.reverse_mapping[mapping_key]
                     else:
-                        step10, cosine = step, float("nan")
+                        step10, cosine = mask_source_step, float("nan")
                     sigma10 = float(self.reverse_sigma_schedule[branch][step10])
                     reference = self._load_donor(branch, step10).get(key)
-                    frozen_target = self._load_target(branch, step).get(key)
+                    frozen_target = self._load_target(branch, mask_source_step).get(key)
                     if reference is None or frozen_target is None:
                         raise KeyError(
                             f"Missing delta-mask source L{block:02d}/H{head:02d} {name} "
@@ -315,12 +332,23 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                             if positives.numel():
                                 threshold = torch.quantile(positives, 0.95)
                                 raw[query_index, frame_index] = values > threshold
-                    dilated = torch.nn.functional.max_pool2d(
-                        raw.float().reshape(-1, 1, 16, 28),
-                        kernel_size=3,
-                        stride=1,
-                        padding=1,
-                    ).reshape_as(raw) > 0
+                    raw_flat = raw.float().reshape(-1, 1, 16, 28)
+                    if self.delta_mask_kernel == 1:
+                        dilated_flat = raw_flat
+                    elif self.delta_mask_kernel == 2:
+                        dilated_flat = torch.nn.functional.max_pool2d(
+                            torch.nn.functional.pad(raw_flat, (1, 0, 1, 0)),
+                            kernel_size=2,
+                            stride=1,
+                        )
+                    else:
+                        dilated_flat = torch.nn.functional.max_pool2d(
+                            raw_flat,
+                            kernel_size=3,
+                            stride=1,
+                            padding=1,
+                        )
+                    dilated = dilated_flat.reshape_as(raw) > 0
                     raw_masks.append(raw.reshape_as(positive))
                     dilated_masks.append(dilated.reshape_as(positive))
                     references.append(reference.float())
@@ -349,6 +377,8 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                         "step10": matched_steps[local_index],
                         "sigma10": matched_sigmas[local_index],
                         "cosine": cosine_scores[local_index],
+                        "mask_source_step": mask_source_step,
+                        "mask_kernel": self.delta_mask_kernel,
                     }
             return output_h.reshape_as(output)
 
@@ -466,17 +496,29 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
                 matched_step10=metadata("step10", np.int16),
                 matched_sigma10=metadata("sigma10", np.float32),
                 cosine=metadata("cosine", np.float32),
+                mask_source_step=np.asarray(
+                    self.reverse_capture_entries[(head_ids[0][0], head_ids[0][1], names[0])]["mask_source_step"],
+                    dtype=np.int16,
+                ),
+                mask_kernel=np.asarray(
+                    self.reverse_capture_entries[(head_ids[0][0], head_ids[0][1], names[0])]["mask_kernel"],
+                    dtype=np.int16,
+                ),
                 step40=np.asarray(self.current_step, dtype=np.int16),
                 timestep40=np.asarray(self.current_timestep_value, dtype=np.float32),
                 sigma40=np.asarray(self.current_sigma, dtype=np.float32),
                 branch=np.asarray(self.current_cfg_branch),
                 threshold_percentile=np.asarray(95, dtype=np.int16),
-                dilation_radius=np.asarray(1, dtype=np.int16),
+                dilation_radius=np.asarray(self.delta_mask_kernel // 2, dtype=np.int16),
                 qkv_modified=np.asarray(False),
                 intervention=np.asarray(
-                    "frozen_similarity_matched_positive_delta_P95_spatial_dilate1_remove_and_renormalize"
-                    if self.reverse_mode == "similarity_delta_mask_removal"
-                    else "frozen_same_index_positive_delta_P95_spatial_dilate1_remove_and_renormalize"
+                    "frozen_S09_positive_delta_P95_spatial_kernel_remove_S00_S09_and_renormalize"
+                    if self.reverse_mode == "s09_fixed_delta_mask_removal"
+                    else (
+                        "frozen_similarity_matched_positive_delta_P95_spatial_kernel_remove_and_renormalize"
+                        if self.reverse_mode == "similarity_delta_mask_removal"
+                        else "frozen_same_index_positive_delta_P95_spatial_kernel_remove_and_renormalize"
+                    )
                 ),
             )
 
@@ -485,6 +527,7 @@ def build_transplanter(parent, mode: str, seed: int, donor_root: Path, mapping_c
 
 def main() -> None:
     args = parse_args()
+    os.environ["ATTENTION_DELTA_MASK_KERNEL"] = str(args.mask_kernel)
     os.environ["ATTENTION_NOISE_MODE"] = "probability_object_query_identity"
     os.environ["ATTENTION_NUM_INFERENCE_STEPS"] = "10" if args.mode == "donor" else "40"
     os.environ["ATTENTION_EXTREME_COUNT"] = "100"
@@ -542,7 +585,11 @@ def main() -> None:
                         else (
                             "similarity_matched_positive_delta_P95_dilate1"
                             if args.mode == "similarity_delta_mask_removal"
-                            else ("same_step_index_S00_S09" if args.mode == "same_index_replacement" else "attention_cosine")
+                            else (
+                                "frozen_S09_positive_delta_P95_apply_S00_S09"
+                                if args.mode == "s09_fixed_delta_mask_removal"
+                                else ("same_step_index_S00_S09" if args.mode == "same_index_replacement" else "attention_cosine")
+                            )
                         )
                     )
                 ),

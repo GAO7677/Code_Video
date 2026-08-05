@@ -2,7 +2,7 @@
 set -euo pipefail
 
 GPU="${1:-3}"
-ROOT=/data/gaoya/agent-data/outputs/object_query_similarity_delta_mask_case001460/seed_047326
+ROOT=/data/gaoya/agent-data/outputs/object_query_similarity_delta_mask1x1_case001460/seed_047326
 DIFFTRACK=/home/gaoya/Code_Video/DiffTrack-main
 PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 WORKER=$DIFFTRACK/AAA_my_test/run_object_query_reverse_attention_transplant_worker.py
@@ -19,8 +19,8 @@ REMOVAL_VIDEO_ROOT=$ROOT/removal_run
 OVERLAY_ROOT=$ROOT/removal_overlays
 BASELINE10=/data/gaoya/agent-data/outputs/attention_lora_object_query_frozen_trajectory_10step_case001460/seeds/seed_047326/probe_top100/videos/lora/cases/$CASE/original.mp4
 BASELINE40=/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds/seed_047326/original.mp4
-DONOR_SOURCE=/data/gaoya/agent-data/outputs/object_query_positive_delta_mask_case001460/seed_047326/donor_rows
-TARGET_SOURCE=/data/gaoya/agent-data/outputs/object_query_positive_delta_mask_case001460/seed_047326/target_rows
+DONOR_SOURCE=/data/gaoya/agent-data/outputs/object_query_positive_delta_mask1x1_case001460/seed_047326/donor_rows
+TARGET_SOURCE=/data/gaoya/agent-data/outputs/object_query_positive_delta_mask1x1_case001460/seed_047326/target_rows
 
 mkdir -p "$ROOT/logs" "$CAPTURE_ROOT" "$OVERLAY_ROOT"
 printf '%s\n' "$CASE_JSON" > "$CASE_LIST"
@@ -67,5 +67,5 @@ link_original "$BASELINE40" "$REMOVAL_VIDEO_ROOT"
 VIDEO=$REMOVAL_VIDEO_ROOT/lora/cases/$CASE/top100_steps_00_40.mp4
 "$PYTHON" "$RENDERER" --capture-root "$CAPTURE_ROOT" --video "$VIDEO" --output-root "$OVERLAY_ROOT"
 
-printf 'seed=47326\ngpu=%s\nmatching=per_head_similarity_csv\nthreshold=P95_positive_delta_per_query_per_latent_frame\ndilation=spatial_radius1\napply_steps=S000-S039\ncompleted=%s\n' \
+printf 'seed=47326\ngpu=%s\nmatching=per_head_similarity_csv\nthreshold=P95_positive_delta_per_query_per_latent_frame\nmask_kernel=1x1_no_expansion\napply_steps=S000-S039\ncompleted=%s\n' \
   "$GPU" "$(date -u +%FT%TZ)" > "$ROOT/complete"
