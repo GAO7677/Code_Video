@@ -1,0 +1,26 @@
+{
+  "extends": "formal_full_sa_no_object_gpu27.json",
+  "experiment": {
+    "name": "full_sa_no_object_gpu01_formal_vjepa_loss",
+    "description": "Formal Full-SA GPU01 run with frozen Tiny-VAE/V-JEPA2.1 auxiliary feature MSE"
+  },
+  "launch": {
+    "gpu_set": "0,1",
+    "num_processes": 2,
+    "main_process_port": 29531
+  },
+  "vjepa_loss": {
+    "enabled": true,
+    "weight": 0.01,
+    "sigma_min": 0.2,
+    "sigma_max": 0.8,
+    "every_n_forwards": 2,
+    "num_frames": 16,
+    "input_size": 384,
+    "tiny_vae_parallel": false,
+    "vjepa_repo": "/home/gaoya/Code_Video/vjepa2_tinyvae_mse/vjepa2",
+    "vjepa_checkpoint": "/data/gaoya/ckpt/VJEPA2/vjepa2_1_vitl_dist_vitG_384.pt",
+    "tiny_vae_root": "/home/gaoya/Code_Video/taehv",
+    "tiny_vae_checkpoint": "/data/gaoya/ckpt/taew2_2.pth"
+  }
+}

@@ -1418,7 +1418,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_model(args: argparse.Namespace, accelerator) -> DINOv3XSSCContextSlotsWanModule:
+def build_model(
+    args: argparse.Namespace,
+    accelerator,
+    *,
+    model_class: type[DINOv3XSSCContextSlotsWanModule] = DINOv3XSSCContextSlotsWanModule,
+    extra_model_kwargs: dict | None = None,
+) -> DINOv3XSSCContextSlotsWanModule:
     xssc_checkpoint = args.xssc_checkpoint
     if not args.disable_object_branch:
         xssc_checkpoint = resolve_latest_xssc_checkpoint(
@@ -1426,7 +1432,7 @@ def build_model(args: argparse.Namespace, accelerator) -> DINOv3XSSCContextSlots
             args.xssc_checkpoint_latest_dir,
         )
     args.xssc_checkpoint = xssc_checkpoint
-    return DINOv3XSSCContextSlotsWanModule(
+    return model_class(
         model_paths=args.model_paths,
         model_id_with_origin_paths=args.model_id_with_origin_paths,
         tokenizer_path=args.tokenizer_path,
@@ -1496,6 +1502,7 @@ def build_model(args: argparse.Namespace, accelerator) -> DINOv3XSSCContextSlots
         head_selection_feature_subtype=args.head_selection_feature_subtype,
         head_selection_expected_num_heads=args.head_selection_expected_num_heads,
         enable_object_branch=not args.disable_object_branch,
+        **(extra_model_kwargs or {}),
     )
 
 
@@ -1593,8 +1600,13 @@ def _log_stage_summary(accelerator, model: DINOv3XSSCContextSlotsWanModule, args
     accelerator.print("\n".join(lines))
 
 
-def main() -> None:
-    parser = build_parser()
+def main(
+    *,
+    build_parser_fn=build_parser,
+    build_model_fn=build_model,
+    log_stage_summary_fn=_log_stage_summary,
+) -> None:
+    parser = build_parser_fn()
     args = tvn.prepare_args(parser.parse_args())
     if int(args.fixed_num_context_frames) != base.XSSC_NUM_CONTEXT_FRAMES:
         parser.error(
@@ -1639,7 +1651,7 @@ def main() -> None:
     headonly_val_config = tvn.build_headonly_val_config(args)
     headonly_val_dataset = tvn.build_headonly_val_dataset(args, headonly_val_config)
     headonly_val_dataloader = tvn.build_headonly_val_dataloader(headonly_val_dataset, args)
-    model = build_model(args, accelerator)
+    model = build_model_fn(args, accelerator)
     actual_trainable_params = sum(
         param.numel() for param in model.trainable_modules()
     )
@@ -1698,7 +1710,7 @@ def main() -> None:
                 f"shape_mismatch={len(resume_info['skipped_shape_mismatch'])}"
             )
 
-    _log_stage_summary(accelerator, model, args)
+    log_stage_summary_fn(accelerator, model, args)
     model_logger = base.ModelLogger(
         tvn.get_checkpoint_dir(args),
         remove_prefix_in_ckpt=args.remove_prefix_in_ckpt,

@@ -16,6 +16,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 TRAIN_SCRIPT = ROOT / "train_xssc_object_self_attn_lora.py"
+VJEPA_LOSS_TRAIN_SCRIPT = ROOT / "train_xssc_object_self_attn_lora_vjepa_loss.py"
 OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT = ROOT / "train_official_xssc_object_only.py"
 VALID_MODES = {"object_only", "full_sa", "s_head", "t_head"}
 HEAD_SELECTIVE_MODES = {"s_head", "t_head"}
@@ -148,6 +149,34 @@ def validate_config(config: dict, config_dir: Path) -> dict:
     if int(require(config, "adaptation.self_attn_lora_rank")) <= 0:
         raise ValueError("adaptation.self_attn_lora_rank must be positive")
 
+    vjepa_loss = config.get("vjepa_loss", {})
+    vjepa_loss_enabled = bool(vjepa_loss.get("enabled", False))
+    if vjepa_loss_enabled:
+        if xssc_backend != "dinov3_movic":
+            raise ValueError(
+                "vjepa_loss currently requires model.xssc_backend=dinov3_movic"
+            )
+        if float(require(config, "vjepa_loss.weight")) <= 0.0:
+            raise ValueError("vjepa_loss.weight must be positive")
+        sigma_min = float(require(config, "vjepa_loss.sigma_min"))
+        sigma_max = float(require(config, "vjepa_loss.sigma_max"))
+        if not 0.0 <= sigma_min < sigma_max <= 1.0:
+            raise ValueError(
+                "vjepa_loss sigma range must satisfy "
+                f"0 <= sigma_min < sigma_max <= 1, got [{sigma_min}, {sigma_max}]"
+            )
+        if int(require(config, "vjepa_loss.every_n_forwards")) <= 0:
+            raise ValueError("vjepa_loss.every_n_forwards must be positive")
+        num_frames = int(require(config, "vjepa_loss.num_frames"))
+        if num_frames <= 0 or num_frames % 2:
+            raise ValueError("vjepa_loss.num_frames must be a positive even integer")
+        if int(require(config, "vjepa_loss.input_size")) != 384:
+            raise ValueError(
+                "The configured V-JEPA2.1 ViT-L checkpoint requires input_size=384"
+            )
+        if not isinstance(require(config, "vjepa_loss.tiny_vae_parallel"), bool):
+            raise TypeError("vjepa_loss.tiny_vae_parallel must be a boolean")
+
     path_keys = [
         "paths.project_root",
         "paths.diffsynth_root",
@@ -185,6 +214,22 @@ def validate_config(config: dict, config_dir: Path) -> dict:
                 f"Configured path does not exist ({dotted_key}): "
                 f"{normalized[keys[0]][keys[1]]}"
             )
+
+    if vjepa_loss_enabled:
+        for key in (
+            "vjepa_repo",
+            "vjepa_checkpoint",
+            "tiny_vae_root",
+            "tiny_vae_checkpoint",
+        ):
+            normalized["vjepa_loss"][key] = resolve_config_path(
+                str(require(config, f"vjepa_loss.{key}")), config_dir
+            )
+            if not Path(normalized["vjepa_loss"][key]).exists():
+                raise FileNotFoundError(
+                    f"Configured V-JEPA loss path does not exist ({key}): "
+                    f"{normalized['vjepa_loss'][key]}"
+                )
 
     normalized["paths"]["output_root"] = resolve_config_path(
         str(require(config, "paths.output_root")), config_dir
@@ -265,13 +310,18 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
     optim = config["optimization"]
     checkpointing = config["checkpointing"]
     logging = config["logging"]
+    vjepa_loss = config.get("vjepa_loss", {})
+    vjepa_loss_enabled = bool(vjepa_loss.get("enabled", False))
 
     xssc_backend = str(model["xssc_backend"])
-    train_script = (
-        OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT
-        if xssc_backend == "official_dinov2"
-        else TRAIN_SCRIPT
-    )
+    if vjepa_loss_enabled:
+        train_script = VJEPA_LOSS_TRAIN_SCRIPT
+    else:
+        train_script = (
+            OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT
+            if xssc_backend == "official_dinov2"
+            else TRAIN_SCRIPT
+        )
     command = [
         str(launch["accelerate_bin"]),
         "launch",
@@ -368,6 +418,21 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
                 "--experiment_seed": optim["seed"],
             }
         )
+    if vjepa_loss_enabled:
+        options.update(
+            {
+                "--vjepa_loss_weight": vjepa_loss["weight"],
+                "--vjepa_sigma_min": vjepa_loss["sigma_min"],
+                "--vjepa_sigma_max": vjepa_loss["sigma_max"],
+                "--vjepa_every_n_forwards": vjepa_loss["every_n_forwards"],
+                "--vjepa_num_frames": vjepa_loss["num_frames"],
+                "--vjepa_input_size": vjepa_loss["input_size"],
+                "--vjepa_repo": vjepa_loss["vjepa_repo"],
+                "--vjepa_checkpoint": vjepa_loss["vjepa_checkpoint"],
+                "--tiny_vae_root": vjepa_loss["tiny_vae_root"],
+                "--tiny_vae_checkpoint": vjepa_loss["tiny_vae_checkpoint"],
+            }
+        )
     if not adaptation["enable_object_branch"]:
         options["--disable_object_branch"] = None
     else:
@@ -458,6 +523,8 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         command.append("--xssc_filter_empty_amg")
     if optim["fail_on_nonfinite_train_values"]:
         command.append("--fail_on_nonfinite_train_values")
+    if vjepa_loss_enabled and vjepa_loss["tiny_vae_parallel"]:
+        command.append("--tiny_vae_parallel")
     if adaptation["enable_object_branch"] and logging["debug_print_object_regularization"]:
         command.append("--debug_print_object_regularization")
     if checkpointing.get("resume_from"):
@@ -506,6 +573,9 @@ def main() -> None:
         "mode": config["adaptation"]["mode"],
         "xssc_backend": config["model"]["xssc_backend"],
         "enable_object_branch": config["adaptation"]["enable_object_branch"],
+        "vjepa_loss_enabled": bool(
+            config.get("vjepa_loss", {}).get("enabled", False)
+        ),
         "config_sources": sources,
         "gpu_set": config["launch"]["gpu_set"],
         "effective_batch": effective_batch,
