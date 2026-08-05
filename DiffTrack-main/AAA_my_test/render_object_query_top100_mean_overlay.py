@@ -82,7 +82,8 @@ def render(payload, frames, values, vmax, title, label):
         )
         base = cv2.resize(frames[frame_index], (TILE_W, TILE_H), interpolation=cv2.INTER_AREA)
         heat = cv2.resize(values[frame_index].astype(np.float32), (TILE_W, TILE_H))
-        norm = np.clip(heat / max(float(vmax), 1e-12), 0, 1)
+        frame_vmax = float(vmax[frame_index]) if np.ndim(vmax) else float(vmax)
+        norm = np.clip(heat / max(frame_vmax, 1e-12), 0, 1)
         color = cv2.applyColorMap(np.uint8(norm * 255), cv2.COLORMAP_TURBO)
         alpha = (0.12 + 0.72 * norm)[..., None]
         canvas[HEADER_H:, x:x + TILE_W] = np.uint8(
@@ -128,18 +129,21 @@ def main():
             raise RuntimeError(f"Duplicate heads for {region}")
         before = np.stack(entry["before"]).mean(axis=0)
         after = np.stack(entry["after"]).mean(axis=0)
-        shared_max = max(
-            float(np.percentile(np.concatenate([before.ravel(), after.ravel()]), 99.5)),
-            1e-12,
-        )
+        shared_frame_max = np.asarray([
+            max(
+                float(np.percentile(np.concatenate([before[index].ravel(), after[index].ravel()]), 99.5)),
+                1e-12,
+            )
+            for index in range(FRAMES)
+        ])
         images = {}
         is_identity = "identity" in cfg.condition
         kinds = (("original", before),) if is_identity else (("before", before), ("after", after))
         for kind, values in kinds:
             filename = f"{region}__{cfg.condition}__{kind}__top{len(heads)}_mean.jpg"
             image = render(
-                entry["payload"], frames, values, shared_max,
-                f"Seed {entry['seed']} | {region} | {cfg.condition} | {kind} | mean of {len(heads)} heads",
+                entry["payload"], frames, values, shared_frame_max,
+                f"Seed {entry['seed']} | {region} | {cfg.condition} | {kind} | per-frame scale | mean of {len(heads)} heads",
                 f"SUM 8Q / MEAN {len(heads)}H",
             )
             cv2.imwrite(str(cfg.output_root / filename), image, [cv2.IMWRITE_JPEG_QUALITY, 94])
@@ -153,7 +157,8 @@ def main():
             "num_heads": len(heads),
             "query_aggregation": "sum_8_queries_then_mean_heads",
             "heads": [{"block": block, "head": head} for block, head in heads],
-            "shared_vmax": shared_max,
+            "scale_mode": "per_frame_before_after_shared",
+            "frame_vmax": shared_frame_max.tolist(),
             "images": images,
         })
     (cfg.output_root / "manifest.json").write_text(

@@ -41,6 +41,7 @@ if NOISE_MODE not in {
     "probability_context_only",
     "probability_object_query_continuity",
     "probability_object_query_main_component_continuity",
+    "probability_object_query_group_mean_continuity",
     "probability_object_query_identity",
     "probability_identity",
 }:
@@ -150,9 +151,15 @@ class AdaptiveQKLogitNoise:
         self.object_continuity_entries: dict[tuple, dict[str, Any]] = {}
         self.object_continuity_capture_root = None
         self.object_continuity_capture_heads: dict[tuple[int, int], float] = {}
+        self.group_mean_phase = "idle"
+        self.group_mean_probe: dict[str, dict[str, Any]] = {}
+        self.group_mean_apply: dict[str, dict[str, Any]] = {}
+        self.group_mean_masks: dict[str, dict[str, torch.Tensor]] = {}
+        self.group_mean_capture_entries: dict[tuple[str, str], dict[str, Any]] = {}
         if self.noise_mode in {
             "probability_object_query_continuity",
             "probability_object_query_main_component_continuity",
+            "probability_object_query_group_mean_continuity",
             "probability_object_query_identity",
         }:
             from AAA_my_test.object_query_attention_capture_headwise_pck import pck_query_regions
@@ -221,11 +228,30 @@ class AdaptiveQKLogitNoise:
         branch_active = (
             CFG_BRANCH_MODE == "both" or CFG_BRANCH_MODE == self.current_cfg_branch
         )
+        if self.noise_mode == "probability_object_query_group_mean_continuity":
+            active_step_end = int(os.environ.get("OBJECT_GROUP_ACTIVE_STEP_END", "39"))
+            branch_active = branch_active and 0 <= self.current_step <= active_step_end
         if self.adaptive_prefix is None or self.current_step < 0 or not branch_active:
             self.group = None
         else:
             self.group = f"{self.adaptive_prefix}_step_{self.current_step:02d}"
-        return self.original_model_fn(*args, **kwargs)
+        if (
+            self.noise_mode != "probability_object_query_group_mean_continuity"
+            or self.group is None
+        ):
+            return self.original_model_fn(*args, **kwargs)
+
+        self.group_mean_probe = {}
+        self.group_mean_apply = {}
+        self.group_mean_masks = {}
+        self.group_mean_phase = "probe"
+        self.original_model_fn(*args, **kwargs)
+        self._finalize_group_mean_masks()
+        self.group_mean_phase = "apply"
+        result = self.original_model_fn(*args, **kwargs)
+        self._finalize_group_mean_capture()
+        self.group_mean_phase = "idle"
+        return result
 
     def _seed(self, block: int, heads: list[int], chunk_start: int) -> int:
         key = (
@@ -234,6 +260,229 @@ class AdaptiveQKLogitNoise:
             f"mode={self.noise_mode}|sigma={SIGMA}|alpha={self.attention_alpha}"
         )
         return int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:8], "little")
+
+    @staticmethod
+    def _main_component_from_topk(response: torch.Tensor, top_k: int) -> torch.Tensor:
+        flat = response.flatten(-2)
+        top_indices = torch.topk(flat, k=min(top_k, flat.shape[-1]), dim=-1).indices
+        candidate = torch.zeros_like(flat, dtype=torch.bool)
+        candidate.scatter_(-1, top_indices, True)
+        candidate = candidate.reshape_as(response)
+        candidate_2d = candidate.reshape(-1, 16, 28)
+        peaks = flat.argmax(dim=-1).reshape(-1, 1)
+        component = torch.zeros_like(candidate_2d.reshape(-1, 16 * 28), dtype=torch.bool)
+        component.scatter_(-1, peaks, True)
+        component = component.reshape(-1, 16, 28)
+        for _ in range(top_k):
+            component = candidate_2d & (
+                torch.nn.functional.max_pool2d(
+                    component.float().unsqueeze(1), 3, stride=1, padding=1
+                ).squeeze(1) > 0
+            )
+        return component.reshape_as(response)
+
+    def _group_mean_object_probabilities(
+        self, selected_q, key_t, scale: float, heads: list[int], block: int
+    ):
+        latent_frames = int(os.environ.get("ATTENTION_MASK_LATENT_FRAMES", "13"))
+        context_frames = int(os.environ.get("ATTENTION_MASK_CONTEXT_LATENT_FRAMES", "2"))
+        sequence = int(selected_q.shape[2])
+        spatial_tokens = sequence // latent_frames
+        if sequence % latent_frames or spatial_tokens != 16 * 28:
+            raise RuntimeError(
+                f"Expected 13x16x28 tokens for group continuity, got {sequence}"
+            )
+        query_rows = sorted(
+            {
+                int(index)
+                for region in self.object_continuity_regions
+                for index in region["token_indices"]
+            }
+        )
+        row_tensor = torch.as_tensor(query_rows, device=selected_q.device, dtype=torch.long)
+        before = torch.softmax(
+            torch.matmul(selected_q[:, :, row_tensor], key_t).float() * scale, dim=-1
+        )
+        after = before.clone()
+        row_positions = {row: index for index, row in enumerate(query_rows)}
+
+        for region in self.object_continuity_regions:
+            region_rows = [int(index) for index in region["token_indices"]]
+            positions = torch.as_tensor(
+                [row_positions[index] for index in region_rows],
+                device=selected_q.device,
+                dtype=torch.long,
+            )
+            region_before = before[:, :, positions]
+            response = region_before.sum(dim=2).reshape(
+                region_before.shape[0], region_before.shape[1], latent_frames, 16, 28
+            )
+            name = str(region["name"])
+            if self.group_mean_phase == "probe":
+                entry = self.group_mean_probe.setdefault(
+                    name,
+                    {"sum": torch.zeros_like(response[:, 0]), "heads": 0, "region": region},
+                )
+                entry["sum"] += response.sum(dim=1)
+                entry["heads"] += len(heads)
+                continue
+            if self.group_mean_phase != "apply":
+                continue
+            if name not in self.group_mean_masks:
+                raise RuntimeError(f"Missing group mask for {name} at step {self.current_step}")
+            forbidden = self.group_mean_masks[name]["forbidden"]
+            forbidden_flat = forbidden.flatten(-2).reshape(
+                forbidden.shape[0], latent_frames * spatial_tokens
+            )
+            region_after = region_before.masked_fill(
+                forbidden_flat[:, None, None, :], 0.0
+            )
+            row_sum = region_after.sum(dim=-1, keepdim=True)
+            region_after = torch.where(
+                row_sum > 0,
+                region_after / row_sum.clamp_min(1e-12),
+                region_before,
+            )
+            after[:, :, positions] = region_after
+            apply_entry = self.group_mean_apply.setdefault(
+                name,
+                {
+                    "before_sum": torch.zeros_like(response[:, 0]),
+                    "after_sum": torch.zeros_like(response[:, 0]),
+                    "heads": 0,
+                    "region": region,
+                },
+            )
+            apply_entry["before_sum"] += response.sum(dim=1)
+            apply_entry["after_sum"] += region_after.sum(dim=2).reshape_as(response).sum(dim=1)
+            apply_entry["heads"] += len(heads)
+        return query_rows, after
+
+    def _finalize_group_mean_masks(self) -> None:
+        expected_heads = int(os.environ.get("OBJECT_GROUP_EXPECTED_HEADS", "100"))
+        quantile = float(os.environ.get("OBJECT_CONTINUITY_HIGH_QUANTILE", "0.90"))
+        top_k = int(os.environ.get("OBJECT_CONTINUITY_MAIN_COMPONENT_TOPK", "5"))
+        radius = int(os.environ.get("OBJECT_CONTINUITY_NEIGHBOR_RADIUS", "1"))
+        context_frames = int(os.environ.get("ATTENTION_MASK_CONTEXT_LATENT_FRAMES", "2"))
+        if not self.group_mean_probe:
+            raise RuntimeError(f"No Top100 heads observed in probe pass at step {self.current_step}")
+        for name, entry in self.group_mean_probe.items():
+            if int(entry["heads"]) != expected_heads:
+                raise RuntimeError(
+                    f"Group probe collected {entry['heads']} heads for {name}, expected {expected_heads}"
+                )
+            mean = entry["sum"] / float(entry["heads"])
+            thresholds = torch.quantile(
+                mean.flatten(-2), quantile, dim=-1, keepdim=True
+            ).unsqueeze(-1)
+            p90 = mean >= thresholds
+            main_component = self._main_component_from_topk(mean, top_k)
+            forbidden = torch.zeros_like(p90)
+            kernel = 2 * radius + 1
+            for frame in range(context_frames, mean.shape[1]):
+                neighboring = torch.nn.functional.max_pool2d(
+                    main_component[:, frame - 1].float().unsqueeze(1),
+                    kernel_size=kernel,
+                    stride=1,
+                    padding=radius,
+                ).squeeze(1) > 0
+                forbidden[:, frame] = p90[:, frame] & ~neighboring
+            self.group_mean_masks[name] = {
+                "probe_mean": mean.detach(),
+                "p90": p90.detach(),
+                "main_component": main_component.detach(),
+                "forbidden": forbidden.detach(),
+            }
+
+    def _finalize_group_mean_capture(self) -> None:
+        capture_step = int(os.environ.get("OBJECT_CONTINUITY_CAPTURE_STEP", "39"))
+        if self.current_step != capture_step or self.object_continuity_capture_root is None:
+            return
+        expected_heads = int(os.environ.get("OBJECT_GROUP_EXPECTED_HEADS", "100"))
+        prefix = (self.group or "").split("_step_", 1)[0]
+        for name, apply_entry in self.group_mean_apply.items():
+            if int(apply_entry["heads"]) != expected_heads:
+                raise RuntimeError(
+                    f"Group apply collected {apply_entry['heads']} heads for {name}, expected {expected_heads}"
+                )
+            masks = self.group_mean_masks[name]
+            before = (apply_entry["before_sum"] / expected_heads).mean(dim=0).detach().cpu()
+            after = (apply_entry["after_sum"] / expected_heads).mean(dim=0).detach().cpu()
+            key = (prefix, name)
+            entry = self.group_mean_capture_entries.setdefault(
+                key,
+                {
+                    "before": torch.zeros_like(before),
+                    "after": torch.zeros_like(after),
+                    "removed": torch.zeros_like(before),
+                    "p90": torch.zeros_like(before),
+                    "main_component": torch.zeros_like(before),
+                    "forbidden": torch.zeros_like(before),
+                    "count": 0,
+                    "region": apply_entry["region"],
+                    "num_heads": expected_heads,
+                },
+            )
+            entry["before"] += before
+            entry["after"] += after
+            entry["removed"] += (before - after).clamp_min(0)
+            entry["p90"] += masks["p90"].float().mean(dim=0).cpu()
+            entry["main_component"] += masks["main_component"].float().mean(dim=0).cpu()
+            entry["forbidden"] += masks["forbidden"].float().mean(dim=0).cpu()
+            entry["count"] += 1
+
+    def flush_group_mean_capture(self, group: str | None) -> None:
+        if not group or self.object_continuity_capture_root is None:
+            return
+        prefix = group.split("_step_", 1)[0]
+        keys = [key for key in self.group_mean_capture_entries if key[0] == prefix]
+        if not keys:
+            return
+        self.object_continuity_capture_root.mkdir(parents=True, exist_ok=True)
+        capture_step = int(os.environ.get("OBJECT_CONTINUITY_CAPTURE_STEP", "39"))
+        case = os.environ.get("QK_ATTENTION_CAPTURE_CASE", "case")
+        seed = int(os.environ.get("ATTENTION_NOISE_SEED", "0"))
+        for key in keys:
+            _prefix, region_name = key
+            entry = self.group_mean_capture_entries.pop(key)
+            count = max(1, int(entry["count"]))
+            region = entry["region"]
+            filename = (
+                f"{case}__seed{seed:06d}__{prefix}__{region_name}"
+                f"__step{capture_step:02d}__group_mean.npz"
+            )
+            np.savez_compressed(
+                self.object_continuity_capture_root / filename,
+                before=(entry["before"] / count).numpy(),
+                after=(entry["after"] / count).numpy(),
+                removed=(entry["removed"] / count).numpy(),
+                p90=(entry["p90"] / count).numpy(),
+                main_component=(entry["main_component"] / count).numpy(),
+                forbidden=(entry["forbidden"] / count).numpy(),
+                query_points=region["points"],
+                query_mask=region["mask"],
+                query_token_indices=region["token_indices"],
+                query_context_frame=self.object_continuity_context_frame,
+                query_latent_frame=np.int32(1),
+                query_pixel_frame=np.int32(4),
+                region_name=np.asarray(region_name),
+                region_phrase=np.asarray(region["phrase"]),
+                step=np.int32(capture_step),
+                seed=np.int32(seed),
+                num_heads=np.int32(entry["num_heads"]),
+                high_quantile=np.float32(
+                    float(os.environ.get("OBJECT_CONTINUITY_HIGH_QUANTILE", "0.90"))
+                ),
+                neighbor_radius=np.int32(
+                    int(os.environ.get("OBJECT_CONTINUITY_NEIGHBOR_RADIUS", "1"))
+                ),
+                main_component_topk=np.int32(
+                    int(os.environ.get("OBJECT_CONTINUITY_MAIN_COMPONENT_TOPK", "5"))
+                ),
+                mode=np.asarray(self.noise_mode),
+                protocol=np.asarray("top100_group_mean_double_pass"),
+                query_aggregation=np.asarray("sum8_queries_then_mean100_heads"),
+            )
 
     def _object_continuity_probabilities(
         self, selected_q, key_t, scale: float, heads: list[int], block: int
@@ -405,6 +654,9 @@ class AdaptiveQKLogitNoise:
         return query_rows, after
 
     def flush_object_continuity_capture(self, group: str | None) -> None:
+        if self.noise_mode == "probability_object_query_group_mean_continuity":
+            self.flush_group_mean_capture(group)
+            return
         if not group or self.object_continuity_capture_root is None:
             return
         prefix = group.split("_step_", 1)[0]
@@ -481,11 +733,19 @@ class AdaptiveQKLogitNoise:
         if self.noise_mode in {
             "probability_object_query_continuity",
             "probability_object_query_main_component_continuity",
+            "probability_object_query_group_mean_continuity",
             "probability_object_query_identity",
         }:
-            continuity_rows, continuity_after = self._object_continuity_probabilities(
-                selected_q, key_t, scale, heads, block
-            )
+            if self.noise_mode == "probability_object_query_group_mean_continuity":
+                continuity_rows, continuity_after = self._group_mean_object_probabilities(
+                    selected_q, key_t, scale, heads, block
+                )
+                if self.group_mean_phase == "probe":
+                    return original(q, k, v)
+            else:
+                continuity_rows, continuity_after = self._object_continuity_probabilities(
+                    selected_q, key_t, scale, heads, block
+                )
         capture_prefix = (self.group or "").split("_step_", 1)[0]
         capture_enabled = (
             self.capture_root is not None
@@ -525,6 +785,7 @@ class AdaptiveQKLogitNoise:
                 probabilities = before_probabilities
             elif self.noise_mode in {
                 "probability_object_query_continuity",
+                "probability_object_query_group_mean_continuity",
                 "probability_object_query_identity",
             }:
                 probabilities = before_probabilities.clone()
@@ -858,6 +1119,7 @@ def write_experiment_metadata() -> None:
                     "probability_context_only": "context_frames_only_attention_mask",
                     "probability_object_query_continuity": "object_query_temporal_spatial_continuity",
                     "probability_object_query_main_component_continuity": "object_query_main_component_temporal_spatial_continuity",
+                    "probability_object_query_group_mean_continuity": "object_query_group_mean_double_pass_temporal_spatial_continuity",
                     "probability_object_query_identity": "object_query_identity_no_intervention",
                     "probability_additive": "direct_attention_probability_additive_noise",
                     "logit": "direct_qk_logit_noise",

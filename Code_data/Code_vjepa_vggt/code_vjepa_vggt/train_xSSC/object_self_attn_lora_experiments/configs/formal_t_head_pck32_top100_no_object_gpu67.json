@@ -1,0 +1,21 @@
+{
+  "extends": "formal_t_head_no_object_gpu67.json",
+  "experiment": {
+    "name": "lora_pck32_top100_t_head_no_object_gpu67_formal",
+    "description": "OpenVid-initialized rank-32 LoRA restricted to the fixed Wan+LoRA PCK@32 Top100 heads; no object branch",
+    "expected_trainable_params": 11075584
+  },
+  "paths": {
+    "head_selection_config": "lora_pck32_top100_heads.json"
+  },
+  "adaptation": {
+    "mode": "t_head",
+    "head_selection_subset_id": "T_lora_pck32_top100",
+    "head_selection_expected_role": "T",
+    "head_selection_feature_subtype": "lora_pck32",
+    "head_selection_expected_num_heads": 100
+  },
+  "logging": {
+    "wandb_name": "lora_pck32_top100_t_head_no_object_gpu67_from_scratch"
+  }
+}

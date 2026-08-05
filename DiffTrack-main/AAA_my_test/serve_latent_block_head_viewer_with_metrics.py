@@ -606,6 +606,52 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/object-query-group-mean-continuity":
+            self.send_payload(
+                object_query_group_mean_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/object-query-group-mean-continuity/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                object_query_group_mean_catalog(
+                    params.get("seed", ["90094"])[0],
+                    params.get("stage", ["all_steps"])[0],
+                ),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/object-query-group-mean-continuity/image":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_group_mean_asset(
+                params.get("seed", ["90094"])[0],
+                params.get("stage", ["all_steps"])[0],
+                params.get("kind", ["group"])[0],
+                params.get("name", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown group-mean object-query image")
+            viewer.send_file_with_range(self, asset, "image/jpeg")
+            return
+        if path == "/api/object-query-group-mean-continuity/video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_group_mean_video(
+                params.get("seed", ["90094"])[0],
+                params.get("stage", ["all_steps"])[0],
+                params.get("kind", ["group"])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown group-mean object-query video")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
         if path == "/api/object-query-top100-mean-overlay/catalog":
             from urllib.parse import parse_qs
 
@@ -2506,6 +2552,9 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 OBJECT_QUERY_TOP100_MEAN_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_object_query_top100_mean_case001460"
 )
+OBJECT_QUERY_GROUP_MEAN_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_object_query_group_mean_case001460"
+)
 OBJECT_QUERY_TOP100_MEAN_SEEDS = (90094, 35075, 21890, 49530, 47326, 32466)
 
 
@@ -2593,6 +2642,123 @@ def object_query_top100_mean_page():
 :root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--old:#b44d31;--new:#176a5c;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2450px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.object{overflow:auto;margin:14px 0;padding:10px;background:var(--card);border:1px solid var(--line);border-radius:13px}.object>h2{position:sticky;left:0;width:max-content;margin:0 0 9px}.row{margin:8px 0 15px}.row h3{position:sticky;left:0;width:max-content;margin:0 0 5px;padding:4px 9px;background:#ece4d6;border-left:6px solid var(--blue)}.row.old h3{border-left-color:var(--old)}.row.new h3{border-left-color:var(--new)}.row img{display:block;min-width:2260px;width:100%;border:1px solid #d8cfbf}.pending{padding:52px 15px;text-align:center;border:1px dashed var(--line)}@media(max-width:900px){header{position:static}}
 </style></head><body><header><a href="/">返回总览</a> · <a href="/object-query-continuity-comparison?v=4">逐 Head 对比</a><h1>Top100 Head Mean · Object Query Attention</h1><p>0613pybullet_sample_001460_w002 · 每个 Head 内 SUM 8 Object Queries，再对完整 PCK@32 Top100 Head 求平均。</p><div class="tools"><label>Seed <select id="seed"><option>90094</option><option>35075</option><option>21890</option><option>49530</option><option>47326</option><option>32466</option></select></label><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main id="content"></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'90094',stage=q.get('stage')||'all_steps';const api='/api/object-query-top100-mean-overlay',src=(method,name)=>`${api}/image?seed=${seed}&stage=${stage}&method=${method}&name=${encodeURIComponent(name)}`,fmt=v=>v==null?'pending':Number(v).toExponential(3),row=(title,cls,method,name,vmax)=>`<section class="row ${cls}"><h3>${title} · vmax=${fmt(vmax)}</h3>${name?`<img loading="lazy" src="${src(method,name)}">`:'<div class="pending">生成/聚合中</div>'}</section>`;function render(d){document.getElementById('seed').value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`Original ${d.identity_ready}/2 · Old ${d.old_ready}/2 · New ${d.new_ready}/2`;document.getElementById('content').innerHTML=d.records.length?d.records.map(r=>`<article class="object"><h2>${e(r.region_name)} · ${e(r.region_phrase)} · ${r.num_heads}/100 heads</h2>${row('No Intervention · Top100 Mean','', 'identity',r.original_image,r.original_vmax)}${row('旧方案 Before · Top100 Mean','old','old',r.old_before_image,r.old_vmax)}${row('旧方案 After · Top100 Mean','old','old',r.old_after_image,r.old_vmax)}${row('新方案 Before · Top100 Mean','new','new',r.new_before_image,r.new_vmax)}${row('新方案 After · Top100 Mean','new','new',r.new_after_image,r.new_vmax)}</article>`).join(''):'<div class="pending">等待该 seed/stage 的 Top100 capture</div>'}async function load(){const d=await fetch(`${api}/catalog?seed=${seed}&stage=${stage}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;else stage=ev.target.value;const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);load();
+</script></body></html>'''
+
+
+def object_query_group_mean_asset(seed: str, stage: str, kind: str, name: str):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    if (
+        seed_value not in OBJECT_QUERY_TOP100_MEAN_SEEDS
+        or stage not in {"all_steps", "steps00_09"}
+        or kind not in {"original", "group"}
+        or Path(name).name != name
+        or not name.endswith(".jpg")
+    ):
+        return None
+    if kind == "original":
+        return object_query_top100_mean_asset(seed, stage, "identity", name)
+    return (
+        OBJECT_QUERY_GROUP_MEAN_ROOT
+        / "seeds"
+        / f"seed_{seed_value:06d}"
+        / stage
+        / "overlays"
+        / name
+    )
+
+
+def object_query_group_mean_video(seed: str, stage: str, kind: str):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    if (
+        seed_value not in OBJECT_QUERY_TOP100_MEAN_SEEDS
+        or stage not in {"all_steps", "steps00_09"}
+        or kind not in {"original", "group"}
+    ):
+        return None
+    case_root = (
+        OBJECT_QUERY_GROUP_MEAN_ROOT
+        / "seeds"
+        / f"seed_{seed_value:06d}"
+        / stage
+        / "videos"
+        / "lora"
+        / "cases"
+        / "0613pybullet_sample_001460_w002"
+    )
+    if kind == "original":
+        return case_root / "original.mp4"
+    suffix = "steps_00_40" if stage == "all_steps" else "steps_00_10"
+    return case_root / f"top100_{suffix}.mp4"
+
+
+def object_query_group_mean_catalog(seed: str, stage: str):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        seed_value = OBJECT_QUERY_TOP100_MEAN_SEEDS[0]
+    if seed_value not in OBJECT_QUERY_TOP100_MEAN_SEEDS:
+        seed_value = OBJECT_QUERY_TOP100_MEAN_SEEDS[0]
+    if stage not in {"all_steps", "steps00_09"}:
+        stage = "all_steps"
+    group_root = (
+        OBJECT_QUERY_GROUP_MEAN_ROOT
+        / "seeds"
+        / f"seed_{seed_value:06d}"
+        / stage
+    )
+    group_manifest = load_payload(group_root / "overlays" / "manifest.json") or {}
+    group_rows = {
+        row["region_name"]: row for row in group_manifest.get("records", [])
+    }
+    identity_catalog = object_query_top100_mean_catalog(str(seed_value), stage)
+    identity_rows = {
+        row["region_name"]: row for row in identity_catalog.get("records", [])
+    }
+    records = []
+    for region_name in sorted(set(group_rows) | set(identity_rows)):
+        group_row = group_rows.get(region_name, {})
+        identity_row = identity_rows.get(region_name, {})
+        records.append(
+            {
+                "region_name": region_name,
+                "region_phrase": (group_row or identity_row).get("region_phrase", region_name),
+                "num_heads": int(group_row.get("num_heads", identity_row.get("num_heads", 0))),
+                "original_image": identity_row.get("original_image"),
+                "images": group_row.get("images", {}),
+                "scale_mode": group_row.get("scale_mode", "per_frame_before_after_shared"),
+                "frame_vmax": group_row.get("frame_vmax", []),
+                "removed_frame_vmax": group_row.get("removed_frame_vmax", []),
+            }
+        )
+    return {
+        "seed": seed_value,
+        "stage": stage,
+        "seeds": list(OBJECT_QUERY_TOP100_MEAN_SEEDS),
+        "records": records,
+        "identity_ready": identity_catalog.get("identity_ready", 0),
+        "group_ready": len(group_rows),
+        "original_video_ready": bool(
+            (asset := object_query_group_mean_video(str(seed_value), stage, "original"))
+            and asset.is_file()
+        ),
+        "group_video_ready": bool(
+            (asset := object_query_group_mean_video(str(seed_value), stage, "group"))
+            and asset.is_file()
+        ),
+    }
+
+
+def object_query_group_mean_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Top100 Group-Mean Continuity</title><style>
+:root{--paper:#eee8dc;--ink:#15241e;--line:#b8ad98;--card:#fffdf8;--red:#b1432d;--green:#176a5c;--gold:#b78024;--blue:#285f7a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 4% 0,#e99d5550,transparent 34rem),radial-gradient(circle at 97% 3%,#4b947750,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:15px 22px;background:#eee8dcee;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 12px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(2450px,calc(100% - 16px));margin:auto;padding:18px 0 90px}.videos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.video,.object{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:10px}.video video{display:block;width:100%;background:#111}.object{overflow:auto;margin:14px 0}.object>h2{position:sticky;left:0;width:max-content;margin:0 0 9px}.row{margin:8px 0 18px}.row h3{position:sticky;left:0;width:max-content;margin:0 0 4px;padding:4px 9px;background:#ece4d6;border-left:6px solid var(--blue)}.row.mask h3{border-left-color:var(--gold)}.row.after h3{border-left-color:var(--green)}.row.removed h3{border-left-color:var(--red)}.explain{position:sticky;left:0;width:min(1180px,calc(100vw - 52px));margin:0 0 8px;padding:8px 11px;background:#f5f0e6;border:1px solid #d7cdbb;border-radius:7px;font:13px/1.55 "Noto Sans SC","Source Han Sans SC",sans-serif;color:#405048}.explain b{color:var(--ink)}.row img{display:block;min-width:2260px;width:100%;border:1px solid #d8cfbf}.pending{padding:52px 15px;text-align:center;border:1px dashed var(--line)}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:13px 18px;background:var(--green);color:#fff}@media(max-width:900px){header{position:static}.videos{grid-template-columns:1fr}}
+</style></head><body><button id="replay" class="replay">重新播放全部</button><header><a href="/">返回总览</a> · <a href="/object-query-top100-mean-overlay?v=1">Top100 Mean 对照</a><h1>Top100 Group-Mean Continuity</h1><p>Probe: SUM 8 object queries → MEAN Top100 heads；P90 候选中移除不邻接上一帧 Top-5 主连通分量的 key，再把同一 forbidden mask 回写全部 Top100 heads。</p><div class="tools"><label>Seed <select id="seed"></select></label><label>Stage <select id="stage"><option value="all_steps">S000-S039</option><option value="steps00_09">S000-S009</option></select></label><button id="refresh">手动刷新</button><span id="status" class="status">读取中</span></div></header><main><section id="videos" class="videos"></section><section id="content"></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let seed=q.get('seed')||'90094',stage=q.get('stage')||'all_steps';const api='/api/object-query-group-mean-continuity',img=(kind,name)=>`${api}/image?seed=${seed}&stage=${stage}&kind=${kind}&name=${encodeURIComponent(name)}`,vid=kind=>`${api}/video?seed=${seed}&stage=${stage}&kind=${kind}`,row=(title,cls,kind,name,description,scale='')=>`<section class="row ${cls}"><h3>${title}${scale?` · ${scale}`:''}</h3><p class="explain">${description}</p>${name?`<img loading="lazy" src="${img(kind,name)}">`:'<div class="pending">生成/聚合中</div>'}</section>`;function sync(){const u=new URL(location.href);u.searchParams.set('seed',seed);u.searchParams.set('stage',stage);history.replaceState(null,'',u)}function render(d){const sel=document.getElementById('seed');if(sel.options.length!==d.seeds.length)sel.innerHTML=d.seeds.map(x=>`<option>${x}</option>`).join('');sel.value=String(seed);document.getElementById('stage').value=stage;document.getElementById('status').textContent=`Original ${d.identity_ready}/2 · Group ${d.group_ready}/2 · color scale: per frame`;document.getElementById('videos').innerHTML=`<article class="video"><h2>Wan+LoRA Original</h2><p>同一 seed、40 个去噪步、49 帧，不修改任何 attention，用作视频质量与运动变化基线。</p>${d.original_video_ready?`<video controls preload="metadata" playsinline src="${vid('original')}"></video>`:'<div class="pending">等待 baseline</div>'}</article><article class="video"><h2>Top100 Group-Mean Intervention · ${stage==='all_steps'?'S000-S039':'S000-S009'}</h2><p>对 PCK@32 Top100 heads 使用组级 forbidden mask；右侧视频是该 mask 实际回写 attention 后的生成结果。</p>${d.group_video_ready?`<video controls preload="metadata" playsinline src="${vid('group')}"></video>`:'<div class="pending">等待双遍推理</div>'}</article>`;document.getElementById('content').innerHTML=d.records.length?d.records.map(r=>`<article class="object"><h2>${e(r.region_name)} · ${e(r.region_phrase)} · ${r.num_heads}/100 heads</h2>${row('1. No Intervention · Top100 Mean','', 'original',r.original_image,'<b>无干预参照。</b>每个 latent key 帧独立计算色标，不再让强帧压暗其他帧。')}${row('2. Group Before · Top100 Mean','', 'group',r.images.before,'<b>干预前的真实 input attention。</b>每个 K 帧独立缩放，但同一个 K 帧的 Before/After 共用局部 vmax，因此帧内可公平比较。','per-frame shared scale')}${row('3. Current Candidate · P90','mask','group',r.images.p90,'<b>当前帧待检查的高响应候选。</b>它是逐帧计算的二值 mask，不受连续值热力图色标影响。')}${row('4. Previous Anchor · Top-5 Main Connected Component','mask','group',r.images.main_component,'<b>上一帧连续性锚点。</b>逐帧 Top-5 后保留包含峰值的主连通分量；二值显示不做色标归一化。')}${row('5. Forbidden Mask · P90 outside radius-1 neighborhood','removed','group',r.images.forbidden,'<b>最终施加的二值 key mask。</b>当前帧 P90 中不邻接上一帧主连通分量的位置；K00/K01 不修改。')}${row('6. Group After · Top100 Mean','after','group',r.images.after,'<b>干预后的 attention。</b>逐帧缩放，并与同一帧 Before 共用 vmax；不同 K 帧之间不共享 vmax。','per-frame shared scale')}${row('7. Removed Attention Mass','removed','group',r.images.removed,'<b>被移除的注意力质量。</b>每个 K 帧独立缩放，以显示弱响应帧中实际发生的删除；颜色不能直接用于比较不同 K 帧的绝对大小。','per-frame scale')}</article>`).join(''):'<div class="pending">等待该 seed/stage 的 group-mean capture</div>'}async function load(){const d=await fetch(`${api}/catalog?seed=${seed}&stage=${stage}`,{cache:'no-store'}).then(r=>r.json());render(d)}for(const id of ['seed','stage'])document.getElementById(id).addEventListener('change',ev=>{if(id==='seed')seed=ev.target.value;else stage=ev.target.value;sync();load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
 </script></body></html>'''
 
 

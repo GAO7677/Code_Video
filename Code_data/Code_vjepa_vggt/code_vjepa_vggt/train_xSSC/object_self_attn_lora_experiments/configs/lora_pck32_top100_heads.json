@@ -1,0 +1,440 @@
+{
+  "schema_version": 1,
+  "subset_id": "T_lora_pck32_top100",
+  "role": "T",
+  "feature_subtype": "lora_pck32",
+  "selection_policy": "Fixed Top100 heads ranked by Wan+LoRA PCK@32; reused at all 40 denoising steps",
+  "selection_source": "/data/gaoya/agent-data/outputs/attention_lora_neighbor_ranking_seed090094_case001460/seeds/seed_090094/pck32/all_steps/alpha090/videos/selection.json",
+  "ranking_criterion": "lora_pck32",
+  "indexing": "Zero-based B{block:02d}H{head:02d}; B04H00 means blocks[4].self_attn head 0",
+  "num_heads": 100,
+  "num_blocks": 24,
+  "block_histogram": {
+    "2": 2,
+    "4": 6,
+    "5": 2,
+    "6": 1,
+    "7": 5,
+    "8": 3,
+    "9": 4,
+    "11": 3,
+    "12": 3,
+    "13": 4,
+    "14": 3,
+    "16": 4,
+    "17": 8,
+    "18": 9,
+    "19": 4,
+    "20": 3,
+    "21": 9,
+    "22": 4,
+    "23": 9,
+    "24": 7,
+    "25": 2,
+    "26": 2,
+    "27": 1,
+    "28": 2
+  },
+  "targets": [
+    {
+      "block": 19,
+      "head": 15
+    },
+    {
+      "block": 20,
+      "head": 17
+    },
+    {
+      "block": 7,
+      "head": 22
+    },
+    {
+      "block": 18,
+      "head": 13
+    },
+    {
+      "block": 17,
+      "head": 8
+    },
+    {
+      "block": 23,
+      "head": 6
+    },
+    {
+      "block": 18,
+      "head": 11
+    },
+    {
+      "block": 8,
+      "head": 10
+    },
+    {
+      "block": 7,
+      "head": 15
+    },
+    {
+      "block": 26,
+      "head": 7
+    },
+    {
+      "block": 18,
+      "head": 6
+    },
+    {
+      "block": 21,
+      "head": 7
+    },
+    {
+      "block": 6,
+      "head": 2
+    },
+    {
+      "block": 24,
+      "head": 6
+    },
+    {
+      "block": 12,
+      "head": 23
+    },
+    {
+      "block": 21,
+      "head": 2
+    },
+    {
+      "block": 23,
+      "head": 10
+    },
+    {
+      "block": 4,
+      "head": 2
+    },
+    {
+      "block": 4,
+      "head": 9
+    },
+    {
+      "block": 9,
+      "head": 12
+    },
+    {
+      "block": 7,
+      "head": 8
+    },
+    {
+      "block": 23,
+      "head": 8
+    },
+    {
+      "block": 18,
+      "head": 17
+    },
+    {
+      "block": 18,
+      "head": 15
+    },
+    {
+      "block": 11,
+      "head": 13
+    },
+    {
+      "block": 11,
+      "head": 1
+    },
+    {
+      "block": 7,
+      "head": 23
+    },
+    {
+      "block": 8,
+      "head": 8
+    },
+    {
+      "block": 18,
+      "head": 12
+    },
+    {
+      "block": 7,
+      "head": 16
+    },
+    {
+      "block": 9,
+      "head": 13
+    },
+    {
+      "block": 21,
+      "head": 3
+    },
+    {
+      "block": 23,
+      "head": 9
+    },
+    {
+      "block": 22,
+      "head": 0
+    },
+    {
+      "block": 24,
+      "head": 8
+    },
+    {
+      "block": 9,
+      "head": 20
+    },
+    {
+      "block": 24,
+      "head": 17
+    },
+    {
+      "block": 13,
+      "head": 5
+    },
+    {
+      "block": 21,
+      "head": 9
+    },
+    {
+      "block": 23,
+      "head": 18
+    },
+    {
+      "block": 20,
+      "head": 9
+    },
+    {
+      "block": 21,
+      "head": 8
+    },
+    {
+      "block": 22,
+      "head": 18
+    },
+    {
+      "block": 16,
+      "head": 0
+    },
+    {
+      "block": 8,
+      "head": 7
+    },
+    {
+      "block": 5,
+      "head": 18
+    },
+    {
+      "block": 9,
+      "head": 23
+    },
+    {
+      "block": 23,
+      "head": 0
+    },
+    {
+      "block": 13,
+      "head": 17
+    },
+    {
+      "block": 18,
+      "head": 4
+    },
+    {
+      "block": 16,
+      "head": 6
+    },
+    {
+      "block": 23,
+      "head": 5
+    },
+    {
+      "block": 24,
+      "head": 9
+    },
+    {
+      "block": 24,
+      "head": 13
+    },
+    {
+      "block": 20,
+      "head": 3
+    },
+    {
+      "block": 12,
+      "head": 15
+    },
+    {
+      "block": 23,
+      "head": 11
+    },
+    {
+      "block": 11,
+      "head": 11
+    },
+    {
+      "block": 17,
+      "head": 10
+    },
+    {
+      "block": 28,
+      "head": 18
+    },
+    {
+      "block": 21,
+      "head": 4
+    },
+    {
+      "block": 4,
+      "head": 11
+    },
+    {
+      "block": 17,
+      "head": 13
+    },
+    {
+      "block": 25,
+      "head": 1
+    },
+    {
+      "block": 2,
+      "head": 14
+    },
+    {
+      "block": 18,
+      "head": 0
+    },
+    {
+      "block": 19,
+      "head": 7
+    },
+    {
+      "block": 17,
+      "head": 0
+    },
+    {
+      "block": 14,
+      "head": 3
+    },
+    {
+      "block": 4,
+      "head": 1
+    },
+    {
+      "block": 17,
+      "head": 18
+    },
+    {
+      "block": 12,
+      "head": 4
+    },
+    {
+      "block": 5,
+      "head": 12
+    },
+    {
+      "block": 18,
+      "head": 20
+    },
+    {
+      "block": 19,
+      "head": 0
+    },
+    {
+      "block": 13,
+      "head": 4
+    },
+    {
+      "block": 16,
+      "head": 12
+    },
+    {
+      "block": 21,
+      "head": 10
+    },
+    {
+      "block": 4,
+      "head": 13
+    },
+    {
+      "block": 2,
+      "head": 19
+    },
+    {
+      "block": 25,
+      "head": 19
+    },
+    {
+      "block": 14,
+      "head": 0
+    },
+    {
+      "block": 28,
+      "head": 11
+    },
+    {
+      "block": 26,
+      "head": 9
+    },
+    {
+      "block": 17,
+      "head": 23
+    },
+    {
+      "block": 21,
+      "head": 6
+    },
+    {
+      "block": 24,
+      "head": 20
+    },
+    {
+      "block": 22,
+      "head": 20
+    },
+    {
+      "block": 14,
+      "head": 10
+    },
+    {
+      "block": 16,
+      "head": 14
+    },
+    {
+      "block": 17,
+      "head": 15
+    },
+    {
+      "block": 19,
+      "head": 18
+    },
+    {
+      "block": 17,
+      "head": 11
+    },
+    {
+      "block": 4,
+      "head": 18
+    },
+    {
+      "block": 23,
+      "head": 13
+    },
+    {
+      "block": 22,
+      "head": 9
+    },
+    {
+      "block": 27,
+      "head": 1
+    },
+    {
+      "block": 13,
+      "head": 12
+    },
+    {
+      "block": 21,
+      "head": 1
+    },
+    {
+      "block": 24,
+      "head": 14
+    }
+  ]
+}
