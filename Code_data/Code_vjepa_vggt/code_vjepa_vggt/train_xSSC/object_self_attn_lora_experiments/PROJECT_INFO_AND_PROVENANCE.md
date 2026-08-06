@@ -13,14 +13,8 @@
 训练时采用49帧视频训练，显存约占36.95GiB / 47.99GiB，推理时可以跑189帧
 
 
-http://127.0.0.1:8092/attention-lora-pck32-seed90094?v=1
 
 
-### 1.1 相关可视化页面
-
-| 页面 | 简要说明 |
-|---|---|
-| [Wan2.2 Legacy TI2V Test5](http://127.0.0.1:8092/wan22-ti2v-legacy-test5?v=1) | 历史 Wan2.2-TI2V 基线视频墙：使用 `legacy_diffsynth.WanVideoPipeline`，仅输入 prompt 和首帧，不使用 context video；配置为 seed 42、CFG 5、40 去噪步、49 帧、704x1280。用于检查未做 Head 干预时的原始生成结果。 |
 
 
 ## 2. 训练阶段
@@ -31,18 +25,25 @@ http://127.0.0.1:8092/attention-lora-pck32-seed90094?v=1
 
 使wan可以接受任意输入帧数的video，对Wan 的 30 个block微调lora：
 - 输入 24 帧，384x672，mixed context sampling 
+- 通用视频数据80%，20%物理仿真数据集，差不多70K
 - 4 GPU，每卡 batch=1，gradient accumulation=4
 - Self-Attention, Text Cross-Attention, FFN, LoRA rank=32 
 - 可训练参数 80.609M。
 - step-010000
 
+
+【可视化展示】
+http://10.176.42.45:8844/formal-physiciq-compare/?page=1
+
+
+
+
 ### 2.2 仿真数据集微调self-attention LoRA
+
+
 ### 2.3 视频自监督模型微调cross-attn + self-attention LoRA
 
-http://10.176.42.45:8844/physiciq-metrics/
 
-- no-object 训练：仿真数据集占比越大、指标越好，画面质量也好，但是美学下降了
-- full head-SA 情况下+ object branch 指标还会下降，object branch 基本没啥用
 
 ```text
 8-frame context video
@@ -55,19 +56,28 @@ http://10.176.42.45:8844/physiciq-metrics/
   -> object cross-attention in Wan DiT
   -> 49-frame generated video
 ```
+利用冻结xSSC提取object信息，Wan DiT 生成object cross-attention，再输入到生成视频中。
 
 xSSC 使用 bbox 初始化 frame-0 slots，然后通过 transition 和 SlotAttention 沿 context 时间递推。Wan 训练阶段冻结 SAM2、DINO 和 xSSC，只训练实验配置指定的 projector、gate、object-attention LoRA 或 Self-Attention LoRA。
 
 
 
+### 2.4 指标&可视化
 
-参数口径：
+http://10.176.42.45:8844/physiciq-average-metrics/ 
 
-| 组件 | 参数量 | xSSC 训练状态 | Wan 训练状态 |
-|---|---:|---|---|
-| DINOv3 ViT-L/16 | 303.130M | 冻结 | 冻结 |
-| xSSC 非 Backbone | 81.044M | 可训练 | 冻结 |
-| 合计 | 384.174M | 81.044M 可训练 | 全部冻结 |
+
+http://10.176.42.45:8844/physiciq-metrics/
+
+http://10.176.42.45:8844/test5/
+
+- no-object 训练：仿真数据集占比越大、指标越好，画面质量也好，但是美学下降了
+- full head-SA 情况下+ object branch 指标还会下降，object branch 基本没啥用
+
+
+
+
+
 
 
 
@@ -194,7 +204,7 @@ PCK 衡量 Q@K 是否能读出目标轨迹；Neighbor Diagonal 衡量注意力�
 | [All-Steps Rankings](http://127.0.0.1:8092/all-steps/rankings?v=4) | PCK统计与筛选 | 覆盖 40×30×24 组合，提供单模型及三模型综合 Top/Bottom，是主要候选来源。 |
 | [Neighbor Diagonal Ranking](http://127.0.0.1:8092/neighbor-diagonal-ranking?v=4) | 注意力结构分析 | 用空间对角纯度、时间连续性和跨帧均衡解释或重新排序同一批 Head，并与 PCK 对照。 |
 | [Wan+LoRA 50-Seed Attention Sweep](http://127.0.0.1:8092/attention-additive-lora-seed-sweep?v=1&experiment=alpha090&stage=all_steps&group=top100) | 跨 seed 干预验证 | 固定复用已筛选的 Wan+LoRA PCK Top100；不会针对每个 seed 重新排名。`alpha` 是干预强度，不属于 PCK 公式。 |
-| [Legacy TI2V First-Latent PCK50](http://127.0.0.1:8092/wan22-ti2v-legacy-pck50?v=2) | 独立协议的重新筛选 | 使用首个 latent frame query，在 6 case×50 seed 上重新统计；结果不能直接替代 Wan+LoRA PCK Top100。 |
+
 
 改变PCK head对应query热力图，可以改变运动【热力图】 http://127.0.0.1:8092/object-query-top100-mean-overlay?seed=47326&stage=all_steps&v=2
 
