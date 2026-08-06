@@ -226,7 +226,7 @@ BASELINE_SPECS = (
 
 INTERACTIVE_METRIC_PRIORITY = (
     "physics_iq_with_context",
-    "videophy2_pc",
+    "videophy2_pc_raw",
     "cosmos_reason1",
 )
 
@@ -340,10 +340,10 @@ METRICS = (
         nested_score("videophy2", "sa_score"),
     ),
     Metric(
-        "videophy2_pc",
-        "VideoPhy2 PC (generated only)",
+        "videophy2_pc_raw",
+        "VideoPhy2 PC raw (full video)",
         "higher",
-        nested_score("videophy2", "pc_score"),
+        nested_score("videophy2", "pc_raw_score"),
     ),
     Metric(
         "videophy2_joint_rate",
@@ -352,10 +352,10 @@ METRICS = (
         nested_score("videophy2", "joint_pass"),
     ),
     Metric(
-        "videophy2_pc_raw",
-        "VideoPhy2 PC raw (full video)",
+        "videophy2_pc",
+        "VideoPhy2 PC (generated only)",
         "higher",
-        nested_score("videophy2", "pc_raw_score"),
+        nested_score("videophy2", "pc_score"),
     ),
     Metric(
         "cosmos_reason1",
@@ -1321,7 +1321,7 @@ def write_plot_index(
 <header><div><h1>PhysicIQ · Checkpoint 指标曲线</h1><p>选择一个或多个训练方案；每条实线连接该方案全部 67/67 完整 checkpoint。四组对照结果作为虚线基线横贯训练 step。</p></div></header>
 <main>
   <section class="controls">
-    <div><h2>训练方案（可多选）</h2><div id="methodChecks" class="checks"></div><div class="commands"><button id="selectNoObject">全部 No-Object</button><button id="selectDedup">全部 Slot-Dedup</button><button id="selectOther">其余方案</button><button id="selectAll">全选</button><button id="clearAll">清空</button><span id="status"></span></div></div>
+    <div><h2>训练方案（可多选）</h2><div id="methodChecks" class="checks"></div><div class="commands"><button id="selectFullSA">全部 Full-SA</button><button id="selectObject">全部 +Object</button><button id="selectNoObject">全部 No-Object</button><button id="selectDedup">全部 +Slot-Dedup</button><button id="selectOther">其余方案</button><button id="selectAll">全选</button><button id="clearAll">清空</button><span id="status"></span></div></div>
     <div><h2>Baseline 横线</h2><div id="baselineChecks" class="checks"></div></div>
   </section>
   <section id="charts" class="charts"></section>
@@ -1339,6 +1339,8 @@ const baselineInputs=DATA.baselines.map(item=>checkbox(baselineRoot,item,"baseli
 document.getElementById("selectAll").onclick=()=>{methodInputs.forEach(input=>input.checked=true);render()};
 document.getElementById("clearAll").onclick=()=>{methodInputs.forEach(input=>input.checked=false);render()};
 function selectGroup(predicate){methodInputs.forEach(input=>{const method=DATA.methods.find(item=>item.key===input.value);input.checked=Boolean(method&&predicate(method))});render()}
+document.getElementById("selectFullSA").onclick=()=>selectGroup(method=>method.label.startsWith("Full-SA"));
+document.getElementById("selectObject").onclick=()=>selectGroup(method=>method.label.includes("+ Object"));
 document.getElementById("selectNoObject").onclick=()=>selectGroup(method=>method.key.includes("no_object"));
 document.getElementById("selectDedup").onclick=()=>selectGroup(method=>method.key.includes("slot_dedup"));
 document.getElementById("selectOther").onclick=()=>selectGroup(method=>!method.key.includes("no_object")&&!method.key.includes("slot_dedup"));

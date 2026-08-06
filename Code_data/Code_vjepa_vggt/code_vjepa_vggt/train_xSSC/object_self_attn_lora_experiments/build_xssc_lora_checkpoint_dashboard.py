@@ -29,6 +29,10 @@ METHOD_PLOT_STYLES = {
     "full_sa": {"marker": "o", "linestyle": "-"},
     "full_sa_resume": {"marker": "o", "linestyle": "-"},
     "full_sa_no_object": {"marker": "X", "linestyle": (0, (5, 1))},
+    "full_sa_no_object_vjepa_loss": {
+        "marker": "d",
+        "linestyle": (0, (3, 1, 1, 1)),
+    },
     "full_sa_no_object_pybullet100": {"marker": "p", "linestyle": (0, (4, 1))},
     "full_sa_no_object_kubric100": {"marker": "*", "linestyle": (0, (2, 1))},
     "s_head59": {"marker": "s", "linestyle": "--"},
@@ -1296,6 +1300,11 @@ MERGED_METHODS = [
     {"key": "object_only", "label": "Object-only", "color": "#4D4D4D"},
     {"key": "full_sa", "label": "Full-SA + Object", "color": "#D62728"},
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
+    {
+        "key": "full_sa_no_object_vjepa_loss",
+        "label": "Full-SA + No-Object + V-JEPA Loss",
+        "color": "#009E73",
+    },
     {"key": "s_head59", "label": "S-head59 + Object", "color": "#2CA02C"},
     {"key": "t_head70", "label": "T-head70 + Object", "color": "#9467BD"},
     {

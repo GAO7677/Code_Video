@@ -101,6 +101,13 @@ METHOD_SPECS = {
         "object": "完全跳过SAM2、DINO、xSSC和object cross-attn",
         "data": "30/30/40",
     },
+    "full_sa_no_object_vjepa_loss": {
+        "label": "Full-SA + No-Object + V-JEPA Loss",
+        "trainable": 23_592_960,
+        "modules": "30层Self-Attn Q/K/V/O LoRA；训练时增加冻结V-JEPA2.1/Tiny-VAE辅助损失",
+        "object": "完全跳过SAM2、DINO、xSSC和object cross-attn",
+        "data": "30/30/40",
+    },
     "full_sa_no_object_pybullet100": {
         "label": "Full-SA + No-Object (PyBullet 100%)",
         "trainable": 23_592_960,
