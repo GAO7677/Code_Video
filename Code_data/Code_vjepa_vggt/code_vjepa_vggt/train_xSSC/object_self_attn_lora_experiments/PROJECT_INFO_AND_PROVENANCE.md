@@ -95,7 +95,7 @@ xSSC 使用 bbox 初始化 frame-0 slots，然后通过 transition 和 SlotAtten
 
 Slot-Dedup 使用跨时间 slot-track 的 mean-frame cosine，相似度阈值 0.94，模式为 merge，最少保留 3 个 slot。它发生在 xSSC 输出之后、object-token projection 之前，不新增可训练参数。
 
-## 3. Head 分类
+## 3. 基于注意力的Head 分类
 
 ### 3.1 原始实验范围
 
@@ -149,11 +149,49 @@ score_G = 0.60 rank(full_entropy)
 - 不同类head输出置0对实验的影响：`http://localhost:8946/s-head-integrated-analysis/index.html#dominant`
 
 
+## 4. PCK的Head 分类
+
+### 4.1 筛选方法
+
+Wan2.2 每个 DiT 有 30 个 block、每个 block 有 24 个 Head。单个去噪步包含
+720 个 `(block, head)`；40 个去噪步共有 28,800 个
+`(step, block, head)` 组合。
+
+对每个 object query，使用该 Head 的 Q@K 最高响应位置作为目标位置预测，
+与 GT/参考轨迹计算像素距离：
+
+```text
+PCK@32 = 100 * count(distance <= 32 px) / count(valid comparisons)
+```
+
+同一评估协议下，按 PCK@32 降序得到 Top30/Top100，升序得到
+Bottom30/Bottom100。`macro_pck32` 表示先在 object、case 等有效分组内计算，
+再进行宏平均，避免样本量较大的分组主导排名。
 
 
-| 页面 | 简要说明 |
-|---|---|
-| [Wan+LoRA 50-Seed Attention Sweep](http://127.0.0.1:8092/attention-additive-lora-seed-sweep?v=1&experiment=alpha090&stage=all_steps&group=top100) | 对 `0613pybullet_sample_001460_w002` 的 50 个 seed 比较原始 Wan+LoRA 与 Attention 干预结果。当前链接选择 Top100 Heads、全部 40 个去噪步和 `alpha=0.9` 加性缩放，并展示同 seed 视频及干预前后热力图，用于判断 Head 干预效果是否跨 seed 稳定。 |
-| [Neighbor Diagonal Ranking](http://127.0.0.1:8092/neighbor-diagonal-ranking?v=4) | 在 S039 对 30 blocks x 24 heads 共 720 个 Head 排名。严格分数同时要求相邻三帧的时间对角线响应均衡，以及所有目标帧块内部具有稳定的空间对角线纯度；页面提供三模型切换、30x24 矩阵、PCK@32 和逐 Head Q@K 热力图。 |
-| [All-Steps Rankings](http://127.0.0.1:8092/all-steps/rankings?v=4) | 覆盖 40 steps x 30 blocks x 24 heads 共 28,800 个组合，按目标物体或背景的 PCK@8/16/32 与平均位置误差排序；同时展示 GT、LoRA、Baseline 三模型等权综合排名、单模型全局排名及逐步 30x24 热力图，用于定位运动追踪能力主要出现在哪个去噪阶段、Block 和 Head。 |
 
+排名可以分别基于 GT teacher-forced、Wan+LoRA、Wan2.2 Baseline，也可以在
+三个模型均有有效结果时做等权 `COMBINED GLOBAL RANKING`。单模型排名用于模型内
+干预；Combined ranking 用于寻找跨模型稳定组合。
+
+
+### 4.3 与可视化页面的关系
+
+整体流程为：
+
+```text
+PCK统计与筛选
+  -> 注意力结构分析
+  -> 固定Head的跨seed干预验证
+```
+
+PCK 衡量 Q@K 是否能读出目标轨迹；Neighbor Diagonal 衡量注意力是否具有
+帧内空间对角集中、相邻帧连续和跨帧均衡结构；Head-zero、Attention noise、mask
+等实验用于检验这些 Head 对生成结果是否具有因果影响。三类结果不能相互替代。
+
+| 页面 | 流程角色 | 与 PCK Head 的关系 |
+|---|---|---|
+| [All-Steps Rankings](http://127.0.0.1:8092/all-steps/rankings?v=4) | PCK统计与筛选 | 覆盖 40×30×24 组合，提供单模型及三模型综合 Top/Bottom，是主要候选来源。 |
+| [Neighbor Diagonal Ranking](http://127.0.0.1:8092/neighbor-diagonal-ranking?v=4) | 注意力结构分析 | 用空间对角纯度、时间连续性和跨帧均衡解释或重新排序同一批 Head，并与 PCK 对照。 |
+| [Wan+LoRA 50-Seed Attention Sweep](http://127.0.0.1:8092/attention-additive-lora-seed-sweep?v=1&experiment=alpha090&stage=all_steps&group=top100) | 跨 seed 干预验证 | 固定复用已筛选的 Wan+LoRA PCK Top100；不会针对每个 seed 重新排名。`alpha` 是干预强度，不属于 PCK 公式。 |
+| [Legacy TI2V First-Latent PCK50](http://127.0.0.1:8855/wan22-ti2v-legacy-pck50?v=2) | 独立协议的重新筛选 | 使用首个 latent frame query，在 6 case×50 seed 上重新统计；结果不能直接替代 Wan+LoRA PCK Top100。 |
