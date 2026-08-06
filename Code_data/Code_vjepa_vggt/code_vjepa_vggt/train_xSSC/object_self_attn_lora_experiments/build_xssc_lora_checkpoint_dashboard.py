@@ -1928,16 +1928,42 @@ def build_master_hub(
         )
         phys_average_root = hub_root / "physiciq-average-metrics"
         phys_average_root.mkdir(parents=True, exist_ok=True)
+        merged_phys_records = merge_video_records(
+            phys_records,
+            legacy_phys_records,
+            "../physiciq-gallery",
+        )
+        phys_average_html = build_average_metrics_page(
+            merged_phys_records,
+            phys_cases,
+            page_title="PhysicIQ · 67-case 平均指标",
+        ).replace(
+            "</header>",
+            '<p><a href="solid-mechanics/">Solid Mechanics · 39-case 平均指标</a></p></header>',
+        )
         (phys_average_root / "index.html").write_text(
-            build_average_metrics_page(
-                merge_video_records(
-                    phys_records,
-                    legacy_phys_records,
-                    "../physiciq-gallery",
-                ),
-                phys_cases,
-                page_title="PhysicIQ · 67-case 平均指标",
+            phys_average_html,
+            encoding="utf-8",
+        )
+        solid_mechanics_cases = [
+            case
+            for case in phys_cases
+            if "_Solid_Mechanics_" in json.dumps(case, ensure_ascii=False)
+        ]
+        solid_mechanics_root = phys_average_root / "solid-mechanics"
+        solid_mechanics_root.mkdir(parents=True, exist_ok=True)
+        solid_mechanics_html = build_average_metrics_page(
+            merged_phys_records,
+            solid_mechanics_cases,
+            page_title=(
+                f"PhysicIQ · Solid Mechanics · {len(solid_mechanics_cases)}-case 平均指标"
             ),
+        ).replace(
+            "</header>",
+            '<p><a href="../">返回 PhysicIQ 67-case 总平均</a></p></header>',
+        )
+        (solid_mechanics_root / "index.html").write_text(
+            solid_mechanics_html,
             encoding="utf-8",
         )
     else:
