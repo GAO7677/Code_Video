@@ -88,31 +88,6 @@
   },
   "plot_metrics": [
     {
-      "field": "wmreward_surprise_mean",
-      "count": "wmreward_surprise_count",
-      "label": "WMReward surprise"
-    },
-    {
-      "field": "physics_iq_with_context_score_mean",
-      "count": "physics_iq_with_context_score_count",
-      "label": "Physics-IQ with context"
-    },
-    {
-      "field": "physics_iq_without_context_score_mean",
-      "count": "physics_iq_without_context_score_count",
-      "label": "Physics-IQ without context"
-    },
-    {
-      "field": "pmf_with_context_score_mean",
-      "count": "pmf_with_context_score_count",
-      "label": "PMF with context"
-    },
-    {
-      "field": "pmf_without_context_score_mean",
-      "count": "pmf_without_context_score_count",
-      "label": "PMF without context"
-    },
-    {
       "field": "videophy2_score_mean",
       "count": "videophy2_score_count",
       "label": "VideoPhy2 joint"
@@ -141,6 +116,31 @@
       "field": "cosmos_reason1_score_mean",
       "count": "cosmos_reason1_score_count",
       "label": "Cosmos Reason"
+    },
+    {
+      "field": "physics_iq_with_context_score_mean",
+      "count": "physics_iq_with_context_score_count",
+      "label": "Physics-IQ with context"
+    },
+    {
+      "field": "physics_iq_without_context_score_mean",
+      "count": "physics_iq_without_context_score_count",
+      "label": "Physics-IQ without context"
+    },
+    {
+      "field": "pmf_with_context_score_mean",
+      "count": "pmf_with_context_score_count",
+      "label": "PMF with context"
+    },
+    {
+      "field": "pmf_without_context_score_mean",
+      "count": "pmf_without_context_score_count",
+      "label": "PMF without context"
+    },
+    {
+      "field": "wmreward_surprise_mean",
+      "count": "wmreward_surprise_count",
+      "label": "WMReward surprise"
     },
     {
       "field": "vbench_subject_consistency_score_mean",

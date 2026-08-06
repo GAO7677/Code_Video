@@ -194,4 +194,20 @@ PCK 衡量 Q@K 是否能读出目标轨迹；Neighbor Diagonal 衡量注意力�
 | [All-Steps Rankings](http://127.0.0.1:8092/all-steps/rankings?v=4) | PCK统计与筛选 | 覆盖 40×30×24 组合，提供单模型及三模型综合 Top/Bottom，是主要候选来源。 |
 | [Neighbor Diagonal Ranking](http://127.0.0.1:8092/neighbor-diagonal-ranking?v=4) | 注意力结构分析 | 用空间对角纯度、时间连续性和跨帧均衡解释或重新排序同一批 Head，并与 PCK 对照。 |
 | [Wan+LoRA 50-Seed Attention Sweep](http://127.0.0.1:8092/attention-additive-lora-seed-sweep?v=1&experiment=alpha090&stage=all_steps&group=top100) | 跨 seed 干预验证 | 固定复用已筛选的 Wan+LoRA PCK Top100；不会针对每个 seed 重新排名。`alpha` 是干预强度，不属于 PCK 公式。 |
-| [Legacy TI2V First-Latent PCK50](http://127.0.0.1:8855/wan22-ti2v-legacy-pck50?v=2) | 独立协议的重新筛选 | 使用首个 latent frame query，在 6 case×50 seed 上重新统计；结果不能直接替代 Wan+LoRA PCK Top100。 |
+| [Legacy TI2V First-Latent PCK50](http://127.0.0.1:8092/wan22-ti2v-legacy-pck50?v=2) | 独立协议的重新筛选 | 使用首个 latent frame query，在 6 case×50 seed 上重新统计；结果不能直接替代 Wan+LoRA PCK Top100。 |
+
+改变PCK head对应query热力图，可以改变运动【热力图】 http://127.0.0.1:8092/object-query-top100-mean-overlay?seed=47326&stage=all_steps&v=2
+
+改变PCK head对应query热力图，可以改变运动 【视频】 http://127.0.0.1:8092/object-query-frozen-trajectory?v=23&seed=47326&step=9&branch=conditional&viz=reverse&stage=all_steps&heatmap=s09_fixed_3
+
+# 5. 发现&问题&后续
+1. 微调的lora版本会出现**重复的新物体**，改变PCK head 对应的热力图，可以改善。
+- 40step的object query PCK head热力图会关注到**重复的新物体**。
+- 微调的lora版本【10step推理】也会减轻**重复的新物体**，10step的热力图也不会关注到**重复的新物体**。
+- **重复的新物体**问题尚未验证基础模型中是否存在。  
+
+2. 只对PCK head进行训练/推理干预，其他head保持不变。降低成本，看看是否有效。
+
+
+
+
