@@ -1,4 +1,4 @@
-# xSSC-Wan 项目信息与权重溯源
+# 物理合理视频续写
 
 ## 1. 项目概述
 
@@ -21,7 +21,7 @@
 
 
 
-### 2.1 v2v适配训练
+### 2.1 v2v 适配训练
 
 使wan可以接受任意输入帧数的video，对Wan 的 30 个block微调lora：
 - 输入 24 帧，384x672，mixed context sampling 
@@ -38,10 +38,10 @@ http://10.176.42.45:8844/formal-physiciq-compare/?page=1
 
 
 
-### 2.2 仿真数据集微调self-attention LoRA
+### 2.2 v2v + 仿真数据集微调 self-attention LoRA
 
 
-### 2.3 视频自监督模型微调cross-attn + self-attention LoRA
+### 2.3 v2v + self-attention LoRA + 视频自监督模型微调cross-attn 
 
 
 
@@ -71,8 +71,8 @@ http://10.176.42.45:8844/physiciq-metrics/
 
 http://10.176.42.45:8844/test5/
 
-- no-object 训练：仿真数据集占比越大、指标越好，画面质量也好，但是美学下降了
-- full head-SA 情况下+ object branch 指标还会下降，object branch 基本没啥用
+- **no-object 训练：仿真数据集占比越大、指标越好，画面质量也好，但是美学下降了**
+- **full head-SA 情况下+ object branch 指标还会下降，object branch 基本没啥用**
 
 
 
@@ -115,7 +115,7 @@ Slot-Dedup 使用跨时间 slot-track 的 mean-frame cosine，相似度阈值 0.
 - 去噪步：5、15、25、35。
 - Head：30 blocks x 24 heads，共 720 个。
 - 保存粒度：每个 model/case/seed/denoise-step/block/head 的全部原始特征值、rank、score 和角色。
-- 注意力落在同帧，还是其他帧，是否落在空间相邻区域
+- **注意力落在同帧，还是其他帧，是否落在空间相邻区域**
 
 ### 7.2 分类分数
 
@@ -154,9 +154,9 @@ score_G = 0.60 rank(full_entropy)
 
 
 
-- 不同head热力图：`http://127.0.0.1:8844/head-evidence/common-stc-all-heads-qk-seed851/`
-- 各类head在block之间的分布：`http://127.0.0.1:8844/head-evidence/head-role-depth-distribution/`
-- 不同类head输出置0对实验的影响：`http://localhost:8946/s-head-integrated-analysis/index.html#dominant`
+- 不同head热力图：http://127.0.0.1:8844/head-evidence/common-stc-all-heads-qk-seed851/
+- 各类head在block之间的分布：http://127.0.0.1:8844/head-evidence/head-role-depth-distribution/
+- 不同类head输出置0对实验的影响 http://localhost:8946/s-head-integrated-analysis/index.html#dominant
 
 
 ## 4. PCK的Head 分类
@@ -167,37 +167,21 @@ Wan2.2 每个 DiT 有 30 个 block、每个 block 有 24 个 Head。单个去噪
 720 个 `(block, head)`；40 个去噪步共有 28,800 个
 `(step, block, head)` 组合。
 
-对每个 object query，使用该 Head 的 Q@K 最高响应位置作为目标位置预测，
-与 GT/参考轨迹计算像素距离：
-
-```text
+**对每个 object query，使用该 Head 的 Q@K 最高响应位置作为object 轨迹预测，与 GT 轨迹计算像素距离**
+```text 
 PCK@32 = 100 * count(distance <= 32 px) / count(valid comparisons)
+
 ```
 
-同一评估协议下，按 PCK@32 降序得到 Top30/Top100，升序得到
-Bottom30/Bottom100。`macro_pck32` 表示先在 object、case 等有效分组内计算，
-再进行宏平均，避免样本量较大的分组主导排名。
+
+按 PCK@32 降序得到 Top30/Top100，升序得到
+Bottom30/Bottom100。
 
 
 
-排名可以分别基于 GT teacher-forced、Wan+LoRA、Wan2.2 Baseline，也可以在
-三个模型均有有效结果时做等权 `COMBINED GLOBAL RANKING`。单模型排名用于模型内
-干预；Combined ranking 用于寻找跨模型稳定组合。
+模型： GT teacher-forced、Wan+LoRA、Wan2.2 Baseline，
 
-
-### 4.3 与可视化页面的关系
-
-整体流程为：
-
-```text
-PCK统计与筛选
-  -> 注意力结构分析
-  -> 固定Head的跨seed干预验证
-```
-
-PCK 衡量 Q@K 是否能读出目标轨迹；Neighbor Diagonal 衡量注意力是否具有
-帧内空间对角集中、相邻帧连续和跨帧均衡结构；Head-zero、Attention noise、mask
-等实验用于检验这些 Head 对生成结果是否具有因果影响。三类结果不能相互替代。
+【可视化】http://127.0.0.1:8092/object-query-top100-mean-overlay?seed=47326&stage=all_steps&v=2
 
 | 页面 | 流程角色 | 与 PCK Head 的关系 |
 |---|---|---|
@@ -208,15 +192,22 @@ PCK 衡量 Q@K 是否能读出目标轨迹；Neighbor Diagonal 衡量注意力�
 
 改变PCK head对应query热力图，可以改变运动【热力图】 http://127.0.0.1:8092/object-query-top100-mean-overlay?seed=47326&stage=all_steps&v=2
 
-改变PCK head对应query热力图，可以改变运动 【视频】 http://127.0.0.1:8092/object-query-frozen-trajectory?v=23&seed=47326&step=9&branch=conditional&viz=reverse&stage=all_steps&heatmap=s09_fixed_3
+改变PCK head对应query热力图，可以改变运动 【视频】 
+- 【002】 http://127.0.0.1:8092/object-query-frozen-trajectory?v=23&seed=47326&step=9&branch=conditional&viz=reverse&stage=all_steps&heatmap=s09_fixed_3
+
+
+- 【0025】 http://127.0.0.1:8092/physiq025-object-query-frozen-trajectory?v=1&seed=13161&stage=all_steps&step=9&branch=conditional&variant=all
 
 # 5. 发现&问题&后续
-1. 微调的lora版本会出现**重复的新物体**，改变PCK head 对应的热力图，可以改善。
-- 40step的object query PCK head热力图会关注到**重复的新物体**。
-- 微调的lora版本【10step推理】也会减轻**重复的新物体**，10step的热力图也不会关注到**重复的新物体**。
-- **重复的新物体**问题尚未验证基础模型中是否存在。  
-- object的错误运动可以通过pck head的跨帧注意力落在了错误的位置。
-2. 只对PCK head进行训练/推理干预，其他head保持不变。降低成本，看看是否有效。
+a. 微调的lora版本会出现**重复的新物体**
+- 40step的object query PCK head热力图会关注到**错误物体位置**，改变PCK head 对应的热力图，可以改善。 **object的错误运动——pck head的跨帧注意力落在了错误的位置**。 (加一些运动平滑的attention正则项可以改善)
+- 微调的lora版本【10step推理】会减轻**重复的新物体**，10step的热力图也不会关注到**重复的新物体**。(扰动PCK head 热力图是影响物体运动的充分条件？)
+- **重复的新物体**问题尚未验证**基础模型**中是否存在，有可能是我自己训练的问题。  
+- 对于不合理的轨迹，pck head的热力图本身没办法判断。可以借助一些外部规则，或者渲染出一个草图视频交给VLM判断。
+b. 现有工作多数都是对于PCK head进行推理干预，降低成本。
+- 可以考虑训练。loss加在PCK head 的attention上？VLM做reward？
+c. object branch 对物理合理性的影响不大，仿真数据集作用更大
+- 还没验证是信息本身没用还是条件注入的方式有问题，先从loss上去验证这个信息到底对指标有用不
 
 
 
