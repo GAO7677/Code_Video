@@ -105,6 +105,7 @@ Slot-Dedup 使用跨时间 slot-track 的 mean-frame cosine，相似度阈值 0.
 - 去噪步：5、15、25、35。
 - Head：30 blocks x 24 heads，共 720 个。
 - 保存粒度：每个 model/case/seed/denoise-step/block/head 的全部原始特征值、rank、score 和角色。
+- 注意力落在同帧，还是其他帧，是否落在空间相邻区域
 
 ### 7.2 分类分数
 
@@ -143,13 +144,9 @@ score_G = 0.60 rank(full_entropy)
 
 
 
-- `http://127.0.0.1:8844/head-evidence/common-stc-all-heads-qk-seed851/`
-- `http://127.0.0.1:8844/head-evidence/head-role-depth-distribution/`
-
-
-
-
-http://localhost:8946/s-head-integrated-analysis/index.html#dominant
+- 不同head热力图：`http://127.0.0.1:8844/head-evidence/common-stc-all-heads-qk-seed851/`
+- 各类head在block之间的分布：`http://127.0.0.1:8844/head-evidence/head-role-depth-distribution/`
+- 不同类head输出置0对实验的影响：`http://localhost:8946/s-head-integrated-analysis/index.html#dominant`
 
 
 
