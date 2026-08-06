@@ -187,7 +187,7 @@ Bottom30/Bottom100。
 |---|---|---|
 | [All-Steps Rankings](http://127.0.0.1:8092/all-steps/rankings?v=4) | PCK统计与筛选 | 覆盖 40×30×24 组合，提供单模型及三模型综合 Top/Bottom，是主要候选来源。 |
 | [Neighbor Diagonal Ranking](http://127.0.0.1:8092/neighbor-diagonal-ranking?v=4) | 注意力结构分析 | 用空间对角纯度、时间连续性和跨帧均衡解释或重新排序同一批 Head，并与 PCK 对照。 |
-| [Wan+LoRA 50-Seed Attention Sweep](http://127.0.0.1:8092/attention-additive-lora-seed-sweep?v=1&experiment=alpha090&stage=all_steps&group=top100) | 跨 seed 干预验证 | 固定复用已筛选的 Wan+LoRA PCK Top100；不会针对每个 seed 重新排名。`alpha` 是干预强度，不属于 PCK 公式。 |
+| [Wan+LoRA 50-Seed Attention Sweep](http://127.0.0.1:8092/attention-additive-lora-seed-sweep?v=1&experiment=alpha090&stage=all_steps&group=top100) | 跨 seed 干预验证 | **干预top100head运动会受影响，干预bottom100head画面崩坏，top100更加关注object query跨帧位置** |
 
 
 改变PCK head对应query热力图，可以改变运动【热力图】 http://127.0.0.1:8092/object-query-top100-mean-overlay?seed=47326&stage=all_steps&v=2
