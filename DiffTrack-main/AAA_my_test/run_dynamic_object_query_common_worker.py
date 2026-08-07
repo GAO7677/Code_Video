@@ -113,6 +113,12 @@ def build_dynamic_capture(parent, args: argparse.Namespace):
             result = self.original_model_fn(*model_args, **kwargs)
             if self.group is not None:
                 self._write_dynamic_capture()
+                # This worker captures the selected attention rows without
+                # modifying head outputs.  The shared head-zero runner uses
+                # call_count only as a generic "intervention hook ran"
+                # sanity check; identity capture has no parent noise hook
+                # that increments it, so mark the dynamic capture call here.
+                self.call_count += 1
             return result
 
         @staticmethod
