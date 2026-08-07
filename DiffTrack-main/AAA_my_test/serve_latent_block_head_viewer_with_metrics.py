@@ -1082,6 +1082,12 @@ class MetricsHandler(viewer.Handler):
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
             return
+        if path == "/api/wan22-ti2v-legacy-pck50/comparison":
+            payload = json.dumps(
+                wan22_ti2v_legacy_pck50_comparison(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
         if path == "/api/wan22-ti2v-legacy-pck50/video":
             from urllib.parse import parse_qs
 
@@ -1500,6 +1506,184 @@ def wan22_ti2v_legacy_pck50_performance():
     }
 
 
+def wan22_ti2v_legacy_pck50_comparison():
+    performance = wan22_ti2v_legacy_pck50_performance()
+    neighbor = viewer.neighbor_diagonal_catalog()
+    neighbor_rows = neighbor.get("records", [])
+    if not performance.get("ready") or len(neighbor_rows) != 720:
+        return {
+            "ready": False,
+            "reason": "Legacy or neighbor-diagonal 720-head summary is unavailable",
+        }
+
+    import numpy as np
+
+    top_ks = (10, 30, 50, 100)
+    scope_specs = (
+        ("s039", "Legacy S039"),
+        ("all_steps_mean", "Legacy S000-S039 average"),
+    )
+    reference_specs = (
+        ("gt", "GT teacher-forced", "gt_pck32", "#d49a25"),
+        ("lora", "LoRA", "lora_pck32", "#197d72"),
+        ("baseline", "Wan2.2 Baseline", "baseline_pck32", "#bd4d36"),
+        ("combined", "Three-model combined", "pck32", "#3d568f"),
+    )
+
+    def dataset(rows, label, color, value_key="pck32"):
+        normalized = [
+            {
+                "block": int(row["block"]),
+                "head": int(row["head"]),
+                "pck32": float(row[value_key]),
+            }
+            for row in rows
+            if row.get(value_key) is not None
+        ]
+        ordered = sorted(
+            normalized,
+            key=lambda row: (-row["pck32"], row["block"], row["head"]),
+        )
+        ranks = {
+            (row["block"], row["head"]): index
+            for index, row in enumerate(ordered, start=1)
+        }
+        for row in normalized:
+            row["rank"] = ranks[(row["block"], row["head"])]
+        normalized.sort(key=lambda row: (row["block"], row["head"]))
+        values = np.asarray([row["pck32"] for row in normalized], dtype=np.float64)
+        percentiles = np.percentile(values, [0, 10, 25, 50, 75, 90, 100])
+        return {
+            "label": label,
+            "color": color,
+            "rows": normalized,
+            "distribution": {
+                "count": int(values.size),
+                "min": float(percentiles[0]),
+                "p10": float(percentiles[1]),
+                "p25": float(percentiles[2]),
+                "median": float(percentiles[3]),
+                "mean": float(values.mean()),
+                "p75": float(percentiles[4]),
+                "p90": float(percentiles[5]),
+                "max": float(percentiles[6]),
+                "std": float(values.std()),
+            },
+        }
+
+    def average_ranks(values):
+        order = sorted(range(len(values)), key=lambda index: values[index])
+        ranks = [0.0] * len(values)
+        start = 0
+        while start < len(order):
+            end = start + 1
+            while end < len(order) and values[order[end]] == values[order[start]]:
+                end += 1
+            average = (start + 1 + end) / 2.0
+            for position in range(start, end):
+                ranks[order[position]] = average
+            start = end
+        return ranks
+
+    def pearson(left, right):
+        left_array = np.asarray(left, dtype=np.float64)
+        right_array = np.asarray(right, dtype=np.float64)
+        left_centered = left_array - left_array.mean()
+        right_centered = right_array - right_array.mean()
+        denominator = np.sqrt(
+            np.dot(left_centered, left_centered)
+            * np.dot(right_centered, right_centered)
+        )
+        if denominator <= 0:
+            return None
+        return float(np.dot(left_centered, right_centered) / denominator)
+
+    def compare(left, right):
+        left_rows = {
+            (row["block"], row["head"]): row for row in left["rows"]
+        }
+        right_rows = {
+            (row["block"], row["head"]): row for row in right["rows"]
+        }
+        keys = sorted(left_rows.keys() & right_rows.keys())
+        left_values = [left_rows[key]["pck32"] for key in keys]
+        right_values = [right_rows[key]["pck32"] for key in keys]
+        differences = np.asarray(left_values) - np.asarray(right_values)
+        overlaps = {}
+        for top_k in top_ks:
+            left_top = {
+                key for key in keys if left_rows[key]["rank"] <= top_k
+            }
+            right_top = {
+                key for key in keys if right_rows[key]["rank"] <= top_k
+            }
+            common = sorted(
+                left_top & right_top,
+                key=lambda key: (
+                    left_rows[key]["rank"] + right_rows[key]["rank"],
+                    left_rows[key]["rank"],
+                    right_rows[key]["rank"],
+                    key,
+                ),
+            )
+            common_count = len(common)
+            union_count = len(left_top | right_top)
+            overlaps[str(top_k)] = {
+                "common_count": common_count,
+                "coverage_pct": 100.0 * common_count / top_k,
+                "jaccard": common_count / union_count if union_count else 0.0,
+                "common_heads": [
+                    {
+                        "block": key[0],
+                        "head": key[1],
+                        "legacy_rank": left_rows[key]["rank"],
+                        "reference_rank": right_rows[key]["rank"],
+                        "legacy_pck32": left_rows[key]["pck32"],
+                        "reference_pck32": right_rows[key]["pck32"],
+                    }
+                    for key in common
+                ],
+            }
+        return {
+            "pair_count": len(keys),
+            "pearson": pearson(left_values, right_values),
+            "spearman": pearson(
+                average_ranks(left_values), average_ranks(right_values)
+            ),
+            "mean_delta": float(differences.mean()),
+            "mean_abs_delta": float(np.abs(differences).mean()),
+            "overlaps": overlaps,
+        }
+
+    references = {
+        key: dataset(neighbor_rows, label, color, value_key)
+        for key, label, value_key, color in reference_specs
+    }
+    scope_colors = {"s039": "#202d29", "all_steps_mean": "#8e5a2d"}
+    scopes = {}
+    for key, label in scope_specs:
+        legacy = dataset(
+            performance["matrices"][key], label, scope_colors[key]
+        )
+        scopes[key] = {
+            **legacy,
+            "comparisons": {
+                reference_key: compare(legacy, reference)
+                for reference_key, reference in references.items()
+            },
+        }
+    return {
+        "ready": True,
+        "top_ks": list(top_ks),
+        "scopes": scopes,
+        "references": references,
+        "protocol_note": (
+            "Legacy uses 6 cases x 50 seeds; neighbor-diagonal uses S039 over "
+            "GT, LoRA, and Baseline on 5 cases. Physical Block/Head IDs are aligned."
+        ),
+    }
+
+
 def wan22_ti2v_legacy_pck50_catalog():
     seeds = [
         int(value)
@@ -1842,11 +2026,186 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 </script></body></html>'''
 
 
+WAN22_TI2V_LEGACY_COMPARISON_SCRIPT = r'''
+let comparison = null;
+let comparisonScope = "s039";
+let comparisonReference = "combined";
+let comparisonTopK = 30;
+
+function comparisonDatasets() {
+  const scope = comparison.scopes[comparisonScope];
+  return [scope, ...Object.values(comparison.references)];
+}
+
+function comparisonGrid(width, height, xTicks, xMin, xMax) {
+  const left = 58, right = 18, top = 18, bottom = 42;
+  const plotWidth = width - left - right, plotHeight = height - top - bottom;
+  const x = value => left + (value - xMin) / (xMax - xMin) * plotWidth;
+  const y = value => top + (100 - value) / 100 * plotHeight;
+  const horizontal = [0, 20, 40, 60, 80, 100].map(value =>
+    `<line x1="${left}" y1="${y(value)}" x2="${width-right}" y2="${y(value)}" stroke="#ded5c5"/>` +
+    `<text x="${left-8}" y="${y(value)+4}" text-anchor="end">${value}</text>`
+  ).join("");
+  const vertical = xTicks.map(value =>
+    `<line x1="${x(value)}" y1="${top}" x2="${x(value)}" y2="${height-bottom}" stroke="#eee7db"/>` +
+    `<text x="${x(value)}" y="${height-bottom+18}" text-anchor="middle">${value}</text>`
+  ).join("");
+  return {left, right, top, bottom, plotWidth, plotHeight, x, y, grid: horizontal + vertical};
+}
+
+function renderRankChart() {
+  const width = 980, height = 360;
+  const grid = comparisonGrid(width, height, [1, 180, 360, 540, 720], 1, 720);
+  const sets = comparisonDatasets();
+  const paths = sets.map(set => {
+    const rows = [...set.rows].sort((left, right) => left.rank - right.rank);
+    const points = rows.map(row =>
+      `${grid.x(row.rank).toFixed(2)},${grid.y(row.pck32).toFixed(2)}`
+    ).join(" ");
+    return `<polyline points="${points}" fill="none" stroke="${set.color}" stroke-width="2.2" opacity=".9"><title>${e(set.label)}</title></polyline>`;
+  }).join("");
+  const legend = sets.map(set =>
+    `<span><i class="legend-swatch" style="background:${set.color}"></i>${e(set.label)}</span>`
+  ).join("");
+  $("rankChart").innerHTML =
+    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="PCK ranked distributions">` +
+    `<g font-family="ui-monospace,monospace" font-size="10" fill="#59645e">${grid.grid}</g>` +
+    `<line x1="${grid.left}" y1="${grid.top}" x2="${grid.left}" y2="${height-grid.bottom}" stroke="#17261f"/>` +
+    `<line x1="${grid.left}" y1="${height-grid.bottom}" x2="${width-grid.right}" y2="${height-grid.bottom}" stroke="#17261f"/>` +
+    paths +
+    `<text x="${width/2}" y="${height-7}" text-anchor="middle" font-size="11">PCK rank among 720 Heads</text>` +
+    `<text x="14" y="${height/2}" text-anchor="middle" font-size="11" transform="rotate(-90 14 ${height/2})">PCK@32 (%)</text></svg>` +
+    `<div class="chart-legend">${legend}</div>`;
+}
+
+function renderScatter(scope, reference, selected) {
+  const width = 760, height = 360;
+  const grid = comparisonGrid(width, height, [0, 20, 40, 60, 80, 100], 0, 100);
+  const referenceMap = new Map(reference.rows.map(row => [`${row.block}-${row.head}`, row]));
+  const common = new Set(selected.common_heads.map(row => `${row.block}-${row.head}`));
+  const circles = scope.rows.map(row => {
+    const key = `${row.block}-${row.head}`, ref = referenceMap.get(key);
+    const isCommon = common.has(key);
+    return `<circle cx="${grid.x(row.pck32).toFixed(2)}" cy="${grid.y(ref.pck32).toFixed(2)}" r="${isCommon ? 3.1 : 1.8}" fill="${isCommon ? "#17261f" : reference.color}" opacity="${isCommon ? .9 : .35}"><title>L${String(row.block).padStart(2,"0")}/H${String(row.head).padStart(2,"0")} · Legacy ${row.pck32.toFixed(3)}% · ${e(reference.label)} ${ref.pck32.toFixed(3)}%</title></circle>`;
+  }).join("");
+  $("scatterTitle").textContent = `${scope.label} × ${reference.label}`;
+  $("scatterChart").innerHTML =
+    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Paired Head PCK scatter">` +
+    `<g font-family="ui-monospace,monospace" font-size="10" fill="#59645e">${grid.grid}</g>` +
+    `<line x1="${grid.left}" y1="${height-grid.bottom}" x2="${width-grid.right}" y2="${grid.top}" stroke="#8c897f" stroke-dasharray="5 5"/>` +
+    `<line x1="${grid.left}" y1="${grid.top}" x2="${grid.left}" y2="${height-grid.bottom}" stroke="#17261f"/>` +
+    `<line x1="${grid.left}" y1="${height-grid.bottom}" x2="${width-grid.right}" y2="${height-grid.bottom}" stroke="#17261f"/>` +
+    circles +
+    `<text x="${width/2}" y="${height-7}" text-anchor="middle" font-size="11">Legacy PCK@32 (%)</text>` +
+    `<text x="14" y="${height/2}" text-anchor="middle" font-size="11" transform="rotate(-90 14 ${height/2})">Reference PCK@32 (%)</text></svg>` +
+    `<div class="chart-legend"><span><i class="legend-swatch" style="background:${reference.color}"></i>全部 720 Head</span><span><i class="legend-swatch" style="background:#17261f"></i>当前 Top-K 交集</span></div>`;
+}
+
+function renderComparison() {
+  if (!comparison?.ready) {
+    $("comparisonStatus").textContent = comparison?.reason || "比较数据读取中";
+    return;
+  }
+  const scope = comparison.scopes[comparisonScope];
+  const reference = comparison.references[comparisonReference];
+  const result = scope.comparisons[comparisonReference];
+  const selected = result.overlaps[String(comparisonTopK)];
+  const references = Object.entries(comparison.references);
+  document.querySelectorAll("#scopeTabs button").forEach(button => {
+    const active = button.dataset.scope === comparisonScope;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  document.querySelectorAll("#referenceTabs button").forEach(button =>
+    button.classList.toggle("active", button.dataset.reference === comparisonReference)
+  );
+  document.querySelectorAll("#topKTabs button").forEach(button =>
+    button.classList.toggle("active", Number(button.dataset.topK) === comparisonTopK)
+  );
+  $("comparisonStatus").textContent = `${scope.label} · 对齐 neighbor-diagonal S039 · 720/720 个物理 Head`;
+  $("overlapBody").innerHTML = references.map(([key, ref]) =>
+    `<tr><td><i class="legend-swatch" style="background:${ref.color}"></i>${e(ref.label)}</td>` +
+    comparison.top_ks.map(topK => {
+      const overlap = scope.comparisons[key].overlaps[String(topK)];
+      const active = key === comparisonReference && topK === comparisonTopK;
+      return `<td><button class="overlap-button ${active ? "active" : ""}" data-overlap-reference="${key}" data-overlap-k="${topK}"><b>${overlap.common_count}/${topK}</b><span>覆盖 ${overlap.coverage_pct.toFixed(1)}% · J ${overlap.jaccard.toFixed(3)}</span></button></td>`;
+    }).join("") + "</tr>"
+  ).join("");
+  document.querySelectorAll(".overlap-button").forEach(button =>
+    button.addEventListener("click", () => selectComparison(null, button.dataset.overlapReference, Number(button.dataset.overlapK)))
+  );
+  $("comparisonSummary").innerHTML =
+    `<span>Top-K 交集<b>${selected.common_count} / ${comparisonTopK}</b></span>` +
+    `<span>双向覆盖率<b>${selected.coverage_pct.toFixed(1)}%</b></span>` +
+    `<span>Jaccard<b>${selected.jaccard.toFixed(3)}</b></span>` +
+    `<span>Pearson · 720 Head<b>${result.pearson.toFixed(3)}</b></span>` +
+    `<span>Spearman · 720 Head<b>${result.spearman.toFixed(3)}</b></span>`;
+  renderRankChart();
+  renderScatter(scope, reference, selected);
+  $("distributionBody").innerHTML = comparisonDatasets().map(set => {
+    const dist = set.distribution;
+    return `<tr><td><i class="legend-swatch" style="background:${set.color}"></i>${e(set.label)}</td>` +
+      ["min", "p10", "p25", "median", "mean", "p75", "p90", "max", "std"].map(key => `<td>${dist[key].toFixed(2)}</td>`).join("") +
+      "</tr>";
+  }).join("");
+  $("commonHeadsTitle").textContent = `${scope.label} × ${reference.label} · Top${comparisonTopK} 公共 Head (${selected.common_count})`;
+  $("commonHeadsBody").innerHTML = selected.common_heads.length ? selected.common_heads.map((row, index) => {
+    const delta = row.reference_rank - row.legacy_rank;
+    return `<tr><td>${index+1}</td><td>L${String(row.block).padStart(2,"0")} / H${String(row.head).padStart(2,"0")}</td><td>#${row.legacy_rank}</td><td>${row.legacy_pck32.toFixed(3)}%</td><td>#${row.reference_rank}</td><td>${row.reference_pck32.toFixed(3)}%</td><td>${delta > 0 ? "+" : ""}${delta}</td></tr>`;
+  }).join("") : `<tr><td colspan="7" class="common-empty">当前两组 Top${comparisonTopK} 没有公共 Head</td></tr>`;
+}
+
+function selectComparison(scope, reference, topK) {
+  if (scope) comparisonScope = scope;
+  if (reference) comparisonReference = reference;
+  if (topK) comparisonTopK = topK;
+  renderComparison();
+}
+
+document.querySelectorAll("#scopeTabs button").forEach(button =>
+  button.addEventListener("click", () => selectComparison(button.dataset.scope, null, null))
+);
+document.querySelectorAll("#referenceTabs button").forEach(button =>
+  button.addEventListener("click", () => selectComparison(null, button.dataset.reference, null))
+);
+document.querySelectorAll("#topKTabs button").forEach(button =>
+  button.addEventListener("click", () => selectComparison(null, null, Number(button.dataset.topK)))
+);
+'''
+
+
 def wan22_ti2v_legacy_pck50_page():
-    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Legacy TI2V First-Latent PCK50</title><style>
-:root{--paper:#ece4d5;--ink:#17261f;--deep:#17443a;--line:#baad98;--card:#fffaf0;--rust:#b7482f;--gold:#d29c35}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 0 0,#d65f3c44,transparent 34rem),radial-gradient(circle at 100% 0,#27897942,transparent 40rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:15px 22px;background:#ece4d5f2;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:4px 0;font-size:clamp(29px,4.4vw,58px);line-height:1}.lead{max-width:1200px;margin:7px 0}.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tools label,.tools select{max-width:100%}button,select{padding:8px 11px;border:1px solid var(--line);background:var(--card);font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(100% - 18px,2100px);margin:auto;padding:18px 0 70px}.overall{padding:18px;margin-bottom:14px;border:1px solid #0f3d35;border-radius:18px;background:linear-gradient(115deg,#153f35,#21675a);color:#fff;box-shadow:0 16px 38px #183d342b}.overall-head{display:flex;justify-content:space-between;gap:14px;align-items:end;flex-wrap:wrap}.overall-number{font:900 clamp(30px,5vw,66px)/.9 ui-monospace,monospace}.overall-label{opacity:.8}.overall-grid{display:grid;grid-template-columns:repeat(4,minmax(190px,1fr));gap:10px;margin-top:17px}.phase{padding:11px;border:1px solid #ffffff38;background:#ffffff10;border-radius:11px}.phase-title{display:flex;justify-content:space-between;gap:8px;font:800 12px ui-monospace,monospace}.bar{height:9px;margin-top:9px;border-radius:99px;background:#061c1780;overflow:hidden}.bar span{display:block;height:100%;background:linear-gradient(90deg,var(--gold),#f0cc75);border-radius:inherit}.phase-note{margin-top:7px;font-size:11px;opacity:.78}.progress{display:grid;grid-template-columns:repeat(3,minmax(280px,1fr));gap:9px;margin-bottom:15px}.case-progress{padding:10px 12px;border:1px solid var(--line);background:#fff9ee;border-radius:10px;font:12px ui-monospace,monospace}.workspace,.ranking,.performance{padding:15px;margin:14px 0;border:1px solid var(--line);border-radius:16px;background:#fffaf0e8;box-shadow:0 13px 34px #58442b16}.performance-head{display:flex;justify-content:space-between;gap:12px;align-items:end;flex-wrap:wrap}.performance-head h2{margin:0}.performance-note{max-width:1050px;margin:7px 0 0;color:#6d675d;line-height:1.45}.performance-matrices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:13px}.matrix-panel{min-width:0;border:1px solid var(--line);background:#fff;padding:10px}.matrix-panel h3{margin:0 0 4px;font-size:16px}.matrix-meta{min-height:18px;margin:0 0 7px;color:#6d675d;font:11px ui-monospace,monospace}.heat-scroll{overflow:auto;border:1px solid #d4c8b5}.performance-heat{display:grid;grid-template-columns:48px repeat(24,minmax(34px,1fr));gap:3px;min-width:980px;padding:12px}.heat-axis,.heat-cell{display:flex;align-items:center;justify-content:center;height:29px;border-radius:4px;font:9px ui-monospace,monospace}.heat-axis{color:#6d756f}.heat-cell{border:0;min-width:0;padding:1px;cursor:default;color:#fff;text-shadow:0 1px 2px #000}.heat-cell:hover{outline:2px solid var(--ink);outline-offset:1px}.viewer{display:grid;grid-template-columns:minmax(340px,.72fr) minmax(650px,1.6fr);gap:12px;margin-top:13px}figure{margin:0;border:1px solid #d4c8b5;background:#fff;padding:8px}video,img{display:block;width:100%;background:#111}video{aspect-ratio:1280/704}figcaption{padding:8px 3px 2px;font-weight:900}.pending{display:grid;place-items:center;min-height:250px;background:#f0eadf;color:#766d60}.tables{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.tables>div{min-width:0}.scroll{overflow:auto;border:1px solid var(--line);background:#fff}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{padding:8px 10px;border-bottom:1px solid #ddd2c0;text-align:center}th{background:var(--deep);color:#fff}tr:first-child td{background:#fff0c8;font-weight:900}@media(max-width:1050px){header{position:static}.overall-grid{grid-template-columns:repeat(2,1fr)}.progress,.tables,.viewer,.performance-matrices{grid-template-columns:minmax(0,1fr)}}@media(max-width:620px){.overall-grid{grid-template-columns:1fr}}</style></head><body><header><a href="/">返回总览</a><h1>Legacy TI2V<br>First-Latent PCK50</h1><p class="lead">首个 latent frame 固定为 object query；逐个验证 6 case × 50 seed × 40 step × 30 block × 24 head。Conditional 分支、不跨 Head 平均，PCK@32 对可见 object-query token/latent 比较做 micro aggregation。</p><div class="tools"><label>Case <select id="case"></select></label><label>Seed <select id="seed"></select></label><label>Global Top10 <select id="rank"></select></label><label>Object <select id="region"></select></label><button id="refresh">手动刷新</button><button id="replay">重新播放</button><span id="status" class="status">读取中</span></div></header><main><section id="overall" class="overall"></section><section id="progress" class="progress"></section><section class="performance"><div class="performance-head"><div><h2>Block × Head PCK@32 性能矩阵</h2><p class="performance-note">同一组 6 case × 50 seed 的 micro aggregation；左图固定最终时间步 S039，右图汇总 S000–S039 全部 step。悬停格子可查看具体 Block、Head、PCK@32、平均误差和比较次数。</p></div><label>指标 <select id="performanceMetric"><option value="pck32">PCK@32（越高越好）</option><option value="mean_error_px">平均误差 px（越低越好）</option></select></label></div><div class="performance-matrices"><article class="matrix-panel"><h3>当前时间步 S039 · 30 × 24 性能图</h3><p class="matrix-meta" id="s039Meta">等待矩阵数据</p><div class="heat-scroll"><div class="performance-heat" id="s039Heat"><span class="pending">计算中</span></div></div></article><article class="matrix-panel"><h3>所有 step 平均 · 30 × 24 性能图</h3><p class="matrix-meta" id="allStepsMeta">等待矩阵数据</p><div class="heat-scroll"><div class="performance-heat" id="allStepsHeat"><span class="pending">计算中</span></div></div></article></div></section><section class="workspace"><h2>Object-query attention overlay</h2><div id="viewer" class="viewer"></div></section><section class="ranking"><h2>PCK@32 Ranking</h2><div id="tables" class="tables"></div></section></main><script>
+    page = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Legacy TI2V First-Latent PCK50</title><style>
+:root{--paper:#ece4d5;--ink:#17261f;--deep:#17443a;--line:#baad98;--card:#fffaf0;--rust:#b7482f;--gold:#d29c35}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 0 0,#d65f3c44,transparent 34rem),radial-gradient(circle at 100% 0,#27897942,transparent 40rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:15px 22px;background:#ece4d5f2;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:4px 0;font-size:clamp(29px,4.4vw,58px);line-height:1}.lead{max-width:1200px;margin:7px 0}.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tools label,.tools select{max-width:100%}button,select{padding:8px 11px;border:1px solid var(--line);background:var(--card);font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(100% - 18px,2100px);margin:auto;padding:18px 0 70px}.overall{padding:18px;margin-bottom:14px;border:1px solid #0f3d35;border-radius:18px;background:linear-gradient(115deg,#153f35,#21675a);color:#fff;box-shadow:0 16px 38px #183d342b}.overall-head{display:flex;justify-content:space-between;gap:14px;align-items:end;flex-wrap:wrap}.overall-number{font:900 clamp(30px,5vw,66px)/.9 ui-monospace,monospace}.overall-label{opacity:.8}.overall-grid{display:grid;grid-template-columns:repeat(4,minmax(190px,1fr));gap:10px;margin-top:17px}.phase{padding:11px;border:1px solid #ffffff38;background:#ffffff10;border-radius:11px}.phase-title{display:flex;justify-content:space-between;gap:8px;font:800 12px ui-monospace,monospace}.bar{height:9px;margin-top:9px;border-radius:99px;background:#061c1780;overflow:hidden}.bar span{display:block;height:100%;background:linear-gradient(90deg,var(--gold),#f0cc75);border-radius:inherit}.phase-note{margin-top:7px;font-size:11px;opacity:.78}.progress{display:grid;grid-template-columns:repeat(3,minmax(280px,1fr));gap:9px;margin-bottom:15px}.case-progress{padding:10px 12px;border:1px solid var(--line);background:#fff9ee;border-radius:10px;font:12px ui-monospace,monospace}.workspace,.ranking,.performance,.comparison{padding:15px;margin:14px 0;border:1px solid var(--line);border-radius:16px;background:#fffaf0e8;box-shadow:0 13px 34px #58442b16}.performance-head,.comparison-head{display:flex;justify-content:space-between;gap:12px;align-items:end;flex-wrap:wrap}.performance-head h2,.comparison-head h2{margin:0}.performance-note,.comparison-note{max-width:1050px;margin:7px 0 0;color:#6d675d;line-height:1.45}.performance-matrices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:13px}.matrix-panel{min-width:0;border:1px solid var(--line);background:#fff;padding:10px}.matrix-panel h3{margin:0 0 4px;font-size:16px}.matrix-meta{min-height:18px;margin:0 0 7px;color:#6d675d;font:11px ui-monospace,monospace}.heat-scroll{overflow:auto;border:1px solid #d4c8b5}.performance-heat{display:grid;grid-template-columns:48px repeat(24,minmax(34px,1fr));gap:3px;min-width:980px;padding:12px}.heat-axis,.heat-cell{display:flex;align-items:center;justify-content:center;height:29px;border-radius:4px;font:9px ui-monospace,monospace}.heat-axis{color:#6d756f}.heat-cell{border:0;min-width:0;padding:1px;cursor:default;color:#fff;text-shadow:0 1px 2px #000}.heat-cell:hover{outline:2px solid var(--ink);outline-offset:1px}.segmented{display:flex;gap:2px;padding:3px;border:1px solid var(--line);background:#e7decf}.segmented button{border:0;background:transparent;color:var(--ink);padding:7px 10px;cursor:pointer}.segmented button.active{background:var(--deep);color:#fff}.comparison-status{display:block;margin:10px 0;color:#6d675d}.overlap-wrap{overflow:auto;border:1px solid var(--line);background:#fff}.overlap-table{min-width:760px}.overlap-table th:first-child,.overlap-table td:first-child{text-align:left;white-space:nowrap}.overlap-button{display:block;width:100%;border:0;background:transparent;padding:5px;color:inherit;cursor:pointer}.overlap-button b{display:block;font:900 18px ui-monospace,monospace}.overlap-button span{display:block;margin-top:2px;font:10px ui-monospace,monospace;color:#6d675d}.overlap-button.active{background:#fff0c8;outline:2px solid var(--gold);outline-offset:-2px}.comparison-controls{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin:13px 0}.comparison-summary{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:7px;margin:10px 0}.comparison-summary span{padding:9px 10px;border-left:3px solid var(--deep);background:#eee6d8;font:11px ui-monospace,monospace}.comparison-summary b{display:block;margin-top:3px;font-size:18px}.chart-grid{display:grid;grid-template-columns:1.15fr 1fr;gap:14px;margin-top:16px}.chart-panel{min-width:0;border-top:2px solid var(--deep);padding-top:9px}.chart-panel h3{margin:0 0 3px}.chart-caption{margin:0 0 8px;color:#6d675d;font-size:11px}.chart-panel svg{display:block;width:100%;height:auto;aspect-ratio:980/360;background:#fff;border:1px solid var(--line)}.chart-legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:7px;font:10px ui-monospace,monospace}.legend-swatch{display:inline-block;width:13px;height:3px;margin-right:5px;vertical-align:middle}.distribution{margin-top:16px}.distribution h3,.common-heads h3{margin:0 0 7px}.distribution .scroll,.common-heads .scroll{max-height:470px}.common-heads{margin-top:16px}.common-empty{padding:24px;text-align:center;color:#756d61}.viewer{display:grid;grid-template-columns:minmax(340px,.72fr) minmax(650px,1.6fr);gap:12px;margin-top:13px}figure{margin:0;border:1px solid #d4c8b5;background:#fff;padding:8px}video,img{display:block;width:100%;background:#111}video{aspect-ratio:1280/704}figcaption{padding:8px 3px 2px;font-weight:900}.pending{display:grid;place-items:center;min-height:250px;background:#f0eadf;color:#766d60}.tables{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.tables>div{min-width:0}.scroll{overflow:auto;border:1px solid var(--line);background:#fff}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{padding:8px 10px;border-bottom:1px solid #ddd2c0;text-align:center}th{background:var(--deep);color:#fff}tr:first-child td{background:#fff0c8;font-weight:900}@media(max-width:1050px){header{position:static}.overall-grid{grid-template-columns:repeat(2,1fr)}.progress,.tables,.viewer,.performance-matrices,.chart-grid{grid-template-columns:minmax(0,1fr)}.comparison-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){.overall-grid,.comparison-summary{grid-template-columns:1fr}.segmented{width:100%;overflow:auto}.segmented button{flex:1;white-space:nowrap}}</style></head><body><header><a href="/">返回总览</a><h1>Legacy TI2V<br>First-Latent PCK50</h1><p class="lead">首个 latent frame 固定为 object query；逐个验证 6 case × 50 seed × 40 step × 30 block × 24 head。Conditional 分支、不跨 Head 平均，PCK@32 对可见 object-query token/latent 比较做 micro aggregation。</p><div class="tools"><label>Case <select id="case"></select></label><label>Seed <select id="seed"></select></label><label>Global Top10 <select id="rank"></select></label><label>Object <select id="region"></select></label><button id="refresh">手动刷新</button><button id="replay">重新播放</button><span id="status" class="status">读取中</span></div></header><main><section id="overall" class="overall"></section><section id="progress" class="progress"></section><section class="performance"><div class="performance-head"><div><h2>Block × Head PCK@32 性能矩阵</h2><p class="performance-note">同一组 6 case × 50 seed 的 micro aggregation；左图固定最终时间步 S039，右图汇总 S000–S039 全部 step。悬停格子可查看具体 Block、Head、PCK@32、平均误差和比较次数。</p></div><label>指标 <select id="performanceMetric"><option value="pck32">PCK@32（越高越好）</option><option value="mean_error_px">平均误差 px（越低越好）</option></select></label></div><div class="performance-matrices"><article class="matrix-panel"><h3>当前时间步 S039 · 30 × 24 性能图</h3><p class="matrix-meta" id="s039Meta">等待矩阵数据</p><div class="heat-scroll"><div class="performance-heat" id="s039Heat"><span class="pending">计算中</span></div></div></article><article class="matrix-panel"><h3>所有 step 平均 · 30 × 24 性能图</h3><p class="matrix-meta" id="allStepsMeta">等待矩阵数据</p><div class="heat-scroll"><div class="performance-heat" id="allStepsHeat"><span class="pending">计算中</span></div></div></article></div></section><section class="comparison"><div class="comparison-head"><div><h2>Legacy 与三模型 PCK Head 重合分析</h2><p class="comparison-note">按相同物理 Block/Head 对齐。重合矩阵同时报告 Top10、Top30、Top50 和 Top100；分布与相关性使用全部 720 个 Head 的实际 PCK@32。</p></div><div class="segmented" id="scopeTabs" role="group" aria-label="Legacy aggregation"><button class="active" data-scope="s039" aria-pressed="true">Legacy S039</button><button data-scope="all_steps_mean" aria-pressed="false">所有 Step 平均</button></div></div><span id="comparisonStatus" class="comparison-status status">读取比较数据</span><div class="overlap-wrap"><table class="overlap-table"><thead><tr><th>参考 PCK 排名</th><th>Top10</th><th>Top30</th><th>Top50</th><th>Top100</th></tr></thead><tbody id="overlapBody"></tbody></table></div><div class="comparison-controls"><div class="segmented" id="referenceTabs" role="tablist" aria-label="Reference ranking"><button data-reference="gt">GT</button><button data-reference="lora">LoRA</button><button data-reference="baseline">Baseline</button><button class="active" data-reference="combined">三模型综合</button></div><div class="segmented" id="topKTabs" role="group" aria-label="Top K"><button data-top-k="10">Top10</button><button class="active" data-top-k="30">Top30</button><button data-top-k="50">Top50</button><button data-top-k="100">Top100</button></div></div><div id="comparisonSummary" class="comparison-summary"></div><div class="chart-grid"><div class="chart-panel"><h3>720 Head PCK@32 排名分布</h3><p class="chart-caption">五组实际 PCK@32 由高到低排列；横轴为排名，纵轴固定为 0–100%。</p><div id="rankChart"></div></div><div class="chart-panel"><h3 id="scatterTitle">成对 PCK@32</h3><p class="chart-caption">每个点是同一个 Block/Head；深色点属于当前 Top-K 交集。</p><div id="scatterChart"></div></div></div><div class="distribution"><h3>实际 PCK@32 分布统计</h3><div class="scroll"><table><thead><tr><th>数据集</th><th>Min</th><th>P10</th><th>P25</th><th>Median</th><th>Mean</th><th>P75</th><th>P90</th><th>Max</th><th>Std</th></tr></thead><tbody id="distributionBody"></tbody></table></div></div><div class="common-heads"><h3 id="commonHeadsTitle">公共 Head</h3><div class="scroll"><table><thead><tr><th>#</th><th>Block / Head</th><th>Legacy Rank</th><th>Legacy PCK@32</th><th>Reference Rank</th><th>Reference PCK@32</th><th>Rank Delta</th></tr></thead><tbody id="commonHeadsBody"></tbody></table></div></div></section><section class="workspace"><h2>Object-query attention overlay</h2><div id="viewer" class="viewer"></div></section><section class="ranking"><h2>PCK@32 Ranking</h2><div id="tables" class="tables"></div></section></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data=null;const $=id=>document.getElementById(id);const performanceLabels={pck32:'PCK@32',mean_error_px:'平均误差 px'};function options(node,values,label){const old=node.value;node.innerHTML=values.map((v,i)=>`<option value="${e(v.value??v)}">${e(label?label(v,i):v.label??v)}</option>`).join('');if([...node.options].some(o=>o.value===old))node.value=old}function table(rows,kind){return `<div class="scroll"><table><thead><tr><th>#</th>${kind==='combo'?'<th>Step</th>':''}<th>Block</th><th>Head</th><th>PCK@32</th><th>N</th></tr></thead><tbody>${(rows||[]).map((r,i)=>`<tr><td>${i+1}</td>${kind==='combo'?`<td>S${String(r.step).padStart(2,'0')}</td>`:''}<td>L${String(r.block).padStart(2,'0')}</td><td>H${String(r.head).padStart(2,'0')}</td><td>${r.pck32==null?'—':Number(r.pck32).toFixed(2)+'%'}</td><td>${r.comparisons||0}</td></tr>`).join('')}</tbody></table></div>`}function syncRegions(){const c=$('case').value;options($('region'),data.objects[c]||['object_A'])}function phase(label,done,total,note){const pct=total?100*done/total:0;return `<div class="phase"><div class="phase-title"><span>${e(label)}</span><span>${done}/${total}</span></div><div class="bar"><span style="width:${Math.min(100,pct).toFixed(2)}%"></span></div><div class="phase-note">${e(note)} · ${pct.toFixed(1)}%</div></div>`}function performanceColor(value,low,high,inverse){let t=high>low?Math.max(0,Math.min(1,(value-low)/(high-low))):.5;if(inverse)t=1-t;return `hsl(${12+120*t} 58% ${34+7*t}%)`}function renderPerformanceMatrix(kind,boxId,metaId,label,low,high){const rows=data.performance?.matrices?.[kind]||[],metric=$('performanceMetric').value,box=$(boxId),map=new Map(rows.map(r=>[`${r.block}-${r.head}`,r]));if(!rows.length){box.innerHTML='<span class="pending">矩阵数据尚未生成</span>';$(metaId).textContent='等待 combined_counts.npz';return}box.innerHTML='<span class="heat-axis">L/H</span>'+[...Array(24)].map((_,h)=>`<span class="heat-axis">H${String(h).padStart(2,'0')}</span>`).join('');for(let block=0;block<30;block++){box.insertAdjacentHTML('beforeend',`<span class="heat-axis">L${String(block).padStart(2,'0')}</span>`);for(let head=0;head<24;head++){const row=map.get(`${block}-${head}`),value=row?.[metric],cell=document.createElement('button');cell.type='button';cell.className='heat-cell';if(Number.isFinite(value)){cell.style.background=performanceColor(value,low,high,metric==='mean_error_px');cell.textContent=Number(value).toFixed(metric==='pck32'?1:0);cell.title=`${label} · L${String(block).padStart(2,'0')} H${String(head).padStart(2,'0')} · PCK@32 ${Number(row.pck32).toFixed(3)}% · 平均误差 ${Number(row.mean_error_px).toFixed(3)} px · N ${Number(row.comparisons).toLocaleString()}`}else{cell.disabled=true;cell.textContent='—'}box.append(cell)}}const better=metric==='pck32'?'绿色表示 PCK 更高':'绿色表示误差更低';$(metaId).textContent=`${performanceLabels[metric]} · 共用色标 ${low.toFixed(2)}–${high.toFixed(2)} · ${better}`}function renderPerformance(){const performance=data.performance,metric=$('performanceMetric').value,rows=[...(performance?.matrices?.s039||[]),...(performance?.matrices?.all_steps_mean||[])],values=rows.map(r=>r[metric]).filter(Number.isFinite);if(!performance?.ready||!values.length){renderPerformanceMatrix('s039','s039Heat','s039Meta','S039',0,1);renderPerformanceMatrix('all_steps_mean','allStepsHeat','allStepsMeta','S000–S039 平均',0,1);return}const low=Math.min(...values),high=Math.max(...values);renderPerformanceMatrix('s039','s039Heat','s039Meta','S039',low,high);renderPerformanceMatrix('all_steps_mean','allStepsHeat','allStepsMeta','S000–S039 平均',low,high)}function render(){const c=$('case').value,s=$('seed').value,r=Number($('rank').value||0),region=$('region').value,a=data.availability?.[c]?.[s]||{},top=data.summary?.top_step_block_head||[],entry=top[r],t=data.totals||{},overall=t.work_total?100*t.work_done/t.work_total:0;$('overall').innerHTML=`<div class="overall-head"><div><div class="overall-label">TOTAL COMPUTE PROGRESS</div><div class="overall-number">${overall.toFixed(1)}%</div></div><div class="overall-label">${t.work_done||0} / ${t.work_total||606} work units · Ranking ${t.ranking_final?'FROZEN':'WAITING'}</div></div><div class="overall-grid">${phase('First-frame SAM2',t.regions_done||0,t.regions_total||6,'query-frame 0 region cache')}${phase('PCK@32 Matrix',t.pck_done||0,t.pck_total||300,'40×30×24 per run')}${phase('Global Top10',t.ranking_final?1:0,1,t.ranking_final?'final ranking frozen':'unlocks at PCK 300/300')}${phase('Top10 Heatmaps',t.heatmap_done||0,t.heatmap_total||300,'case × seed object overlays')}</div>`;$('progress').innerHTML=data.progress.map(p=>`<div class="case-progress"><b>${e(p.case)}</b><br>SAM2 ${p.region?'READY':'WAIT'} · PCK ${p.pck}/50 · Top10 heatmap ${p.heatmap}/50</div>`).join('');$('status').textContent=`${data.summary?.completed_runs||0}/${data.summary?.expected_runs||300} PCK runs · ${data.summary?.final?'FINAL RANKING':'incremental ranking'}`;renderPerformance();const video=a.video?`<figure><video controls muted playsinline preload="metadata" src="/api/wan22-ti2v-legacy-pck50/video?case=${encodeURIComponent(c)}&seed=${s}"></video><figcaption>${e(c)} · seed ${s} · 40-step / 49-frame</figcaption></figure>`:`<figure><div class="pending">该 seed 视频尚未生成</div><figcaption>Generated video</figcaption></figure>`;const heat=a.heatmap&&entry?`<figure><img src="/api/wan22-ti2v-legacy-pck50/heatmap?case=${encodeURIComponent(c)}&seed=${s}&rank=${r}&region=${encodeURIComponent(region)}&v=${Date.now()}"><figcaption>Rank ${r+1} · S${String(entry.step).padStart(2,'0')} / L${String(entry.block).padStart(2,'0')} / H${String(entry.head).padStart(2,'0')} · ${e(region)} · 每帧独立色标</figcaption></figure>`:`<figure><div class="pending">等待最终 Top10 与该 seed 热力图重跑</div><figcaption>Object-query heatmap</figcaption></figure>`;$('viewer').innerHTML=video+heat;$('tables').innerHTML=`<div><h3>Step × Block × Head · Global Top10</h3>${table(top,'combo')}</div><div><h3>Block × Head · 跨全部 40 Steps</h3>${table(data.summary?.top_block_head_across_steps||[],'head')}</div>`}async function load(){data=await fetch('/api/wan22-ti2v-legacy-pck50/catalog',{cache:'no-store'}).then(r=>r.json());options($('case'),data.cases);options($('seed'),data.seeds);options($('rank'),(data.summary?.top_step_block_head||[]).map((x,i)=>({value:i,label:`#${i+1} S${String(x.step).padStart(2,'0')} L${String(x.block).padStart(2,'0')} H${String(x.head).padStart(2,'0')}`})));syncRegions();render()}$('case').addEventListener('change',()=>{syncRegions();render()});['seed','rank','region'].forEach(id=>$(id).addEventListener('change',render));$('performanceMetric').addEventListener('change',renderPerformance);$('refresh').addEventListener('click',load);$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));load();
 </script></body></html>'''
+    page = page.replace(
+        "<title>Legacy TI2V First-Latent PCK50</title>",
+        '<title>Legacy TI2V First-Latent PCK50</title><link rel="icon" href="data:,">',
+        1,
+    )
+    page = page.replace(
+        "<script>",
+        "<script>" + WAN22_TI2V_LEGACY_COMPARISON_SCRIPT + "</script><script>",
+        1,
+    )
+    page = page.replace(
+        "async function load(){data=await fetch('/api/wan22-ti2v-legacy-pck50/catalog',{cache:'no-store'}).then(r=>r.json());",
+        "async function load(){[data,comparison]=await Promise.all([fetch('/api/wan22-ti2v-legacy-pck50/catalog',{cache:'no-store'}).then(r=>r.json()),fetch('/api/wan22-ti2v-legacy-pck50/comparison',{cache:'no-store'}).then(r=>r.json())]);",
+        1,
+    )
+    page = page.replace(
+        "syncRegions();render()}$('case')",
+        "syncRegions();render();renderComparison()}$('case')",
+        1,
+    )
+    page = page.replace(
+        "tr:first-child td{background:#fff0c8;font-weight:900}",
+        ".tables tr:first-child td{background:#fff0c8;font-weight:900}",
+        1,
+    )
+    page = page.replace("<th>Rank Delta</th>", "<th>Ref - Legacy Rank</th>", 1)
+    return page
 
 
 def wan22_ti2v_baseline_seeds_page():

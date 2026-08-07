@@ -46,6 +46,8 @@ OUTPUT_QUALITY = 7
 VJEPA_PATCH_SIZE = 16
 VJEPA_TUBELET_SIZE = 2
 VJEPA_INPUT_MODES = ("center_crop", "native_rect")
+CASE_SELECTION_MODES = ("mixture", "pybullet_multiobject")
+MODEL_CONDITIONS = ("step03463_lora", "no_step03463_lora")
 DEFAULT_CENTER_RUN_TAG = "step03463_seed3463_retry2"
 DEFAULT_COMPARISON_PAGE = "comparison_step03463.html"
 
@@ -56,6 +58,7 @@ for _path in (PROJECT_ROOT, TRAIN_XSSC_DIR, DIFFSYNTH_ROOT, SCRIPT_DIR):
 from diffsynth.utils.data import save_video
 
 import code_vjepa_vggt.context_wan_v_newtrain as context_flow
+from code_vjepa_vggt.data import pybullet0713_no_gt_box_dataset as pybullet_data
 from code_vjepa_vggt.train_xSSC import visualize_training_xt_v_x0_dinov3 as vis_single
 from code_vjepa_vggt.train_xSSC.object_self_attn_lora_experiments import (
     launch_from_config,
@@ -103,6 +106,132 @@ def _select_cases(dataset, *, count: int, seed: int) -> list[dict[str, Any]]:
                 "local_index": local_index,
                 "case_seed": int(seed + 1009 * (position + 1)),
             }
+        )
+    return cases
+
+
+def _select_pybullet_multiobject_cases(
+    dataset,
+    *,
+    count: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Select deterministic random PyBullet cases using metadata only."""
+    source_names = list(dataset.source_names)
+    if "pybullet" not in source_names:
+        raise RuntimeError(f"Dataset has no PyBullet source: {source_names}")
+    source_id = source_names.index("pybullet")
+    source_dataset = dataset.datasets[source_id]
+    records = getattr(source_dataset, "samples", None)
+    if not isinstance(records, list) or not records:
+        raise RuntimeError("PyBullet dataset does not expose a non-empty samples index")
+    source_offset = sum(int(value) for value in dataset.source_lengths[:source_id])
+    candidates: list[dict[str, Any]] = []
+    for local_index, record in enumerate(records):
+        manifest_path = Path(record.manifest_path)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        meta = None
+        if record.meta_path:
+            meta_path = Path(record.meta_path)
+            if meta_path.is_file():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if not isinstance(meta, dict):
+            meta = None
+        entity_slots = pybullet_data._entity_slots_from_meta(meta, manifest)
+        if len(entity_slots) < 2:
+            continue
+        candidates.append(
+            {
+                "global_index": int(source_offset + local_index),
+                "source_id": int(source_id),
+                "source_name": "pybullet",
+                "local_index": int(local_index),
+                "sample_key": str(record.key),
+                "case_id": str(record.case_id),
+                "family_key": str(record.family_key),
+                "object_count": len(entity_slots),
+                "entity_slots": entity_slots,
+                "manifest_path": str(manifest_path),
+                "meta_path": str(record.meta_path) if record.meta_path else None,
+            }
+        )
+    if len(candidates) < int(count):
+        raise RuntimeError(
+            f"Need {count} multi-object PyBullet cases, found {len(candidates)}"
+        )
+    rng = np.random.default_rng(int(seed))
+    selected_ids = rng.choice(len(candidates), size=int(count), replace=False).tolist()
+    selected = []
+    for position, candidate_id in enumerate(selected_ids):
+        case = dict(candidates[int(candidate_id)])
+        case.update(
+            {
+                "position": int(position),
+                "case_seed": int(seed + 1009 * (position + 1)),
+            }
+        )
+        selected.append(case)
+    return selected
+
+
+def _validate_case_plan(
+    payload: dict[str, Any],
+    *,
+    dataset,
+    count: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if payload.get("selection_mode") != "pybullet_multiobject":
+        raise ValueError(f"Unexpected case-plan selection mode: {payload.get('selection_mode')}")
+    if int(payload.get("seed", -1)) != int(seed):
+        raise ValueError(f"Case-plan seed mismatch: {payload.get('seed')} vs {seed}")
+    cases = payload.get("cases")
+    if not isinstance(cases, list) or len(cases) != int(count):
+        raise ValueError(
+            f"Case-plan count mismatch: {len(cases) if isinstance(cases, list) else None} vs {count}"
+        )
+    normalized = []
+    for expected_position, raw_case in enumerate(cases):
+        case = dict(raw_case)
+        if int(case.get("position", -1)) != expected_position:
+            raise ValueError(f"Invalid case-plan position at row {expected_position}")
+        if case.get("source_name") != "pybullet" or int(case.get("object_count", 0)) < 2:
+            raise ValueError(f"Case-plan row is not multi-object PyBullet: {case}")
+        global_index = int(case["global_index"])
+        if not 0 <= global_index < len(dataset):
+            raise ValueError(f"Case-plan global index is out of range: {global_index}")
+        normalized.append(case)
+    return normalized
+
+
+def _cases_from_args(dataset, args: argparse.Namespace, *, local_rank: int) -> list[dict[str, Any]]:
+    if args.case_selection == "mixture":
+        return _select_cases(dataset, count=int(args.num_cases), seed=int(args.seed))
+    plan_path = Path(args.case_plan).expanduser().resolve() if args.case_plan else None
+    if plan_path is not None and plan_path.is_file():
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+        return _validate_case_plan(
+            payload,
+            dataset=dataset,
+            count=int(args.num_cases),
+            seed=int(args.seed),
+        )
+    cases = _select_pybullet_multiobject_cases(
+        dataset,
+        count=int(args.num_cases),
+        seed=int(args.seed),
+    )
+    if plan_path is not None and local_rank == 0:
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        _json_dump(
+            plan_path,
+            {
+                "selection_mode": "pybullet_multiobject",
+                "seed": int(args.seed),
+                "num_cases": int(args.num_cases),
+                "minimum_object_count": 2,
+                "cases": cases,
+            },
         )
     return cases
 
@@ -514,6 +643,7 @@ def _build_case(
     schedule_choices: list[dict[str, Any]],
     case_dir: Path,
     vjepa_input_mode: str,
+    model_condition: str,
 ) -> dict[str, Any]:
     case_seed = int(case["case_seed"])
     _seed_all(case_seed)
@@ -749,6 +879,15 @@ def _build_case(
             int(frame_indices.numel()) // VJEPA_TUBELET_SIZE,
             *[int(value) for value in vjepa_spatial_grid],
         ],
+        "model_condition": model_condition,
+        "base_pretrained_lora_merged": True,
+        "step03463_lora_loaded": model_condition == "step03463_lora",
+        "selected_object_count": int(
+            case.get("object_count", len(raw_sample.get("entity_slots", [])))
+        ),
+        "selected_entity_slots": case.get(
+            "entity_slots", raw_sample.get("entity_slots", [])
+        ),
         "target_video": "target_tiny_vae.mp4",
         "source_video": "source_frames.mp4",
         "color_scales_p99_5": scales,
@@ -770,21 +909,51 @@ def _worker_main(args: argparse.Namespace, train_argv: list[str]) -> None:
     parser = vjepa_train.build_parser()
     train_args = vjepa_train.core.tvn.prepare_args(parser.parse_args(train_argv))
     dataset = vjepa_train.core.base.build_dataset(train_args)
-    cases = _select_cases(dataset, count=int(args.num_cases), seed=int(args.seed))
+    cases = _cases_from_args(dataset, args, local_rank=local_rank)
+    if args.model_condition == "no_step03463_lora":
+        train_args.self_attn_adaptation_mode = "object_only"
     model = vjepa_train.build_model(train_args, SimpleNamespace(device=device))
-    checkpoint = vjepa_train.core.tvn._resolve_checkpoint_file(Path(args.checkpoint).resolve())
-    load_info = vjepa_train.core.tvn._load_filtered_checkpoint_into_model(
-        model,
-        checkpoint,
-        include_prefixes=("slot_norm.", "slot_projector.", "time_embedding."),
-        include_substrings=(".self_attn.",),
-    )
-    expected_count = sum(1 for _, parameter in model.named_parameters() if parameter.requires_grad)
-    if load_info["loaded_count"] != expected_count or load_info["skipped_shape_mismatch"]:
+    merged_count = len(model.merged_pretrained_lora_modules)
+    expected_merged_count = int(train_args.pretrained_lora_expected_modules)
+    if merged_count != expected_merged_count:
         raise RuntimeError(
-            "Incomplete step-3463 checkpoint load: "
-            f"loaded={load_info['loaded_count']}/{expected_count}, "
-            f"shape_mismatch={len(load_info['skipped_shape_mismatch'])}"
+            "Base pretrained LoRA was not fully merged into Wan: "
+            f"merged={merged_count}/{expected_merged_count}"
+        )
+    self_attn_lora_names = [
+        name
+        for name, _ in model.pipe.dit.named_parameters()
+        if vjepa_train.core._is_full_self_attn_lora_parameter(name)
+    ]
+    checkpoint_loaded = False
+    loaded_count = 0
+    if args.model_condition == "step03463_lora":
+        if not self_attn_lora_names:
+            raise RuntimeError("Step-3463 condition has no self-attention LoRA parameters")
+        checkpoint = vjepa_train.core.tvn._resolve_checkpoint_file(
+            Path(args.checkpoint).resolve()
+        )
+        load_info = vjepa_train.core.tvn._load_filtered_checkpoint_into_model(
+            model,
+            checkpoint,
+            include_prefixes=("slot_norm.", "slot_projector.", "time_embedding."),
+            include_substrings=(".self_attn.",),
+        )
+        expected_count = sum(
+            1 for _, parameter in model.named_parameters() if parameter.requires_grad
+        )
+        if load_info["loaded_count"] != expected_count or load_info["skipped_shape_mismatch"]:
+            raise RuntimeError(
+                "Incomplete step-3463 checkpoint load: "
+                f"loaded={load_info['loaded_count']}/{expected_count}, "
+                f"shape_mismatch={len(load_info['skipped_shape_mismatch'])}"
+            )
+        checkpoint_loaded = True
+        loaded_count = int(load_info["loaded_count"])
+    elif self_attn_lora_names:
+        raise RuntimeError(
+            "no_step03463_lora must not contain self-attention LoRA parameters: "
+            f"{self_attn_lora_names[:8]}"
         )
     model.eval()
     schedule_choices = _schedule_choices(
@@ -795,6 +964,17 @@ def _worker_main(args: argparse.Namespace, train_argv: list[str]) -> None:
     output_root = Path(args.output).resolve()
     rank_root = output_root / f"rank{local_rank}"
     rank_root.mkdir(parents=True, exist_ok=True)
+    _json_dump(
+        rank_root / "model_init.json",
+        {
+            "model_condition": args.model_condition,
+            "base_pretrained_lora_checkpoint": str(train_args.lora_checkpoint),
+            "base_pretrained_lora_merged_modules": merged_count,
+            "self_attn_lora_parameter_tensors": len(self_attn_lora_names),
+            "step03463_checkpoint_loaded": checkpoint_loaded,
+            "step03463_loaded_tensors": loaded_count,
+        },
+    )
     for case in cases:
         if int(case["position"]) % world_size != local_rank:
             continue
@@ -806,6 +986,7 @@ def _worker_main(args: argparse.Namespace, train_argv: list[str]) -> None:
             schedule_choices=schedule_choices,
             case_dir=case_dir,
             vjepa_input_mode=args.vjepa_input_mode,
+            model_condition=args.model_condition,
         )
         print(
             f"rank={local_rank} completed case={record['case_id']} "
@@ -836,6 +1017,13 @@ def _build_index(output_root: Path, *, config_path: Path, checkpoint: Path, seed
             "vjepa_input_mode": records[0]["vjepa_input_mode"] if records else None,
             "vjepa_input_size": records[0]["vjepa_input_size"] if records else None,
             "vjepa_token_grid": records[0]["vjepa_token_grid"] if records else None,
+            "model_condition": records[0]["model_condition"] if records else None,
+            "base_pretrained_lora_merged": (
+                records[0]["base_pretrained_lora_merged"] if records else None
+            ),
+            "step03463_lora_loaded": (
+                records[0]["step03463_lora_loaded"] if records else None
+            ),
             "records": records,
         },
     )
@@ -1026,18 +1214,134 @@ grid.addEventListener('loadedmetadata',()=>{{const first=vids()[0];if(first)seek
     return page_path
 
 
+def _build_model_comparison_page(
+    output_root: Path,
+    *,
+    step_run_tag: str,
+    no_step_run_tag: str,
+    page_name: str,
+) -> Path:
+    step_index = json.loads(
+        (output_root / step_run_tag / "index.json").read_text(encoding="utf-8")
+    )
+    no_step_index = json.loads(
+        (output_root / no_step_run_tag / "index.json").read_text(encoding="utf-8")
+    )
+    if step_index.get("model_condition") != "step03463_lora":
+        raise RuntimeError(f"Unexpected step model condition: {step_index.get('model_condition')}")
+    if no_step_index.get("model_condition") != "no_step03463_lora":
+        raise RuntimeError(
+            f"Unexpected no-step model condition: {no_step_index.get('model_condition')}"
+        )
+    step_records = {
+        int(record["case_position"]): _prefix_record_paths(record, step_run_tag)
+        for record in step_index["records"]
+    }
+    no_step_records = {
+        int(record["case_position"]): _prefix_record_paths(record, no_step_run_tag)
+        for record in no_step_index["records"]
+    }
+    if step_records.keys() != no_step_records.keys():
+        raise RuntimeError(
+            "Step/no-step case positions differ: "
+            f"step={sorted(step_records)}, no_step={sorted(no_step_records)}"
+        )
+    identity_fields = (
+        "case_id",
+        "case_label",
+        "source",
+        "global_index",
+        "local_index",
+        "case_seed",
+        "context_cutoff_frame",
+        "vjepa_frame_indices",
+        "vjepa_sampling_local",
+        "vjepa_input_mode",
+        "vjepa_input_size",
+        "vjepa_token_grid",
+        "selected_object_count",
+        "selected_entity_slots",
+    )
+    schedule_fields = (
+        "label",
+        "scheduler_index",
+        "timestep",
+        "sigma",
+        "raw_timestep_weight",
+        "normalized_timestep_weight",
+        "sigma_gate_normalizer",
+    )
+    pairs = []
+    for position in sorted(step_records):
+        step = step_records[position]
+        no_step = no_step_records[position]
+        for field in identity_fields:
+            if step[field] != no_step[field]:
+                raise RuntimeError(
+                    f"Case {position} differs in {field}: "
+                    f"step={step[field]!r}, no_step={no_step[field]!r}"
+                )
+        step_variants = {item["label"]: item for item in step["variants"]}
+        no_step_variants = {item["label"]: item for item in no_step["variants"]}
+        if step_variants.keys() != no_step_variants.keys():
+            raise RuntimeError(f"Case {position} timestep labels differ")
+        for label in step_variants:
+            for field in schedule_fields:
+                if step_variants[label][field] != no_step_variants[label][field]:
+                    raise RuntimeError(f"Case {position}/{label} differs in {field}")
+        pairs.append({"step": step, "no_step": no_step})
+
+    payload = json.dumps(pairs, ensure_ascii=False).replace("</", "<\\/")
+    page = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Step 3463 LoRA Multi-Object Comparison</title>
+<style>
+:root {{ --bg:#111615; --surface:#19201e; --line:#3a4841; --text:#edf3ee; --muted:#a9b7ae; --lime:#b8e986; --amber:#f1b45c; --cyan:#78c8d2; }}
+* {{ box-sizing:border-box; }} body {{ margin:0; min-height:100vh; background:linear-gradient(135deg,#111615,#17201d 55%,#111615); color:var(--text); font:14px/1.45 "IBM Plex Sans",Verdana,sans-serif; }}
+header {{ padding:18px 24px 15px; border-bottom:1px solid var(--line); background:#151c1a; }} h1 {{ margin:0 0 5px; font:700 24px/1.1 Georgia,serif; letter-spacing:0; }} h2 {{ margin:0; font-size:18px; letter-spacing:0; }}
+.muted {{ color:var(--muted); }} main {{ max-width:1680px; margin:0 auto; padding:18px 24px 30px; }} .toolbar {{ display:flex; flex-wrap:wrap; gap:10px 16px; align-items:end; padding-bottom:16px; }}
+label {{ display:grid; gap:4px; color:var(--muted); font-size:12px; }} select,input[type=range] {{ accent-color:var(--lime); }} select,.icon {{ min-height:36px; border:1px solid var(--line); border-radius:5px; background:#222c28; color:var(--text); padding:6px 10px; }} .icon {{ width:38px; padding:0; cursor:pointer; font-size:16px; }} .icon:hover {{ border-color:var(--lime); }}
+.case-head {{ display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:8px; margin:8px 0 2px; }} .objects {{ min-height:22px; margin-bottom:10px; color:var(--muted); }}
+.grid {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }} figure {{ margin:0; min-width:0; }} figcaption {{ min-height:54px; color:var(--muted); font-size:12px; }} figcaption b {{ color:var(--text); font-size:14px; }} video {{ display:block; width:100%; aspect-ratio:16/9; object-fit:contain; background:#050606; border:1px solid var(--line); }} .target video {{ border-color:var(--amber); }} .no-step video {{ border-color:var(--cyan); }}
+table {{ width:100%; border-collapse:collapse; margin:12px 0 16px; font-variant-numeric:tabular-nums; }} th,td {{ padding:8px 10px; text-align:right; border-bottom:1px solid var(--line); }} th:first-child,td:first-child {{ text-align:left; }} th {{ color:var(--muted); font-size:12px; font-weight:500; }} td strong {{ color:var(--lime); }}
+.controls {{ display:flex; gap:10px; align-items:center; margin-top:15px; }} .controls input {{ flex:1; min-width:220px; }} .frame {{ width:72px; color:var(--muted); font-variant-numeric:tabular-nums; }}
+@media(max-width:920px) {{ .grid {{ grid-template-columns:1fr; }} figcaption {{ min-height:0; margin:10px 0 5px; }} }} @media(max-width:620px) {{ main,header {{ padding-left:12px; padding-right:12px; }} table {{ font-size:11px; }} th,td {{ padding:7px 4px; }} }}
+</style></head><body>
+<header><h1>Step 3463 LoRA Multi-Object Comparison</h1><div class="muted">PyBullet | six multi-object cases | native V-JEPA 384x672 | shared cases, noise and timesteps</div></header>
+<main><div class="toolbar">
+<label>Case<select id="case"></select></label><label>View<select id="view"><option value="loss">Loss overlay</option><option value="x0">Predicted x0</option></select></label>
+<label id="lossLabel">Loss<select id="kind"><option value="flow">Flow loss</option><option value="vjepa">V-JEPA auxiliary</option><option value="total">Weighted total</option></select></label>
+<label>Timestep weight<select id="weight"><option value="low_weight">Low</option><option value="mid_weight">Mid</option><option value="high_weight">High</option></select></label>
+<button class="icon" id="play" title="Play all" aria-label="Play all">&#9654;</button><button class="icon" id="pause" title="Pause all" aria-label="Pause all">&#10074;&#10074;</button><button class="icon" id="replay" title="Replay all" aria-label="Replay all">&#8634;</button>
+</div><div class="case-head"><h2 id="title"></h2><span class="muted" id="sampling"></span></div><div class="objects" id="objects"></div>
+<table><thead><tr><th>Model condition</th><th>Flow</th><th>V-JEPA</th><th>Total</th><th id="scaleHead">Color p99.5</th></tr></thead><tbody id="facts"></tbody></table>
+<div class="grid" id="grid"></div><div class="controls"><span class="frame" id="frame">frame 0</span><input id="seek" type="range" min="0" max="8.2" value="0" step="0.01"></div>
+</main><script>
+const DATA={payload}; const $=id=>document.getElementById(id); const casePick=$('case'),viewPick=$('view'),kindPick=$('kind'),weightPick=$('weight'),grid=$('grid'),facts=$('facts'),title=$('title'),sampling=$('sampling'),objects=$('objects'),seek=$('seek'),frame=$('frame');
+const vids=()=>[...document.querySelectorAll('video')]; const fmt=v=>Number(v).toExponential(5); DATA.forEach((pair,i)=>{{const r=pair.step,o=document.createElement('option');o.value=i;o.textContent=r.case_id+' | '+r.selected_object_count+' objects';casePick.appendChild(o);}}); function variant(record){{return record.variants.find(v=>v.label===weightPick.value);}}
+function load(){{const pair=DATA[Number(casePick.value)||0],step=pair.step,noStep=pair.no_step,sv=variant(step),nv=variant(noStep),kind=kindPick.value,isLoss=viewPick.value==='loss'; title.textContent=step.case_label; sampling.textContent='seed '+step.case_seed+' | '+(step.vjepa_sampling_local?'local':'global')+' V-JEPA sampling | sigma '+Number(sv.sigma).toFixed(4)+' | w '+Number(sv.normalized_timestep_weight).toFixed(4); objects.textContent=step.selected_object_count+' objects | '+step.selected_entity_slots.map(x=>x.object_phrase||x.object_noun).join(' | '); $('lossLabel').style.display=isLoss?'grid':'none'; $('scaleHead').textContent=isLoss?kindPick.options[kindPick.selectedIndex].text+' p99.5':'Input structure'; facts.innerHTML='<tr><td>step03463_lora</td><td>'+fmt(sv.scalar.main_weighted)+'</td><td>'+fmt(sv.scalar.vjepa_weighted_aux)+'</td><td><strong>'+fmt(sv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(step.color_scales_p99_5[kind]):'base merge + step LoRA')+'</td></tr><tr><td>no_step03463_lora</td><td>'+fmt(nv.scalar.main_weighted)+'</td><td>'+fmt(nv.scalar.vjepa_weighted_aux)+'</td><td><strong>'+fmt(nv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(noStep.color_scales_p99_5[kind]):'base merge only')+'</td></tr>'; const viewLabel=isLoss?kindPick.options[kindPick.selectedIndex].text:'Predicted x0',stepSrc=isLoss?sv.videos[kind]:sv.pred_video,noStepSrc=isLoss?nv.videos[kind]:nv.pred_video; grid.innerHTML='<figure class="target"><figcaption><b>Target x0</b><br>Tiny-VAE decoded training target</figcaption><video controls muted playsinline preload="metadata" src="'+step.target_video+'"></video></figure><figure><figcaption><b>step03463_lora</b><br>'+viewLabel+' | '+weightPick.options[weightPick.selectedIndex].text+' weight</figcaption><video controls muted playsinline preload="metadata" src="'+stepSrc+'"></video></figure><figure class="no-step"><figcaption><b>no_step03463_lora</b><br>'+viewLabel+' | base pretrained LoRA merged</figcaption><video controls muted playsinline preload="metadata" src="'+noStepSrc+'"></video></figure>'; seek.value=0; frame.textContent='frame 0';}}
+function sync(action){{vids().forEach(video=>action(video));}} $('play').onclick=()=>sync(video=>video.play().catch(()=>{{}})); $('pause').onclick=()=>sync(video=>video.pause()); $('replay').onclick=()=>sync(video=>{{video.currentTime=0;video.play().catch(()=>{{}})}}); casePick.onchange=load; viewPick.onchange=load; kindPick.onchange=load; weightPick.onchange=load; seek.oninput=()=>{{const t=Number(seek.value);sync(video=>video.currentTime=t);frame.textContent='frame '+Math.round(t*6);}}; grid.addEventListener('loadedmetadata',()=>{{const first=vids()[0];if(first)seek.max=Math.max(0,first.duration||8.2);}},true); grid.addEventListener('timeupdate',event=>{{if(event.target.tagName==='VIDEO'){{seek.value=event.target.currentTime;frame.textContent='frame '+Math.round(event.target.currentTime*6);}}}},true); load();
+</script></body></html>"""
+    page_path = output_root / page_name
+    page_path.write_text(page, encoding="utf-8")
+    return page_path
+
+
 def _parent_main(args: argparse.Namespace) -> None:
     config_path = args.config.expanduser().resolve()
     raw, _ = launch_from_config.load_config(config_path)
     resolved = launch_from_config.validate_config(raw, config_path.parent)
     checkpoint = args.checkpoint.expanduser().resolve()
-    checkpoint_file = vjepa_train.core.tvn._resolve_checkpoint_file(checkpoint)
-    if not checkpoint_file.is_file():
-        raise FileNotFoundError(checkpoint_file)
+    if args.model_condition == "step03463_lora":
+        checkpoint_file = vjepa_train.core.tvn._resolve_checkpoint_file(checkpoint)
+        if not checkpoint_file.is_file():
+            raise FileNotFoundError(checkpoint_file)
     resolved["launch"]["gpu_set"] = "6,7"
     resolved["launch"]["num_processes"] = 2
     resolved["launch"]["main_process_port"] = int(args.accelerate_port)
-    resolved["checkpointing"]["resume_from"] = str(checkpoint)
+    resolved["checkpointing"]["resume_from"] = (
+        str(checkpoint) if args.model_condition == "step03463_lora" else None
+    )
     from datetime import datetime, timezone
 
     run_tag = args.run_tag or f"step03463_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
@@ -1052,6 +1356,14 @@ def _parent_main(args: argparse.Namespace) -> None:
             "num_cases": int(args.num_cases),
             "seed": int(args.seed),
             "vjepa_input_mode": args.vjepa_input_mode,
+            "case_selection": args.case_selection,
+            "case_plan": str(args.case_plan.expanduser().resolve()) if args.case_plan else None,
+            "model_condition": args.model_condition,
+            "base_pretrained_lora_checkpoint": resolved["paths"][
+                "pretrained_lora_checkpoint"
+            ],
+            "base_pretrained_lora_merge_required": True,
+            "step03463_checkpoint_loaded": args.model_condition == "step03463_lora",
             "interpretation": "local_loss_contribution_density",
         },
     )
@@ -1079,7 +1391,13 @@ def _parent_main(args: argparse.Namespace) -> None:
         str(args.seed),
         "--vjepa-input-mode",
         args.vjepa_input_mode,
+        "--case-selection",
+        args.case_selection,
+        "--model-condition",
+        args.model_condition,
     ]
+    if args.case_plan is not None:
+        worker_prefix.extend(["--case-plan", str(args.case_plan.expanduser().resolve())])
     worker_command = command[:script_index] + worker_prefix + command[script_index + 1 :]
     env = os.environ.copy()
     env.update(
@@ -1097,7 +1415,7 @@ def _parent_main(args: argparse.Namespace) -> None:
     subprocess.run(worker_command, env=env, check=True)
     _build_index(output_root, config_path=config_path, checkpoint=checkpoint, seed=int(args.seed))
     serve_root = output_root
-    if args.vjepa_input_mode == "native_rect":
+    if args.vjepa_input_mode == "native_rect" and args.compare_run_tag:
         comparison_path = _build_comparison_page(
             args.output_root.expanduser().resolve(),
             center_run_tag=args.compare_run_tag,
@@ -1106,6 +1424,19 @@ def _parent_main(args: argparse.Namespace) -> None:
         )
         serve_root = args.output_root.expanduser().resolve()
         print(f"Comparison page: {comparison_path}", flush=True)
+    if args.compare_model_run_tag:
+        if args.model_condition != "no_step03463_lora":
+            raise ValueError(
+                "--compare-model-run-tag must be used while generating no_step03463_lora"
+            )
+        model_comparison_path = _build_model_comparison_page(
+            args.output_root.expanduser().resolve(),
+            step_run_tag=args.compare_model_run_tag,
+            no_step_run_tag=run_tag,
+            page_name=args.model_comparison_page,
+        )
+        serve_root = args.output_root.expanduser().resolve()
+        print(f"Model comparison page: {model_comparison_path}", flush=True)
     print(f"Visualization artifacts: {output_root}", flush=True)
     print(
         f"Foreground server command: {sys.executable} -m http.server 8787 "
@@ -1128,13 +1459,25 @@ def _parse_parent_args() -> argparse.Namespace:
         choices=VJEPA_INPUT_MODES,
         default="center_crop",
     )
-    parser.add_argument("--compare-run-tag", default=DEFAULT_CENTER_RUN_TAG)
+    parser.add_argument("--case-selection", choices=CASE_SELECTION_MODES, default="mixture")
+    parser.add_argument("--case-plan", type=Path, default=None)
+    parser.add_argument("--model-condition", choices=MODEL_CONDITIONS, default="step03463_lora")
+    parser.add_argument("--compare-run-tag", default=None)
     parser.add_argument("--comparison-page", default=DEFAULT_COMPARISON_PAGE)
+    parser.add_argument("--compare-model-run-tag", default=None)
+    parser.add_argument(
+        "--model-comparison-page",
+        default="comparison_step03463_pybullet_multiobject.html",
+    )
     args = parser.parse_args()
     if args.num_cases <= 0:
         parser.error("--num-cases must be positive")
     if Path(args.comparison_page).name != args.comparison_page:
         parser.error("--comparison-page must be a file name")
+    if Path(args.model_comparison_page).name != args.model_comparison_page:
+        parser.error("--model-comparison-page must be a file name")
+    if args.case_selection == "pybullet_multiobject" and args.case_plan is None:
+        parser.error("--case-plan is required for pybullet_multiobject selection")
     return args
 
 
@@ -1146,6 +1489,9 @@ def _parse_worker_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--num-cases", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--vjepa-input-mode", choices=VJEPA_INPUT_MODES, required=True)
+    parser.add_argument("--case-selection", choices=CASE_SELECTION_MODES, required=True)
+    parser.add_argument("--case-plan", type=Path, default=None)
+    parser.add_argument("--model-condition", choices=MODEL_CONDITIONS, required=True)
     known, rest = parser.parse_known_args()
     if known.num_cases <= 0:
         parser.error("--num-cases must be positive")
