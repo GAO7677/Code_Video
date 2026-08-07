@@ -5,7 +5,9 @@ The source MP4s already contain the exact loss overlays. This utility decodes
 them into image sheets and adds explicit VAE and V-JEPA temporal mappings:
 
 * Wan VAE38: 49 frames -> 13 temporal latents (first frame + 4-frame groups).
-* V-JEPA: 16 selected frames -> 8 tubelets, each containing 2 selected frames.
+* V-JEPA full-video input: 49 raw frames -> 50 model frames -> 25 tubelets.
+  The final raw frame is duplicated once only when the tubelet size requires
+  even temporal length.
 """
 
 from __future__ import annotations
@@ -93,8 +95,18 @@ def _vae_spans(*, latent_time_steps: int) -> list[tuple[int, int]]:
     return spans
 
 
-def _vjepa_mapping(record: dict[str, Any]) -> dict[int, dict[str, Any]]:
+def _vjepa_model_frame_indices(record: dict[str, Any]) -> list[int]:
+    model_indices = record.get("vjepa_model_frame_indices")
+    if isinstance(model_indices, list) and model_indices:
+        return [int(value) for value in model_indices]
     selected = [int(value) for value in record["vjepa_frame_indices"]]
+    if str(record.get("vjepa_frame_sampling")) == "full" and len(selected) % VJEPA_TUBELET_SIZE:
+        selected = selected + [selected[-1]]
+    return selected
+
+
+def _vjepa_mapping(record: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    selected = _vjepa_model_frame_indices(record)
     if len(selected) % VJEPA_TUBELET_SIZE:
         raise RuntimeError("V-JEPA selected frame count is not tubelet divisible")
     used = {int(value) for value in record["vjepa_loss_frame_indices"]}
@@ -102,10 +114,13 @@ def _vjepa_mapping(record: dict[str, Any]) -> dict[int, dict[str, Any]]:
     for token_index in range(0, len(selected), VJEPA_TUBELET_SIZE):
         frames = selected[token_index : token_index + VJEPA_TUBELET_SIZE]
         for frame_index in frames:
-            mapping[int(frame_index)] = {
+            frame_key = int(frame_index)
+            if not 0 <= frame_key < FRAME_COUNT:
+                continue
+            mapping[frame_key] = {
                 "token_index": token_index // VJEPA_TUBELET_SIZE,
                 "frames": frames,
-                "used": int(frame_index) in used,
+                "used": frame_key in used,
             }
     return mapping
 
@@ -175,7 +190,9 @@ def _draw_temporal_strip(
         active = latent_index == vae_index
         color = (85, 185, 118) if active else (47, 72, 57)
         cv2.rectangle(strip, (x0, 31), (max(x0, x1), 36), color, -1)
-    vjepa_tokens = len(record["vjepa_frame_indices"]) // VJEPA_TUBELET_SIZE
+    vjepa_tokens = int(record.get("vjepa_temporal_tokens", 0))
+    if vjepa_tokens <= 0:
+        vjepa_tokens = len(_vjepa_model_frame_indices(record)) // VJEPA_TUBELET_SIZE
     vjepa_segment = bar_width / float(vjepa_tokens)
     current_token = None if vjepa_info is None else int(vjepa_info["token_index"])
     for token_index in range(vjepa_tokens):
@@ -188,8 +205,8 @@ def _draw_temporal_strip(
         cv2.rectangle(strip, (x0, 41), (max(x0, x1), 46), color, -1)
     _put_text(
         strip,
-        f"green: VAE {FRAME_COUNT}->{latent_time_steps} | cyan: VJ {len(record['vjepa_frame_indices'])}->"
-        f"{vjepa_tokens} | {kind}",
+        f"green: VAE {FRAME_COUNT}->{latent_time_steps} | cyan: VJ full-video ->"
+        f"{vjepa_tokens} tubelets | {kind}",
         4,
         57,
         color=(175, 185, 178),
@@ -297,7 +314,7 @@ code { color:#d3edac; }
 <body>
 <header>
   <h1>V-JEPA Loss Frame Images</h1>
-  <div class="muted">Static 49-frame contact sheets | Wan VAE38 and V-JEPA temporal compression shown per frame</div>
+    <div class="muted">Static 49-frame contact sheets | Wan VAE38 and full-video V-JEPA temporal compression shown per frame</div>
 </header>
 <main>
   <div class="toolbar">
@@ -313,9 +330,10 @@ code { color:#d3edac; }
   <div class="legend">
     <b>Reading each frame:</b>
     <code>VAE z03 [9-12]</code> means raw frames 9 through 12 share one Wan VAE temporal latent.
-    <code>VJ t03 [13,16] USED</code> means the two selected frames form one V-JEPA tubelet and
-    contribute to feature loss. Gray or missing V-JEPA tokens are not feature-loss frames.
-    The green bar is the 49-to-13 VAE mapping; the cyan bar is the 16-to-8 V-JEPA mapping.
+    <code>VJ t03 [13,16] USED</code> means the tubelet frames contribute to feature loss.
+    In full-video mode the final raw frame is duplicated once only for tubelet alignment.
+    Gray or missing V-JEPA tokens are not feature-loss frames. The green bar is the
+    49-to-13 VAE mapping; the cyan bar is the full-video V-JEPA mapping.
   </div>
 </main>
 <script>
@@ -327,19 +345,19 @@ const status=document.getElementById("status");
 function recordFor(pair){return pair[condition.value];}
 function render(){
   const records=DATA.map(recordFor), label=weight.value;
-  status.textContent="Showing static frame images for "+condition.value+" | "+label+
-    " | every case contains all 49 raw target frames and two loss overlays.";
+    status.textContent="Showing static frame images for "+condition.value+" | "+label+
+    " | every case contains all 49 raw target frames and full-video V-JEPA overlays.";
   gallery.innerHTML=records.map(record=>{
     const sheets=record.image_sheets[label];
     return '<section class="case"><div class="case-head"><b>case '+record.case_position+
       ' | '+record.case_label+' | seed '+record.case_seed+'</b><span class="muted">'+
       record.selected_object_count+' objects | VAE '+record.vae_latent_time_steps+
       ' temporal latents | V-JEPA '+record.vjepa_temporal_tokens+
-      ' tubelets | feature frames '+record.vjepa_loss_frame_indices.join(',')+
+      ' tubelets | future-loss frames '+record.vjepa_loss_frame_indices.length+
       '</span></div><div class="objects">'+record.object_text+'</div><div class="sheet-grid">'+
-      '<figure class="target"><figcaption><b>Loss-input target</b><br>all 49 frames</figcaption><img loading="lazy" src="'+record.target_image+'"></figure>'+
-      '<figure class="flow"><figcaption><b>Flow loss</b><br>latent v-MSE projected to frames</figcaption><img loading="lazy" src="'+sheets.flow+'"></figure>'+
-      '<figure class="vjepa"><figcaption><b>V-JEPA feature loss</b><br>selected frames and tubelets</figcaption><img loading="lazy" src="'+sheets.vjepa_feature+'"></figure>'+
+      '<figure class="target"><figcaption><b>Loss-input target</b><br>all 49 frames</figcaption><img loading="lazy" src="'+record.target_image+'"></figure>'+ 
+      '<figure class="flow"><figcaption><b>Flow loss</b><br>latent v-MSE projected to frames</figcaption><img loading="lazy" src="'+sheets.flow+'"></figure>'+ 
+      '<figure class="vjepa"><figcaption><b>V-JEPA feature loss</b><br>full-video input and tubelets</figcaption><img loading="lazy" src="'+sheets.vjepa_feature+'"></figure>'+ 
       '</div></section>';
   }).join("");
 }
