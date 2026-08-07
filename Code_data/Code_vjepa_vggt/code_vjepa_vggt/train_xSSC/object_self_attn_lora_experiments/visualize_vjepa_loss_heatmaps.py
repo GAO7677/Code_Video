@@ -602,15 +602,125 @@ def _vmax(maps: list[np.ndarray]) -> float:
     return max(float(np.percentile(values, 99.5)), float(values.max()) * 1e-6, 1e-12)
 
 
+def _future_vjepa_frame_indices(
+    frame_indices: torch.Tensor,
+    *,
+    context_cutoff: int,
+) -> list[int]:
+    if int(frame_indices.numel()) % VJEPA_TUBELET_SIZE:
+        raise RuntimeError(
+            "V-JEPA frame selection is not divisible by its tubelet size: "
+            f"frames={int(frame_indices.numel())}, tubelet={VJEPA_TUBELET_SIZE}"
+        )
+    tubes = frame_indices.view(-1, VJEPA_TUBELET_SIZE)
+    future_tubes = (tubes > int(context_cutoff)).all(dim=1)
+    selected = tubes[future_tubes].reshape(-1).detach().cpu().tolist()
+    if not selected:
+        raise RuntimeError("V-JEPA frame selection has no future-only feature-loss frames")
+    return [int(value) for value in selected]
+
+
+def _project_latent_temporal_signal(
+    value: torch.Tensor,
+    *,
+    time_steps: int,
+) -> torch.Tensor:
+    projected = F.interpolate(
+        value[None, None, :, None, None].float(),
+        size=(int(time_steps), 1, 1),
+        mode="trilinear",
+        align_corners=False,
+    )
+    return projected[0, 0, :, 0, 0]
+
+
+def _flow_frame_usage(
+    supervised: torch.Tensor,
+    *,
+    time_steps: int,
+) -> tuple[list[int], list[str]]:
+    activity = _project_latent_temporal_signal(
+        supervised.float(),
+        time_steps=time_steps,
+    ).detach().cpu().numpy()
+    active = np.flatnonzero(activity > 1e-6).astype(np.int64).tolist()
+    labels = []
+    for value in activity:
+        if value <= 1e-6:
+            labels.append("flow=masked")
+        elif value >= 1.0 - 1e-6:
+            labels.append("flow=supervised")
+        else:
+            labels.append("flow=mixed")
+    if not active:
+        raise RuntimeError("Projected flow supervision has no active video frames")
+    return [int(value) for value in active], labels
+
+
+def _spatial_stats(
+    density: np.ndarray,
+    *,
+    active_frame_indices: list[int],
+    profile_size: tuple[int, int] = (24, 42),
+) -> dict[str, Any]:
+    """Summarize normalized spatial mass so case comparisons ignore loss scale."""
+    if density.ndim != 3:
+        raise ValueError(f"Expected [T,H,W] density, got {density.shape}")
+    selected = [
+        int(index)
+        for index in active_frame_indices
+        if 0 <= int(index) < int(density.shape[0])
+    ]
+    if not selected:
+        raise ValueError("Spatial statistics require at least one active frame")
+    profile = np.asarray(density[selected], dtype=np.float64).sum(axis=0)
+    profile = np.where(np.isfinite(profile), np.maximum(profile, 0.0), 0.0)
+    total = float(profile.sum())
+    height, width = profile.shape
+    if total <= 1e-20:
+        normalized = np.full((height, width), 1.0 / float(height * width), dtype=np.float64)
+    else:
+        normalized = profile / total
+    y_coords = (np.arange(height, dtype=np.float64) + 0.5) / float(height)
+    x_coords = (np.arange(width, dtype=np.float64) + 0.5) / float(width)
+    centroid_x = float((normalized.sum(axis=0) * x_coords).sum())
+    centroid_y = float((normalized.sum(axis=1) * y_coords).sum())
+    positive = normalized[normalized > 0.0]
+    entropy = float(-(positive * np.log(positive)).sum() / math.log(float(height * width)))
+    active_area = float((normalized > (1.0 / float(height * width))).mean())
+    grid = F.adaptive_avg_pool2d(
+        torch.from_numpy(normalized.astype(np.float32))[None, None],
+        profile_size,
+    )[0, 0].numpy().astype(np.float64)
+    grid /= max(float(grid.sum()), 1e-20)
+    return {
+        "active_frame_indices": selected,
+        "centroid_xy_normalized": [centroid_x, centroid_y],
+        "normalized_entropy": entropy,
+        "active_area_fraction_above_uniform": active_area,
+        "profile_grid_shape": [int(profile_size[0]), int(profile_size[1])],
+        "profile_grid": grid.astype(np.float32).tolist(),
+    }
+
+
 def _overlay_video(
     frames: list[np.ndarray],
     density: np.ndarray,
     *,
     vmax: float,
     header: str,
+    frame_labels: list[str] | None = None,
 ) -> list[np.ndarray]:
+    if len(frames) != int(density.shape[0]):
+        raise ValueError(
+            f"Frame/density length mismatch: frames={len(frames)}, density={density.shape}"
+        )
+    if frame_labels is not None and len(frame_labels) != len(frames):
+        raise ValueError(
+            f"Frame-label length mismatch: labels={len(frame_labels)}, frames={len(frames)}"
+        )
     rendered = []
-    for frame, values in zip(frames, density):
+    for frame_index, (frame, values) in enumerate(zip(frames, density)):
         normalized = np.clip(values / max(vmax, 1e-12), 0.0, 1.0).astype(np.float32)
         heat_bgr = cv2.applyColorMap((normalized * 255.0).astype(np.uint8), cv2.COLORMAP_TURBO)
         heat = cv2.cvtColor(heat_bgr, cv2.COLOR_BGR2RGB).astype(np.float32)
@@ -620,14 +730,27 @@ def _overlay_video(
         alpha = alpha[..., None]
         blended = base * (1.0 - alpha) + heat * alpha
         canvas = np.clip(blended, 0.0, 255.0).astype(np.uint8)
-        cv2.rectangle(canvas, (0, 0), (OUTPUT_WIDTH, 25), (20, 24, 28), -1)
+        cv2.rectangle(canvas, (0, 0), (OUTPUT_WIDTH, 37), (20, 24, 28), -1)
         cv2.putText(
             canvas,
             header,
-            (7, 17),
+            (7, 15),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
+            0.39,
             (245, 248, 250),
+            1,
+            cv2.LINE_AA,
+        )
+        frame_label = (
+            frame_labels[frame_index] if frame_labels is not None else "loss=projected"
+        )
+        cv2.putText(
+            canvas,
+            f"frame={frame_index:02d} | {frame_label}",
+            (7, 31),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.37,
+            (210, 221, 214),
             1,
             cv2.LINE_AA,
         )
@@ -664,6 +787,17 @@ def _build_case(
         context_cutoff=context_cutoff,
         seed=case_seed + 7001,
     )
+    vjepa_loss_frame_indices = _future_vjepa_frame_indices(
+        frame_indices,
+        context_cutoff=context_cutoff,
+    )
+    vjepa_loss_frame_set = set(vjepa_loss_frame_indices)
+    vjepa_frame_labels = [
+        "vjepa_feature=used; range=all"
+        if frame_index in vjepa_loss_frame_set
+        else "vjepa_feature=unused; range=all"
+        for frame_index in range(output_time)
+    ]
     with torch.no_grad():
         target_input, vjepa_input_hw, vjepa_spatial_grid = _preprocess_vjepa(
             model,
@@ -734,6 +868,10 @@ def _build_case(
             latent_error = latent_error * supervised[:, None, None]
             main_mse = latent_error[supervised].mean()
             main_scalar = main_mse * float(choice["raw_timestep_weight"])
+            flow_loss_frame_indices, flow_frame_labels = _flow_frame_usage(
+                supervised,
+                time_steps=output_time,
+            )
             pred_raw = model._decode_tiny_vae_raw(pred_x0)
             feature_map, range_map, feature_loss, range_loss, future_fraction = _vjepa_maps(
                 model,
@@ -751,12 +889,16 @@ def _build_case(
             aux_weight = float(model.vjepa_loss_weight) * float(
                 choice["normalized_timestep_weight"]
             )
-            aux_map = aux_weight * (
-                feature_density + float(model.vjepa_range_penalty_weight) * range_density
+            feature_weighted_density = aux_weight * feature_density
+            range_weighted_density = (
+                aux_weight * float(model.vjepa_range_penalty_weight) * range_density
             )
-            aux_scalar = aux_weight * (
-                feature_loss + float(model.vjepa_range_penalty_weight) * range_loss
+            aux_map = feature_weighted_density + range_weighted_density
+            feature_weighted_scalar = aux_weight * feature_loss
+            range_weighted_scalar = (
+                aux_weight * float(model.vjepa_range_penalty_weight) * range_loss
             )
+            aux_scalar = feature_weighted_scalar + range_weighted_scalar
             main_density = _normalize_density(
                 _project_latent_map(latent_error, time_steps=output_time),
                 main_scalar,
@@ -766,15 +908,17 @@ def _build_case(
             pred_frames = _resize_frames(_as_rgb_frames(pred_raw.clamp(0.0, 1.0)))
             density_means = {
                 "flow": float(main_density.mean().item()),
+                "vjepa_feature": float(feature_weighted_density.mean().item()),
                 "vjepa": float(aux_map.mean().item()),
                 "total": float(total_density.mean().item()),
             }
             expected_means = {
                 "flow": float(main_scalar.item()),
+                "vjepa_feature": feature_weighted_scalar,
                 "vjepa": aux_scalar,
                 "total": total_scalar,
             }
-            for map_name in ("flow", "vjepa", "total"):
+            for map_name in ("flow", "vjepa_feature", "vjepa", "total"):
                 if not math.isclose(
                     density_means[map_name],
                     expected_means[map_name],
@@ -794,6 +938,8 @@ def _build_case(
                     "main_weighted": float(main_scalar.item()),
                     "vjepa_feature": feature_loss,
                     "vjepa_range": range_loss,
+                    "vjepa_feature_weighted": feature_weighted_scalar,
+                    "vjepa_range_weighted": range_weighted_scalar,
                     "vjepa_weighted_aux": aux_scalar,
                     "total_weighted": total_scalar,
                     "future_token_fraction": future_fraction,
@@ -801,10 +947,15 @@ def _build_case(
                 },
                 "density": {
                     "flow": main_density.detach().cpu().numpy().astype(np.float32),
+                    "vjepa_feature": (
+                        feature_weighted_density.detach().cpu().numpy().astype(np.float32)
+                    ),
                     "vjepa": aux_map.detach().cpu().numpy().astype(np.float32),
                     "total": total_density.detach().cpu().numpy().astype(np.float32),
                 },
                 "pred_frames": pred_frames,
+                "flow_loss_frame_indices": flow_loss_frame_indices,
+                "flow_frame_labels": flow_frame_labels,
             }
         )
         del latent_xt, training_target, velocity, pred_x0_raw, pred_x0, pred_raw
@@ -812,7 +963,7 @@ def _build_case(
 
     scales = {
         name: _vmax([variant["density"][name] for variant in variants])
-        for name in ("flow", "vjepa", "total")
+        for name in ("flow", "vjepa_feature", "vjepa", "total")
     }
     case_dir.mkdir(parents=True, exist_ok=True)
     _write_video(target_frames, case_dir / "target_tiny_vae.mp4")
@@ -826,11 +977,35 @@ def _build_case(
         variant_dir.mkdir(parents=True, exist_ok=True)
         scalar = variant["scalar"]
         videos = {}
-        for name, title in (
-            ("flow", "flow"),
-            ("vjepa", "vjepa"),
-            ("total", "total"),
-        ):
+        video_specs = (
+            (
+                "flow",
+                "Flow weighted v-MSE",
+                variant["flow_frame_labels"],
+            ),
+            (
+                "vjepa_feature",
+                "V-JEPA feature MSE",
+                vjepa_frame_labels,
+            ),
+            (
+                "vjepa",
+                "V-JEPA auxiliary",
+                vjepa_frame_labels,
+            ),
+            (
+                "total",
+                "Weighted total",
+                [
+                    (
+                        f"{flow_label}; "
+                        f"vjepa_feature={'used' if frame_index in vjepa_loss_frame_set else 'unused'}"
+                    )
+                    for frame_index, flow_label in enumerate(variant["flow_frame_labels"])
+                ],
+            ),
+        )
+        for name, title, frame_labels in video_specs:
             header = (
                 f"{title} | {choice['label']} | sigma={choice['sigma']:.3f} "
                 f"w={choice['normalized_timestep_weight']:.3f}"
@@ -842,6 +1017,7 @@ def _build_case(
                     variant["density"][name],
                     vmax=scales[name],
                     header=header,
+                    frame_labels=frame_labels,
                 ),
                 path,
             )
@@ -860,6 +1036,20 @@ def _build_case(
                 "scalar": scalar,
                 "videos": videos,
                 "pred_video": str(pred_path.relative_to(case_dir)),
+                "spatial_stats": {
+                    "flow": _spatial_stats(
+                        variant["density"]["flow"],
+                        active_frame_indices=variant["flow_loss_frame_indices"],
+                    ),
+                    "vjepa_feature": _spatial_stats(
+                        variant["density"]["vjepa_feature"],
+                        active_frame_indices=vjepa_loss_frame_indices,
+                    ),
+                    "total": _spatial_stats(
+                        variant["density"]["total"],
+                        active_frame_indices=list(range(output_time)),
+                    ),
+                },
             }
         )
     record = {
@@ -872,6 +1062,7 @@ def _build_case(
         "case_seed": case_seed,
         "context_cutoff_frame": int(context_cutoff),
         "vjepa_frame_indices": [int(value) for value in frame_indices.cpu().tolist()],
+        "vjepa_loss_frame_indices": vjepa_loss_frame_indices,
         "vjepa_sampling_local": bool(sampling_local),
         "vjepa_input_mode": vjepa_input_mode,
         "vjepa_input_size": [int(value) for value in vjepa_input_hw],
@@ -890,6 +1081,10 @@ def _build_case(
         ),
         "target_video": "target_tiny_vae.mp4",
         "source_video": "source_frames.mp4",
+        "loss_input_description": (
+            "Tiny-VAE decoded target video. Flow v-MSE is projected from latent "
+            "supervision; V-JEPA feature MSE uses only vjepa_loss_frame_indices."
+        ),
         "color_scales_p99_5": scales,
         "metadata": raw_sample,
         "variants": variant_records,
@@ -995,6 +1190,69 @@ def _worker_main(args: argparse.Namespace, train_argv: list[str]) -> None:
         )
 
 
+def _pairwise_spatial_comparison(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute case-to-case similarity on normalized spatial profiles."""
+    if not records:
+        return {}
+    variants_by_record = [
+        {str(variant["label"]): variant for variant in record["variants"]}
+        for record in records
+    ]
+    shared_labels = set(variants_by_record[0])
+    for variants in variants_by_record[1:]:
+        shared_labels &= set(variants)
+    if not shared_labels:
+        raise RuntimeError("No shared timestep labels available for spatial comparison")
+
+    case_positions = [int(record["case_position"]) for record in records]
+    case_ids = [str(record["case_id"]) for record in records]
+    results: dict[str, Any] = {
+        "definition": (
+            "Profiles are spatially normalized before comparison. Flow aggregates the "
+            "projected supervised latent v-MSE; V-JEPA feature uses future-only "
+            "tubelet frames and excludes the all-frame range penalty."
+        ),
+        "case_positions": case_positions,
+        "case_ids": case_ids,
+        "timesteps": {},
+    }
+    for label in sorted(shared_labels):
+        per_kind: dict[str, Any] = {}
+        for kind in ("flow", "vjepa_feature", "total"):
+            profiles = []
+            for variants in variants_by_record:
+                stats = variants[label]["spatial_stats"][kind]
+                profile = np.asarray(stats["profile_grid"], dtype=np.float64).reshape(-1)
+                profile = np.maximum(profile, 0.0)
+                profile /= max(float(profile.sum()), 1e-20)
+                profiles.append(profile)
+            matrix = np.stack(profiles, axis=0)
+            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+            cosine = (matrix @ matrix.T) / np.maximum(norms * norms.T, 1e-20)
+            cosine = np.clip(cosine, -1.0, 1.0)
+            midpoint = 0.5 * (matrix[:, None, :] + matrix[None, :, :])
+            safe_matrix = np.maximum(matrix, 1e-20)
+            safe_midpoint = np.maximum(midpoint, 1e-20)
+            js = 0.5 * (
+                (matrix[:, None, :] * np.log(safe_matrix[:, None, :] / safe_midpoint)).sum(axis=-1)
+                + (matrix[None, :, :] * np.log(safe_matrix[None, :, :] / safe_midpoint)).sum(axis=-1)
+            )
+            upper = np.triu_indices(len(records), k=1)
+            cosine_values = cosine[upper]
+            js_values = js[upper]
+            per_kind[kind] = {
+                "cosine_similarity": cosine.astype(np.float32).tolist(),
+                "jensen_shannon_divergence": js.astype(np.float32).tolist(),
+                "mean_pairwise_cosine_similarity": float(cosine_values.mean()),
+                "min_pairwise_cosine_similarity": float(cosine_values.min()),
+                "max_pairwise_cosine_similarity": float(cosine_values.max()),
+                "mean_pairwise_js_divergence": float(js_values.mean()),
+                "max_pairwise_js_divergence": float(js_values.max()),
+            }
+        results["timesteps"][label] = per_kind
+    return results
+
+
 def _build_index(output_root: Path, *, config_path: Path, checkpoint: Path, seed: int) -> None:
     records = []
     for manifest_path in sorted(output_root.glob("rank*/case_*/manifest.json")):
@@ -1008,25 +1266,24 @@ def _build_index(output_root: Path, *, config_path: Path, checkpoint: Path, seed
             variant["pred_video"] = f"{prefix}/{variant['pred_video']}"
         records.append(record)
     records.sort(key=lambda item: int(item["case_position"]))
-    _json_dump(
-        output_root / "index.json",
-        {
-            "config": str(config_path),
-            "checkpoint": str(checkpoint),
-            "seed": int(seed),
-            "vjepa_input_mode": records[0]["vjepa_input_mode"] if records else None,
-            "vjepa_input_size": records[0]["vjepa_input_size"] if records else None,
-            "vjepa_token_grid": records[0]["vjepa_token_grid"] if records else None,
-            "model_condition": records[0]["model_condition"] if records else None,
-            "base_pretrained_lora_merged": (
-                records[0]["base_pretrained_lora_merged"] if records else None
-            ),
-            "step03463_lora_loaded": (
-                records[0]["step03463_lora_loaded"] if records else None
-            ),
-            "records": records,
-        },
-    )
+    index_payload = {
+        "config": str(config_path),
+        "checkpoint": str(checkpoint),
+        "seed": int(seed),
+        "vjepa_input_mode": records[0]["vjepa_input_mode"] if records else None,
+        "vjepa_input_size": records[0]["vjepa_input_size"] if records else None,
+        "vjepa_token_grid": records[0]["vjepa_token_grid"] if records else None,
+        "model_condition": records[0]["model_condition"] if records else None,
+        "base_pretrained_lora_merged": (
+            records[0]["base_pretrained_lora_merged"] if records else None
+        ),
+        "step03463_lora_loaded": (
+            records[0]["step03463_lora_loaded"] if records else None
+        ),
+        "spatial_comparison": _pairwise_spatial_comparison(records),
+        "records": records,
+    }
+    _json_dump(output_root / "index.json", index_payload)
     vjepa_mode = records[0]["vjepa_input_mode"] if records else "unknown"
     vjepa_size = records[0]["vjepa_input_size"] if records else [0, 0]
     vjepa_grid = records[0]["vjepa_token_grid"] if records else [0, 0, 0]
@@ -1124,6 +1381,7 @@ def _build_comparison_page(
         "case_seed",
         "context_cutoff_frame",
         "vjepa_frame_indices",
+        "vjepa_loss_frame_indices",
         "vjepa_sampling_local",
     )
     schedule_fields = (
@@ -1310,20 +1568,237 @@ table {{ width:100%; border-collapse:collapse; margin:12px 0 16px; font-variant-
 <header><h1>Step 3463 LoRA Multi-Object Comparison</h1><div class="muted">PyBullet | six multi-object cases | native V-JEPA 384x672 | shared cases, noise and timesteps</div></header>
 <main><div class="toolbar">
 <label>Case<select id="case"></select></label><label>View<select id="view"><option value="loss">Loss overlay</option><option value="x0">Predicted x0</option></select></label>
-<label id="lossLabel">Loss<select id="kind"><option value="flow">Flow loss</option><option value="vjepa">V-JEPA auxiliary</option><option value="total">Weighted total</option></select></label>
+<label id="lossLabel">Loss<select id="kind"><option value="flow">Flow loss</option><option value="vjepa_feature">V-JEPA feature MSE</option><option value="total">Weighted total</option></select></label>
 <label>Timestep weight<select id="weight"><option value="low_weight">Low</option><option value="mid_weight">Mid</option><option value="high_weight">High</option></select></label>
 <button class="icon" id="play" title="Play all" aria-label="Play all">&#9654;</button><button class="icon" id="pause" title="Pause all" aria-label="Pause all">&#10074;&#10074;</button><button class="icon" id="replay" title="Replay all" aria-label="Replay all">&#8634;</button>
 </div><div class="case-head"><h2 id="title"></h2><span class="muted" id="sampling"></span></div><div class="objects" id="objects"></div>
-<table><thead><tr><th>Model condition</th><th>Flow</th><th>V-JEPA</th><th>Total</th><th id="scaleHead">Color p99.5</th></tr></thead><tbody id="facts"></tbody></table>
+<table><thead><tr><th>Model condition</th><th>Flow</th><th>V-JEPA feature</th><th>Total</th><th id="scaleHead">Color p99.5</th></tr></thead><tbody id="facts"></tbody></table>
 <div class="grid" id="grid"></div><div class="controls"><span class="frame" id="frame">frame 0</span><input id="seek" type="range" min="0" max="8.2" value="0" step="0.01"></div>
 </main><script>
 const DATA={payload}; const $=id=>document.getElementById(id); const casePick=$('case'),viewPick=$('view'),kindPick=$('kind'),weightPick=$('weight'),grid=$('grid'),facts=$('facts'),title=$('title'),sampling=$('sampling'),objects=$('objects'),seek=$('seek'),frame=$('frame');
 const vids=()=>[...document.querySelectorAll('video')]; const fmt=v=>Number(v).toExponential(5); DATA.forEach((pair,i)=>{{const r=pair.step,o=document.createElement('option');o.value=i;o.textContent=r.case_id+' | '+r.selected_object_count+' objects';casePick.appendChild(o);}}); function variant(record){{return record.variants.find(v=>v.label===weightPick.value);}}
-function load(){{const pair=DATA[Number(casePick.value)||0],step=pair.step,noStep=pair.no_step,sv=variant(step),nv=variant(noStep),kind=kindPick.value,isLoss=viewPick.value==='loss'; title.textContent=step.case_label; sampling.textContent='seed '+step.case_seed+' | '+(step.vjepa_sampling_local?'local':'global')+' V-JEPA sampling | sigma '+Number(sv.sigma).toFixed(4)+' | w '+Number(sv.normalized_timestep_weight).toFixed(4); objects.textContent=step.selected_object_count+' objects | '+step.selected_entity_slots.map(x=>x.object_phrase||x.object_noun).join(' | '); $('lossLabel').style.display=isLoss?'grid':'none'; $('scaleHead').textContent=isLoss?kindPick.options[kindPick.selectedIndex].text+' p99.5':'Input structure'; facts.innerHTML='<tr><td>step03463_lora</td><td>'+fmt(sv.scalar.main_weighted)+'</td><td>'+fmt(sv.scalar.vjepa_weighted_aux)+'</td><td><strong>'+fmt(sv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(step.color_scales_p99_5[kind]):'base merge + step LoRA')+'</td></tr><tr><td>no_step03463_lora</td><td>'+fmt(nv.scalar.main_weighted)+'</td><td>'+fmt(nv.scalar.vjepa_weighted_aux)+'</td><td><strong>'+fmt(nv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(noStep.color_scales_p99_5[kind]):'base merge only')+'</td></tr>'; const viewLabel=isLoss?kindPick.options[kindPick.selectedIndex].text:'Predicted x0',stepSrc=isLoss?sv.videos[kind]:sv.pred_video,noStepSrc=isLoss?nv.videos[kind]:nv.pred_video; grid.innerHTML='<figure class="target"><figcaption><b>Target x0</b><br>Tiny-VAE decoded training target</figcaption><video controls muted playsinline preload="metadata" src="'+step.target_video+'"></video></figure><figure><figcaption><b>step03463_lora</b><br>'+viewLabel+' | '+weightPick.options[weightPick.selectedIndex].text+' weight</figcaption><video controls muted playsinline preload="metadata" src="'+stepSrc+'"></video></figure><figure class="no-step"><figcaption><b>no_step03463_lora</b><br>'+viewLabel+' | base pretrained LoRA merged</figcaption><video controls muted playsinline preload="metadata" src="'+noStepSrc+'"></video></figure>'; seek.value=0; frame.textContent='frame 0';}}
+function load(){{const pair=DATA[Number(casePick.value)||0],step=pair.step,noStep=pair.no_step,sv=variant(step),nv=variant(noStep),kind=kindPick.value,isLoss=viewPick.value==='loss'; title.textContent=step.case_label; sampling.textContent='seed '+step.case_seed+' | '+(step.vjepa_sampling_local?'local':'global')+' V-JEPA sampling | feature-loss frames '+step.vjepa_loss_frame_indices.join(',')+' | sigma '+Number(sv.sigma).toFixed(4)+' | w '+Number(sv.normalized_timestep_weight).toFixed(4); objects.textContent=step.selected_object_count+' objects | '+step.selected_entity_slots.map(x=>x.object_phrase||x.object_noun).join(' | '); $('lossLabel').style.display=isLoss?'grid':'none'; $('scaleHead').textContent=isLoss?kindPick.options[kindPick.selectedIndex].text+' p99.5':'Input structure'; facts.innerHTML='<tr><td>step03463_lora</td><td>'+fmt(sv.scalar.main_weighted)+'</td><td>'+fmt(sv.scalar.vjepa_feature_weighted)+'</td><td><strong>'+fmt(sv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(step.color_scales_p99_5[kind]):'base merge + step LoRA')+'</td></tr><tr><td>no_step03463_lora</td><td>'+fmt(nv.scalar.main_weighted)+'</td><td>'+fmt(nv.scalar.vjepa_feature_weighted)+'</td><td><strong>'+fmt(nv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(noStep.color_scales_p99_5[kind]):'base merge only')+'</td></tr>'; const viewLabel=isLoss?kindPick.options[kindPick.selectedIndex].text:'Predicted x0',stepSrc=isLoss?sv.videos[kind]:sv.pred_video,noStepSrc=isLoss?nv.videos[kind]:nv.pred_video; grid.innerHTML='<figure class="target"><figcaption><b>Loss-input target</b><br>Tiny-VAE decoded target frames</figcaption><video controls muted playsinline preload="metadata" src="'+step.target_video+'"></video></figure><figure><figcaption><b>step03463_lora</b><br>'+viewLabel+' | '+weightPick.options[weightPick.selectedIndex].text+' weight</figcaption><video controls muted playsinline preload="metadata" src="'+stepSrc+'"></video></figure><figure class="no-step"><figcaption><b>no_step03463_lora</b><br>'+viewLabel+' | base pretrained LoRA merged</figcaption><video controls muted playsinline preload="metadata" src="'+noStepSrc+'"></video></figure>'; seek.value=0; frame.textContent='frame 0';}}
 function sync(action){{vids().forEach(video=>action(video));}} $('play').onclick=()=>sync(video=>video.play().catch(()=>{{}})); $('pause').onclick=()=>sync(video=>video.pause()); $('replay').onclick=()=>sync(video=>{{video.currentTime=0;video.play().catch(()=>{{}})}}); casePick.onchange=load; viewPick.onchange=load; kindPick.onchange=load; weightPick.onchange=load; seek.oninput=()=>{{const t=Number(seek.value);sync(video=>video.currentTime=t);frame.textContent='frame '+Math.round(t*6);}}; grid.addEventListener('loadedmetadata',()=>{{const first=vids()[0];if(first)seek.max=Math.max(0,first.duration||8.2);}},true); grid.addEventListener('timeupdate',event=>{{if(event.target.tagName==='VIDEO'){{seek.value=event.target.currentTime;frame.textContent='frame '+Math.round(event.target.currentTime*6);}}}},true); load();
 </script></body></html>"""
     page_path = output_root / page_name
     page_path.write_text(page, encoding="utf-8")
+    return page_path
+
+
+def _build_all_frames_model_comparison_page(
+    output_root: Path,
+    *,
+    step_run_tag: str,
+    no_step_run_tag: str,
+    page_name: str,
+) -> Path:
+    """Build a synchronized six-case gallery with normalized spatial statistics."""
+    step_index = json.loads(
+        (output_root / step_run_tag / "index.json").read_text(encoding="utf-8")
+    )
+    no_step_index = json.loads(
+        (output_root / no_step_run_tag / "index.json").read_text(encoding="utf-8")
+    )
+    step_records = {
+        int(record["case_position"]): _prefix_record_paths(record, step_run_tag)
+        for record in step_index["records"]
+    }
+    no_step_records = {
+        int(record["case_position"]): _prefix_record_paths(record, no_step_run_tag)
+        for record in no_step_index["records"]
+    }
+    if step_records.keys() != no_step_records.keys():
+        raise RuntimeError(
+            "All-frame model comparison case positions differ: "
+            f"step={sorted(step_records)}, no_step={sorted(no_step_records)}"
+        )
+    pairs = []
+    for position in sorted(step_records):
+        step = step_records[position]
+        no_step = no_step_records[position]
+        for field in (
+            "case_id",
+            "case_label",
+            "case_seed",
+            "global_index",
+            "vjepa_frame_indices",
+            "vjepa_loss_frame_indices",
+            "vjepa_input_mode",
+            "vjepa_input_size",
+            "vjepa_token_grid",
+        ):
+            if step[field] != no_step[field]:
+                raise RuntimeError(
+                    f"All-frame case {position} differs in {field}: "
+                    f"step={step[field]!r}, no_step={no_step[field]!r}"
+                )
+        pairs.append({"step": step, "no_step": no_step})
+
+    payload = json.dumps(pairs, ensure_ascii=False).replace("</", "<\\/")
+    page = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PyBullet Multi-Object Loss Gallery</title>
+<style>
+:root {
+  --bg:#101513; --panel:#17201c; --line:#3a4b40; --text:#edf5ee;
+  --muted:#a5b6aa; --lime:#b8e986; --amber:#f1b45c; --cyan:#79c8d2;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:linear-gradient(135deg,#101513,#1a241f 56%,#101513);
+  color:var(--text); font:14px/1.45 "IBM Plex Sans",Verdana,sans-serif; }
+header { padding:18px 24px 15px; border-bottom:1px solid var(--line);
+  background:#141c18; }
+h1 { margin:0 0 5px; font:700 24px/1.1 Georgia,serif; }
+h2 { margin:0; font-size:18px; }
+.muted { color:var(--muted); }
+main { max-width:1900px; margin:0 auto; padding:18px 24px 36px; }
+.toolbar { display:flex; flex-wrap:wrap; align-items:end; gap:10px 16px;
+  padding-bottom:14px; border-bottom:1px solid var(--line); }
+label { display:grid; gap:4px; color:var(--muted); font-size:12px; }
+select,.icon { min-height:36px; border:1px solid var(--line); border-radius:5px;
+  background:#222e27; color:var(--text); padding:6px 10px; }
+select { accent-color:var(--lime); }
+.icon { width:38px; padding:0; cursor:pointer; font-size:16px; }
+.icon:hover { border-color:var(--lime); }
+.status { margin:14px 0 8px; color:var(--muted); }
+.case { border-top:1px solid var(--line); padding:16px 0 18px; }
+.case-title { display:flex; flex-wrap:wrap; justify-content:space-between;
+  align-items:baseline; gap:8px; margin-bottom:8px; }
+.case-title b { color:var(--text); font-size:16px; }
+.objects { color:var(--muted); font-size:12px; margin-bottom:10px; }
+.videos { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+figure { margin:0; min-width:0; }
+figcaption { min-height:42px; color:var(--muted); font-size:12px; }
+figcaption b { color:var(--text); font-size:13px; }
+video { display:block; width:100%; aspect-ratio:16/9; object-fit:contain;
+  background:#050606; border:1px solid var(--line); }
+.target video { border-color:var(--amber); }
+.flow video { border-color:#d67e57; }
+.feature video { border-color:var(--lime); }
+.total video { border-color:var(--cyan); }
+.stats { margin:18px 0 0; padding-top:14px; border-top:1px solid var(--line); }
+.stats-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; }
+.stats-head b { font-size:16px; }
+.metric { margin:10px 0; color:var(--muted); }
+.matrix-wrap { overflow:auto; }
+table { border-collapse:collapse; width:max-content; min-width:520px;
+  font-variant-numeric:tabular-nums; }
+th,td { padding:5px 8px; border:1px solid var(--line); text-align:right; }
+th { color:var(--muted); font-size:11px; font-weight:500; }
+th:first-child,td:first-child { text-align:left; }
+td { min-width:62px; }
+.controls { display:flex; gap:10px; align-items:center; margin-top:14px; }
+.controls input { flex:1; min-width:220px; accent-color:var(--lime); }
+.frame { width:76px; color:var(--muted); font-variant-numeric:tabular-nums; }
+code { color:#d3edac; }
+@media(max-width:1250px) { .videos { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:680px) {
+  main,header { padding-left:12px; padding-right:12px; }
+  .videos { grid-template-columns:1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>PyBullet Multi-Object Loss Gallery</h1>
+  <div class="muted">Six shared cases | native rectangular V-JEPA input 384x672 | complete 49-frame timeline</div>
+</header>
+<main>
+  <div class="toolbar">
+    <label>Model condition
+      <select id="condition">
+        <option value="step">step03463_lora</option>
+        <option value="no_step">no_step03463_lora</option>
+      </select>
+    </label>
+    <label>Loss profile
+      <select id="kind">
+        <option value="flow">Flow weighted v-MSE</option>
+        <option value="vjepa_feature">V-JEPA feature MSE</option>
+        <option value="total">Weighted total</option>
+      </select>
+    </label>
+    <label>Timestep weight
+      <select id="weight">
+        <option value="low_weight">Low</option>
+        <option value="mid_weight">Mid</option>
+        <option value="high_weight">High</option>
+      </select>
+    </label>
+    <button class="icon" id="play" title="Play all videos" aria-label="Play all">&#9654;</button>
+    <button class="icon" id="pause" title="Pause all videos" aria-label="Pause all">&#10074;&#10074;</button>
+    <button class="icon" id="replay" title="Replay all videos" aria-label="Replay all">&#8634;</button>
+  </div>
+  <div class="status" id="status"></div>
+  <div id="gallery"></div>
+  <section class="stats">
+    <div class="stats-head"><b>Cross-case spatial distribution</b><span class="muted" id="statsMeta"></span></div>
+    <div class="metric" id="metric"></div>
+    <div class="matrix-wrap"><table id="matrix"></table></div>
+  </section>
+  <div class="controls">
+    <span class="frame" id="frame">frame 0</span>
+    <input id="seek" type="range" min="0" max="8.2" value="0" step="0.01">
+  </div>
+</main>
+<script>
+const DATA=__PAYLOAD__;
+const $=id=>document.getElementById(id);
+const condition=$("condition"),kind=$("kind"),weight=$("weight");
+const gallery=$("gallery"),status=$("status"),statsMeta=$("statsMeta");
+const metric=$("metric"),matrix=$("matrix"),seek=$("seek"),frame=$("frame");
+const labels={flow:"Flow weighted v-MSE",vjepa_feature:"V-JEPA feature MSE",total:"Weighted total"};
+const videos=()=>[...document.querySelectorAll("video")];
+function getRecord(pair){return pair[condition.value];}
+function getVariant(record){return record.variants.find(value=>value.label===weight.value);}
+function objectText(record){return record.selected_entity_slots.map(value=>value.object_phrase||value.object_noun).join(" | ");}
+function profile(record){return getVariant(record).spatial_stats[kind.value].profile_grid.flat();}
+function normalize(values){const clipped=values.map(value=>Math.max(Number(value),0));const total=clipped.reduce((a,b)=>a+b,0)||1;return clipped.map(value=>value/total);}
+function cosine(a,b){let dot=0,aa=0,bb=0;for(let i=0;i<a.length;i++){dot+=a[i]*b[i];aa+=a[i]*a[i];bb+=b[i]*b[i];}return dot/(Math.sqrt(aa*bb)||1);}
+function jsDivergence(a,b){const eps=1e-20;let first=0,second=0;for(let i=0;i<a.length;i++){const mid=0.5*(a[i]+b[i]);if(a[i]>0)first+=0.5*a[i]*Math.log(Math.max(a[i],eps)/Math.max(mid,eps));if(b[i]>0)second+=0.5*b[i]*Math.log(Math.max(b[i],eps)/Math.max(mid,eps));}return first+second;}
+function matrixColor(value){const clipped=Math.max(0,Math.min(1,Number(value)));const hue=18+clipped*105;return "hsl("+hue+" 58% "+(20+clipped*35)+"%)";}
+function renderStats(){
+  const records=DATA.map(getRecord),profiles=records.map(record=>normalize(profile(record))),n=records.length;
+  const cosineMatrix=[],jsMatrix=[];for(let row=0;row<n;row++){cosineMatrix[row]=[];jsMatrix[row]=[];for(let col=0;col<n;col++){cosineMatrix[row][col]=cosine(profiles[row],profiles[col]);jsMatrix[row][col]=jsDivergence(profiles[row],profiles[col]);}}
+  let sum=0,maxJs=0,count=0;for(let row=0;row<n;row++)for(let col=row+1;col<n;col++){sum+=cosineMatrix[row][col];maxJs=Math.max(maxJs,jsMatrix[row][col]);count++;}
+  statsMeta.textContent=labels[kind.value]+" | normalized spatial profile | "+weight.value;
+  metric.textContent="Mean pairwise cosine similarity "+(sum/Math.max(count,1)).toFixed(4)+" | maximum pairwise Jensen-Shannon divergence "+maxJs.toFixed(4)+" | profiles aggregate only frames participating in the selected loss.";
+  let html="<thead><tr><th>case</th>"+records.map(record=>"<th>"+record.case_position+"</th>").join("")+"</tr></thead><tbody>";
+  for(let row=0;row<n;row++){html+="<tr><th>"+records[row].case_position+" · "+records[row].case_id+"</th>";for(let col=0;col<n;col++){html+='<td style="background:'+matrixColor(cosineMatrix[row][col])+'">'+cosineMatrix[row][col].toFixed(3)+"</td>";}html+="</tr>";}
+  matrix.innerHTML=html+"</tbody>";
+}
+function render(){
+  const records=DATA.map(getRecord),selectedWeight=weight.value;
+  status.textContent="Showing "+labels[kind.value]+" on "+records.length+" complete videos | selected timestep "+selectedWeight+" | V-JEPA feature frames are future-only; Flow is latent v-MSE projected to the 49-frame target.";
+  gallery.innerHTML=records.map(record=>{
+    const variant=getVariant(record),stats=variant.spatial_stats[kind.value];
+    const statsText="centroid ("+stats.centroid_xy_normalized.map(value=>Number(value).toFixed(3)).join(", ")+") | entropy "+Number(stats.normalized_entropy).toFixed(3)+" | area>uniform "+Number(stats.active_area_fraction_above_uniform).toFixed(3);
+    return '<section class="case"><div class="case-title"><b>case '+record.case_position+" | "+record.case_label+" | seed "+record.case_seed+"</b><span class=\"muted\">sigma "+Number(variant.sigma).toFixed(4)+" | normalized weight "+Number(variant.normalized_timestep_weight).toFixed(4)+" | "+statsText+"</span></div><div class=\"objects\">"+record.selected_object_count+" objects | "+objectText(record)+"</div><div class=\"videos\">"+
+      '<figure class="target"><figcaption><b>Loss-input target</b><br>decoded Tiny-VAE target</figcaption><video controls muted playsinline preload="metadata" src="'+record.target_video+'"></video></figure>'+
+      '<figure class="flow"><figcaption><b>Flow</b><br>weighted v-MSE projected to target frames</figcaption><video controls muted playsinline preload="metadata" src="'+variant.videos.flow+'"></video></figure>'+
+      '<figure class="feature"><figcaption><b>V-JEPA feature</b><br>future-only selected frames carry feature heat</figcaption><video controls muted playsinline preload="metadata" src="'+variant.videos.vjepa_feature+'"></video></figure>'+
+      '<figure class="total"><figcaption><b>Weighted total</b><br>flow + V-JEPA auxiliary contribution</figcaption><video controls muted playsinline preload="metadata" src="'+variant.videos.total+'"></video></figure></div></section>';
+  }).join("");
+  renderStats();seek.value=0;frame.textContent="frame 0";
+}
+function sync(action){videos().forEach(video=>action(video));}
+$("play").onclick=()=>sync(video=>video.play().catch(()=>{}));
+$("pause").onclick=()=>sync(video=>video.pause());
+$("replay").onclick=()=>sync(video=>{video.currentTime=0;video.play().catch(()=>{});});
+condition.onchange=render;kind.onchange=render;weight.onchange=render;
+seek.oninput=()=>{const time=Number(seek.value);sync(video=>video.currentTime=time);frame.textContent="frame "+Math.round(time*6);};
+gallery.addEventListener("loadedmetadata",event=>{if(event.target.tagName==="VIDEO")seek.max=Math.max(0,event.target.duration||8.2);},true);
+gallery.addEventListener("timeupdate",event=>{if(event.target.tagName==="VIDEO"){seek.value=event.target.currentTime;frame.textContent="frame "+Math.round(event.target.currentTime*6);}},true);
+render();
+</script>
+</body>
+</html>
+"""
+    page_path = output_root / page_name
+    page_path.write_text(page.replace("__PAYLOAD__", payload), encoding="utf-8")
     return page_path
 
 
@@ -1437,6 +1912,13 @@ def _parent_main(args: argparse.Namespace) -> None:
         )
         serve_root = args.output_root.expanduser().resolve()
         print(f"Model comparison page: {model_comparison_path}", flush=True)
+        all_frames_path = _build_all_frames_model_comparison_page(
+            args.output_root.expanduser().resolve(),
+            step_run_tag=args.compare_model_run_tag,
+            no_step_run_tag=run_tag,
+            page_name=args.all_frames_comparison_page,
+        )
+        print(f"All-frame gallery page: {all_frames_path}", flush=True)
     print(f"Visualization artifacts: {output_root}", flush=True)
     print(
         f"Foreground server command: {sys.executable} -m http.server 8787 "
@@ -1469,6 +1951,10 @@ def _parse_parent_args() -> argparse.Namespace:
         "--model-comparison-page",
         default="comparison_step03463_pybullet_multiobject.html",
     )
+    parser.add_argument(
+        "--all-frames-comparison-page",
+        default="comparison_step03463_pybullet_multiobject_all_frames.html",
+    )
     args = parser.parse_args()
     if args.num_cases <= 0:
         parser.error("--num-cases must be positive")
@@ -1476,6 +1962,8 @@ def _parse_parent_args() -> argparse.Namespace:
         parser.error("--comparison-page must be a file name")
     if Path(args.model_comparison_page).name != args.model_comparison_page:
         parser.error("--model-comparison-page must be a file name")
+    if Path(args.all_frames_comparison_page).name != args.all_frames_comparison_page:
+        parser.error("--all-frames-comparison-page must be a file name")
     if args.case_selection == "pybullet_multiobject" and args.case_plan is None:
         parser.error("--case-plan is required for pybullet_multiobject selection")
     return args
