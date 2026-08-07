@@ -152,14 +152,18 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             raise ValueError("Invalid V-JEPA sigma range")
         if self.vjepa_every_n_forwards <= 0:
             raise ValueError("vjepa_every_n_forwards must be positive")
-        if self.vjepa_num_frames <= 0 or self.vjepa_num_frames % 2:
-            raise ValueError("vjepa_num_frames must be a positive even integer")
+        if self.vjepa_num_frames <= 0:
+            raise ValueError("vjepa_num_frames must be positive")
+        if self.vjepa_frame_sampling != "full" and self.vjepa_num_frames % 2:
+            raise ValueError(
+                "vjepa_num_frames must be even unless frame_sampling=full"
+            )
         if self.vjepa_input_size != 384:
             raise ValueError("V-JEPA2.1 ViT-L requires vjepa_input_size=384")
         if self.vjepa_range_penalty_weight < 0.0:
             raise ValueError("vjepa_range_penalty_weight must be non-negative")
-        if self.vjepa_frame_sampling not in {"global", "local", "mixed"}:
-            raise ValueError("vjepa_frame_sampling must be global/local/mixed")
+        if self.vjepa_frame_sampling not in {"global", "local", "mixed", "full"}:
+            raise ValueError("vjepa_frame_sampling must be global/local/mixed/full")
         if not 0.0 <= self.vjepa_local_sampling_probability <= 1.0:
             raise ValueError("vjepa_local_sampling_probability must be in [0, 1]")
         if not 0 < self.vjepa_local_context_frames < self.vjepa_num_frames:
@@ -253,6 +257,20 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         context_cutoff: int,
         device: torch.device,
     ) -> tuple[torch.Tensor, bool]:
+        if self.vjepa_frame_sampling == "full":
+            if time_steps <= 0:
+                raise ValueError("V-JEPA full-video input requires at least one frame")
+            frame_indices = torch.arange(
+                time_steps,
+                device=device,
+                dtype=torch.long,
+            )
+            # V-JEPA's 3D patch embedding uses tubelet_size=2. Duplicate only
+            # the final real frame so an odd-length video keeps every frame.
+            if frame_indices.numel() % 2:
+                frame_indices = torch.cat((frame_indices, frame_indices[-1:]))
+            return frame_indices, False
+
         use_local = self.vjepa_frame_sampling == "local"
         if self.vjepa_frame_sampling == "mixed":
             use_local = bool(
@@ -683,7 +701,7 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--vjepa_range_penalty_weight", type=float, required=True)
     group.add_argument(
         "--vjepa_frame_sampling",
-        choices=("global", "local", "mixed"),
+        choices=("global", "local", "mixed", "full"),
         required=True,
     )
     group.add_argument(

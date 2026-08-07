@@ -168,8 +168,13 @@ def validate_config(config: dict, config_dir: Path) -> dict:
         if int(require(config, "vjepa_loss.every_n_forwards")) <= 0:
             raise ValueError("vjepa_loss.every_n_forwards must be positive")
         num_frames = int(require(config, "vjepa_loss.num_frames"))
-        if num_frames <= 0 or num_frames % 2:
-            raise ValueError("vjepa_loss.num_frames must be a positive even integer")
+        frame_sampling = str(require(config, "vjepa_loss.frame_sampling"))
+        if num_frames <= 0:
+            raise ValueError("vjepa_loss.num_frames must be positive")
+        if frame_sampling != "full" and num_frames % 2:
+            raise ValueError(
+                "vjepa_loss.num_frames must be even unless frame_sampling=full"
+            )
         if int(require(config, "vjepa_loss.input_size")) != 384:
             raise ValueError(
                 "The configured V-JEPA2.1 ViT-L checkpoint requires input_size=384"
@@ -178,10 +183,9 @@ def validate_config(config: dict, config_dir: Path) -> dict:
             raise TypeError("vjepa_loss.tiny_vae_parallel must be a boolean")
         if float(require(config, "vjepa_loss.range_penalty_weight")) < 0.0:
             raise ValueError("vjepa_loss.range_penalty_weight must be non-negative")
-        frame_sampling = str(require(config, "vjepa_loss.frame_sampling"))
-        if frame_sampling not in {"global", "local", "mixed"}:
+        if frame_sampling not in {"global", "local", "mixed", "full"}:
             raise ValueError(
-                "vjepa_loss.frame_sampling must be global/local/mixed"
+                "vjepa_loss.frame_sampling must be global/local/mixed/full"
             )
         local_probability = float(
             require(config, "vjepa_loss.local_sampling_probability")

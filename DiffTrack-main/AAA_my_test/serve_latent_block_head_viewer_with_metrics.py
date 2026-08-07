@@ -399,7 +399,7 @@ UNLISTED_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-top100-mean-overlay?v=1"><div><span>30 / TOP100 MEAN OVERLAY</span><h2>Top100 Head Mean Attention</h2><p>展示 Top100 Head 平均后的 Object Query Attention，对比 baseline、旧方案和新方案。</p></div><span class="go">打开 Top100 Mean 页面</span></a>
 <a class="card new" href="/object-query-group-mean-continuity?v=3"><div><span>31 / GROUP-MEAN CONTINUITY</span><h2>Top100 Group-Mean Continuity</h2><p>查看 Top100 组均值的 continuity mask、after attention 和 removed 区域。</p></div><span class="go">打开 Group-Mean 页面</span></a>
 <a class="card new" href="/physiq025-object-query-frozen-trajectory?v=1"><div><span>32 / PHYSIQ025 FROZEN</span><h2>PhysIQ025 Frozen Trajectory</h2><p>PhysIQ025 case 的 frozen Object Query trajectory 页面，集中展示视频、对象轨迹和注意力图。</p></div><span class="go">打开 PhysIQ025 Frozen</span></a>
-<a class="card new" href="/wan22-ti2v-legacy-pck50?v=1"><div><span>33 / LEGACY PCK50</span><h2>Legacy TI2V First-Latent PCK50</h2><p>首个 latent frame 固定为 object query，浏览 6 case × 50 seed 的 PCK@32 排名和 overlay。</p></div><span class="go">打开 Legacy PCK50</span></a>
+<a class="card new" href="/wan22-ti2v-legacy-pck50?v=2"><div><span>33 / LEGACY PCK50</span><h2>五组 PCK Head 排名与重合</h2><p>首个 latent frame 固定为 object query；查看 Legacy、GT、LoRA、Baseline、三模型综合在 S039 与全步平均下的 720 Head 排名、30 × 24 矩阵、Top-K 重合和相关性。</p></div><span class="go">打开 PCK Head 对比</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + "</section>", 1
@@ -1088,6 +1088,26 @@ class MetricsHandler(viewer.Handler):
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
             return
+        if path == "/api/pck-head-rankings":
+            payload = json.dumps(
+                pck_head_rankings_payload(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/downloads/pck-head-rankings.json":
+            if not PCK_HEAD_RANKINGS_JSON.is_file():
+                raise FileNotFoundError("PCK head rankings JSON is unavailable")
+            viewer.send_file_with_range(
+                self, PCK_HEAD_RANKINGS_JSON, "application/json; charset=utf-8"
+            )
+            return
+        if path == "/downloads/pck-head-rankings.md":
+            if not PCK_HEAD_RANKINGS_MD.is_file():
+                raise FileNotFoundError("PCK head rankings Markdown is unavailable")
+            viewer.send_file_with_range(
+                self, PCK_HEAD_RANKINGS_MD, "text/markdown; charset=utf-8"
+            )
+            return
         if path == "/api/wan22-ti2v-legacy-pck50/video":
             from urllib.parse import parse_qs
 
@@ -1432,6 +1452,12 @@ WAN22_TI2V_LEGACY_PCK50_CACHE = Path(
 WAN22_TI2V_LEGACY_PCK50_SEEDS = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds.txt"
 )
+PCK_HEAD_RANKINGS_JSON = Path(
+    "/data/gaoya/agent-data/outputs/pck_head_rankings/pck_head_rankings.json"
+)
+PCK_HEAD_RANKINGS_MD = Path(
+    "/data/gaoya/agent-data/outputs/pck_head_rankings/pck_head_rankings.md"
+)
 WAN22_TI2V_LEGACY_PCK50_CASES = (
     "0613pybullet_sample_000301_w000",
     "0613pybullet_sample_000331_w001",
@@ -1440,6 +1466,19 @@ WAN22_TI2V_LEGACY_PCK50_CASES = (
     "0613pybullet_sample_001460_w002",
     "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed",
 )
+
+
+def pck_head_rankings_payload() -> dict:
+    """Load the stable two-view PCK ranking export used by the comparison UI."""
+    if not PCK_HEAD_RANKINGS_JSON.is_file():
+        return {"ready": False, "reason": f"missing {PCK_HEAD_RANKINGS_JSON}"}
+    try:
+        payload = json.loads(PCK_HEAD_RANKINGS_JSON.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ready": False, "reason": f"cannot read PCK ranking export: {exc}"}
+    if not isinstance(payload, dict) or not isinstance(payload.get("views"), dict):
+        return {"ready": False, "reason": "PCK ranking export has an invalid schema"}
+    return payload
 
 
 def wan22_ti2v_legacy_pck50_performance():
@@ -1506,7 +1545,7 @@ def wan22_ti2v_legacy_pck50_performance():
     }
 
 
-def wan22_ti2v_legacy_pck50_comparison():
+def _wan22_ti2v_legacy_pck50_comparison_from_catalog():
     performance = wan22_ti2v_legacy_pck50_performance()
     neighbor = viewer.neighbor_diagonal_catalog()
     neighbor_rows = neighbor.get("records", [])
@@ -1672,7 +1711,7 @@ def wan22_ti2v_legacy_pck50_comparison():
                 for reference_key, reference in references.items()
             },
         }
-    return {
+    result = {
         "ready": True,
         "top_ks": list(top_ks),
         "scopes": scopes,
@@ -1681,6 +1720,218 @@ def wan22_ti2v_legacy_pck50_comparison():
             "Legacy uses 6 cases x 50 seeds; neighbor-diagonal uses S039 over "
             "GT, LoRA, and Baseline on 5 cases. Physical Block/Head IDs are aligned."
         ),
+    }
+    ranking = pck_head_rankings_payload()
+    if ranking.get("ready", True) is not False:
+        series_labels = {
+            "legacy_s039": "Legacy S039",
+            "gt": "GT teacher-forced",
+            "lora": "LoRA",
+            "baseline": "Wan2.2 Baseline",
+            "combined": "Three-model combined",
+        }
+        result["ranking_export"] = {
+            "generated_at_utc": ranking.get("generated_at_utc"),
+            "json_path": str(PCK_HEAD_RANKINGS_JSON),
+            "md_path": str(PCK_HEAD_RANKINGS_MD),
+            "views": {
+                view_id: {
+                    "label": view.get("label", view_id),
+                    "source_steps": view.get("source_steps", []),
+                    "series": list(view.get("series", {}).keys()),
+                }
+                for view_id, view in ranking.get("views", {}).items()
+            },
+        }
+        result["pairwise_by_view"] = {}
+        for view_id, pairs in ranking.get(
+            "pairwise_comparisons_by_view", {}
+        ).items():
+            enriched = {}
+            for pair_id, pair in pairs.items():
+                left_id = pair.get("left_series")
+                right_id = pair.get("right_series")
+                enriched[pair_id] = {
+                    **pair,
+                    "left_label": series_labels.get(left_id, left_id),
+                    "right_label": series_labels.get(right_id, right_id),
+                }
+            result["pairwise_by_view"][view_id] = enriched
+    else:
+        result["ranking_export"] = ranking
+        result["pairwise_by_view"] = {}
+    return result
+
+
+def wan22_ti2v_legacy_pck50_comparison():
+    """Build both comparison views from the exported, two-view ranking JSON."""
+    ranking = pck_head_rankings_payload()
+    if ranking.get("ready", True) is False:
+        return ranking
+
+    import numpy as np
+
+    labels = {
+        "legacy_s039": "Legacy S039",
+        "gt": "GT teacher-forced",
+        "lora": "LoRA",
+        "baseline": "Wan2.2 Baseline",
+        "combined": "Three-model combined",
+    }
+    colors = {
+        "legacy_s039": "#202d29",
+        "gt": "#d49a25",
+        "lora": "#197d72",
+        "baseline": "#bd4d36",
+        "combined": "#3d568f",
+    }
+    top_ks = (10, 30, 50, 100)
+
+    def dataset(series_id, series, view_id):
+        rows = [
+            {
+                "block": int(row["block"]),
+                "head": int(row["head"]),
+                "pck32": float(row["pck32"]),
+                "rank": int(row["rank"]),
+            }
+            for row in series.get("ranked_heads", [])
+            if row.get("pck32") is not None
+        ]
+        rows.sort(key=lambda row: (row["block"], row["head"]))
+        values = np.asarray([row["pck32"] for row in rows], dtype=np.float64)
+        percentiles = np.percentile(values, [0, 10, 25, 50, 75, 90, 100])
+        return {
+            "id": series_id,
+            "label": labels[series_id],
+            "color": colors[series_id],
+            "view_id": view_id,
+            "rows": rows,
+            "distribution": {
+                "count": int(values.size),
+                "min": float(percentiles[0]),
+                "p10": float(percentiles[1]),
+                "p25": float(percentiles[2]),
+                "median": float(percentiles[3]),
+                "mean": float(values.mean()),
+                "p75": float(percentiles[4]),
+                "p90": float(percentiles[5]),
+                "max": float(percentiles[6]),
+                "std": float(values.std()),
+            },
+        }
+
+    def add_common_heads(raw_pair, left, right):
+        left_rows = {(row["block"], row["head"]): row for row in left["rows"]}
+        right_rows = {(row["block"], row["head"]): row for row in right["rows"]}
+        result = {
+            "pair_count": raw_pair.get(
+                "pair_count", len(left_rows.keys() & right_rows.keys())
+            ),
+            "pearson": raw_pair.get("pearson_pck32"),
+            "spearman": raw_pair.get("spearman_pck32"),
+            "mean_delta": raw_pair.get("mean_delta_left_minus_right"),
+            "mean_abs_delta": raw_pair.get("mean_abs_delta_pck32"),
+            "overlaps": {},
+        }
+        for top_k in top_ks:
+            left_top = {
+                key for key, row in left_rows.items() if row["rank"] <= top_k
+            }
+            right_top = {
+                key for key, row in right_rows.items() if row["rank"] <= top_k
+            }
+            common = sorted(
+                left_top & right_top,
+                key=lambda key: (
+                    left_rows[key]["rank"] + right_rows[key]["rank"],
+                    left_rows[key]["rank"],
+                    right_rows[key]["rank"],
+                    key,
+                ),
+            )
+            raw_overlap = raw_pair["overlaps"][f"Top{top_k}"]
+            result["overlaps"][str(top_k)] = {
+                **raw_overlap,
+                "common_heads": [
+                    {
+                        "block": key[0],
+                        "head": key[1],
+                        "legacy_rank": left_rows[key]["rank"],
+                        "reference_rank": right_rows[key]["rank"],
+                        "legacy_pck32": left_rows[key]["pck32"],
+                        "reference_pck32": right_rows[key]["pck32"],
+                    }
+                    for key in common
+                ],
+            }
+        return result
+
+    scopes = {}
+    pairwise_by_view = {}
+    for view_id, view in ranking.get("views", {}).items():
+        series = view.get("series", {})
+        datasets = {
+            series_id: dataset(series_id, series_data, view_id)
+            for series_id, series_data in series.items()
+            if series_id in labels
+        }
+        legacy = datasets.get("legacy_s039")
+        if legacy is None or len(legacy["rows"]) != 720:
+            continue
+        references = {
+            series_id: datasets[series_id]
+            for series_id in ("gt", "lora", "baseline", "combined")
+            if series_id in datasets
+        }
+        raw_pairs = ranking.get("pairwise_comparisons_by_view", {}).get(view_id, {})
+        comparisons = {}
+        for reference_id, reference in references.items():
+            pair_id = f"legacy_s039__{reference_id}"
+            raw_pair = raw_pairs.get(pair_id)
+            if raw_pair is not None:
+                comparisons[reference_id] = add_common_heads(
+                    raw_pair, legacy, reference
+                )
+        scopes[view_id] = {
+            **legacy,
+            "label": labels["legacy_s039"]
+            if view_id == "s039"
+            else "Legacy S000-S039 average",
+            "view_label": view.get("label", view_id),
+            "references": references,
+            "comparisons": comparisons,
+        }
+        enriched_pairs = {}
+        for pair_id, raw_pair in raw_pairs.items():
+            left_id = raw_pair.get("left_series")
+            right_id = raw_pair.get("right_series")
+            enriched_pairs[pair_id] = {
+                **raw_pair,
+                "left_label": labels.get(left_id, left_id),
+                "right_label": labels.get(right_id, right_id),
+            }
+        pairwise_by_view[view_id] = enriched_pairs
+
+    return {
+        "ready": bool(scopes),
+        "top_ks": list(top_ks),
+        "scopes": scopes,
+        "references": scopes.get("s039", {}).get("references", {}),
+        "pairwise_by_view": pairwise_by_view,
+        "ranking_export": {
+            "generated_at_utc": ranking.get("generated_at_utc"),
+            "json_path": str(PCK_HEAD_RANKINGS_JSON),
+            "md_path": str(PCK_HEAD_RANKINGS_MD),
+            "views": {
+                view_id: {
+                    "label": view.get("label", view_id),
+                    "source_steps": view.get("source_steps", []),
+                    "series": list(view.get("series", {}).keys()),
+                }
+                for view_id, view in ranking.get("views", {}).items()
+            },
+        },
     }
 
 
@@ -2034,7 +2285,7 @@ let comparisonTopK = 30;
 
 function comparisonDatasets() {
   const scope = comparison.scopes[comparisonScope];
-  return [scope, ...Object.values(comparison.references)];
+  return [scope, ...Object.values(scope.references)];
 }
 
 function comparisonGrid(width, height, xTicks, xMin, xMax) {
@@ -2101,16 +2352,39 @@ function renderScatter(scope, reference, selected) {
     `<div class="chart-legend"><span><i class="legend-swatch" style="background:${reference.color}"></i>全部 720 Head</span><span><i class="legend-swatch" style="background:#17261f"></i>当前 Top-K 交集</span></div>`;
 }
 
+function renderPairwise() {
+  const box = $("pairwiseBody");
+  const exportMeta = comparison?.ranking_export;
+  if (!box || !comparison?.pairwise_by_view?.[comparisonScope]) {
+    if (box) box.innerHTML = `<tr><td colspan="7" class="common-empty">PCK 排名导出尚未生成</td></tr>`;
+    return;
+  }
+  const pairs = Object.values(comparison.pairwise_by_view[comparisonScope]);
+  const view = exportMeta?.views?.[comparisonScope];
+  $("pairwiseStatus").textContent =
+    `${view?.label || comparisonScope} · ${pairs.length} 个 pair · 每组 720 个物理 Head`;
+  box.innerHTML = pairs.map(pair => {
+    const overlapCell = topK => {
+      const item = pair.overlaps[`Top${topK}`];
+      return `<td class="pair-cell"><b>${item.common_count}/${topK}</b><span>J ${item.jaccard.toFixed(3)} · ${item.coverage_pct.toFixed(1)}%</span></td>`;
+    };
+    return `<tr><td>${e(pair.left_label)} × ${e(pair.right_label)}</td>` +
+      [10, 30, 50, 100].map(overlapCell).join("") +
+      `<td class="pair-cell"><b>${pair.pearson_pck32.toFixed(4)}</b><span>全 720 Head</span></td>` +
+      `<td class="pair-cell"><b>${pair.spearman_pck32.toFixed(4)}</b><span>平均秩</span></td></tr>`;
+  }).join("");
+}
+
 function renderComparison() {
   if (!comparison?.ready) {
     $("comparisonStatus").textContent = comparison?.reason || "比较数据读取中";
     return;
   }
   const scope = comparison.scopes[comparisonScope];
-  const reference = comparison.references[comparisonReference];
+  const reference = scope.references[comparisonReference];
   const result = scope.comparisons[comparisonReference];
   const selected = result.overlaps[String(comparisonTopK)];
-  const references = Object.entries(comparison.references);
+  const references = Object.entries(scope.references);
   document.querySelectorAll("#scopeTabs button").forEach(button => {
     const active = button.dataset.scope === comparisonScope;
     button.classList.toggle("active", active);
@@ -2122,7 +2396,7 @@ function renderComparison() {
   document.querySelectorAll("#topKTabs button").forEach(button =>
     button.classList.toggle("active", Number(button.dataset.topK) === comparisonTopK)
   );
-  $("comparisonStatus").textContent = `${scope.label} · 对齐 neighbor-diagonal S039 · 720/720 个物理 Head`;
+  $("comparisonStatus").textContent = `${scope.view_label || scope.label} · Legacy 与五组导出排名对齐 · 720/720 个物理 Head`;
   $("overlapBody").innerHTML = references.map(([key, ref]) =>
     `<tr><td><i class="legend-swatch" style="background:${ref.color}"></i>${e(ref.label)}</td>` +
     comparison.top_ks.map(topK => {
@@ -2142,6 +2416,7 @@ function renderComparison() {
     `<span>Spearman · 720 Head<b>${result.spearman.toFixed(3)}</b></span>`;
   renderRankChart();
   renderScatter(scope, reference, selected);
+  renderPairwise();
   $("distributionBody").innerHTML = comparisonDatasets().map(set => {
     const dist = set.distribution;
     return `<tr><td><i class="legend-swatch" style="background:${set.color}"></i>${e(set.label)}</td>` +
@@ -2182,6 +2457,21 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     page = page.replace(
         "<title>Legacy TI2V First-Latent PCK50</title>",
         '<title>Legacy TI2V First-Latent PCK50</title><link rel="icon" href="data:,">',
+        1,
+    )
+    page = page.replace(
+        "</style>",
+        ".pairwise{margin-top:16px}.pairwise-note{margin:6px 0 10px;color:#6d675d;line-height:1.45}.pairwise .scroll{max-height:540px}.pairwise-table{min-width:1100px}.pairwise-table th:first-child,.pairwise-table td:first-child{text-align:left;white-space:nowrap}.pair-cell{font:11px ui-monospace,monospace;line-height:1.25}.pair-cell b{display:block;font-size:15px}.pair-cell span{display:block;color:#6d675d}.pairwise-table tr:hover td{background:#fff3d3}.download-row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}.download-row a{display:inline-block;padding:7px 10px;border:1px solid var(--line);background:#fff;color:var(--deep);font:700 11px ui-monospace,monospace;text-decoration:none}</style>",
+        1,
+    )
+    page = page.replace(
+        ".pairwise{margin-top:16px}",
+        ".pairwise{padding:15px;margin:14px 0;border:1px solid var(--line);border-radius:16px;background:#fffaf0e8;box-shadow:0 13px 34px #58442b16}",
+        1,
+    )
+    page = page.replace(
+        '<section class="workspace"><h2>Object-query attention overlay</h2>',
+        '<section class="pairwise"><h2>五组 PCK 排序的完整重合度与相关性</h2><p class="pairwise-note">只展示两个口径：Legacy S039 与所有 Step 平均。每个单元格为“公共 Head / Top-K”，下一行是 Jaccard 与覆盖率；Pearson/Spearman 使用同一组 720 个物理 Head 的实际 PCK@32，Spearman 对并列值使用平均秩。</p><span id="pairwiseStatus" class="comparison-status status">读取排名导出</span><div class="download-row"><a href="/downloads/pck-head-rankings.json">下载完整 JSON</a><a href="/downloads/pck-head-rankings.md">下载说明 Markdown</a></div><div class="scroll"><table class="pairwise-table"><thead><tr><th>排序组合</th><th>Top10</th><th>Top30</th><th>Top50</th><th>Top100</th><th>Pearson</th><th>Spearman</th></tr></thead><tbody id="pairwiseBody"></tbody></table></div></section><section class="workspace"><h2>Object-query attention overlay</h2>',
         1,
     )
     page = page.replace(

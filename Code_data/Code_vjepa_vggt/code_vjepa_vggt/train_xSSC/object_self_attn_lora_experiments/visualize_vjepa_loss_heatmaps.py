@@ -289,6 +289,20 @@ def _fixed_vjepa_frames(
 ) -> tuple[torch.Tensor, bool]:
     """Make mixed sampling deterministic and reuse it for every timestep."""
     sampling = module.vjepa_frame_sampling
+    if sampling == "full":
+        if time_steps <= 0:
+            raise ValueError("V-JEPA full-video input requires at least one frame")
+        indices = torch.arange(
+            time_steps,
+            device=module.pipe.device,
+            dtype=torch.long,
+        )
+        # Keep all real frames. The final frame is repeated only to complete
+        # the last size-2 temporal tubelet when the video length is odd.
+        if indices.numel() % VJEPA_TUBELET_SIZE:
+            indices = torch.cat((indices, indices[-1:]))
+        return indices, False
+
     if sampling == "local":
         use_local = True
     elif sampling == "global":
@@ -614,7 +628,11 @@ def _future_vjepa_frame_indices(
         )
     tubes = frame_indices.view(-1, VJEPA_TUBELET_SIZE)
     future_tubes = (tubes > int(context_cutoff)).all(dim=1)
-    selected = tubes[future_tubes].reshape(-1).detach().cpu().tolist()
+    selected_tensor = tubes[future_tubes].reshape(-1)
+    # The full-video path may repeat the final real frame for tubelet
+    # alignment. Report each decoded frame once in visualizations/statistics.
+    selected_tensor = torch.unique_consecutive(selected_tensor)
+    selected = selected_tensor.detach().cpu().tolist()
     if not selected:
         raise RuntimeError("V-JEPA frame selection has no future-only feature-loss frames")
     return [int(value) for value in selected]
@@ -781,14 +799,19 @@ def _build_case(
     target_video = target_raw.clamp(0.0, 1.0)
     output_time = int(target_raw.shape[1])
     context_cutoff = model._context_frame_cutoff(inputs_shared, output_time)
-    frame_indices, sampling_local = _fixed_vjepa_frames(
+    model_frame_indices, sampling_local = _fixed_vjepa_frames(
         model,
         time_steps=output_time,
         context_cutoff=context_cutoff,
         seed=case_seed + 7001,
     )
+    display_frame_indices = torch.arange(
+        output_time,
+        device=model_frame_indices.device,
+        dtype=torch.long,
+    )
     vjepa_loss_frame_indices = _future_vjepa_frame_indices(
-        frame_indices,
+        model_frame_indices,
         context_cutoff=context_cutoff,
     )
     vjepa_loss_frame_set = set(vjepa_loss_frame_indices)
@@ -802,7 +825,7 @@ def _build_case(
         target_input, vjepa_input_hw, vjepa_spatial_grid = _preprocess_vjepa(
             model,
             target_video,
-            frame_indices,
+            model_frame_indices,
             input_mode=vjepa_input_mode,
         )
         target_features = model._encode_vjepa(target_input).detach()
@@ -878,7 +901,7 @@ def _build_case(
                 target_raw=target_raw,
                 pred_raw=pred_raw,
                 target_features=target_features,
-                frame_indices=frame_indices,
+                frame_indices=model_frame_indices,
                 context_cutoff=context_cutoff,
                 input_mode=vjepa_input_mode,
                 input_hw=vjepa_input_hw,
@@ -1061,13 +1084,22 @@ def _build_case(
         "local_index": int(case["local_index"]),
         "case_seed": case_seed,
         "context_cutoff_frame": int(context_cutoff),
-        "vjepa_frame_indices": [int(value) for value in frame_indices.cpu().tolist()],
+        "vjepa_frame_indices": [
+            int(value) for value in display_frame_indices.cpu().tolist()
+        ],
+        "vjepa_model_frame_indices": [
+            int(value) for value in model_frame_indices.cpu().tolist()
+        ],
         "vjepa_loss_frame_indices": vjepa_loss_frame_indices,
         "vjepa_sampling_local": bool(sampling_local),
+        "vjepa_frame_sampling": str(model.vjepa_frame_sampling),
+        "vjepa_padded_frame_count": int(
+            model_frame_indices.numel() - display_frame_indices.numel()
+        ),
         "vjepa_input_mode": vjepa_input_mode,
         "vjepa_input_size": [int(value) for value in vjepa_input_hw],
         "vjepa_token_grid": [
-            int(frame_indices.numel()) // VJEPA_TUBELET_SIZE,
+            int(model_frame_indices.numel()) // VJEPA_TUBELET_SIZE,
             *[int(value) for value in vjepa_spatial_grid],
         ],
         "model_condition": model_condition,
@@ -1083,7 +1115,8 @@ def _build_case(
         "source_video": "source_frames.mp4",
         "loss_input_description": (
             "Tiny-VAE decoded target video. Flow v-MSE is projected from latent "
-            "supervision; V-JEPA feature MSE uses only vjepa_loss_frame_indices."
+            "supervision; V-JEPA receives all decoded frames. An odd final frame "
+            "is repeated only for tubelet alignment."
         ),
         "color_scales_p99_5": scales,
         "metadata": raw_sample,
