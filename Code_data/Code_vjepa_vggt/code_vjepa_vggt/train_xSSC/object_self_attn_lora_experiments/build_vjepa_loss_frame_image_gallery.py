@@ -108,7 +108,7 @@ def _vjepa_model_frame_indices(record: dict[str, Any]) -> list[int]:
 def _vjepa_mapping(record: dict[str, Any]) -> dict[int, dict[str, Any]]:
     selected = _vjepa_model_frame_indices(record)
     if len(selected) % VJEPA_TUBELET_SIZE:
-        raise RuntimeError("V-JEPA selected frame count is not tubelet divisible")
+        raise RuntimeError("V-JEPA model frame count is not tubelet divisible")
     used = {int(value) for value in record["vjepa_loss_frame_indices"]}
     mapping: dict[int, dict[str, Any]] = {}
     for token_index in range(0, len(selected), VJEPA_TUBELET_SIZE):
@@ -163,7 +163,7 @@ def _draw_temporal_strip(
     vjepa = _vjepa_mapping(record)
     vjepa_info = vjepa.get(int(frame_index))
     if vjepa_info is None:
-        vjepa_label = "VJ -- not sampled"
+        vjepa_label = "VJ -- not in input"
     else:
         status = "USED" if vjepa_info["used"] else "masked"
         pair = ",".join(str(value) for value in vjepa_info["frames"])
@@ -408,7 +408,9 @@ def build_gallery(
             output_case.mkdir(parents=True, exist_ok=True)
             latent_time_steps = 1 + (FRAME_COUNT - 1) // VAE_TEMPORAL_STRIDE
             if int(record.get("vjepa_temporal_tokens", 0)) == 0:
-                record["vjepa_temporal_tokens"] = len(record["vjepa_frame_indices"]) // VJEPA_TUBELET_SIZE
+                record["vjepa_temporal_tokens"] = len(
+                    _vjepa_model_frame_indices(record)
+                ) // VJEPA_TUBELET_SIZE
             target_frames = _read_video(output_root / run / record["target_video"])
             target_image = output_case / "target.jpg"
             cv2.imwrite(
@@ -451,9 +453,14 @@ def build_gallery(
                 "selected_object_count": int(record["selected_object_count"]),
                 "object_text": _object_text(record),
                 "vjepa_frame_indices": [int(value) for value in record["vjepa_frame_indices"]],
+                "vjepa_model_frame_indices": [
+                    int(value) for value in _vjepa_model_frame_indices(record)
+                ],
                 "vjepa_loss_frame_indices": [int(value) for value in record["vjepa_loss_frame_indices"]],
                 "vae_latent_time_steps": int(latent_time_steps),
                 "vjepa_temporal_tokens": int(record["vjepa_temporal_tokens"]),
+                "vjepa_frame_sampling": str(record.get("vjepa_frame_sampling", "full")),
+                "vjepa_padded_frame_count": int(record.get("vjepa_padded_frame_count", 0)),
                 "target_image": target_image.relative_to(output_root).as_posix(),
                 "image_sheets": sheets_by_weight,
             }
