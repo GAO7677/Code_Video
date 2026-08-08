@@ -24,6 +24,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from decord import VideoReader, cpu
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -39,6 +40,7 @@ DEFAULT_CHECKPOINT = Path(
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/xssc_vjepa_loss_heatmaps"
 )
+DEFAULT_GPU_SET = "6,7"
 OUTPUT_HEIGHT = 256
 OUTPUT_WIDTH = 448
 OUTPUT_FPS = 6
@@ -46,7 +48,7 @@ OUTPUT_QUALITY = 7
 VJEPA_PATCH_SIZE = 16
 VJEPA_TUBELET_SIZE = 2
 VJEPA_INPUT_MODES = ("center_crop", "native_rect")
-CASE_SELECTION_MODES = ("mixture", "pybullet_multiobject")
+CASE_SELECTION_MODES = ("mixture", "pybullet_multiobject", "json_list")
 MODEL_CONDITIONS = ("step03463_lora", "no_step03463_lora")
 DEFAULT_CENTER_RUN_TAG = "step03463_seed3463_retry2"
 DEFAULT_COMPARISON_PAGE = "comparison_step03463.html"
@@ -61,6 +63,7 @@ from diffsynth.utils.data import save_video
 
 import code_vjepa_vggt.context_wan_v_newtrain as context_flow
 from code_vjepa_vggt.data import pybullet0713_no_gt_box_dataset as pybullet_data
+from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8
 from code_vjepa_vggt.train_xSSC import visualize_training_xt_v_x0_dinov3 as vis_single
 from code_vjepa_vggt.train_xSSC.object_self_attn_lora_experiments import (
     launch_from_config,
@@ -86,6 +89,17 @@ def _seed_all(seed: int) -> None:
 def _safe_name(value: str) -> str:
     value = "".join(char if char.isalnum() or char in "-_." else "_" for char in value)
     return value[:120] or "sample"
+
+
+def _parse_gpu_set(value: str) -> list[str]:
+    gpus = [item.strip() for item in str(value).split(",") if item.strip()]
+    if not gpus:
+        raise ValueError(f"GPU set must contain at least one device, got {value!r}")
+    if "4" in gpus:
+        raise ValueError("GPU 4 is forbidden by workspace rules")
+    if len(set(gpus)) != len(gpus):
+        raise ValueError(f"GPU set contains duplicate devices: {value!r}")
+    return gpus
 
 
 def _select_cases(dataset, *, count: int, seed: int) -> list[dict[str, Any]]:
@@ -176,6 +190,135 @@ def _select_pybullet_multiobject_cases(
     return selected
 
 
+def _read_json_case_paths(list_path: Path) -> list[Path]:
+    if not list_path.is_file():
+        raise FileNotFoundError(f"JSON case list not found: {list_path}")
+    paths: list[Path] = []
+    for raw_line in list_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        path = Path(line).expanduser()
+        if not path.is_absolute():
+            path = (list_path.parent / path).resolve()
+        else:
+            path = path.resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"JSON case entry does not exist: {path}")
+        paths.append(path)
+    if not paths:
+        raise ValueError(f"JSON case list is empty: {list_path}")
+    return paths
+
+
+def _select_json_cases(
+    *,
+    json_case_list: Path,
+    count: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    json_paths = _read_json_case_paths(json_case_list)
+    if len(json_paths) != int(count):
+        raise ValueError(
+            f"JSON case count mismatch: list has {len(json_paths)} entries, requested {count}"
+        )
+    cases = []
+    for position, json_path in enumerate(json_paths):
+        cases.append(
+            {
+                "position": int(position),
+                "global_index": int(position),
+                "source_id": 0,
+                "source_name": "v2v_json",
+                "local_index": int(position),
+                "sample_key": json_path.stem,
+                "case_id": json_path.stem,
+                "json_path": str(json_path),
+                "case_seed": int(seed + 1009 * (position + 1)),
+            }
+        )
+    return cases
+
+
+def _load_json_case_sample(
+    case: dict[str, Any],
+    *,
+    resolution: tuple[int, int],
+    num_context_frames: int,
+) -> dict[str, Any]:
+    json_path = Path(case["json_path"]).expanduser().resolve()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    source_video_path = Path(payload["source_video"]).expanduser().resolve()
+    context_video_path = payload.get("input_video")
+    context_path = (
+        Path(context_video_path).expanduser().resolve()
+        if context_video_path
+        else None
+    )
+
+    source_reader = VideoReader(str(source_video_path), ctx=cpu(0))
+    source_frame_count = len(source_reader)
+    source_indices = np.arange(source_frame_count, dtype=np.int64)
+    source_frames = source_reader.get_batch(source_indices).asnumpy()
+    video = preprocess_video_rgb_uint8(
+        source_frames,
+        resolution,
+        value_range="minus_one_to_one",
+        resize_mode="stretch",
+    )
+
+    if context_path is not None and context_path.is_file():
+        context_reader = VideoReader(str(context_path), ctx=cpu(0))
+        context_frame_count = len(context_reader)
+        context_indices_np = np.arange(context_frame_count, dtype=np.int64)
+        context_frames = context_reader.get_batch(context_indices_np).asnumpy()
+    else:
+        context_frame_count = min(int(num_context_frames), source_frame_count)
+        context_indices_np = np.arange(context_frame_count, dtype=np.int64)
+        context_frames = source_reader.get_batch(context_indices_np).asnumpy()
+        context_path = None
+
+    context_video = preprocess_video_rgb_uint8(
+        context_frames,
+        resolution,
+        value_range="minus_one_to_one",
+        resize_mode="stretch",
+    )
+
+    sample_key = json_path.stem
+    metadata = {
+        "dataset_name": "v2v_json",
+        "sample_key": sample_key,
+        "case_id": sample_key,
+        "json_path": str(json_path),
+        "source_video_path": str(source_video_path),
+        "context_video_path": str(context_path) if context_path is not None else None,
+        "source_frame_count": int(source_frame_count),
+        "context_frame_count": int(context_frame_count),
+        "source_frame_indices": source_indices.tolist(),
+        "context_frame_indices": context_indices_np.tolist(),
+        "input_caption": payload.get("input_caption"),
+        "input_image": payload.get("input_image"),
+        "input_video": payload.get("input_video"),
+        "input_video_4f": payload.get("input_video_4f"),
+        "input_video_16f": payload.get("input_video_16f"),
+        "input_video_24f": payload.get("input_video_24f"),
+        "input_video_randomf": payload.get("input_video_randomf"),
+        "raw_payload": payload,
+        "entity_slots": [],
+    }
+    return {
+        "video": video,
+        "context_video": context_video,
+        "caption": str(payload.get("input_caption", sample_key)),
+        "video_path": str(source_video_path),
+        "frame_indices": torch.arange(int(video.shape[1]), dtype=torch.long),
+        "context_frame_indices": torch.arange(int(context_video.shape[1]), dtype=torch.long),
+        "num_context_frames": int(context_video.shape[1]),
+        "metadata": metadata,
+    }
+
+
 def _validate_case_plan(
     payload: dict[str, Any],
     *,
@@ -209,6 +352,14 @@ def _validate_case_plan(
 def _cases_from_args(dataset, args: argparse.Namespace, *, local_rank: int) -> list[dict[str, Any]]:
     if args.case_selection == "mixture":
         return _select_cases(dataset, count=int(args.num_cases), seed=int(args.seed))
+    if args.case_selection == "json_list":
+        if args.json_case_list is None:
+            raise ValueError("--json-case-list is required for json_list selection")
+        return _select_json_cases(
+            json_case_list=Path(args.json_case_list).expanduser().resolve(),
+            count=int(args.num_cases),
+            seed=int(args.seed),
+        )
     plan_path = Path(args.case_plan).expanduser().resolve() if args.case_plan else None
     if plan_path is not None and plan_path.is_file():
         payload = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -801,13 +952,21 @@ def _build_case(
     case: dict[str, Any],
     schedule_choices: list[dict[str, Any]],
     case_dir: Path,
+    video_resolution: tuple[int, int],
     vjepa_input_mode: str,
     model_condition: str,
     flow_weighted_vjepa_alpha: float,
 ) -> dict[str, Any]:
     case_seed = int(case["case_seed"])
     _seed_all(case_seed)
-    sample = dataset[int(case["global_index"])]
+    if "json_path" in case:
+        sample = _load_json_case_sample(
+            case,
+            resolution=video_resolution,
+            num_context_frames=8,
+        )
+    else:
+        sample = dataset[int(case["global_index"])]
     prepared = model._prepare_pipeline_sample(sample)
     inputs_shared, inputs_posi = prepared[0], prepared[1]
     input_latents = inputs_shared["input_latents"]
@@ -1198,8 +1357,11 @@ def _worker_main(args: argparse.Namespace, train_argv: list[str]) -> None:
     world_size = int(os.environ.get("WORLD_SIZE", "2"))
     device = torch.device(f"cuda:{local_rank}")
     visible = [item.strip() for item in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if item.strip()]
-    if set(visible) != {"6", "7"} or "4" in visible:
-        raise RuntimeError(f"Expected CUDA_VISIBLE_DEVICES=6,7, got {visible}")
+    expected_visible = _parse_gpu_set(args.expected_gpu_set)
+    if visible != expected_visible:
+        raise RuntimeError(
+            f"Expected CUDA_VISIBLE_DEVICES={','.join(expected_visible)}, got {visible}"
+        )
     _seed_all(int(args.seed) + local_rank)
     parser = vjepa_train.build_parser()
     train_args = vjepa_train.core.tvn.prepare_args(parser.parse_args(train_argv))
@@ -1280,6 +1442,7 @@ def _worker_main(args: argparse.Namespace, train_argv: list[str]) -> None:
             case=case,
             schedule_choices=schedule_choices,
             case_dir=case_dir,
+            video_resolution=(int(train_args.height), int(train_args.width)),
             vjepa_input_mode=args.vjepa_input_mode,
             model_condition=args.model_condition,
             flow_weighted_vjepa_alpha=args.flow_weighted_vjepa_alpha,
@@ -1935,8 +2098,9 @@ def _parent_main(args: argparse.Namespace) -> None:
         checkpoint_file = vjepa_train.core.tvn._resolve_checkpoint_file(checkpoint)
         if not checkpoint_file.is_file():
             raise FileNotFoundError(checkpoint_file)
-    resolved["launch"]["gpu_set"] = "6,7"
-    resolved["launch"]["num_processes"] = 2
+    gpu_set = ",".join(_parse_gpu_set(args.gpu_set))
+    resolved["launch"]["gpu_set"] = gpu_set
+    resolved["launch"]["num_processes"] = len(_parse_gpu_set(gpu_set))
     resolved["launch"]["main_process_port"] = int(args.accelerate_port)
     resolved["checkpointing"]["resume_from"] = (
         str(checkpoint) if args.model_condition == "step03463_lora" else None
@@ -1951,12 +2115,15 @@ def _parent_main(args: argparse.Namespace) -> None:
         {
             "config": str(config_path),
             "checkpoint": str(checkpoint),
-            "gpu_set": "6,7",
+            "gpu_set": gpu_set,
             "num_cases": int(args.num_cases),
             "seed": int(args.seed),
             "vjepa_input_mode": args.vjepa_input_mode,
             "case_selection": args.case_selection,
             "case_plan": str(args.case_plan.expanduser().resolve()) if args.case_plan else None,
+            "json_case_list": (
+                str(args.json_case_list.expanduser().resolve()) if args.json_case_list else None
+            ),
             "model_condition": args.model_condition,
             "flow_weighted_vjepa_alpha": float(args.flow_weighted_vjepa_alpha),
             "flow_weighted_vjepa_flow_quantile": FLOW_WEIGHTED_VJEPA_FLOW_QUANTILE,
@@ -1994,6 +2161,8 @@ def _parent_main(args: argparse.Namespace) -> None:
         args.vjepa_input_mode,
         "--case-selection",
         args.case_selection,
+        "--expected-gpu-set",
+        gpu_set,
         "--model-condition",
         args.model_condition,
         "--flow-weighted-vjepa-alpha",
@@ -2001,11 +2170,13 @@ def _parent_main(args: argparse.Namespace) -> None:
     ]
     if args.case_plan is not None:
         worker_prefix.extend(["--case-plan", str(args.case_plan.expanduser().resolve())])
+    if args.json_case_list is not None:
+        worker_prefix.extend(["--json-case-list", str(args.json_case_list.expanduser().resolve())])
     worker_command = command[:script_index] + worker_prefix + command[script_index + 1 :]
     env = os.environ.copy()
     env.update(
         {
-            "CUDA_VISIBLE_DEVICES": "6,7",
+            "CUDA_VISIBLE_DEVICES": gpu_set,
             "PYTHONNOUSERSITE": "1",
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
             "PYTHONPATH": os.pathsep.join(
@@ -2013,7 +2184,7 @@ def _parent_main(args: argparse.Namespace) -> None:
             ).rstrip(os.pathsep),
         }
     )
-    print("GPU 6,7 visualization launch:", flush=True)
+    print(f"GPU {gpu_set} visualization launch:", flush=True)
     print(" ".join(subprocess.list2cmdline([str(item)]) for item in worker_command), flush=True)
     subprocess.run(worker_command, env=env, check=True)
     _build_index(output_root, config_path=config_path, checkpoint=checkpoint, seed=int(args.seed))
@@ -2063,6 +2234,7 @@ def _parse_parent_args() -> argparse.Namespace:
     parser.add_argument("--run-tag", default=None)
     parser.add_argument("--num-cases", type=int, default=3)
     parser.add_argument("--seed", type=int, default=3463)
+    parser.add_argument("--gpu-set", default=DEFAULT_GPU_SET)
     parser.add_argument("--accelerate-port", type=int, default=29567)
     parser.add_argument(
         "--vjepa-input-mode",
@@ -2071,6 +2243,7 @@ def _parse_parent_args() -> argparse.Namespace:
     )
     parser.add_argument("--case-selection", choices=CASE_SELECTION_MODES, default="mixture")
     parser.add_argument("--case-plan", type=Path, default=None)
+    parser.add_argument("--json-case-list", type=Path, default=None)
     parser.add_argument("--model-condition", choices=MODEL_CONDITIONS, default="step03463_lora")
     parser.add_argument(
         "--flow-weighted-vjepa-alpha",
@@ -2095,6 +2268,10 @@ def _parse_parent_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.num_cases <= 0:
         parser.error("--num-cases must be positive")
+    try:
+        _parse_gpu_set(args.gpu_set)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.flow_weighted_vjepa_alpha < 0.0:
         parser.error("--flow-weighted-vjepa-alpha must be non-negative")
     if Path(args.comparison_page).name != args.comparison_page:
@@ -2105,6 +2282,8 @@ def _parse_parent_args() -> argparse.Namespace:
         parser.error("--all-frames-comparison-page must be a file name")
     if args.case_selection == "pybullet_multiobject" and args.case_plan is None:
         parser.error("--case-plan is required for pybullet_multiobject selection")
+    if args.case_selection == "json_list" and args.json_case_list is None:
+        parser.error("--json-case-list is required for json_list selection")
     return args
 
 
@@ -2117,14 +2296,22 @@ def _parse_worker_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--vjepa-input-mode", choices=VJEPA_INPUT_MODES, required=True)
     parser.add_argument("--case-selection", choices=CASE_SELECTION_MODES, required=True)
+    parser.add_argument("--expected-gpu-set", required=True)
     parser.add_argument("--case-plan", type=Path, default=None)
+    parser.add_argument("--json-case-list", type=Path, default=None)
     parser.add_argument("--model-condition", choices=MODEL_CONDITIONS, required=True)
     parser.add_argument("--flow-weighted-vjepa-alpha", type=float, required=True)
     known, rest = parser.parse_known_args()
     if known.num_cases <= 0:
         parser.error("--num-cases must be positive")
+    try:
+        _parse_gpu_set(known.expected_gpu_set)
+    except ValueError as exc:
+        parser.error(str(exc))
     if known.flow_weighted_vjepa_alpha < 0.0:
         parser.error("--flow-weighted-vjepa-alpha must be non-negative")
+    if known.case_selection == "json_list" and known.json_case_list is None:
+        parser.error("--json-case-list is required for json_list selection")
     return known, rest
 
 

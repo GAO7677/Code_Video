@@ -46,6 +46,64 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def filter_overlapping_query_tracks(sample, query_frame: int, min_pixels: int):
+    """Drop later tracks that cannot supply distinct query pixels."""
+    kept = []
+    assigned = None
+    dropped = []
+    for track_index, track in enumerate(sample.object_tracks):
+        masks = np.asarray(track.masks_thw) > 0
+        if masks.ndim != 3:
+            raise ValueError(f"expected track masks [T,H,W], got {masks.shape}")
+        frame_index = min(max(int(query_frame), 0), len(masks) - 1)
+        if not masks[frame_index].any():
+            candidates = [index for index, mask in enumerate(masks) if mask.any()]
+            if not candidates:
+                dropped.append(
+                    {
+                        "track_index": track_index,
+                        "phrase": str(track.source_phrase or track.phrase),
+                        "reason": "empty_track",
+                    }
+                )
+                continue
+            frame_index = min(candidates, key=lambda index: (abs(index - query_frame), index))
+        mask = masks[frame_index]
+        if assigned is None:
+            assigned = np.zeros_like(mask, dtype=bool)
+        exclusive_pixels = int((mask & ~assigned).sum())
+        if exclusive_pixels < int(min_pixels):
+            dropped.append(
+                {
+                    "track_index": track_index,
+                    "phrase": str(track.source_phrase or track.phrase),
+                    "reason": "insufficient_exclusive_query_pixels",
+                    "source_mask_frame": int(frame_index),
+                    "mask_pixels": int(mask.sum()),
+                    "exclusive_pixels": exclusive_pixels,
+                    "required_pixels": int(min_pixels),
+                }
+            )
+            continue
+        kept.append(track)
+        assigned |= mask
+
+    if not kept:
+        raise RuntimeError("automatic grounding produced no distinct object tracks")
+    sample.object_tracks = kept
+    sample.debug = {
+        **dict(sample.debug or {}),
+        "exclusive_query_mask_filter": {
+            "query_frame": int(query_frame),
+            "input_track_count": len(kept) + len(dropped),
+            "kept_track_count": len(kept),
+            "dropped_track_count": len(dropped),
+            "dropped_tracks": dropped,
+        },
+    }
+    return sample
+
+
 def main() -> None:
     args = parse_args()
     if not 0 <= args.worker_id < args.num_workers:
@@ -90,6 +148,12 @@ def main() -> None:
                 caption=caption,
                 image_hw=(int(args.height), int(args.width)),
             )
+            query_frame = int(args.query_context_frame)
+            sample = filter_overlapping_query_tracks(
+                sample,
+                query_frame=query_frame,
+                min_pixels=int(args.points_per_region),
+            )
             phrases = [
                 str(track.source_phrase or track.phrase or f"object_{track_index:02d}")
                 for track_index, track in enumerate(sample.object_tracks)
@@ -97,7 +161,6 @@ def main() -> None:
             if not phrases:
                 raise RuntimeError(f"{case.key}: automatic grounding found no object tracks")
 
-            query_frame = int(args.query_context_frame)
             if not 0 <= query_frame < len(frames_tchw_01):
                 raise ValueError(
                     f"query-context-frame {query_frame} is outside {len(frames_tchw_01)} frames"
@@ -145,6 +208,7 @@ def main() -> None:
                 cache,
                 save_visualizations=bool(args.save_visualizations),
             )
+            (output_dir / "error.txt").unlink(missing_ok=True)
             print(
                 f"[{index}/{len(cases)}] complete {case.key}: "
                 f"{len(phrases)} objects, query_frame={query_frame}",

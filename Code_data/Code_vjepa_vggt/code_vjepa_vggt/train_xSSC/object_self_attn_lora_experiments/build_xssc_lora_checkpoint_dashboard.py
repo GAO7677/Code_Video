@@ -1714,6 +1714,38 @@ def build_status(
     return rows
 
 
+def build_weight_provenance_section() -> str:
+    return """
+    <section class="panel provenance"><div class="panel-head"><h2>训练权重来源</h2>
+      <span class="state">14 种方案</span></div>
+      <p class="weights-note">所有方案共享同一 Wan + OpenVid LoRA 起点；“from scratch”仅表示不续接本轮实验 checkpoint，并非随机初始化。</p>
+      <h3>统一训练起点</h3>
+      <div class="table-wrap"><table><thead><tr><th>层级</th><th>权重</th><th>训练中的作用</th></tr></thead><tbody>
+        <tr><td>生成底座</td><td><code>Wan-AI-Wan2.2-TI2V-5B</code></td><td>冻结的 Wan 2.2 TI2V 5B 主干</td></tr>
+        <tr><td>初始化 LoRA</td><td><code>openvid_mixed_ctx24_384x672_lora · step-010000</code></td><td>300 个 LoRA 模块合并进 Wan 后卸载并冻结</td></tr>
+        <tr><td>本轮可训练权重</td><td><code>LoRA rank 32 · alpha 32</code></td><td>按方案注入 Object、Full-SA 或指定 Head LoRA</td></tr>
+      </tbody></table></div>
+      <h3>各方案的额外权重与适配范围</h3>
+      <div class="table-wrap"><table class="scheme-weights"><thead><tr><th>训练方案</th><th>Object / xSSC 权重</th><th>本轮适配或额外权重</th></tr></thead><tbody>
+        <tr><td>Object-only</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>仅 Object 分支 LoRA</td></tr>
+        <tr><td>Full-SA + Object</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支</td></tr>
+        <tr><td>Full-SA + No-Object</td><td>不加载</td><td>全 Self-Attention LoRA</td></tr>
+        <tr><td>Full-SA + No-Object + V-JEPA Loss</td><td>不加载</td><td>全 Self-Attention LoRA；冻结 V-JEPA2.1 ViT-L / ViT-G 与 Tiny-VAE <code>taew2_2</code> 提供辅助损失</td></tr>
+        <tr><td>S-head59 + Object</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>59 个 S-head LoRA + Object 分支</td></tr>
+        <tr><td>T-head70 + Object</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支</td></tr>
+        <tr><td>T-head70 + No-Object</td><td>不加载</td><td>70 个 T-head LoRA</td></tr>
+        <tr><td>Motion-head100 (LoRA-PCK32 Top100) + No-Object</td><td>不加载</td><td>按 Wan + OpenVid LoRA 的 PCK@32 排名选择 Top100 Head</td></tr>
+        <tr><td>Full-SA + No-Object (PyBullet 100%)</td><td>不加载</td><td>全 Self-Attention LoRA；训练数据为 PyBullet 100%</td></tr>
+        <tr><td>Full-SA + No-Object (Kubric 100%)</td><td>不加载</td><td>全 Self-Attention LoRA；训练数据为 Kubric 100%</td></tr>
+        <tr><td>T-head70 + Object + Slot-Dedup</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支 + Slot-Dedup</td></tr>
+        <tr><td>Full-SA + Object + Slot-Dedup</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支 + Slot-Dedup</td></tr>
+        <tr><td>Full-SA + Object + Slot-Dedup (xSSC-50k)</td><td>xSSC step-050000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支 + Slot-Dedup</td></tr>
+        <tr><td>T-head70 + Object + Slot-Dedup (xSSC-50k)</td><td>xSSC step-050000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支 + Slot-Dedup</td></tr>
+      </tbody></table></div>
+      <p class="weights-note weights-footnote">较晚 step 可能从同一方案较早的 <code>training_state.pt</code> 续训，但底座与初始化 LoRA 不变。</p>
+    </section>"""
+
+
 def build_watch_index(
     status: list[dict[str, Any]],
     pending: bool,
@@ -1728,6 +1760,7 @@ def build_watch_index(
     )
     state = "推理排队中" if pending else "持续监听"
     phys_section = build_physiciq_section(phys_status)
+    weight_provenance_section = build_weight_provenance_section()
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1750,6 +1783,10 @@ def build_watch_index(
     .state{{margin-left:auto;color:var(--accent);font-weight:800}}table{{width:100%;
       border-collapse:collapse;font-variant-numeric:tabular-nums}}th,td{{padding:9px 8px;
       text-align:left;border-top:1px solid var(--line);font-size:13px}}th{{color:var(--muted)}}
+    .provenance{{margin-bottom:18px}}.provenance h3{{margin:15px 0 7px;font-size:14px}}
+    .table-wrap{{overflow-x:auto}}.scheme-weights{{min-width:920px}}code{{font-size:12px}}
+    .weights-note{{margin:0;color:var(--muted);font-size:13px;line-height:1.5}}
+    .weights-footnote{{margin-top:10px}}
     .swatch{{display:inline-block;width:10px;height:10px;margin-right:7px;border-radius:2px}}
     .progress{{position:relative;width:100%;height:7px;margin-bottom:4px;overflow:hidden;
       background:#e7ecee;border-radius:999px}}.progress span{{display:block;height:100%;
@@ -1768,6 +1805,7 @@ def build_watch_index(
   <header><h1>xSSC LoRA checkpoint watcher</h1>
     <p>test_5 · 8 context · 49 frames · 512×896 · 8 denoising steps</p></header>
   <main>
+    {weight_provenance_section}
     <div class="links">
       <a class="link" href="videos/"><strong>Checkpoint 视频</strong>
         <span>按方法、训练 step 和 case 查看生成结果</span></a>
