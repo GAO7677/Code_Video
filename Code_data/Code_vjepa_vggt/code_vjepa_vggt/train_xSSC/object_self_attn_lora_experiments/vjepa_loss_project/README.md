@@ -34,3 +34,6 @@
 `visualize_ball_block_pairwise.py` 对目录内全部视频取前 49 帧，以 `384x672`
 native-rectangle 输入提取特征。页面先展示 8 个无 overlay 的原视频和 49 帧
 拼接图，再展示全部 pair 的 overlay 视频、49 帧热力图拼接图和差异排序。
+
+`visualize_ball_block_temporal_similarity.py` 复用缓存特征，计算 28 个视频对在
+49 帧时间轴上的平均 patch cosine similarity，并生成总览、分 pair 曲线和统计表。

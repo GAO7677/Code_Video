@@ -36,6 +36,14 @@ def yaw_velocity(degrees: float) -> tuple[float, float, float]:
 
 SCENARIOS = (
     Scenario(
+        "motion_speed_050x",
+        "speed=0.50x, baseline direction",
+        0.7,
+        0.5,
+        1.0,
+        scaled_velocity(0.50),
+    ),
+    Scenario(
         "motion_speed_075x",
         "speed=0.75x, baseline direction",
         0.7,
@@ -50,6 +58,14 @@ SCENARIOS = (
         0.5,
         1.0,
         scaled_velocity(1.25),
+    ),
+    Scenario(
+        "motion_speed_150x",
+        "speed=1.50x, baseline direction",
+        0.7,
+        0.5,
+        1.0,
+        scaled_velocity(1.50),
     ),
     Scenario(
         "motion_direction_yaw_m10",
@@ -68,6 +84,15 @@ SCENARIOS = (
         yaw_velocity(10.0),
     ),
     Scenario(
+        "motion_distance_050x",
+        "x center distance=0.50x, baseline velocity",
+        0.7,
+        0.5,
+        1.0,
+        tuple(float(value) for value in BASE_VELOCITY),
+        ball_start_x=BLOCK_START_X - 0.50 * BASE_CENTER_DISTANCE_X,
+    ),
+    Scenario(
         "motion_distance_075x",
         "x center distance=0.75x, baseline velocity",
         0.7,
@@ -84,6 +109,15 @@ SCENARIOS = (
         1.0,
         tuple(float(value) for value in BASE_VELOCITY),
         ball_start_x=BLOCK_START_X - 1.25 * BASE_CENTER_DISTANCE_X,
+    ),
+    Scenario(
+        "motion_distance_150x",
+        "x center distance=1.50x, baseline velocity",
+        0.7,
+        0.5,
+        1.0,
+        tuple(float(value) for value in BASE_VELOCITY),
+        ball_start_x=BLOCK_START_X - 1.50 * BASE_CENTER_DISTANCE_X,
     ),
 )
 

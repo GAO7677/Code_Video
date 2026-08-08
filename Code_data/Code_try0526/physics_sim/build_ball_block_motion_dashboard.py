@@ -20,12 +20,16 @@ DASHBOARD_DIR = Path(
 )
 BASELINE = "e07_mu05_m1"
 MOTION_ORDER = (
+    "motion_speed_050x",
     "motion_speed_075x",
     "motion_speed_125x",
+    "motion_speed_150x",
     "motion_direction_yaw_m10",
     "motion_direction_yaw_p10",
+    "motion_distance_050x",
     "motion_distance_075x",
     "motion_distance_125x",
+    "motion_distance_150x",
 )
 ORIGINAL_ORDER = (
     "e03_mu05_m1",
@@ -151,10 +155,10 @@ def main() -> None:
   </style>
 </head>
 <body>
-  <header><h1>Ball-block 单变量仿真对比</h1><p>原始 8 个材料参数视频 + 6 个速度/方向/距离控制视频 · 60 FPS · 150 帧 · 1280×720</p></header>
+  <header><h1>Ball-block 单变量仿真对比</h1><p>原始 8 个材料参数视频 + 10 个速度/方向/距离控制视频 · 60 FPS · 150 帧 · 1280×720</p></header>
   <main>
     <div class="notice"><strong>控制原则：</strong>速度实验只缩放速度模长；方向实验只旋转水平 yaw；距离实验只改变小球初始 x 坐标。其余材料、质量、几何、重力、阻尼、相机和渲染参数保持固定。</div>
-    <section><h2>运动与初始位置控制组</h2><p>基准 e07_mu05_m1 与六个新增单变量 case。</p><div class="grid">{''.join(controlled_cards)}</div></section>
+    <section><h2>运动与初始位置控制组</h2><p>基准 e07_mu05_m1 与十个新增单变量 case。</p><div class="grid">{''.join(controlled_cards)}</div></section>
     <section><h2>原始材料参数组</h2><p>原有其余七个 restitution、friction 和 ball-mass 变化 case；基准已在上方展示。</p><div class="grid">{''.join(original_cards)}</div></section>
   </main>
 </body>
@@ -174,7 +178,7 @@ def main() -> None:
         + "\n",
         encoding="utf-8",
     )
-    print(f"Wrote {DASHBOARD_DIR / 'index.html'} (14 videos)")
+    print(f"Wrote {DASHBOARD_DIR / 'index.html'} (18 videos)")
 
 
 if __name__ == "__main__":

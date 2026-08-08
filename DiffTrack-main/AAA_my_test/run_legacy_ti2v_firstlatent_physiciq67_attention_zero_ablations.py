@@ -34,7 +34,6 @@ from AAA_my_test.build_legacy_ti2v_firstlatent_physiciq67_visual_samples import 
 from AAA_my_test.legacy_ti2v_firstlatent_physiciq67_common import (  # noqa: E402
     CASES,
     REGION_CACHE_ROOT,
-    read_payload,
 )
 from AAA_my_test.run_legacy_ti2v_firstlatent_physiciq67_pck_worker import (  # noqa: E402
     build_args,
@@ -94,13 +93,28 @@ def build_tasks(manifest: dict) -> list[dict]:
     return tasks
 
 
-def task_root(task: dict) -> Path:
+def task_root(task: dict, output_root: Path = OUTPUT_ROOT) -> Path:
     return (
-        OUTPUT_ROOT
+        output_root
         / str(task["case"])
         / f"seed_{int(task['seed']):05d}"
         / variant_id(str(task["mode"]), int(task["top_n"]), task.get("region"))
     )
+
+
+def baseline_tasks(manifest: dict) -> list[dict]:
+    tasks = []
+    for sample in manifest["samples"]:
+        baseline_video = sample.get("baseline_video")
+        if baseline_video and not Path(str(baseline_video)).is_file():
+            tasks.append(
+                {
+                    "case": str(sample["case"]),
+                    "seed": int(sample["seed"]),
+                    "mode": "baseline",
+                }
+            )
+    return tasks
 
 
 class PostSoftmaxAttentionZeroer:
@@ -271,32 +285,138 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--worker-id", type=int, required=True)
     parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--task-index", type=int, default=None)
+    parser.add_argument("--manifest-path", type=Path, default=MANIFEST_PATH)
+    parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
+    parser.add_argument("--generate-missing-baselines", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
 
-def process(pipe, manifest: dict, task: dict, case, overwrite: bool) -> None:
-    output = task_root(task)
+def sample_inputs(sample: dict, case_lookup: dict) -> tuple[Path, Path]:
+    case_key = str(sample["case"])
+    case = case_lookup.get(case_key)
+    input_json = sample.get("input_json")
+    query_cache_dir = sample.get("query_cache_dir")
+    if input_json is None:
+        if case is None:
+            raise KeyError(f"{case_key}: manifest has no input_json and case is unknown")
+        input_json = case.json_path
+    if query_cache_dir is None:
+        query_cache_dir = REGION_CACHE_ROOT / case_key
+    return Path(str(input_json)), Path(str(query_cache_dir))
+
+
+def generation_inputs(sample: dict, case_lookup: dict, seed: int):
+    json_path, cache_dir = sample_inputs(sample, case_lookup)
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    payload, firstframe = ensure_firstframe_image(json_path, payload)
+    args = build_args(seed)
+    image = (
+        Image.open(firstframe)
+        .convert("RGB")
+        .resize((1280, 704), Image.Resampling.LANCZOS)
+    )
+    return json_path, cache_dir, payload, args, image
+
+
+def generate_video(pipe, payload: dict, args, image: Image.Image, seed: int):
+    return _run_pipe_once(
+        pipe=pipe,
+        prompt=str(payload["input_caption"]),
+        negative_prompt=args.negative_prompt,
+        seed=seed,
+        input_image=image,
+        height=704,
+        width=1280,
+        num_frames=49,
+        cfg_scale=5.0,
+        num_inference_steps=40,
+        sample_shift=5.0,
+        sample_solver="unipc",
+        offload_model=False,
+    )
+
+
+def process_baseline(
+    pipe, task: dict, sample: dict, case_lookup: dict, overwrite: bool
+) -> None:
+    output_video = Path(str(sample["baseline_video"]))
+    output = output_video.parent
+    ready = all(
+        (output / name).is_file() for name in ("complete.json", "manifest.json")
+    )
+    if output_video.is_file() and ready and not overwrite:
+        print(f"skip baseline {output_video}", flush=True)
+        return
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "complete.json").unlink(missing_ok=True)
+    (output / "error.txt").unlink(missing_ok=True)
+    json_path, _, payload, args, image = generation_inputs(
+        sample, case_lookup, int(task["seed"])
+    )
+    video = generate_video(pipe, payload, args, image, int(task["seed"]))
+    temporary_video = output_video.with_name(
+        f"{output_video.stem}.tmp{output_video.suffix}"
+    )
+    save_video_np(video, temporary_video, fps=30)
+    temporary_video.replace(output_video)
+    metadata = {
+        **task,
+        "input_json": str(json_path),
+        "output_video": str(output_video),
+        "height": 704,
+        "width": 1280,
+        "num_frames": 49,
+        "fps": 30,
+        "sampling_steps": 40,
+        "cfg_scale": 5.0,
+        "sample_shift": 5.0,
+        "sample_solver": "unipc",
+    }
+    (output / "manifest.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    (output / "complete.json").write_text(
+        json.dumps(
+            {"case": task["case"], "seed": task["seed"], "mode": "baseline"},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    del video
+
+
+def process(
+    pipe,
+    manifest: dict,
+    task: dict,
+    sample: dict,
+    case_lookup: dict,
+    output_root: Path,
+    overwrite: bool,
+) -> None:
+    output = task_root(task, output_root)
     complete_path = output / "complete.json"
     ready = all(
         (output / name).is_file()
         for name in ("complete.json", "manifest.json", "generated.mp4")
     )
     if ready and not overwrite:
-        print(f"skip {output.relative_to(OUTPUT_ROOT)}", flush=True)
+        print(f"skip {output.relative_to(output_root)}", flush=True)
         return
     output.mkdir(parents=True, exist_ok=True)
     complete_path.unlink(missing_ok=True)
     (output / "error.txt").unlink(missing_ok=True)
-    cache = load_region_cache(REGION_CACHE_ROOT, case.key)
+    json_path, cache_dir, payload, args, image = generation_inputs(
+        sample, case_lookup, int(task["seed"])
+    )
+    cache = load_region_cache(cache_dir.parent, cache_dir.name)
     if int(cache.metadata.get("query_context_frame", -1)) != 0:
-        raise RuntimeError(f"{case.key}: expected query frame 0 cache")
+        raise RuntimeError(f"{task['case']}: expected query frame 0 cache")
     points, query_regions = object_queries(cache)
     region_slices = {region.region_name: point_slice for region, point_slice in query_regions}
-    payload = read_payload(case)
-    payload, firstframe = ensure_firstframe_image(case.json_path, payload)
-    args = build_args(int(task["seed"]))
-    image = Image.open(firstframe).convert("RGB").resize((1280, 704), Image.Resampling.LANCZOS)
     entries = manifest["entries"][: int(task["top_n"])]
     zeroer = PostSoftmaxAttentionZeroer(
         pipe.pipe,
@@ -309,21 +429,7 @@ def process(pipe, manifest: dict, task: dict, case, overwrite: bool) -> None:
     )
     zeroer.install()
     try:
-        video = _run_pipe_once(
-            pipe=pipe,
-            prompt=str(payload["input_caption"]),
-            negative_prompt=args.negative_prompt,
-            seed=int(task["seed"]),
-            input_image=image,
-            height=704,
-            width=1280,
-            num_frames=49,
-            cfg_scale=5.0,
-            num_inference_steps=40,
-            sample_shift=5.0,
-            sample_solver="unipc",
-            offload_model=False,
-        )
+        video = generate_video(pipe, payload, args, image, int(task["seed"]))
     finally:
         zeroer.remove()
     audit = zeroer.audit()
@@ -339,6 +445,8 @@ def process(pipe, manifest: dict, task: dict, case, overwrite: bool) -> None:
         "output_projection_location": "selected self-attention head outputs before o projection",
         "denoising_steps": list(range(40)),
         "cfg_branches": ["conditional", "unconditional"],
+        "input_json": str(json_path),
+        "query_cache_dir": str(cache_dir),
         "ranking_snapshot_completed_runs": int(manifest["completed_runs_at_selection"]),
         "selected_entries": entries,
         "regions": list(region_slices),
@@ -368,10 +476,12 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.worker_id < args.num_workers:
         raise ValueError("worker-id must be in [0, num-workers)")
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(args.manifest_path.read_text(encoding="utf-8"))
     if len(manifest.get("entries", [])) < max(TOP_COUNTS):
         raise RuntimeError("visual sample manifest does not contain Top100 entries")
     tasks = build_tasks(manifest)
+    if args.generate_missing_baselines:
+        tasks = baseline_tasks(manifest) + tasks
     if args.task_index is not None:
         if not 0 <= args.task_index < len(tasks):
             raise ValueError(f"task-index must be in [0, {len(tasks)})")
@@ -381,12 +491,33 @@ def main() -> None:
     if not tasks:
         return
     case_lookup = {case.key: case for case in CASES}
+    sample_lookup = {
+        (str(sample["case"]), int(sample["seed"])): sample
+        for sample in manifest["samples"]
+    }
     pipe = build_wan_ti2v_pipeline(build_args(int(tasks[0]["seed"])))
     for index, task in enumerate(tasks, start=1):
-        output = task_root(task)
-        print(f"[{index}/{len(tasks)}] start {output.relative_to(OUTPUT_ROOT)}", flush=True)
+        sample = sample_lookup[(str(task["case"]), int(task["seed"]))]
+        if task["mode"] == "baseline":
+            output = Path(str(sample["baseline_video"])).parent
+            label = f"baseline/{task['case']}/seed_{int(task['seed']):05d}"
+        else:
+            output = task_root(task, args.output_root)
+            label = str(output.relative_to(args.output_root))
+        print(f"[{index}/{len(tasks)}] start {label}", flush=True)
         try:
-            process(pipe, manifest, task, case_lookup[str(task["case"])], bool(args.overwrite))
+            if task["mode"] == "baseline":
+                process_baseline(pipe, task, sample, case_lookup, bool(args.overwrite))
+            else:
+                process(
+                    pipe,
+                    manifest,
+                    task,
+                    sample,
+                    case_lookup,
+                    args.output_root,
+                    bool(args.overwrite),
+                )
         except Exception:
             output.mkdir(parents=True, exist_ok=True)
             (output / "error.txt").write_text(traceback.format_exc(), encoding="utf-8")
@@ -394,7 +525,7 @@ def main() -> None:
             raise
         gc.collect()
         torch.cuda.empty_cache()
-        print(f"[{index}/{len(tasks)}] complete {output.relative_to(OUTPUT_ROOT)}", flush=True)
+        print(f"[{index}/{len(tasks)}] complete {label}", flush=True)
 
 
 if __name__ == "__main__":

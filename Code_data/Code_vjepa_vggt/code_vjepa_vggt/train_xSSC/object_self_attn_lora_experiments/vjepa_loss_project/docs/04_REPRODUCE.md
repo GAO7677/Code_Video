@@ -77,3 +77,11 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC
   --input-dir /data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos/ball_block \
   --output-dir /data/gaoya/agent-data/outputs/vjepa_ball_block_pairwise/RUN_NAME
 ```
+
+时间相似度曲线复用已有 feature cache：
+
+```bash
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/vjepa_loss_project/visualize_ball_block_temporal_similarity.py \
+  --result-root /data/gaoya/agent-data/outputs/vjepa_ball_block_pairwise/RUN_NAME
+```

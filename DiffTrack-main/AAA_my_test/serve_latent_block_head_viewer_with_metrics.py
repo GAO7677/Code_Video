@@ -1162,7 +1162,9 @@ class MetricsHandler(viewer.Handler):
 
             params = parse_qs(urlparse(self.path).query)
             asset = wan22_ti2v_legacy_physiciq67_query_image(
-                params.get("case", [""])[0], params.get("region", ["all"])[0]
+                params.get("case", [""])[0],
+                params.get("region", ["all"])[0],
+                params.get("seed", [""])[0],
             )
             if asset is None or not asset.is_file():
                 raise FileNotFoundError("unknown PhysicIQ67 object-query image")
@@ -1538,6 +1540,12 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_MANIFEST = (
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "attention_zero_ablations"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "attention_zero_seed47326"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_MANIFEST = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT / "cases.json"
 )
 WAN22_TI2V_LEGACY_PCK50_SEEDS = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds.txt"
@@ -2218,10 +2226,28 @@ def wan22_ti2v_legacy_physiciq67_visual_manifest():
             "entries": [],
         }
     try:
-        return json.loads(
+        payload = json.loads(
             WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_MANIFEST.read_text(encoding="utf-8")
         )
-    except (OSError, json.JSONDecodeError) as exc:
+        if WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_MANIFEST.is_file():
+            requested = json.loads(
+                WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_MANIFEST.read_text(
+                    encoding="utf-8"
+                )
+            )
+            if requested.get("entries") != payload.get("entries"):
+                raise ValueError("requested seed47326 ranking snapshot does not match")
+            seen = {
+                (str(row.get("case")), int(row.get("seed", -1)))
+                for row in payload.get("samples", [])
+            }
+            payload["samples"].extend(
+                row
+                for row in requested.get("samples", [])
+                if (str(row.get("case")), int(row.get("seed", -1))) not in seen
+            )
+        return payload
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         return {"ready": False, "reason": str(exc), "samples": [], "entries": []}
 
 
@@ -2245,6 +2271,9 @@ def _wan22_ti2v_legacy_physiciq67_ablation_variant(
 
 def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[dict]):
     case, seed = str(sample["case"]), int(sample["seed"])
+    ablation_root = Path(
+        str(sample.get("ablation_root") or WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT)
+    )
     regions = [
         str(row["region_name"])
         for row in sample.get("regions", [])
@@ -2259,7 +2288,7 @@ def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[d
                 mode, top_n, region
             )
             root = (
-                WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT
+                ablation_root
                 / case
                 / f"seed_{seed:05d}"
                 / str(variant)
@@ -2313,14 +2342,24 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
             / "heatmaps" / case / f"seed_{seed:05d}"
         )
         sample = dict(row)
-        sample["video_ready"] = (
-            WAN22_TI2V_LEGACY_PHYSICIQ67_ROOT
-            / "runs" / case / f"seed_{seed:05d}" / "generated.mp4"
-        ).is_file()
-        sample["query_visual_ready"] = (
-            WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT
-            / "regions" / case / "sam2_regions_points.png"
-        ).is_file()
+        video_path = Path(
+            str(
+                sample.get("baseline_video")
+                or WAN22_TI2V_LEGACY_PHYSICIQ67_ROOT
+                / "runs"
+                / case
+                / f"seed_{seed:05d}"
+                / "generated.mp4"
+            )
+        )
+        query_root = Path(
+            str(
+                sample.get("query_cache_dir")
+                or WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "regions" / case
+            )
+        )
+        sample["video_ready"] = video_path.is_file()
+        sample["query_visual_ready"] = (query_root / "sam2_regions_points.png").is_file()
         attention_files_ready = (
             (heatmap_root / "complete.json").is_file()
             and (heatmap_root / "metadata.json").is_file()
@@ -2382,9 +2421,17 @@ def wan22_ti2v_legacy_physiciq67_visual_video(case: str, seed: str):
     sample = _wan22_ti2v_legacy_physiciq67_sample(case, seed)
     if sample is None:
         return None
-    return (
-        WAN22_TI2V_LEGACY_PHYSICIQ67_ROOT
-        / "runs" / case / f"seed_{int(seed):05d}" / "generated.mp4"
+    return Path(
+        str(
+            sample.get("baseline_video")
+            or (
+                WAN22_TI2V_LEGACY_PHYSICIQ67_ROOT
+                / "runs"
+                / case
+                / f"seed_{int(seed):05d}"
+                / "generated.mp4"
+            )
+        )
     )
 
 
@@ -2411,7 +2458,12 @@ def wan22_ti2v_legacy_physiciq67_ablation_video(
     if variant is None:
         return None
     return (
-        WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT
+        Path(
+            str(
+                sample.get("ablation_root")
+                or WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT
+            )
+        )
         / case
         / f"seed_{seed_value:05d}"
         / variant
@@ -2419,16 +2471,25 @@ def wan22_ti2v_legacy_physiciq67_ablation_video(
     )
 
 
-def wan22_ti2v_legacy_physiciq67_query_image(case: str, region: str):
+def wan22_ti2v_legacy_physiciq67_query_image(
+    case: str, region: str, seed: str = ""
+):
     manifest = wan22_ti2v_legacy_physiciq67_visual_manifest()
-    sample = next(
-        (row for row in manifest.get("samples", []) if str(row.get("case")) == case),
-        None,
-    )
+    sample = _wan22_ti2v_legacy_physiciq67_sample(case, seed) if seed else None
+    if sample is None:
+        sample = next(
+            (row for row in manifest.get("samples", []) if str(row.get("case")) == case),
+            None,
+        )
     if sample is None:
         return None
     names = {str(row.get("region_name")) for row in sample.get("regions", [])}
-    root = WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "regions" / case
+    root = Path(
+        str(
+            sample.get("query_cache_dir")
+            or WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "regions" / case
+        )
+    )
     if region in {"", "all"}:
         return root / "sam2_regions_points.png"
     if region not in names:
@@ -2545,6 +2606,15 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     if old_media not in page:
         raise RuntimeError("PhysicIQ67 visual page media template changed")
     page = page.replace(old_media, new_media)
+    page = page.replace(
+        "query-image?case=${encodeURIComponent(s.case)}&region=",
+        "query-image?${base}&region=",
+    )
+    matrix_prefix = """function renderMatrix(){const s=current(),view=$('view').value,metric=$('metric').value,rows=s.matrices?.[view]||[],vals=rows.map(x=>x[metric]).filter(Number.isFinite),lo=Math.min(...vals),hi=Math.max(...vals),map=new Map(rows.map(x=>[`${x.block}-${x.head}`,x])),box=$('matrix');"""
+    guarded_matrix_prefix = """function renderMatrix(){const s=current(),view=$('view').value,metric=$('metric').value,rows=s.matrices?.[view]||[],vals=rows.map(x=>x[metric]).filter(Number.isFinite),box=$('matrix');if(!vals.length){box.innerHTML='<div class="pending">该 case 暂无单-run head matrix</div>';$('matrixMeta').textContent='matrix unavailable';return}const lo=Math.min(...vals),hi=Math.max(...vals),map=new Map(rows.map(x=>[`${x.block}-${x.head}`,x]));"""
+    if matrix_prefix not in page:
+        raise RuntimeError("PhysicIQ67 visual page matrix template changed")
+    page = page.replace(matrix_prefix, guarded_matrix_prefix)
     page = page.replace(
         "function render(){",
         """function renderAblations(s,base){const records=s.attention_zero_ablations||[],objects=s.regions.filter(x=>x.region_type==='object').map(x=>x.region_name),rows=[...objects.map((region,i)=>({mode:'single_object',region,label:`01.${i+1} · ${region} only`,detail:'该 object query → all K'})),{mode:'all_objects',region:'',label:'02 · All Objects Together',detail:'所有 object query → all K'},{mode:'full_qk',region:'',label:'03 · Full Head Q@K',detail:'selected heads · all Q → all K'}],card=(spec,n)=>{const r=records.find(x=>x.mode===spec.mode&&String(x.region||'')===spec.region&&Number(x.top_n)===n),suffix=spec.region?`&region=${encodeURIComponent(spec.region)}`:'',src=`${api}/ablation-video?${base}&mode=${encodeURIComponent(spec.mode)}&top_n=${n}${suffix}`,media=r?.ready?`<video controls muted playsinline preload="metadata" src="${src}"></video>`:`<div class="pending">${r?.error?'生成失败':'待生成'}</div>`;return `<figure>${media}<figcaption>Top${n} · A=0 · no renorm</figcaption></figure>`},baseline=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Baseline unavailable</div>';$('ablation').innerHTML=`<div class="ablation-baseline"><figure>${baseline}<figcaption>Baseline · No Attention Intervention</figcaption></figure></div><div class="ablation-table">${rows.map(spec=>`<div class="ablation-row"><div class="ablation-label"><strong>${e(spec.label)}</strong><small>${e(spec.detail)}</small></div>${[30,50,100].map(n=>card(spec,n)).join('')}</div>`).join('')}</div>`}function render(){""",
