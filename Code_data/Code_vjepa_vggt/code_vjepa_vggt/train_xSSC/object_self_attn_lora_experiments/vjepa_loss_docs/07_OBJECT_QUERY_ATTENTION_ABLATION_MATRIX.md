@@ -91,7 +91,13 @@ M5 使用 `V_R=0, K不变` 的精确等价实现：softmax 权重 `A` 不变，�
 
 ## 7. 重跑命令
 
-原冻结样例的第 `i` 个 worker：
+当前三张可安全使用的 GPU（0/3/5）采用 3-way 均衡分片。下面的 wrapper 会让同一个 worker 先完成原 6 case，再自动接续 seed=47326 的 9 case；每个阶段都按 `complete.json + manifest.json + generated.mp4` 可恢复跳过：
+
+```bash
+bash /home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/run_legacy_physiciq67_attention_matrix_worker_pair.sh <worker-id:0..2> 3 <physical-gpu:0|3|5>
+```
+
+也可只运行某一组；原冻结样例的第 `i` 个 worker：
 
 ```bash
 CUDA_VISIBLE_DEVICES=<非4的物理GPU> /home/gaoya/miniconda3/envs/wan-cu128/bin/python -u /home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/run_legacy_ti2v_firstlatent_physiciq67_attention_zero_ablations.py --worker-id <i> --num-workers 5
