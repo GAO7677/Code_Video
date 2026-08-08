@@ -1716,33 +1716,43 @@ def build_status(
 
 def build_weight_provenance_section() -> str:
     return """
-    <section class="panel provenance"><div class="panel-head"><h2>训练权重来源</h2>
-      <span class="state">14 种方案</span></div>
-      <p class="weights-note">所有方案共享同一 Wan + OpenVid LoRA 起点；“from scratch”仅表示不续接本轮实验 checkpoint，并非随机初始化。</p>
-      <h3>统一训练起点</h3>
-      <div class="table-wrap"><table><thead><tr><th>层级</th><th>权重</th><th>训练中的作用</th></tr></thead><tbody>
-        <tr><td>生成底座</td><td><code>Wan-AI-Wan2.2-TI2V-5B</code></td><td>冻结的 Wan 2.2 TI2V 5B 主干</td></tr>
-        <tr><td>初始化 LoRA</td><td><code>openvid_mixed_ctx24_384x672_lora · step-010000</code></td><td>300 个 LoRA 模块合并进 Wan 后卸载并冻结</td></tr>
-        <tr><td>本轮可训练权重</td><td><code>LoRA rank 32 · alpha 32</code></td><td>按方案注入 Object、Full-SA 或指定 Head LoRA</td></tr>
+    <section class="panel provenance"><div class="panel-head"><h2>训练方案、权重与数据</h2>
+      <span class="state">14 种方案 · 3 个数据集</span></div>
+      <p class="weights-note">所有方案共享同一 Wan + OpenVid LoRA 起点；“from scratch”仅表示不续接本轮实验 checkpoint，并非随机初始化。下列样本数与参数均按当前正式配置和数据索引核对。</p>
+      <h3>基础模型与统一训练参数</h3>
+      <div class="table-wrap"><table><thead><tr><th>项目</th><th>配置 / 规模</th><th>说明</th></tr></thead><tbody>
+        <tr><td>生成底座</td><td><code>Wan-AI-Wan2.2-TI2V-5B</code>（约 5B 参数）</td><td>Wan 2.2 TI2V 主干；初始化后冻结</td></tr>
+        <tr><td>初始化 LoRA</td><td><code>openvid_mixed_ctx24_384x672_lora · step-010000</code></td><td>rank/alpha = 32/32，覆盖 300 个模块；合并进 Wan 后卸载并冻结</td></tr>
+        <tr><td>本轮适配结构</td><td>30 个 Self-Attention block × 24 heads；LoRA rank/alpha = 32/32</td><td>按方案训练 Object、Full-SA 或指定 Head；精确可训练参数见总表</td></tr>
+        <tr><td>输入规格</td><td>49 frames · 8 context · 512×896 · bf16</td><td>xSSC 输入 256，最多 64 个时间步</td></tr>
+        <tr><td>优化参数</td><td>LR 1e-4 · WD 0.01 · paged AdamW 8-bit · max grad norm 1.0</td><td>有效 batch 8；通常 20k steps，每 500 steps 保存；数据集消融为 1k steps</td></tr>
       </tbody></table></div>
-      <h3>各方案的额外权重与适配范围</h3>
-      <div class="table-wrap"><table class="scheme-weights"><thead><tr><th>训练方案</th><th>Object / xSSC 权重</th><th>本轮适配或额外权重</th></tr></thead><tbody>
-        <tr><td>Object-only</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>仅 Object 分支 LoRA</td></tr>
-        <tr><td>Full-SA + Object</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支</td></tr>
-        <tr><td>Full-SA + No-Object</td><td>不加载</td><td>全 Self-Attention LoRA</td></tr>
-        <tr><td>Full-SA + No-Object + V-JEPA Loss</td><td>不加载</td><td>全 Self-Attention LoRA；冻结 V-JEPA2.1 ViT-L / ViT-G 与 Tiny-VAE <code>taew2_2</code> 提供辅助损失</td></tr>
-        <tr><td>S-head59 + Object</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>59 个 S-head LoRA + Object 分支</td></tr>
-        <tr><td>T-head70 + Object</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支</td></tr>
-        <tr><td>T-head70 + No-Object</td><td>不加载</td><td>70 个 T-head LoRA</td></tr>
-        <tr><td>Motion-head100 (LoRA-PCK32 Top100) + No-Object</td><td>不加载</td><td>按 Wan + OpenVid LoRA 的 PCK@32 排名选择 Top100 Head</td></tr>
-        <tr><td>Full-SA + No-Object (PyBullet 100%)</td><td>不加载</td><td>全 Self-Attention LoRA；训练数据为 PyBullet 100%</td></tr>
-        <tr><td>Full-SA + No-Object (Kubric 100%)</td><td>不加载</td><td>全 Self-Attention LoRA；训练数据为 Kubric 100%</td></tr>
-        <tr><td>T-head70 + Object + Slot-Dedup</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支 + Slot-Dedup</td></tr>
-        <tr><td>Full-SA + Object + Slot-Dedup</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支 + Slot-Dedup</td></tr>
-        <tr><td>Full-SA + Object + Slot-Dedup (xSSC-50k)</td><td>xSSC step-050000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支 + Slot-Dedup</td></tr>
-        <tr><td>T-head70 + Object + Slot-Dedup (xSSC-50k)</td><td>xSSC step-050000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支 + Slot-Dedup</td></tr>
+      <h3>训练数据集规模与混合采样</h3>
+      <div class="table-wrap"><table class="dataset-summary"><thead><tr><th>数据集</th><th>当前训练样本</th><th>标准混合占比</th><th>每个混合轮次的期望抽样数</th><th>使用方式</th></tr></thead><tbody>
+        <tr><td>PyBullet 0713</td><td class="num">1,617</td><td class="num">30%</td><td class="num">约 50,818</td><td>49 帧 prefix replay；样本较少，带权重复抽样</td></tr>
+        <tr><td>Kubric / PhyCo</td><td class="num">114,276</td><td class="num">30%</td><td class="num">约 50,818</td><td>69 帧索引筛选，训练输出 49 帧 replay</td></tr>
+        <tr><td>OpenVidHD parquet</td><td class="num">53,500</td><td class="num">40%</td><td class="num">约 67,757</td><td>49 帧视频与文本提示</td></tr>
+        <tr class="total-row"><td>标准混合合计</td><td class="num">169,393</td><td class="num">100%</td><td class="num">169,393</td><td><code>WeightedRandomSampler</code> 按来源占比采样</td></tr>
       </tbody></table></div>
-      <p class="weights-note weights-footnote">较晚 step 可能从同一方案较早的 <code>training_state.pt</code> 续训，但底座与初始化 LoRA 不变。</p>
+      <p class="weights-note weights-footnote">样本数口径：PyBullet/Kubric 为当前确定性 <code>train</code> split，OpenVid 为当前 parquet 行数。PyBullet 100% 与 Kubric 100% 消融仅启用对应数据源，不使用另外两类样本。</p>
+      <h3>训练方案总表</h3>
+      <div class="table-wrap"><table class="scheme-weights"><thead><tr><th>类别</th><th>训练方案</th><th>训练数据</th><th>Object / xSSC 权重</th><th>本轮适配或额外权重</th><th>可训练参数</th></tr></thead><tbody>
+        <tr><td class="category-cell">基线</td><td>Object-only</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>仅 Object 分支 LoRA</td><td class="num">25,458,688</td></tr>
+        <tr><td class="category-cell" rowspan="2">Full Self-Attention</td><td>Full-SA + Object</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支</td><td class="num">49,051,648</td></tr>
+        <tr><td>Full-SA + No-Object</td><td>标准混合 30/30/40</td><td>不加载</td><td>全 Self-Attention LoRA</td><td class="num">23,592,960</td></tr>
+        <tr><td class="category-cell">辅助损失</td><td>Full-SA + No-Object + V-JEPA Loss</td><td>标准混合 30/30/40</td><td>不加载</td><td>全 Self-Attention LoRA；冻结 V-JEPA2.1 ViT-L/ViT-G 与 Tiny-VAE <code>taew2_2</code>，辅助损失权重 0.01</td><td class="num">23,592,960</td></tr>
+        <tr><td class="category-cell" rowspan="4">Head 选择</td><td>S-head59 + Object</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>59 个 S-head LoRA + Object 分支</td><td class="num">34,682,880</td></tr>
+        <tr><td>T-head70 + Object</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支</td><td class="num">34,863,104</td></tr>
+        <tr><td>T-head70 + No-Object</td><td>标准混合 30/30/40</td><td>不加载</td><td>70 个 T-head LoRA</td><td class="num">9,404,416</td></tr>
+        <tr><td>Motion-head100 (LoRA-PCK32 Top100) + No-Object</td><td>标准混合 30/30/40</td><td>不加载</td><td>按 Wan + OpenVid LoRA 的 PCK@32 排名选择 Top100 Head</td><td class="num">11,075,584</td></tr>
+        <tr><td class="category-cell" rowspan="2">数据集消融</td><td>Full-SA + No-Object (PyBullet 100%)</td><td>PyBullet 100%</td><td>不加载</td><td>全 Self-Attention LoRA；1k steps</td><td class="num">23,592,960</td></tr>
+        <tr><td>Full-SA + No-Object (Kubric 100%)</td><td>Kubric 100%</td><td>不加载</td><td>全 Self-Attention LoRA；1k steps</td><td class="num">23,592,960</td></tr>
+        <tr><td class="category-cell" rowspan="2">Slot 去重</td><td>T-head70 + Object + Slot-Dedup</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支 + Slot-Dedup</td><td class="num">34,863,104</td></tr>
+        <tr><td>Full-SA + Object + Slot-Dedup</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支 + Slot-Dedup</td><td class="num">49,051,648</td></tr>
+        <tr><td class="category-cell" rowspan="2">xSSC-50k 初始化 / 续训</td><td>Full-SA + Object + Slot-Dedup (xSSC-50k)</td><td>标准混合 30/30/40</td><td>xSSC step-050000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支 + Slot-Dedup</td><td class="num">49,051,648</td></tr>
+        <tr><td>T-head70 + Object + Slot-Dedup (xSSC-50k)</td><td>标准混合 30/30/40</td><td>xSSC step-050000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支 + Slot-Dedup</td><td class="num">34,863,104</td></tr>
+      </tbody></table></div>
+      <p class="weights-note weights-footnote">较晚 step 可能从同一方案较早的 <code>training_state.pt</code> 续训，但底座、初始化 LoRA 与可训练参数规模不变。</p>
     </section>"""
 
 
@@ -1784,7 +1794,10 @@ def build_watch_index(
       border-collapse:collapse;font-variant-numeric:tabular-nums}}th,td{{padding:9px 8px;
       text-align:left;border-top:1px solid var(--line);font-size:13px}}th{{color:var(--muted)}}
     .provenance{{margin-bottom:18px}}.provenance h3{{margin:15px 0 7px;font-size:14px}}
-    .table-wrap{{overflow-x:auto}}.scheme-weights{{min-width:920px}}code{{font-size:12px}}
+    .table-wrap{{overflow-x:auto}}.scheme-weights{{min-width:1420px}}.dataset-summary{{min-width:850px}}
+    .category-cell{{color:var(--accent);font-weight:800;vertical-align:top;white-space:nowrap}}
+    .num{{font-variant-numeric:tabular-nums;white-space:nowrap}}.total-row td{{font-weight:800}}
+    code{{font-size:12px}}
     .weights-note{{margin:0;color:var(--muted);font-size:13px;line-height:1.5}}
     .weights-footnote{{margin-top:10px}}
     .swatch{{display:inline-block;width:10px;height:10px;margin-right:7px;border-radius:2px}}

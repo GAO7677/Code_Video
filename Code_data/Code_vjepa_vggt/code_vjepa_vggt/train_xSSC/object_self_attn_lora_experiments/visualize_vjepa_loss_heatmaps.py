@@ -647,13 +647,14 @@ def _flow_weighted_vjepa_feature_density(
     alpha: float = FLOW_WEIGHTED_VJEPA_ALPHA,
     flow_quantile: float = FLOW_WEIGHTED_VJEPA_FLOW_QUANTILE,
 ) -> tuple[torch.Tensor, float]:
-    flow_scale = torch.quantile(
-        flow_density.detach().float().reshape(-1),
-        float(flow_quantile),
-    ).clamp_min(1e-12)
+    flow_values = flow_density.detach().float().reshape(-1).cpu().numpy()
+    if flow_values.size == 0:
+        raise RuntimeError("Flow density is empty")
+    flow_scale = float(np.quantile(flow_values, float(flow_quantile)))
+    flow_scale = max(flow_scale, 1e-12)
     flow_gate = (flow_density.detach().float() / flow_scale).clamp(0.0, 1.0)
     weighted = feature_density.float() * (1.0 + float(alpha) * flow_gate)
-    return weighted, float(flow_scale.item())
+    return weighted, float(flow_scale)
 
 
 def _vjepa_maps(

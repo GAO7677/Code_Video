@@ -400,6 +400,7 @@ UNLISTED_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-group-mean-continuity?v=3"><div><span>31 / GROUP-MEAN CONTINUITY</span><h2>Top100 Group-Mean Continuity</h2><p>查看 Top100 组均值的 continuity mask、after attention 和 removed 区域。</p></div><span class="go">打开 Group-Mean 页面</span></a>
 <a class="card new" href="/physiq025-object-query-frozen-trajectory?v=1"><div><span>32 / PHYSIQ025 FROZEN</span><h2>PhysIQ025 Frozen Trajectory</h2><p>PhysIQ025 case 的 frozen Object Query trajectory 页面，集中展示视频、对象轨迹和注意力图。</p></div><span class="go">打开 PhysIQ025 Frozen</span></a>
 <a class="card new" href="/wan22-ti2v-legacy-pck50?v=2"><div><span>33 / LEGACY PCK50</span><h2>五组 PCK Head 排名与重合</h2><p>首个 latent frame 固定为 object query；查看 Legacy、GT、LoRA、Baseline、三模型综合在 S039 与全步平均下的 720 Head 排名、30 × 24 矩阵、Top-K 重合和相关性。</p></div><span class="go">打开 PCK Head 对比</span></a>
+<a class="card new" href="/wan22-ti2v-legacy-physiciq67-samples?v=1"><div><span>34 / PHYSICIQ67 SAMPLES</span><h2>新 Legacy Object Query 样例</h2><p>固定随机抽取已完成的 PhysicIQ67 runs，展示生成视频、SAM2 object query、单 run PCK 矩阵和 S039 Top10 attention。</p></div><span class="go">打开 PhysicIQ67 样例</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + "</section>", 1
@@ -1449,6 +1450,15 @@ WAN22_TI2V_LEGACY_PCK50_ROOT = Path(
 WAN22_TI2V_LEGACY_PCK50_CACHE = Path(
     "/data/gaoya/agent-data/cache/wan22_ti2v_legacy_firstlatent_regions_704x1280"
 )
+WAN22_TI2V_LEGACY_PHYSICIQ67_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_ROOT / "visual_samples"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_MANIFEST = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "samples.json"
+)
 WAN22_TI2V_LEGACY_PCK50_SEEDS = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds.txt"
 )
@@ -2028,21 +2038,15 @@ def wan22_ti2v_legacy_pck50_video(case: str, seed: str):
     return WAN22_TI2V_LEGACY_PCK50_ROOT / "runs" / case / f"seed_{seed_value:05d}" / "generated.mp4"
 
 
-def wan22_ti2v_legacy_pck50_heatmap(case: str, seed: str, rank: str, region: str):
+def _wan22_ti2v_legacy_heatmap_payload(
+    heatmap_dir: Path, video_path: Path, rank_value: int, region: str
+):
     import cv2
     import numpy as np
 
-    if case not in WAN22_TI2V_LEGACY_PCK50_CASES:
-        return None
-    try:
-        seed_value, rank_value = int(seed), int(rank)
-    except ValueError:
-        return None
-    heatmap_dir = WAN22_TI2V_LEGACY_PCK50_ROOT / "heatmaps" / case / f"seed_{seed_value:05d}"
     metadata_path = heatmap_dir / "metadata.json"
     maps_path = heatmap_dir / "attention_maps.npy"
-    video_path = wan22_ti2v_legacy_pck50_video(case, seed)
-    if not metadata_path.is_file() or not maps_path.is_file() or video_path is None or not video_path.is_file():
+    if not metadata_path.is_file() or not maps_path.is_file() or not video_path.is_file():
         return None
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     regions = metadata.get("regions", [])
@@ -2092,6 +2096,22 @@ def wan22_ti2v_legacy_pck50_heatmap(case: str, seed: str, rank: str, region: str
     cv2.putText(title, text_label, (18, 41), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (23, 68, 58), 2)
     ok, encoded = cv2.imencode(".jpg", np.concatenate([title, montage], axis=0), [cv2.IMWRITE_JPEG_QUALITY, 91])
     return None if not ok else encoded.tobytes()
+
+
+def wan22_ti2v_legacy_pck50_heatmap(case: str, seed: str, rank: str, region: str):
+    if case not in WAN22_TI2V_LEGACY_PCK50_CASES:
+        return None
+    try:
+        seed_value, rank_value = int(seed), int(rank)
+    except ValueError:
+        return None
+    video_path = wan22_ti2v_legacy_pck50_video(case, seed)
+    if video_path is None:
+        return None
+    heatmap_dir = WAN22_TI2V_LEGACY_PCK50_ROOT / "heatmaps" / case / f"seed_{seed_value:05d}"
+    return _wan22_ti2v_legacy_heatmap_payload(
+        heatmap_dir, video_path, rank_value, region
+    )
 
 
 def wan22_ti2v_legacy_test5_asset(name: str):
