@@ -29,6 +29,8 @@ def parse_args() -> argparse.Namespace:
         required=True,
     )
     parser.add_argument("--kind", choices=["cpu", "gpu"])
+    parser.add_argument("--methods", default=None)
+    parser.add_argument("--gpus", default=None)
     parser.add_argument("--once", action="store_true")
     return parser.parse_args()
 
@@ -172,10 +174,14 @@ def metric_marker_path(
 
 def load_manifests(config: dict[str, Any]) -> list[dict[str, Any]]:
     root = state_paths(config)["checkpoints"]
+    method_keys = {method["key"] for method in config["methods"]}
     manifests = [
         load_json(path)
         for path in sorted(root.glob("*/step-*.json"))
         if path.is_file()
+    ]
+    manifests = [
+        manifest for manifest in manifests if manifest["method_key"] in method_keys
     ]
     return sorted(
         manifests,
@@ -775,6 +781,22 @@ def main() -> None:
     config_path = args.config.resolve()
     config = load_json(config_path)
     config["_config_path"] = str(config_path)
+    if args.methods:
+        requested = {item.strip() for item in args.methods.split(",") if item.strip()}
+        known = {method["key"] for method in config["methods"]}
+        unknown = sorted(requested - known)
+        if unknown:
+            raise ValueError(f"Unknown watcher methods: {unknown}")
+        config["methods"] = [
+            method for method in config["methods"] if method["key"] in requested
+        ]
+    if args.gpus:
+        gpu_ids = [int(item.strip()) for item in args.gpus.split(",") if item.strip()]
+        if not gpu_ids or len(gpu_ids) != len(set(gpu_ids)):
+            raise ValueError(f"Invalid --gpus value: {args.gpus!r}")
+        if 4 in gpu_ids:
+            raise ValueError("GPU 4 is prohibited by workspace rules")
+        config["runtime"]["gpu_ids"] = gpu_ids
     prepare_directories(config)
     tasks = discover_checkpoints(config)
     write_discovery(config, tasks)

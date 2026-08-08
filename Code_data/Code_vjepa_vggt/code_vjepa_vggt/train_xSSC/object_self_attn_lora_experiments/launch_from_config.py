@@ -16,6 +16,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 TRAIN_SCRIPT = ROOT / "train_xssc_object_self_attn_lora.py"
+PHYSRVG_DIT_TRAIN_SCRIPT = ROOT / "train_xssc_object_self_attn_lora_physrvg_dit.py"
 VJEPA_LOSS_TRAIN_SCRIPT = (
     ROOT / "vjepa_loss_project/train_xssc_object_self_attn_lora_vjepa_loss.py"
 )
@@ -23,6 +24,7 @@ OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT = ROOT / "train_official_xssc_object_only
 VALID_MODES = {"object_only", "full_sa", "s_head", "t_head"}
 HEAD_SELECTIVE_MODES = {"s_head", "t_head"}
 VALID_XSSC_BACKENDS = {"dinov3_movic", "official_dinov2"}
+VALID_INITIALIZATIONS = {"openvid_lora", "physrvg_dit"}
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -151,6 +153,22 @@ def validate_config(config: dict, config_dir: Path) -> dict:
     if int(require(config, "adaptation.self_attn_lora_rank")) <= 0:
         raise ValueError("adaptation.self_attn_lora_rank must be positive")
 
+    initialization_type = str(
+        config.get("initialization", {}).get("type", "openvid_lora")
+    )
+    if initialization_type not in VALID_INITIALIZATIONS:
+        raise ValueError(
+            "initialization.type must be one of "
+            f"{sorted(VALID_INITIALIZATIONS)}, got {initialization_type!r}"
+        )
+    if initialization_type == "physrvg_dit" and (
+        xssc_backend != "dinov3_movic" or mode != "full_sa"
+    ):
+        raise ValueError(
+            "PhysRVG DiT initialization currently supports only "
+            "dinov3_movic Full-SA experiments"
+        )
+
     vjepa_loss = config.get("vjepa_loss", {})
     vjepa_loss_enabled = bool(vjepa_loss.get("enabled", False))
     if vjepa_loss_enabled:
@@ -214,11 +232,14 @@ def validate_config(config: dict, config_dir: Path) -> dict:
         "paths.project_root",
         "paths.diffsynth_root",
         "paths.wan_root",
-        "paths.pretrained_lora_checkpoint",
         "paths.pybullet_root",
         "paths.kubric_root",
         "paths.openvid_root",
     ]
+    if initialization_type == "openvid_lora":
+        path_keys.append("paths.pretrained_lora_checkpoint")
+    else:
+        path_keys.append("paths.physrvg_dit_checkpoint")
     if enable_object_branch:
         path_keys.extend(
             [
@@ -237,6 +258,7 @@ def validate_config(config: dict, config_dir: Path) -> dict:
                 ]
             )
     normalized = copy.deepcopy(config)
+    normalized.setdefault("initialization", {})["type"] = initialization_type
     for dotted_key in path_keys:
         keys = dotted_key.split(".")
         normalized[keys[0]][keys[1]] = resolve_config_path(
@@ -347,8 +369,13 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
     vjepa_loss_enabled = bool(vjepa_loss.get("enabled", False))
 
     xssc_backend = str(model["xssc_backend"])
+    initialization_type = str(
+        config.get("initialization", {}).get("type", "openvid_lora")
+    )
     if vjepa_loss_enabled:
         train_script = VJEPA_LOSS_TRAIN_SCRIPT
+    elif initialization_type == "physrvg_dit":
+        train_script = PHYSRVG_DIT_TRAIN_SCRIPT
     else:
         train_script = (
             OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT
@@ -419,7 +446,6 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "--lora_target_modules": model["pretrained_lora_target_modules"],
         "--lora_rank": model["pretrained_lora_rank"],
         "--lora_alpha": model["pretrained_lora_alpha"],
-        "--lora_checkpoint": paths["pretrained_lora_checkpoint"],
         "--extra_inputs": "input_image",
         "--lambda_main": conditioning["lambda_main"],
         "--report_to": logging["report_to"],
@@ -430,6 +456,10 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         ),
         "--wandb_mode": logging["wandb_mode"],
     }
+    if initialization_type == "openvid_lora":
+        options["--lora_checkpoint"] = paths["pretrained_lora_checkpoint"]
+    else:
+        options["--physrvg_dit_checkpoint"] = paths["physrvg_dit_checkpoint"]
     if xssc_backend == "dinov3_movic":
         options.update(
             {
@@ -619,6 +649,7 @@ def main() -> None:
         "mode": config["adaptation"]["mode"],
         "xssc_backend": config["model"]["xssc_backend"],
         "enable_object_branch": config["adaptation"]["enable_object_branch"],
+        "initialization": config["initialization"]["type"],
         "vjepa_loss_enabled": bool(
             config.get("vjepa_loss", {}).get("enabled", False)
         ),

@@ -21,13 +21,7 @@
     "checkpoint_stability_seconds": 30,
     "gpu_poll_seconds": 30,
     "gpu_ids": [
-      0,
-      1,
-      2,
-      3,
-      5,
-      6,
-      7
+      3
     ],
     "gpu_ready_max_used_mib": 8000,
     "expected_cases": 20,
@@ -74,7 +68,8 @@
       "full_sa_no_object_kubric100",
       "t_head70_no_object",
       "t_head100_lora_pck32_no_object",
-      "full_sa_no_object_vjepa_loss"
+      "full_sa_no_object_vjepa_loss",
+      "full_sa_physrvg_dit"
     ],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
     "output_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/xssc",
@@ -284,6 +279,14 @@
       "color": "#009E73",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu01_formal_vjepa_loss/20260805T180305Z/checkpoints"
+      ]
+    },
+    {
+      "key": "full_sa_physrvg_dit",
+      "label": "Full-SA + Object (PhysRVG DiT)",
+      "color": "#17BECF",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_physrvg_dit_gpu12_formal/formal_20260808T142258Z_physrvg_dit/checkpoints"
       ]
     }
   ]

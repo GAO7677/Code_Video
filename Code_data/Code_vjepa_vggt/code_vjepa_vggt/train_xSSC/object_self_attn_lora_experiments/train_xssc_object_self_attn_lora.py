@@ -773,6 +773,14 @@ class AMGBoxBuilder:
 class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
     """Wan training module conditioned on frozen DINOv3 MOVi-C xSSC slots."""
 
+    def _initialize_frozen_dit(self, dit: nn.Module) -> list[str]:
+        merged_modules = merge_and_unload_pretrained_lora(
+            dit,
+            expected_module_count=self.pretrained_lora_expected_modules,
+        )
+        self.base_dit_initialization = "Wan2.2 TI2V 5B + merged OpenVid LoRA"
+        return merged_modules
+
     def __init__(
         self,
         *args,
@@ -918,10 +926,7 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
             )
 
         dit = self.pipe.dit
-        self.merged_pretrained_lora_modules = merge_and_unload_pretrained_lora(
-            dit,
-            expected_module_count=self.pretrained_lora_expected_modules,
-        )
+        self.merged_pretrained_lora_modules = self._initialize_frozen_dit(dit)
         if len(dit.blocks) != self.self_attn_expected_num_blocks:
             raise RuntimeError(
                 "Unexpected Wan block count: "
@@ -1544,9 +1549,9 @@ def _log_stage_summary(accelerator, model: DINOv3XSSCContextSlotsWanModule, args
         "=" * 78,
         "DINOv3 xSSC object/self-attention LoRA experiment",
         "=" * 78,
-        f"Frozen Wan base: {args.wan_root}",
-        f"OpenVid initialization LoRA merged into Wan: {args.lora_checkpoint}",
-        f"Merged/unloaded pretrained LoRA modules: "
+        f"Frozen Wan architecture/components: {args.wan_root}",
+        f"Frozen DiT initialization: {model.base_dit_initialization}",
+        f"Initialization LoRA modules removed: "
         f"{len(model.merged_pretrained_lora_modules)}",
         f"Object branch enabled: {model.enable_object_branch}",
         f"Frozen DINOv3 xSSC checkpoint: "
@@ -1605,6 +1610,7 @@ def main(
     build_parser_fn=build_parser,
     build_model_fn=build_model,
     log_stage_summary_fn=_log_stage_summary,
+    require_pretrained_lora: bool = True,
 ) -> None:
     parser = build_parser_fn()
     args = tvn.prepare_args(parser.parse_args())
@@ -1614,7 +1620,7 @@ def main(
         )
     if int(args.train_batch_size) <= 0:
         parser.error("--train_batch_size must be positive")
-    if args.lora_checkpoint is None:
+    if require_pretrained_lora and args.lora_checkpoint is None:
         parser.error(
             "--lora_checkpoint is required: all experiment modes must start from "
             "the same pretrained OpenVid LoRA"

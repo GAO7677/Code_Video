@@ -31,6 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--mode", choices=["discover", "inference", "metrics"], required=True)
     parser.add_argument("--kind", choices=["cpu", "gpu"])
+    parser.add_argument("--methods", default=None)
+    parser.add_argument("--gpus", default=None)
     parser.add_argument("--once", action="store_true")
     return parser.parse_args()
 
@@ -88,10 +90,14 @@ def discover_tasks(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def load_phys_manifests(config: dict[str, Any]) -> list[dict[str, Any]]:
     root = phys_state_root(config) / "inference"
+    method_keys = set(config["physiciq"]["method_keys"])
     manifests = [
         load_json(path)
         for path in sorted(root.glob("*/step-*.json"))
         if path.is_file()
+    ]
+    manifests = [
+        manifest for manifest in manifests if manifest["method_key"] in method_keys
     ]
     return sorted(manifests, key=lambda row: (int(row["step"]), row["method_key"]))
 
@@ -507,6 +513,23 @@ def main() -> None:
     args = parse_args()
     config = load_json(args.config.resolve())
     config["_config_path"] = str(args.config.resolve())
+    if args.methods:
+        requested = {item.strip() for item in args.methods.split(",") if item.strip()}
+        known = set(config["physiciq"]["method_keys"])
+        unknown = sorted(requested - known)
+        if unknown:
+            raise ValueError(f"Unknown PhysicIQ watcher methods: {unknown}")
+        config["physiciq"]["method_keys"] = [
+            method for method in config["physiciq"]["method_keys"]
+            if method in requested
+        ]
+    if args.gpus:
+        gpu_ids = [int(item.strip()) for item in args.gpus.split(",") if item.strip()]
+        if not gpu_ids or len(gpu_ids) != len(set(gpu_ids)):
+            raise ValueError(f"Invalid --gpus value: {args.gpus!r}")
+        if 4 in gpu_ids:
+            raise ValueError("GPU 4 is prohibited by workspace rules")
+        config["runtime"]["gpu_ids"] = gpu_ids
     if not config.get("physiciq", {}).get("enabled"):
         raise SystemExit("PhysicIQ watcher is disabled in config")
     phys_state_root(config).mkdir(parents=True, exist_ok=True)

@@ -62,7 +62,7 @@ payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 config = payload["resolved_config"]
 print(config["experiment"]["name"])
 print(config["paths"]["wan_root"])
-print(config["paths"]["pretrained_lora_checkpoint"])
+print(config["paths"].get("pretrained_lora_checkpoint") or "")
 PY
 )
 EXPERIMENT_NAME="${CONFIG_VALUES[0]}"

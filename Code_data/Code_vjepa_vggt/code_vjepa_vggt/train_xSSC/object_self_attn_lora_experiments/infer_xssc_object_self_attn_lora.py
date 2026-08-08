@@ -21,6 +21,7 @@ if str(TRAIN_XSSC_ROOT) not in sys.path:
 
 import infer_xssc_context_slots_dinov3 as infer_dinov3
 import train_xssc_object_self_attn_lora as train
+import train_xssc_object_self_attn_lora_physrvg_dit as train_physrvg_dit
 import train_xssc_object_self_attn_lora_slot_dedup as train_slot_dedup
 
 
@@ -77,9 +78,15 @@ def _apply_config_to_model_args(model_args, config: dict) -> None:
     conditioning = config["conditioning"]
     filters = conditioning["amg_filters"]
     enable_object_branch = bool(adaptation.get("enable_object_branch", True))
+    initialization_type = str(
+        config.get("initialization", {}).get("type", "openvid_lora")
+    )
 
     model_args.wan_root = paths["wan_root"]
-    model_args.lora_checkpoint = paths["pretrained_lora_checkpoint"]
+    model_args.lora_checkpoint = paths.get("pretrained_lora_checkpoint")
+    model_args.physrvg_dit_checkpoint = paths.get("physrvg_dit_checkpoint")
+    if initialization_type == "physrvg_dit":
+        model_args.lora_checkpoint = None
     model_args.lora_target_modules = model["pretrained_lora_target_modules"]
     model_args.lora_rank = int(model["pretrained_lora_rank"])
     model_args.lora_alpha = float(model["pretrained_lora_alpha"])
@@ -171,7 +178,15 @@ def _build_runtime_model(args):
     slot_dedup_mode = str(
         config.get("conditioning", {}).get("slot_dedup", {}).get("mode", "none")
     )
-    train_impl = train_slot_dedup if slot_dedup_mode != "none" else train
+    initialization_type = str(
+        config.get("initialization", {}).get("type", "openvid_lora")
+    )
+    if initialization_type == "physrvg_dit":
+        if slot_dedup_mode != "none":
+            raise ValueError("PhysRVG DiT inference does not support slot de-dup")
+        train_impl = train_physrvg_dit
+    else:
+        train_impl = train_slot_dedup if slot_dedup_mode != "none" else train
     model = train_impl.build_model(
         model_args,
         SimpleNamespace(device=torch.device(args.device)),
@@ -240,9 +255,13 @@ def _build_runtime_model(args):
             "slot_dedup_mode": slot_dedup_mode,
             "slot_dedup": config.get("conditioning", {}).get("slot_dedup"),
             "head_identity": identity_info,
-            "pretrained_lora_checkpoint": config["paths"][
+            "initialization": initialization_type,
+            "pretrained_lora_checkpoint": config["paths"].get(
                 "pretrained_lora_checkpoint"
-            ],
+            ),
+            "physrvg_dit_checkpoint": config["paths"].get(
+                "physrvg_dit_checkpoint"
+            ),
         },
     }
     return model, model_args, runtime_info

@@ -1,0 +1,23 @@
+{
+  "extends": "full_sa.json",
+  "experiment": {
+    "name": "full_sa_physrvg_dit_gpu12_formal",
+    "description": "PhysRVG full fine-tuned DiT plus the unchanged xSSC Object branch and rank-32 Full-SA LoRA"
+  },
+  "initialization": {
+    "type": "physrvg_dit"
+  },
+  "paths": {
+    "pretrained_lora_checkpoint": null,
+    "physrvg_dit_checkpoint": "/data/gaoya/ckpt/HappyP4nda-PhysRVG/dit/diffusion_pytorch_model.safetensors"
+  },
+  "launch": {
+    "gpu_set": "1,2",
+    "num_processes": 2,
+    "main_process_port": 29541
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4
+  }
+}

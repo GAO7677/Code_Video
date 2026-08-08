@@ -1,0 +1,21 @@
+{
+  "extends": "formal_full_sa_physrvg_dit_gpu12.json",
+  "experiment": {
+    "name": "smoke_full_sa_physrvg_dit_gpu12"
+  },
+  "paths": {
+    "output_root": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora_smoke"
+  },
+  "optimization": {
+    "max_train_steps": 1,
+    "num_epochs": 1
+  },
+  "checkpointing": {
+    "save_steps": 1,
+    "max_checkpoints_keep": 1
+  },
+  "logging": {
+    "report_to": "none",
+    "wandb_mode": "disabled"
+  }
+}
