@@ -251,7 +251,12 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def save_region_cache(cache_dir: Path, cache: RegionQueryCache) -> None:
+def save_region_cache(
+    cache_dir: Path,
+    cache: RegionQueryCache,
+    *,
+    save_visualizations: bool = True,
+) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     temporary = cache_dir / "regions.npz.tmp"
     with temporary.open("wb") as handle:
@@ -267,7 +272,8 @@ def save_region_cache(cache_dir: Path, cache: RegionQueryCache) -> None:
         "regions": [asdict(region) for region in cache.regions],
     }
     _atomic_write_json(cache_dir / "regions.json", payload)
-    save_region_query_visualizations(cache_dir, cache)
+    if save_visualizations:
+        save_region_query_visualizations(cache_dir, cache)
     _atomic_write_json(cache_dir / "complete.json", {"case_key": cache.case_key})
 
 

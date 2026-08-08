@@ -50,6 +50,8 @@ CASE_SELECTION_MODES = ("mixture", "pybullet_multiobject")
 MODEL_CONDITIONS = ("step03463_lora", "no_step03463_lora")
 DEFAULT_CENTER_RUN_TAG = "step03463_seed3463_retry2"
 DEFAULT_COMPARISON_PAGE = "comparison_step03463.html"
+FLOW_WEIGHTED_VJEPA_ALPHA = 2.0
+FLOW_WEIGHTED_VJEPA_FLOW_QUANTILE = 0.995
 
 for _path in (PROJECT_ROOT, TRAIN_XSSC_DIR, DIFFSYNTH_ROOT, SCRIPT_DIR):
     if str(_path) not in sys.path:
@@ -487,6 +489,22 @@ def _normalize_density(value: torch.Tensor, scalar: torch.Tensor | float) -> tor
     return value * (scalar_value / mean_value)
 
 
+def _flow_weighted_vjepa_feature_density(
+    feature_density: torch.Tensor,
+    flow_density: torch.Tensor,
+    *,
+    alpha: float = FLOW_WEIGHTED_VJEPA_ALPHA,
+    flow_quantile: float = FLOW_WEIGHTED_VJEPA_FLOW_QUANTILE,
+) -> tuple[torch.Tensor, float]:
+    flow_scale = torch.quantile(
+        flow_density.detach().float().reshape(-1),
+        float(flow_quantile),
+    ).clamp_min(1e-12)
+    flow_gate = (flow_density.detach().float() / flow_scale).clamp(0.0, 1.0)
+    weighted = feature_density.float() * (1.0 + float(alpha) * flow_gate)
+    return weighted, float(flow_scale.item())
+
+
 def _vjepa_maps(
     module,
     *,
@@ -785,6 +803,7 @@ def _build_case(
     case_dir: Path,
     vjepa_input_mode: str,
     model_condition: str,
+    flow_weighted_vjepa_alpha: float,
 ) -> dict[str, Any]:
     case_seed = int(case["case_seed"])
     _seed_all(case_seed)
@@ -926,22 +945,43 @@ def _build_case(
                 _project_latent_map(latent_error, time_steps=output_time),
                 main_scalar,
             )
+            (
+                flow_weighted_feature_density,
+                flow_weighted_feature_flow_scale,
+            ) = _flow_weighted_vjepa_feature_density(
+                feature_weighted_density,
+                main_density,
+                alpha=flow_weighted_vjepa_alpha,
+            )
+            flow_weighted_feature_scalar = float(
+                flow_weighted_feature_density.mean().item()
+            )
             total_density = main_density + aux_map
             total_scalar = float(main_scalar.item()) + aux_scalar
             pred_frames = _resize_frames(_as_rgb_frames(pred_raw.clamp(0.0, 1.0)))
             density_means = {
                 "flow": float(main_density.mean().item()),
                 "vjepa_feature": float(feature_weighted_density.mean().item()),
+                "vjepa_feature_flow_weighted": float(
+                    flow_weighted_feature_density.mean().item()
+                ),
                 "vjepa": float(aux_map.mean().item()),
                 "total": float(total_density.mean().item()),
             }
             expected_means = {
                 "flow": float(main_scalar.item()),
                 "vjepa_feature": feature_weighted_scalar,
+                "vjepa_feature_flow_weighted": flow_weighted_feature_scalar,
                 "vjepa": aux_scalar,
                 "total": total_scalar,
             }
-            for map_name in ("flow", "vjepa_feature", "vjepa", "total"):
+            for map_name in (
+                "flow",
+                "vjepa_feature",
+                "vjepa_feature_flow_weighted",
+                "vjepa",
+                "total",
+            ):
                 if not math.isclose(
                     density_means[map_name],
                     expected_means[map_name],
@@ -962,6 +1002,9 @@ def _build_case(
                     "vjepa_feature": feature_loss,
                     "vjepa_range": range_loss,
                     "vjepa_feature_weighted": feature_weighted_scalar,
+                    "vjepa_feature_flow_weighted": flow_weighted_feature_scalar,
+                    "flow_weighted_vjepa_alpha": float(flow_weighted_vjepa_alpha),
+                    "flow_weighted_vjepa_flow_p99_5": flow_weighted_feature_flow_scale,
                     "vjepa_range_weighted": range_weighted_scalar,
                     "vjepa_weighted_aux": aux_scalar,
                     "total_weighted": total_scalar,
@@ -972,6 +1015,12 @@ def _build_case(
                     "flow": main_density.detach().cpu().numpy().astype(np.float32),
                     "vjepa_feature": (
                         feature_weighted_density.detach().cpu().numpy().astype(np.float32)
+                    ),
+                    "vjepa_feature_flow_weighted": (
+                        flow_weighted_feature_density.detach()
+                        .cpu()
+                        .numpy()
+                        .astype(np.float32)
                     ),
                     "vjepa": aux_map.detach().cpu().numpy().astype(np.float32),
                     "total": total_density.detach().cpu().numpy().astype(np.float32),
@@ -986,7 +1035,7 @@ def _build_case(
 
     scales = {
         name: _vmax([variant["density"][name] for variant in variants])
-        for name in ("flow", "vjepa_feature", "vjepa", "total")
+        for name in ("flow", "vjepa_feature", "vjepa_feature_flow_weighted", "vjepa", "total")
     }
     case_dir.mkdir(parents=True, exist_ok=True)
     _write_video(target_frames, case_dir / "target_tiny_vae.mp4")
@@ -1009,6 +1058,11 @@ def _build_case(
             (
                 "vjepa_feature",
                 "V-JEPA feature MSE",
+                vjepa_frame_labels,
+            ),
+            (
+                "vjepa_feature_flow_weighted",
+                "Flow-weighted V-JEPA feature MSE",
                 vjepa_frame_labels,
             ),
             (
@@ -1068,6 +1122,10 @@ def _build_case(
                         variant["density"]["vjepa_feature"],
                         active_frame_indices=vjepa_loss_frame_indices,
                     ),
+                    "vjepa_feature_flow_weighted": _spatial_stats(
+                        variant["density"]["vjepa_feature_flow_weighted"],
+                        active_frame_indices=vjepa_loss_frame_indices,
+                    ),
                     "total": _spatial_stats(
                         variant["density"]["total"],
                         active_frame_indices=list(range(output_time)),
@@ -1107,6 +1165,13 @@ def _build_case(
         "model_condition": model_condition,
         "base_pretrained_lora_merged": True,
         "step03463_lora_loaded": model_condition == "step03463_lora",
+        "flow_weighted_vjepa_alpha": float(flow_weighted_vjepa_alpha),
+        "flow_weighted_vjepa_flow_quantile": FLOW_WEIGHTED_VJEPA_FLOW_QUANTILE,
+        "flow_weighted_vjepa_definition": (
+            "vjepa_feature_flow_weighted = vjepa_feature_weighted_density * "
+            "(1 + alpha * clip(flow_density / flow_density_p99.5, 0, 1)); "
+            "derived visualization map only, original total remains unchanged."
+        ),
         "selected_object_count": int(
             case.get("object_count", len(raw_sample.get("entity_slots", [])))
         ),
@@ -1217,6 +1282,7 @@ def _worker_main(args: argparse.Namespace, train_argv: list[str]) -> None:
             case_dir=case_dir,
             vjepa_input_mode=args.vjepa_input_mode,
             model_condition=args.model_condition,
+            flow_weighted_vjepa_alpha=args.flow_weighted_vjepa_alpha,
         )
         print(
             f"rank={local_rank} completed case={record['case_id']} "
@@ -1245,7 +1311,9 @@ def _pairwise_spatial_comparison(records: list[dict[str, Any]]) -> dict[str, Any
         "definition": (
             "Profiles are spatially normalized before comparison. Flow aggregates the "
             "projected supervised latent v-MSE; V-JEPA feature uses future-only "
-            "tubelet frames and excludes the all-frame range penalty."
+            "tubelet frames and excludes the all-frame range penalty. "
+            "Flow-weighted V-JEPA feature multiplies that feature map by "
+            "1 + alpha * clipped Flow density."
         ),
         "case_positions": case_positions,
         "case_ids": case_ids,
@@ -1253,7 +1321,7 @@ def _pairwise_spatial_comparison(records: list[dict[str, Any]]) -> dict[str, Any
     }
     for label in sorted(shared_labels):
         per_kind: dict[str, Any] = {}
-        for kind in ("flow", "vjepa_feature", "total"):
+        for kind in ("flow", "vjepa_feature", "vjepa_feature_flow_weighted", "total"):
             profiles = []
             for variants in variants_by_record:
                 stats = variants[label]["spatial_stats"][kind]
@@ -1305,6 +1373,10 @@ def _build_index(output_root: Path, *, config_path: Path, checkpoint: Path, seed
         "config": str(config_path),
         "checkpoint": str(checkpoint),
         "seed": int(seed),
+        "flow_weighted_vjepa_alpha": records[0]["flow_weighted_vjepa_alpha"] if records else None,
+        "flow_weighted_vjepa_flow_quantile": (
+            records[0]["flow_weighted_vjepa_flow_quantile"] if records else None
+        ),
         "vjepa_input_mode": records[0]["vjepa_input_mode"] if records else None,
         "vjepa_input_size": records[0]["vjepa_input_size"] if records else None,
         "vjepa_token_grid": records[0]["vjepa_token_grid"] if records else None,
@@ -1348,18 +1420,18 @@ video {{ display:block; width:100%; aspect-ratio:16/9; object-fit:contain; backg
 </style></head><body>
 <header><h1>V-JEPA Loss Heatmaps</h1><div class="muted">Step 3463 · {vjepa_mode} {vjepa_size[0]}×{vjepa_size[1]} · token grid {'×'.join(str(value) for value in vjepa_grid)} · fixed case seed/noise/full-video V-JEPA input</div></header>
 <main><div class="toolbar">
-<label>Case<select id="case"></select></label><label>Overlay<select id="kind"><option value="flow">Flow loss</option><option value="vjepa">V-JEPA auxiliary</option><option value="total">Weighted total</option></select></label>
+<label>Case<select id="case"></select></label><label>Overlay<select id="kind"><option value="flow">Flow loss</option><option value="vjepa_feature">V-JEPA feature MSE</option><option value="vjepa_feature_flow_weighted">Flow-weighted V-JEPA feature</option><option value="vjepa">V-JEPA auxiliary</option><option value="total">Weighted total</option></select></label>
 <button id="play">Play</button><button id="pause">Pause</button><button id="replay">Replay</button>
 </div><div class="case-head"><h2 id="title"></h2><span class="muted" id="sampling"></span></div><div class="facts" id="facts"></div>
 <div class="grid" id="grid"></div><div class="controls"><span class="muted" id="frame">frame 0</span><input id="seek" type="range" min="0" max="48" value="0" step="0.01"></div>
-<p class="note">Each overlay is a local loss-contribution density on the decoded target video. The three timestep columns share one color scale per loss type within the selected case; the scale is the 99.5th percentile and clipped values are saturated. Flow is projected from latent v-MSE. V-JEPA is the true normalized future-token feature contribution plus its range penalty. The weighted total is the numerical sum of the two contribution maps.</p>
+<p class="note">Each overlay is a local loss-contribution density on the decoded target video. The three timestep columns share one color scale per loss type within the selected case; the scale is the 99.5th percentile and clipped values are saturated. Flow is projected from latent v-MSE. Flow-weighted V-JEPA feature is a derived visualization map: feature density multiplied by <code>1 + alpha * clip(flow / flow_p99.5, 0, 1)</code>. The original weighted total remains the numerical sum of Flow plus the unmodified V-JEPA auxiliary map.</p>
 </main><script>
 const DATA={payload}; let current=null; const vids=()=>[...document.querySelectorAll('video')];
 const casePick=document.getElementById('case'), kindPick=document.getElementById('kind'), grid=document.getElementById('grid'), facts=document.getElementById('facts'), title=document.getElementById('title'), sampling=document.getElementById('sampling'), seek=document.getElementById('seek'), frame=document.getElementById('frame');
 DATA.forEach((item,i)=>{{const o=document.createElement('option');o.value=i;o.textContent=item.source+' · '+item.case_id;casePick.appendChild(o);}});
 function fmt(v){{return Number(v).toExponential(4)}}
-function renderFacts(item){{const rows=[]; item.variants.forEach(v=>rows.push('<div class="fact"><span>'+v.label+' · sigma '+Number(v.sigma).toFixed(3)+' · w '+Number(v.normalized_timestep_weight).toFixed(3)+'</span><b>flow '+fmt(v.scalar.main_weighted)+'</b><b>V-JEPA '+fmt(v.scalar.vjepa_weighted_aux)+'</b><b>total '+fmt(v.scalar.total_weighted)+'</b></div>')); facts.innerHTML=rows.join('');}}
-function load(){{current=DATA[Number(casePick.value)||0]; title.textContent=current.source+' · '+current.case_label; const scale=current.color_scales_p99_5[kindPick.value]; const samplingMode=current.vjepa_frame_sampling||'full'; const rawFrames=Number(current.vjepa_frame_indices?.length||0); const paddedFrames=Number(current.vjepa_padded_frame_count||0); const tokenCount=Number(current.vjepa_temporal_tokens||(current.vjepa_token_grid&&current.vjepa_token_grid[0])||0); sampling.textContent='seed '+current.case_seed+' · V-JEPA '+samplingMode+' · '+rawFrames+' raw frames'+(paddedFrames?' (+ '+paddedFrames+' padded)':'')+' · '+tokenCount+' tubelets · color p99.5 '+fmt(scale); renderFacts(current); const labels={{flow:'Flow loss',vjepa:'V-JEPA auxiliary',total:'Weighted total'}}; grid.innerHTML='<figure class="source"><figcaption>Target video used for loss comparison</figcaption><video controls muted playsinline preload="metadata" src="'+current.target_video+'"></video></figure>'+current.variants.map(v=>'<figure><figcaption><b>'+v.label+'</b> · '+labels[kindPick.value]+'<br>sigma '+Number(v.sigma).toFixed(4)+' · raw w '+fmt(v.raw_timestep_weight)+' · normalized w '+fmt(v.normalized_timestep_weight)+'</figcaption><video controls muted playsinline preload="metadata" src="'+v.videos[kindPick.value]+'"></video></figure>').join(''); seek.value=0; frame.textContent='frame 0'; }}
+function renderFacts(item){{const rows=[]; item.variants.forEach(v=>rows.push('<div class="fact"><span>'+v.label+' · sigma '+Number(v.sigma).toFixed(3)+' · w '+Number(v.normalized_timestep_weight).toFixed(3)+'</span><b>flow '+fmt(v.scalar.main_weighted)+'</b><b>feature '+fmt(v.scalar.vjepa_feature_weighted)+'</b><b>flow-weighted feature '+fmt(v.scalar.vjepa_feature_flow_weighted)+'</b><b>aux '+fmt(v.scalar.vjepa_weighted_aux)+'</b><b>total '+fmt(v.scalar.total_weighted)+'</b></div>')); facts.innerHTML=rows.join('');}}
+function load(){{current=DATA[Number(casePick.value)||0]; title.textContent=current.source+' · '+current.case_label; const scale=current.color_scales_p99_5[kindPick.value]; const samplingMode=current.vjepa_frame_sampling||'full'; const rawFrames=Number(current.vjepa_frame_indices?.length||0); const paddedFrames=Number(current.vjepa_padded_frame_count||0); const tokenCount=Number(current.vjepa_temporal_tokens||(current.vjepa_token_grid&&current.vjepa_token_grid[0])||0); sampling.textContent='seed '+current.case_seed+' · V-JEPA '+samplingMode+' · '+rawFrames+' raw frames'+(paddedFrames?' (+ '+paddedFrames+' padded)':'')+' · '+tokenCount+' tubelets · color p99.5 '+fmt(scale); renderFacts(current); const labels={{flow:'Flow loss',vjepa_feature:'V-JEPA feature MSE',vjepa_feature_flow_weighted:'Flow-weighted V-JEPA feature',vjepa:'V-JEPA auxiliary',total:'Weighted total'}}; grid.innerHTML='<figure class="source"><figcaption>Target video used for loss comparison</figcaption><video controls muted playsinline preload="metadata" src="'+current.target_video+'"></video></figure>'+current.variants.map(v=>'<figure><figcaption><b>'+v.label+'</b> · '+labels[kindPick.value]+'<br>sigma '+Number(v.sigma).toFixed(4)+' · raw w '+fmt(v.raw_timestep_weight)+' · normalized w '+fmt(v.normalized_timestep_weight)+'</figcaption><video controls muted playsinline preload="metadata" src="'+v.videos[kindPick.value]+'"></video></figure>').join(''); seek.value=0; frame.textContent='frame 0'; }}
 function sync(action){{vids().forEach(v=>action(v));}}
 document.getElementById('play').onclick=()=>sync(v=>v.play().catch(()=>{{}})); document.getElementById('pause').onclick=()=>sync(v=>v.pause()); document.getElementById('replay').onclick=()=>sync(v=>{{v.currentTime=0;v.play().catch(()=>{{}})}});
 casePick.onchange=load; kindPick.onchange=load; seek.oninput=()=>{{const t=Number(seek.value);sync(v=>v.currentTime=t);frame.textContent='frame '+Math.round(t);}};
@@ -1560,6 +1632,8 @@ def _build_model_comparison_page(
         "vjepa_model_frame_count",
         "vjepa_temporal_tokens",
         "vjepa_padded_frame_count",
+        "flow_weighted_vjepa_alpha",
+        "flow_weighted_vjepa_flow_quantile",
         "selected_object_count",
         "selected_entity_slots",
     )
@@ -1611,16 +1685,16 @@ table {{ width:100%; border-collapse:collapse; margin:12px 0 16px; font-variant-
 <header><h1>Step 3463 LoRA Multi-Object Comparison</h1><div class="muted">PyBullet | six multi-object cases | native V-JEPA 384x672 | shared cases, noise and timesteps</div></header>
 <main><div class="toolbar">
 <label>Case<select id="case"></select></label><label>View<select id="view"><option value="loss">Loss overlay</option><option value="x0">Predicted x0</option></select></label>
-<label id="lossLabel">Loss<select id="kind"><option value="flow">Flow loss</option><option value="vjepa_feature">V-JEPA feature MSE</option><option value="total">Weighted total</option></select></label>
+<label id="lossLabel">Loss<select id="kind"><option value="flow">Flow loss</option><option value="vjepa_feature">V-JEPA feature MSE</option><option value="vjepa_feature_flow_weighted">Flow-weighted V-JEPA feature</option><option value="total">Weighted total</option></select></label>
 <label>Timestep weight<select id="weight"><option value="low_weight">Low</option><option value="mid_weight">Mid</option><option value="high_weight">High</option></select></label>
 <button class="icon" id="play" title="Play all" aria-label="Play all">&#9654;</button><button class="icon" id="pause" title="Pause all" aria-label="Pause all">&#10074;&#10074;</button><button class="icon" id="replay" title="Replay all" aria-label="Replay all">&#8634;</button>
 </div><div class="case-head"><h2 id="title"></h2><span class="muted" id="sampling"></span></div><div class="objects" id="objects"></div>
-<table><thead><tr><th>Model condition</th><th>Flow</th><th>V-JEPA feature</th><th>Total</th><th id="scaleHead">Color p99.5</th></tr></thead><tbody id="facts"></tbody></table>
+<table><thead><tr><th>Model condition</th><th>Flow</th><th>V-JEPA feature</th><th>Flow-weighted V-JEPA feature</th><th>Total</th><th id="scaleHead">Color p99.5</th></tr></thead><tbody id="facts"></tbody></table>
 <div class="grid" id="grid"></div><div class="controls"><span class="frame" id="frame">frame 0</span><input id="seek" type="range" min="0" max="8.2" value="0" step="0.01"></div>
 </main><script>
 const DATA={payload}; const $=id=>document.getElementById(id); const casePick=$('case'),viewPick=$('view'),kindPick=$('kind'),weightPick=$('weight'),grid=$('grid'),facts=$('facts'),title=$('title'),sampling=$('sampling'),objects=$('objects'),seek=$('seek'),frame=$('frame');
 const vids=()=>[...document.querySelectorAll('video')]; const fmt=v=>Number(v).toExponential(5); DATA.forEach((pair,i)=>{{const r=pair.step,o=document.createElement('option');o.value=i;o.textContent=r.case_id+' | '+r.selected_object_count+' objects';casePick.appendChild(o);}}); function variant(record){{return record.variants.find(v=>v.label===weightPick.value);}}
-function load(){{const pair=DATA[Number(casePick.value)||0],step=pair.step,noStep=pair.no_step,sv=variant(step),nv=variant(noStep),kind=kindPick.value,isLoss=viewPick.value==='loss'; title.textContent=step.case_label; const stepMode=step.vjepa_frame_sampling||'full'; const noStepMode=noStep.vjepa_frame_sampling||'full'; const stepFrames=Number(step.vjepa_model_frame_count||step.vjepa_frame_indices?.length||0); const noStepFrames=Number(noStep.vjepa_model_frame_count||noStep.vjepa_frame_indices?.length||0); const stepPadded=Number(step.vjepa_padded_frame_count||0); const noStepPadded=Number(noStep.vjepa_padded_frame_count||0); sampling.textContent='seed '+step.case_seed+' | step '+stepMode+' '+stepFrames+' frames'+(stepPadded?' (+ '+stepPadded+' padded)':'')+' | no-step '+noStepMode+' '+noStepFrames+' frames'+(noStepPadded?' (+ '+noStepPadded+' padded)':'')+' | feature-loss tubelets '+step.vjepa_loss_frame_indices.join(',')+' | sigma '+Number(sv.sigma).toFixed(4)+' | w '+Number(sv.normalized_timestep_weight).toFixed(4); objects.textContent=step.selected_object_count+' objects | '+step.selected_entity_slots.map(x=>x.object_phrase||x.object_noun).join(' | '); $('lossLabel').style.display=isLoss?'grid':'none'; $('scaleHead').textContent=isLoss?kindPick.options[kindPick.selectedIndex].text+' p99.5':'Input structure'; facts.innerHTML='<tr><td>step03463_lora</td><td>'+fmt(sv.scalar.main_weighted)+'</td><td>'+fmt(sv.scalar.vjepa_feature_weighted)+'</td><td><strong>'+fmt(sv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(step.color_scales_p99_5[kind]):'base merge + step LoRA')+'</td></tr><tr><td>no_step03463_lora</td><td>'+fmt(nv.scalar.main_weighted)+'</td><td>'+fmt(nv.scalar.vjepa_feature_weighted)+'</td><td><strong>'+fmt(nv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(noStep.color_scales_p99_5[kind]):'base merge only')+'</td></tr>'; const viewLabel=isLoss?kindPick.options[kindPick.selectedIndex].text:'Predicted x0',stepSrc=isLoss?sv.videos[kind]:sv.pred_video,noStepSrc=isLoss?nv.videos[kind]:nv.pred_video; grid.innerHTML='<figure class="target"><figcaption><b>Loss-input target</b><br>Tiny-VAE decoded target frames</figcaption><video controls muted playsinline preload="metadata" src="'+step.target_video+'"></video></figure><figure><figcaption><b>step03463_lora</b><br>'+viewLabel+' | '+weightPick.options[weightPick.selectedIndex].text+' weight</figcaption><video controls muted playsinline preload="metadata" src="'+stepSrc+'"></video></figure><figure class="no-step"><figcaption><b>no_step03463_lora</b><br>'+viewLabel+' | base pretrained LoRA merged</figcaption><video controls muted playsinline preload="metadata" src="'+noStepSrc+'"></video></figure>'; seek.value=0; frame.textContent='frame 0';}}
+function load(){{const pair=DATA[Number(casePick.value)||0],step=pair.step,noStep=pair.no_step,sv=variant(step),nv=variant(noStep),kind=kindPick.value,isLoss=viewPick.value==='loss'; title.textContent=step.case_label; const stepMode=step.vjepa_frame_sampling||'full'; const noStepMode=noStep.vjepa_frame_sampling||'full'; const stepFrames=Number(step.vjepa_model_frame_count||step.vjepa_frame_indices?.length||0); const noStepFrames=Number(noStep.vjepa_model_frame_count||noStep.vjepa_frame_indices?.length||0); const stepPadded=Number(step.vjepa_padded_frame_count||0); const noStepPadded=Number(noStep.vjepa_padded_frame_count||0); sampling.textContent='seed '+step.case_seed+' | step '+stepMode+' '+stepFrames+' frames'+(stepPadded?' (+ '+stepPadded+' padded)':'')+' | no-step '+noStepMode+' '+noStepFrames+' frames'+(noStepPadded?' (+ '+noStepPadded+' padded)':'')+' | feature-loss tubelets '+step.vjepa_loss_frame_indices.join(',')+' | sigma '+Number(sv.sigma).toFixed(4)+' | w '+Number(sv.normalized_timestep_weight).toFixed(4); objects.textContent=step.selected_object_count+' objects | '+step.selected_entity_slots.map(x=>x.object_phrase||x.object_noun).join(' | '); $('lossLabel').style.display=isLoss?'grid':'none'; $('scaleHead').textContent=isLoss?kindPick.options[kindPick.selectedIndex].text+' p99.5':'Input structure'; facts.innerHTML='<tr><td>step03463_lora</td><td>'+fmt(sv.scalar.main_weighted)+'</td><td>'+fmt(sv.scalar.vjepa_feature_weighted)+'</td><td>'+fmt(sv.scalar.vjepa_feature_flow_weighted)+'</td><td><strong>'+fmt(sv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(step.color_scales_p99_5[kind]):'base merge + step LoRA')+'</td></tr><tr><td>no_step03463_lora</td><td>'+fmt(nv.scalar.main_weighted)+'</td><td>'+fmt(nv.scalar.vjepa_feature_weighted)+'</td><td>'+fmt(nv.scalar.vjepa_feature_flow_weighted)+'</td><td><strong>'+fmt(nv.scalar.total_weighted)+'</strong></td><td>'+(isLoss?fmt(noStep.color_scales_p99_5[kind]):'base merge only')+'</td></tr>'; const viewLabel=isLoss?kindPick.options[kindPick.selectedIndex].text:'Predicted x0',stepSrc=isLoss?sv.videos[kind]:sv.pred_video,noStepSrc=isLoss?nv.videos[kind]:nv.pred_video; grid.innerHTML='<figure class="target"><figcaption><b>Loss-input target</b><br>Tiny-VAE decoded target frames</figcaption><video controls muted playsinline preload="metadata" src="'+step.target_video+'"></video></figure><figure><figcaption><b>step03463_lora</b><br>'+viewLabel+' | '+weightPick.options[weightPick.selectedIndex].text+' weight</figcaption><video controls muted playsinline preload="metadata" src="'+stepSrc+'"></video></figure><figure class="no-step"><figcaption><b>no_step03463_lora</b><br>'+viewLabel+' | base pretrained LoRA merged</figcaption><video controls muted playsinline preload="metadata" src="'+noStepSrc+'"></video></figure>'; seek.value=0; frame.textContent='frame 0';}}
 function sync(action){{vids().forEach(video=>action(video));}} $('play').onclick=()=>sync(video=>video.play().catch(()=>{{}})); $('pause').onclick=()=>sync(video=>video.pause()); $('replay').onclick=()=>sync(video=>{{video.currentTime=0;video.play().catch(()=>{{}})}}); casePick.onchange=load; viewPick.onchange=load; kindPick.onchange=load; weightPick.onchange=load; seek.oninput=()=>{{const t=Number(seek.value);sync(video=>video.currentTime=t);frame.textContent='frame '+Math.round(t*6);}}; grid.addEventListener('loadedmetadata',()=>{{const first=vids()[0];if(first)seek.max=Math.max(0,first.duration||8.2);}},true); grid.addEventListener('timeupdate',event=>{{if(event.target.tagName==='VIDEO'){{seek.value=event.target.currentTime;frame.textContent='frame '+Math.round(event.target.currentTime*6);}}}},true); load();
 </script></body></html>"""
     page_path = output_root / page_name
@@ -1717,7 +1791,7 @@ select { accent-color:var(--lime); }
   align-items:baseline; gap:8px; margin-bottom:8px; }
 .case-title b { color:var(--text); font-size:16px; }
 .objects { color:var(--muted); font-size:12px; margin-bottom:10px; }
-.videos { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.videos { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
 figure { margin:0; min-width:0; }
 figcaption { min-height:42px; color:var(--muted); font-size:12px; }
 figcaption b { color:var(--text); font-size:13px; }
@@ -1766,6 +1840,7 @@ code { color:#d3edac; }
       <select id="kind">
         <option value="flow">Flow weighted v-MSE</option>
         <option value="vjepa_feature">V-JEPA feature MSE</option>
+        <option value="vjepa_feature_flow_weighted">Flow-weighted V-JEPA feature</option>
         <option value="total">Weighted total</option>
       </select>
     </label>
@@ -1798,7 +1873,7 @@ const $=id=>document.getElementById(id);
 const condition=$("condition"),kind=$("kind"),weight=$("weight");
 const gallery=$("gallery"),status=$("status"),statsMeta=$("statsMeta");
 const metric=$("metric"),matrix=$("matrix"),seek=$("seek"),frame=$("frame");
-const labels={flow:"Flow weighted v-MSE",vjepa_feature:"V-JEPA feature MSE",total:"Weighted total"};
+const labels={flow:"Flow weighted v-MSE",vjepa_feature:"V-JEPA feature MSE",vjepa_feature_flow_weighted:"Flow-weighted V-JEPA feature",total:"Weighted total"};
 const videos=()=>[...document.querySelectorAll("video")];
 function getRecord(pair){return pair[condition.value];}
 function getVariant(record){return record.variants.find(value=>value.label===weight.value);}
@@ -1828,6 +1903,7 @@ function render(){
       '<figure class="target"><figcaption><b>Loss-input target</b><br>decoded Tiny-VAE target</figcaption><video controls muted playsinline preload="metadata" src="'+record.target_video+'"></video></figure>'+
       '<figure class="flow"><figcaption><b>Flow</b><br>weighted v-MSE projected to target frames</figcaption><video controls muted playsinline preload="metadata" src="'+variant.videos.flow+'"></video></figure>'+
       '<figure class="feature"><figcaption><b>V-JEPA feature</b><br>full-video input; future-only tubelets carry feature heat</figcaption><video controls muted playsinline preload="metadata" src="'+variant.videos.vjepa_feature+'"></video></figure>'+
+      '<figure class="feature"><figcaption><b>Flow-weighted V-JEPA feature</b><br>derived map: feature density amplified by Flow-high regions</figcaption><video controls muted playsinline preload="metadata" src="'+variant.videos.vjepa_feature_flow_weighted+'"></video></figure>'+
       '<figure class="total"><figcaption><b>Weighted total</b><br>flow + V-JEPA auxiliary contribution</figcaption><video controls muted playsinline preload="metadata" src="'+variant.videos.total+'"></video></figure></div></section>';
   }).join("");
   renderStats();seek.value=0;frame.textContent="frame 0";
@@ -1882,6 +1958,8 @@ def _parent_main(args: argparse.Namespace) -> None:
             "case_selection": args.case_selection,
             "case_plan": str(args.case_plan.expanduser().resolve()) if args.case_plan else None,
             "model_condition": args.model_condition,
+            "flow_weighted_vjepa_alpha": float(args.flow_weighted_vjepa_alpha),
+            "flow_weighted_vjepa_flow_quantile": FLOW_WEIGHTED_VJEPA_FLOW_QUANTILE,
             "base_pretrained_lora_checkpoint": resolved["paths"][
                 "pretrained_lora_checkpoint"
             ],
@@ -1918,6 +1996,8 @@ def _parent_main(args: argparse.Namespace) -> None:
         args.case_selection,
         "--model-condition",
         args.model_condition,
+        "--flow-weighted-vjepa-alpha",
+        str(args.flow_weighted_vjepa_alpha),
     ]
     if args.case_plan is not None:
         worker_prefix.extend(["--case-plan", str(args.case_plan.expanduser().resolve())])
@@ -1992,6 +2072,15 @@ def _parse_parent_args() -> argparse.Namespace:
     parser.add_argument("--case-selection", choices=CASE_SELECTION_MODES, default="mixture")
     parser.add_argument("--case-plan", type=Path, default=None)
     parser.add_argument("--model-condition", choices=MODEL_CONDITIONS, default="step03463_lora")
+    parser.add_argument(
+        "--flow-weighted-vjepa-alpha",
+        type=float,
+        default=FLOW_WEIGHTED_VJEPA_ALPHA,
+        help=(
+            "Multiplier strength for derived V-JEPA feature map in high-Flow regions. "
+            "alpha=2 means Flow-p99.5 pixels can receive up to 3x feature loss."
+        ),
+    )
     parser.add_argument("--compare-run-tag", default=None)
     parser.add_argument("--comparison-page", default=DEFAULT_COMPARISON_PAGE)
     parser.add_argument("--compare-model-run-tag", default=None)
@@ -2006,6 +2095,8 @@ def _parse_parent_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.num_cases <= 0:
         parser.error("--num-cases must be positive")
+    if args.flow_weighted_vjepa_alpha < 0.0:
+        parser.error("--flow-weighted-vjepa-alpha must be non-negative")
     if Path(args.comparison_page).name != args.comparison_page:
         parser.error("--comparison-page must be a file name")
     if Path(args.model_comparison_page).name != args.model_comparison_page:
@@ -2028,9 +2119,12 @@ def _parse_worker_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--case-selection", choices=CASE_SELECTION_MODES, required=True)
     parser.add_argument("--case-plan", type=Path, default=None)
     parser.add_argument("--model-condition", choices=MODEL_CONDITIONS, required=True)
+    parser.add_argument("--flow-weighted-vjepa-alpha", type=float, required=True)
     known, rest = parser.parse_known_args()
     if known.num_cases <= 0:
         parser.error("--num-cases must be positive")
+    if known.flow_weighted_vjepa_alpha < 0.0:
+        parser.error("--flow-weighted-vjepa-alpha must be non-negative")
     return known, rest
 
 
