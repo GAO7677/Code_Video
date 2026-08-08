@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rerun selected PhysicIQ67 samples and capture provisional S039 Top10 heatmaps."""
+"""Rerun selected PhysicIQ67 samples and capture provisional S039 Top100 heatmaps."""
 
 from __future__ import annotations
 
@@ -58,6 +58,7 @@ def process(pipe, entries: list[dict], case, seed: int, overwrite: bool) -> None
         print(f"skip visual heatmap {case.key} seed={seed}", flush=True)
         return
     output.mkdir(parents=True, exist_ok=True)
+    (output / "error.txt").unlink(missing_ok=True)
     cache = load_region_cache(REGION_CACHE_ROOT, case.key)
     points, query_regions = object_queries(cache)
     region_slices = [point_slice for _, point_slice in query_regions]
@@ -99,7 +100,7 @@ def process(pipe, entries: list[dict], case, seed: int, overwrite: bool) -> None
     metadata = {
         "case": case.key,
         "seed": int(seed),
-        "selection": "provisional PhysicIQ67 aggregate S039 Top10",
+        "selection": "provisional PhysicIQ67 aggregate S039 Top100",
         "query_latent_index": 0,
         "query_pixel_frame": 0,
         "normalization": "per target-frame spatial softmax, then mean over object query points",

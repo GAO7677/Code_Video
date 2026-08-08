@@ -62,7 +62,7 @@ def choose_samples(available: dict[str, list[int]], count: int, seed: int) -> li
     return selected
 
 
-def provisional_s039_top10() -> tuple[list[dict], int]:
+def provisional_s039_top_heads(limit: int = 100) -> tuple[list[dict], int]:
     ranking_path = OUTPUT_ROOT / "aggregate" / "ranking.json"
     ranking = json.loads(ranking_path.read_text(encoding="utf-8"))
     rows = [row for row in ranking["global_step_block_head"] if int(row["step"]) == 39]
@@ -75,7 +75,7 @@ def provisional_s039_top10() -> tuple[list[dict], int]:
             int(row["head"]),
         )
     )
-    return rows[:10], int(ranking.get("completed_runs", 0))
+    return rows[:limit], int(ranking.get("completed_runs", 0))
 
 
 def matrix_records(metrics_path: Path, kind: str) -> list[dict]:
@@ -109,10 +109,13 @@ def matrix_records(metrics_path: Path, kind: str) -> list[dict]:
     ]
 
 
-def existing_selection() -> list[dict]:
+def existing_manifest() -> dict:
     if not MANIFEST_PATH.is_file():
-        return []
-    payload = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        return {}
+    return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+
+
+def manifest_selection(payload: dict) -> list[dict]:
     return [
         {"case": str(row["case"]), "seed": int(row["seed"])}
         for row in payload.get("samples", [])
@@ -124,7 +127,8 @@ def main() -> None:
     if args.count <= 0:
         raise ValueError("--count must be positive")
     available = completed_runs()
-    selected = [] if args.refresh_selection else existing_selection()
+    previous = {} if args.refresh_selection else existing_manifest()
+    selected = manifest_selection(previous)
     selected = [
         row for row in selected
         if int(row["seed"]) in available.get(str(row["case"]), [])
@@ -135,7 +139,11 @@ def main() -> None:
         raise RuntimeError("No completed PhysicIQ67 runs are available")
 
     case_lookup = {case.key: case for case in CASES}
-    entries, completed_snapshot = provisional_s039_top10()
+    if selected and len(previous.get("entries", [])) >= 100:
+        entries = previous["entries"]
+        completed_snapshot = int(previous.get("completed_runs_at_selection", 0))
+    else:
+        entries, completed_snapshot = provisional_s039_top_heads(100)
     VISUAL_ROOT.mkdir(parents=True, exist_ok=True)
     samples = []
     for selected_row in selected:
@@ -160,10 +168,10 @@ def main() -> None:
             }
         )
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "selection_seed": int(args.selection_seed),
-        "requested_count": int(args.count),
+        "selection_seed": int(previous.get("selection_seed", args.selection_seed)),
+        "requested_count": int(previous.get("requested_count", args.count)),
         "completed_runs_at_selection": completed_snapshot,
         "ranking_status": "provisional until 3350/3350 runs complete",
         "protocol": {
@@ -173,7 +181,7 @@ def main() -> None:
             "query_latent_index": 0,
             "latent_anchor_pixel_frames": list(range(0, 49, 4)),
             "points_per_object": 8,
-            "attention": "S039 provisional Top10; per-frame spatial softmax then mean over object query points",
+            "attention": "S039 provisional Top100; per-frame spatial softmax then mean over object query points",
         },
         "entries": entries,
         "samples": samples,

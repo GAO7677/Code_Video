@@ -1077,6 +1077,18 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/wan22-ti2v-legacy-physiciq67-samples":
+            self.send_payload(
+                wan22_ti2v_legacy_physiciq67_visual_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/catalog":
+            payload = json.dumps(
+                wan22_ti2v_legacy_physiciq67_visual_catalog(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
         if path == "/api/wan22-ti2v-legacy-pck50/catalog":
             payload = json.dumps(
                 wan22_ti2v_legacy_pck50_catalog(), ensure_ascii=False
@@ -1133,6 +1145,71 @@ class MetricsHandler(viewer.Handler):
             if payload is None:
                 raise FileNotFoundError("legacy TI2V PCK50 heatmap is not ready")
             self.send_payload(payload, "image/jpeg")
+            return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_physiciq67_visual_video(
+                params.get("case", [""])[0], params.get("seed", [""])[0]
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown PhysicIQ67 visual sample video")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/query-image":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_physiciq67_query_image(
+                params.get("case", [""])[0], params.get("region", ["all"])[0]
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown PhysicIQ67 object-query image")
+            viewer.send_file_with_range(self, asset, "image/png")
+            return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/heatmap":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = wan22_ti2v_legacy_physiciq67_visual_heatmap(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("rank", ["0"])[0],
+                params.get("region", ["object_A"])[0],
+            )
+            if payload is None:
+                raise FileNotFoundError("PhysicIQ67 visual sample heatmap is not ready")
+            self.send_payload(payload, "image/jpeg")
+            return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/mean-heatmap":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = wan22_ti2v_legacy_physiciq67_mean_heatmap(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("top_n", ["30"])[0],
+                params.get("region", ["object_A"])[0],
+            )
+            if payload is None:
+                raise FileNotFoundError("PhysicIQ67 Top-N mean heatmap is not ready")
+            self.send_payload(payload, "image/jpeg")
+            return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/ablation-video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_physiciq67_ablation_video(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("mode", [""])[0],
+                params.get("top_n", [""])[0],
+                params.get("region", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("PhysicIQ67 attention-zero video is not ready")
+            viewer.send_file_with_range(self, asset, "video/mp4")
             return
         if path == "/api/wan22-ti2v-legacy-test5/catalog":
             payload = json.dumps(
@@ -1458,6 +1535,9 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT = (
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_MANIFEST = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "samples.json"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "attention_zero_ablations"
 )
 WAN22_TI2V_LEGACY_PCK50_SEEDS = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds.txt"
@@ -2038,10 +2118,55 @@ def wan22_ti2v_legacy_pck50_video(case: str, seed: str):
     return WAN22_TI2V_LEGACY_PCK50_ROOT / "runs" / case / f"seed_{seed_value:05d}" / "generated.mp4"
 
 
+def _wan22_ti2v_legacy_attention_montage(
+    video_path: Path, selected, anchors, panel_label: str, title_label: str
+):
+    import cv2
+    import numpy as np
+
+    capture = cv2.VideoCapture(str(video_path))
+    frames = []
+    while True:
+        ok, frame = capture.read()
+        if not ok:
+            break
+        frames.append(frame)
+    capture.release()
+    if not frames:
+        return None
+    panels = []
+    for latent_index, probability in enumerate(selected):
+        normalized = probability - float(np.nanmin(probability))
+        normalized /= max(float(np.nanmax(normalized)), 1.0e-12)
+        color = cv2.applyColorMap((normalized * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
+        pixel_index = min(int(anchors[latent_index]), len(frames) - 1)
+        frame = cv2.resize(frames[pixel_index], (480, 264), interpolation=cv2.INTER_AREA)
+        color = cv2.resize(color, (480, 264), interpolation=cv2.INTER_NEAREST)
+        panel = cv2.addWeighted(frame, 0.55, color, 0.45, 0)
+        label = f"K{latent_index:02d}/F{pixel_index:02d} | {panel_label}"
+        cv2.putText(panel, label, (10, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
+        cv2.putText(panel, label, (10, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+        panels.append(panel)
+    columns = 4
+    blank = np.full_like(panels[0], 245)
+    while len(panels) % columns:
+        panels.append(blank.copy())
+    rows = [
+        np.concatenate(panels[index : index + columns], axis=1)
+        for index in range(0, len(panels), columns)
+    ]
+    montage = np.concatenate(rows, axis=0)
+    title = np.full((64, montage.shape[1], 3), (232, 224, 210), dtype=np.uint8)
+    cv2.putText(title, title_label, (18, 41), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (23, 68, 58), 2)
+    ok, encoded = cv2.imencode(
+        ".jpg", np.concatenate([title, montage], axis=0), [cv2.IMWRITE_JPEG_QUALITY, 91]
+    )
+    return None if not ok else encoded.tobytes()
+
+
 def _wan22_ti2v_legacy_heatmap_payload(
     heatmap_dir: Path, video_path: Path, rank_value: int, region: str
 ):
-    import cv2
     import numpy as np
 
     metadata_path = heatmap_dir / "metadata.json"
@@ -2055,47 +2180,17 @@ def _wan22_ti2v_legacy_heatmap_payload(
     maps = np.load(maps_path, mmap_mode="r")
     selected = np.asarray(maps[rank_value, regions.index(region)], dtype=np.float32)
     anchors = metadata.get("latent_anchor_pixel_frames", list(range(len(selected))))
-    capture = cv2.VideoCapture(str(video_path))
-    frames = []
-    while True:
-        ok, frame = capture.read()
-        if not ok:
-            break
-        frames.append(frame)
-    capture.release()
-    if not frames:
-        return None
     entry = metadata["entries"][rank_value]
-    panels = []
-    for latent_index, probability in enumerate(selected):
-        normalized = probability - float(np.nanmin(probability))
-        normalized /= max(float(np.nanmax(normalized)), 1.0e-12)
-        color = cv2.applyColorMap((normalized * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
-        pixel_index = min(int(anchors[latent_index]), len(frames) - 1)
-        frame = cv2.resize(frames[pixel_index], (480, 264), interpolation=cv2.INTER_AREA)
-        color = cv2.resize(color, (480, 264), interpolation=cv2.INTER_NEAREST)
-        panel = cv2.addWeighted(frame, 0.55, color, 0.45, 0)
-        label = (
-            f"K{latent_index:02d}/F{pixel_index:02d} | S{entry['step']:02d} "
-            f"L{entry['block']:02d} H{entry['head']:02d}"
-        )
-        cv2.putText(panel, label, (10, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
-        cv2.putText(panel, label, (10, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-        panels.append(panel)
-    columns = 4
-    blank = np.full_like(panels[0], 245)
-    while len(panels) % columns:
-        panels.append(blank.copy())
-    rows = [np.concatenate(panels[index : index + columns], axis=1) for index in range(0, len(panels), columns)]
-    montage = np.concatenate(rows, axis=0)
-    title = np.full((64, montage.shape[1], 3), (232, 224, 210), dtype=np.uint8)
-    text_label = (
-        f"Rank {rank_value + 1} | {region} | per-frame color scale | "
-        f"PCK@32 {entry.get('pck32', 0):.2f}%"
+    return _wan22_ti2v_legacy_attention_montage(
+        video_path,
+        selected,
+        anchors,
+        f"S{entry['step']:02d} L{entry['block']:02d} H{entry['head']:02d}",
+        (
+            f"Rank {rank_value + 1} | {region} | per-frame color scale | "
+            f"PCK@32 {entry.get('pck32', 0):.2f}%"
+        ),
     )
-    cv2.putText(title, text_label, (18, 41), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (23, 68, 58), 2)
-    ok, encoded = cv2.imencode(".jpg", np.concatenate([title, montage], axis=0), [cv2.IMWRITE_JPEG_QUALITY, 91])
-    return None if not ok else encoded.tobytes()
 
 
 def wan22_ti2v_legacy_pck50_heatmap(case: str, seed: str, rank: str, region: str):
@@ -2112,6 +2207,361 @@ def wan22_ti2v_legacy_pck50_heatmap(case: str, seed: str, rank: str, region: str
     return _wan22_ti2v_legacy_heatmap_payload(
         heatmap_dir, video_path, rank_value, region
     )
+
+
+def wan22_ti2v_legacy_physiciq67_visual_manifest():
+    if not WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_MANIFEST.is_file():
+        return {
+            "ready": False,
+            "reason": "visual sample manifest has not been generated",
+            "samples": [],
+            "entries": [],
+        }
+    try:
+        return json.loads(
+            WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_MANIFEST.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ready": False, "reason": str(exc), "samples": [], "entries": []}
+
+
+def _wan22_ti2v_legacy_physiciq67_ablation_variant(
+    mode: str, top_n: int, region: str = ""
+):
+    if top_n not in {30, 50, 100}:
+        return None
+    if mode == "single_object":
+        if not region:
+            return None
+        target = region
+    elif mode == "all_objects":
+        target = "all_objects"
+    elif mode == "full_qk":
+        target = "all_queries"
+    else:
+        return None
+    return f"{mode}__{target}__top{top_n:03d}"
+
+
+def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[dict]):
+    case, seed = str(sample["case"]), int(sample["seed"])
+    regions = [
+        str(row["region_name"])
+        for row in sample.get("regions", [])
+        if row.get("region_type") == "object"
+    ]
+    specs = [("single_object", region) for region in regions]
+    specs.extend((("all_objects", ""), ("full_qk", "")))
+    records = []
+    for mode, region in specs:
+        for top_n in (30, 50, 100):
+            variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(
+                mode, top_n, region
+            )
+            root = (
+                WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT
+                / case
+                / f"seed_{seed:05d}"
+                / str(variant)
+            )
+            video_path = root / "generated.mp4"
+            metadata_path = root / "manifest.json"
+            complete_path = root / "complete.json"
+            ready = video_path.is_file() and metadata_path.is_file() and complete_path.is_file()
+            if ready:
+                try:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    ready = (
+                        metadata.get("case") == case
+                        and int(metadata.get("seed", -1)) == seed
+                        and metadata.get("mode") == mode
+                        and int(metadata.get("top_n", -1)) == top_n
+                        and str(metadata.get("region") or "") == region
+                        and metadata.get("selected_entries") == entries[:top_n]
+                        and metadata.get("protocol")
+                        == "post_softmax_attention_rows_zero_without_renormalization"
+                    )
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    ready = False
+            records.append(
+                {
+                    "mode": mode,
+                    "region": region or None,
+                    "top_n": top_n,
+                    "variant_id": variant,
+                    "ready": ready,
+                    "error": (root / "error.txt").is_file(),
+                }
+            )
+    return records
+
+
+def wan22_ti2v_legacy_physiciq67_visual_catalog():
+    payload = wan22_ti2v_legacy_physiciq67_visual_manifest()
+    if payload.get("ready") is False:
+        return payload
+    summary_path = WAN22_TI2V_LEGACY_PHYSICIQ67_ROOT / "aggregate" / "summary.json"
+    try:
+        aggregate_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        aggregate_summary = {}
+    samples = []
+    for row in payload.get("samples", []):
+        case, seed = str(row["case"]), int(row["seed"])
+        heatmap_root = (
+            WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT
+            / "heatmaps" / case / f"seed_{seed:05d}"
+        )
+        sample = dict(row)
+        sample["video_ready"] = (
+            WAN22_TI2V_LEGACY_PHYSICIQ67_ROOT
+            / "runs" / case / f"seed_{seed:05d}" / "generated.mp4"
+        ).is_file()
+        sample["query_visual_ready"] = (
+            WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT
+            / "regions" / case / "sam2_regions_points.png"
+        ).is_file()
+        attention_files_ready = (
+            (heatmap_root / "complete.json").is_file()
+            and (heatmap_root / "metadata.json").is_file()
+            and (heatmap_root / "attention_maps.npy").is_file()
+        )
+        attention_matches_snapshot = False
+        if attention_files_ready:
+            try:
+                heatmap_metadata = json.loads(
+                    (heatmap_root / "metadata.json").read_text(encoding="utf-8")
+                )
+                attention_matches_snapshot = (
+                    heatmap_metadata.get("entries") == payload.get("entries")
+                )
+            except (OSError, json.JSONDecodeError):
+                attention_matches_snapshot = False
+        sample["attention_ready"] = attention_files_ready and attention_matches_snapshot
+        sample["attention_zero_ablations"] = (
+            _wan22_ti2v_legacy_physiciq67_ablation_records(
+                sample, payload.get("entries", [])
+            )
+        )
+        samples.append(sample)
+    ablation_records = [
+        record
+        for sample in samples
+        for record in sample["attention_zero_ablations"]
+    ]
+    return {
+        **payload,
+        "ready": True,
+        "samples": samples,
+        "aggregate_progress": {
+            "completed_runs": int(aggregate_summary.get("completed_runs", 0)),
+            "expected_runs": int(aggregate_summary.get("expected_runs", 3350)),
+            "final": bool(aggregate_summary.get("final", False)),
+        },
+        "ablation_progress": {
+            "ready": sum(int(record["ready"]) for record in ablation_records),
+            "failed": sum(int(record["error"]) for record in ablation_records),
+            "expected": len(ablation_records),
+        },
+    }
+
+
+def _wan22_ti2v_legacy_physiciq67_sample(case: str, seed: str):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    manifest = wan22_ti2v_legacy_physiciq67_visual_manifest()
+    for row in manifest.get("samples", []):
+        if str(row.get("case")) == case and int(row.get("seed", -1)) == seed_value:
+            return row
+    return None
+
+
+def wan22_ti2v_legacy_physiciq67_visual_video(case: str, seed: str):
+    sample = _wan22_ti2v_legacy_physiciq67_sample(case, seed)
+    if sample is None:
+        return None
+    return (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_ROOT
+        / "runs" / case / f"seed_{int(seed):05d}" / "generated.mp4"
+    )
+
+
+def wan22_ti2v_legacy_physiciq67_ablation_video(
+    case: str, seed: str, mode: str, top_n: str, region: str
+):
+    sample = _wan22_ti2v_legacy_physiciq67_sample(case, seed)
+    if sample is None:
+        return None
+    try:
+        seed_value, count = int(seed), int(top_n)
+    except ValueError:
+        return None
+    object_regions = {
+        str(row["region_name"])
+        for row in sample.get("regions", [])
+        if row.get("region_type") == "object"
+    }
+    if mode == "single_object" and region not in object_regions:
+        return None
+    if mode != "single_object":
+        region = ""
+    variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(mode, count, region)
+    if variant is None:
+        return None
+    return (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT
+        / case
+        / f"seed_{seed_value:05d}"
+        / variant
+        / "generated.mp4"
+    )
+
+
+def wan22_ti2v_legacy_physiciq67_query_image(case: str, region: str):
+    manifest = wan22_ti2v_legacy_physiciq67_visual_manifest()
+    sample = next(
+        (row for row in manifest.get("samples", []) if str(row.get("case")) == case),
+        None,
+    )
+    if sample is None:
+        return None
+    names = {str(row.get("region_name")) for row in sample.get("regions", [])}
+    root = WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "regions" / case
+    if region in {"", "all"}:
+        return root / "sam2_regions_points.png"
+    if region not in names:
+        return None
+    return root / "regions" / region / "mask_points.png"
+
+
+def wan22_ti2v_legacy_physiciq67_visual_heatmap(
+    case: str, seed: str, rank: str, region: str
+):
+    if _wan22_ti2v_legacy_physiciq67_sample(case, seed) is None:
+        return None
+    try:
+        seed_value, rank_value = int(seed), int(rank)
+    except ValueError:
+        return None
+    heatmap_dir = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT
+        / "heatmaps" / case / f"seed_{seed_value:05d}"
+    )
+    video_path = wan22_ti2v_legacy_physiciq67_visual_video(case, seed)
+    if video_path is None:
+        return None
+    return _wan22_ti2v_legacy_heatmap_payload(
+        heatmap_dir, video_path, rank_value, region
+    )
+
+
+def wan22_ti2v_legacy_physiciq67_mean_heatmap(
+    case: str, seed: str, top_n: str, region: str
+):
+    import numpy as np
+
+    if _wan22_ti2v_legacy_physiciq67_sample(case, seed) is None:
+        return None
+    try:
+        seed_value, count = int(seed), int(top_n)
+    except ValueError:
+        return None
+    if count not in {30, 50, 100}:
+        return None
+    heatmap_dir = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT
+        / "heatmaps" / case / f"seed_{seed_value:05d}"
+    )
+    metadata_path = heatmap_dir / "metadata.json"
+    maps_path = heatmap_dir / "attention_maps.npy"
+    video_path = wan22_ti2v_legacy_physiciq67_visual_video(case, seed)
+    if (
+        video_path is None
+        or not video_path.is_file()
+        or not metadata_path.is_file()
+        or not maps_path.is_file()
+    ):
+        return None
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    regions = metadata.get("regions", [])
+    entries = metadata.get("entries", [])
+    if region not in regions or len(entries) < count:
+        return None
+    maps = np.load(maps_path, mmap_mode="r")
+    if maps.shape[0] < count:
+        return None
+    selected = np.asarray(
+        np.nanmean(maps[:count, regions.index(region)], axis=0), dtype=np.float32
+    )
+    anchors = metadata.get("latent_anchor_pixel_frames", list(range(len(selected))))
+    mean_pck = float(np.mean([float(row.get("pck32", 0.0)) for row in entries[:count]]))
+    return _wan22_ti2v_legacy_attention_montage(
+        video_path,
+        selected,
+        anchors,
+        f"S39 Top{count} Head Mean",
+        (
+            f"Top{count} Head Mean | {region} | per-frame color scale | "
+            f"mean ranking PCK@32 {mean_pck:.2f}%"
+        ),
+    )
+
+
+def wan22_ti2v_legacy_physiciq67_visual_page():
+    page = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Legacy PhysicIQ67 Visual Samples</title><link rel="icon" href="data:,"><style>
+:root{--paper:#ece4d5;--ink:#17261f;--deep:#17443a;--line:#baad98;--card:#fffaf0;--gold:#d29c35}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 0 0,#d65f3c44,transparent 34rem),radial-gradient(circle at 100% 0,#27897942,transparent 40rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:15px 22px;background:#ece4d5f2;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:4px 0;font-size:clamp(29px,4.4vw,58px);line-height:1}.lead{max-width:1200px;margin:7px 0}.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}button,select{padding:8px 11px;border:1px solid var(--line);background:var(--card);font-weight:900}.status{font:12px ui-monospace,monospace}main{width:min(100% - 18px,2200px);margin:auto;padding:18px 0 70px}.note,.media,.performance,.ranking{padding:14px;margin:14px 0;border:1px solid var(--line);border-radius:16px;background:#fffaf0e8;box-shadow:0 13px 34px #58442b16}.note{border-left:7px solid var(--gold)}.note h2,.performance h2,.ranking h2{margin:0 0 7px}.caption{line-height:1.5;color:#5f5a51}.media-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}figure{margin:0;border:1px solid #d4c8b5;background:#fff;padding:8px;min-width:0}video,img{display:block;width:100%;background:#111}video{aspect-ratio:1280/704}figcaption{padding:8px 3px 2px;font-weight:900}.pending{display:grid;place-items:center;min-height:260px;background:#f0eadf;color:#766d60;text-align:center}.heat-scroll,.table-scroll{overflow:auto;border:1px solid var(--line);background:#fff}.performance-heat{display:grid;grid-template-columns:48px repeat(24,minmax(34px,1fr));gap:3px;min-width:980px;padding:12px}.axis,.cell{display:flex;align-items:center;justify-content:center;height:29px;border-radius:4px;font:9px ui-monospace,monospace}.axis{color:#6d756f}.cell{border:0;color:#fff;text-shadow:0 1px 2px #000}.cell:hover{outline:2px solid var(--ink)}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{padding:8px 10px;border-bottom:1px solid #ddd2c0;text-align:center}th{background:var(--deep);color:#fff}.ranking-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:1100px){header{position:static}.media-grid,.ranking-grid{grid-template-columns:1fr}}</style></head><body><header><a href="/">返回总览</a> · <a href="/wan22-ti2v-legacy-pck50?v=2">旧 Legacy 排名页</a><h1>Legacy PhysicIQ67<br>Object Query Samples</h1><p class="lead">固定随机抽取已完成 runs；F00/K00 object query，704×1280，S039 provisional Top10 attention。样例不覆盖旧 6-case 稳定排名。</p><div class="tools"><label>Sample <select id="sample"></select></label><label>Object <select id="region"></select></label><label>S039 Head <select id="rank"></select></label><label>Matrix <select id="view"><option value="s039">S039</option><option value="all_steps_mean">S000–S039 Mean</option></select></label><label>Metric <select id="metric"><option value="pck32">PCK@32</option><option value="mean_error_px">Mean error</option></select></label><button id="refresh">手动刷新</button><button id="replay">重新播放</button><span id="status" class="status">读取中</span></div></header><main><section class="note"><h2 id="title">读取样例</h2><div id="caption" class="caption"></div></section><section class="media"><div id="media" class="media-grid"></div></section><section class="performance"><h2>单 Run · 30 × 24 Head Matrix</h2><p id="matrixMeta" class="status"></p><div class="heat-scroll"><div id="matrix" class="performance-heat"></div></div></section><section class="ranking"><h2>捕获时的 provisional S039 Top10</h2><div class="ranking-grid"><div id="table" class="table-scroll"></div><div><p>这些 Head 来自样例清单生成时的增量 aggregate。3350 runs 完成前排名仍可能变化；attention capture 只用于定性检查。</p><p id="protocol" class="status"></p></div></div></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),api='/api/wan22-ti2v-legacy-physiciq67-samples',q=new URL(location.href).searchParams;let data=null;const $=id=>document.getElementById(id),key=x=>`${x.case}::${x.seed}`,current=()=>data.samples.find(x=>key(x)===$('sample').value)||data.samples[0];function options(el,rows,value,label){const old=el.value;el.innerHTML=rows.map(x=>`<option value="${e(value(x))}">${e(label(x))}</option>`).join('');if([...el.options].some(x=>x.value===old))el.value=old}function color(v,lo,hi,inverse){let t=hi>lo?Math.max(0,Math.min(1,(v-lo)/(hi-lo))):.5;if(inverse)t=1-t;return `hsl(${12+120*t} 58% ${34+7*t}%)`}function sync(){const s=current(),u=new URL(location.href);u.searchParams.set('case',s.case);u.searchParams.set('seed',s.seed);u.searchParams.set('region',$('region').value);u.searchParams.set('rank',$('rank').value);history.replaceState(null,'',u)}function renderMatrix(){const s=current(),view=$('view').value,metric=$('metric').value,rows=s.matrices?.[view]||[],vals=rows.map(x=>x[metric]).filter(Number.isFinite),lo=Math.min(...vals),hi=Math.max(...vals),map=new Map(rows.map(x=>[`${x.block}-${x.head}`,x])),box=$('matrix');box.innerHTML='<span class="axis">L/H</span>'+[...Array(24)].map((_,h)=>`<span class="axis">H${String(h).padStart(2,'0')}</span>`).join('');for(let b=0;b<30;b++){box.insertAdjacentHTML('beforeend',`<span class="axis">L${String(b).padStart(2,'0')}</span>`);for(let h=0;h<24;h++){const r=map.get(`${b}-${h}`),v=r?.[metric],c=document.createElement('button');c.className='cell';if(Number.isFinite(v)){c.style.background=color(v,lo,hi,metric==='mean_error_px');c.textContent=Number(v).toFixed(metric==='pck32'?1:0);c.title=`L${b} H${h} · PCK@32 ${Number(r.pck32).toFixed(3)}% · error ${Number(r.mean_error_px).toFixed(3)} px · N ${r.comparisons}`}else{c.disabled=true;c.textContent='—'}box.append(c)}}$('matrixMeta').textContent=`${view} · ${metric} · range ${lo.toFixed(3)}–${hi.toFixed(3)}`}function render(){const s=current(),region=$('region').value,rank=Number($('rank').value||0),entry=data.entries[rank],base=`case=${encodeURIComponent(s.case)}&seed=${s.seed}`;$('title').textContent=`${s.category} · ${s.case} · seed ${s.seed}`;$('caption').textContent=s.caption;const video=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Generated video unavailable</div>',query=s.query_visual_ready?`<img src="${api}/query-image?case=${encodeURIComponent(s.case)}&region=${encodeURIComponent(region)}&v=1">`:'<div class="pending">Query visualization unavailable</div>',heat=s.attention_ready&&entry?`<img src="${api}/heatmap?${base}&rank=${rank}&region=${encodeURIComponent(region)}&v=${Date.now()}">`:'<div class="pending">Attention capture 待生成<br>视频、SAM2 query 和 PCK 矩阵已可查看</div>';$('media').innerHTML=`<figure>${video}<figcaption>Legacy generated video · 40 steps / 49 frames</figcaption></figure><figure>${query}<figcaption>SAM2 mask + 8 object query points · F00/K00</figcaption></figure><figure>${heat}<figcaption>${entry?`#${rank+1} · S39 L${entry.block} H${entry.head} · ${region}`:'S039 attention'}</figcaption></figure>`;renderMatrix();$('table').innerHTML='<table><thead><tr><th>#</th><th>Block</th><th>Head</th><th>PCK@32</th><th>N</th></tr></thead><tbody>'+data.entries.map((x,i)=>`<tr><td>${i+1}</td><td>L${String(x.block).padStart(2,'0')}</td><td>H${String(x.head).padStart(2,'0')}</td><td>${Number(x.pck32).toFixed(3)}%</td><td>${Number(x.comparisons).toLocaleString()}</td></tr>`).join('')+'</tbody></table>';$('protocol').textContent=`Selection seed ${data.selection_seed} · aggregate ${data.completed_runs_at_selection}/3350 · ${data.ranking_status}`;sync()}function sampleChanged(){const s=current();options($('region'),s.regions.filter(x=>x.region_type==='object'),x=>x.region_name,x=>`${x.region_name} · ${x.region_phrase||''}`);render()}async function load(){data=await fetch(`${api}/catalog?v=${Date.now()}`,{cache:'no-store'}).then(r=>r.json());if(!data.ready){$('status').textContent=data.reason||'样例清单未生成';return}const wantedCase=q.get('case'),wantedSeed=q.get('seed');options($('sample'),data.samples,key,x=>`${x.category} · ${x.case} · seed ${x.seed}`);const wanted=data.samples.find(x=>x.case===wantedCase&&String(x.seed)===wantedSeed);if(wanted)$('sample').value=key(wanted);options($('rank'),data.entries,(x,i)=>i,(x,i)=>`#${i+1} S39 L${String(x.block).padStart(2,'0')} H${String(x.head).padStart(2,'0')}`);if(q.get('rank'))$('rank').value=q.get('rank');sampleChanged();if(q.get('region')&&[...$('region').options].some(x=>x.value===q.get('region')))$('region').value=q.get('region');$('status').textContent=`${data.aggregate_progress.completed_runs}/${data.aggregate_progress.expected_runs} runs · ${data.samples.filter(x=>x.attention_ready).length}/${data.samples.length} attention samples ready`;render()}$('sample').addEventListener('change',sampleChanged);for(const id of ['region','rank'])$(id).addEventListener('change',render);for(const id of ['view','metric'])$(id).addEventListener('change',renderMatrix);$('refresh').addEventListener('click',load);$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));load();
+</script></body></html>'''
+    page = page.replace(
+        "S039 provisional Top10 attention",
+        "S039 provisional Top30/50/100 Head mean attention",
+    )
+    page = page.replace('<label>S039 Head <select id="rank"></select></label>', "")
+    page = page.replace(
+        '<section class="media"><div id="media" class="media-grid"></div></section><section class="performance"><h2>单 Run · 30 × 24 Head Matrix</h2>',
+        '<section class="media"><h2>Generated Video & Object Query</h2><div id="media" class="media-grid base-media"></div></section><section class="media"><h2>S039 Top-N Head Mean Attention Overlay</h2><div id="means" class="media-grid"></div></section><section class="ablation"><h2>Post-softmax Attention Response Zero Ablations</h2><p>冻结 S039 Top30/50/100 physical heads；全部 40 denoising steps、conditional + unconditional；置零后不重新归一化。</p><div id="ablation"></div></section><details class="performance"><summary>单 Run · 30 × 24 Head Matrix（点击展开）</summary>',
+    )
+    page = page.replace(
+        '<div id="matrix" class="performance-heat"></div></div></section><section class="ranking"><h2>捕获时的 provisional S039 Top10</h2>',
+        '<div id="matrix" class="performance-heat"></div></div></details><section class="ranking"><h2>捕获时的 provisional S039 Top100</h2>',
+    )
+    page = page.replace(
+        ".media-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}",
+        ".media-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}.base-media{grid-template-columns:repeat(2,minmax(0,1fr))}.ablation{overflow:hidden}.ablation-baseline{max-width:520px;margin:12px 0 18px}.ablation-table{overflow-x:auto}.ablation-row{display:grid;grid-template-columns:minmax(190px,.7fr) repeat(3,minmax(300px,1fr));gap:10px;min-width:1150px;padding:10px 0;border-top:1px solid var(--line)}.ablation-label{display:flex;flex-direction:column;justify-content:center;padding:12px;background:#17443a;color:#fff}.ablation-label small{margin-top:7px;opacity:.8}.ablation-row video{aspect-ratio:1280/704}summary{cursor:pointer;font-size:20px;font-weight:900}details[open] summary{margin-bottom:12px}",
+    )
+    page = page.replace(
+        ".note,.media,.performance,.ranking{",
+        ".note,.media,.ablation,.performance,.ranking{",
+    )
+    page = page.replace("u.searchParams.set('rank',$('rank').value);", "")
+    page = page.replace(
+        "const s=current(),region=$('region').value,rank=Number($('rank').value||0),entry=data.entries[rank],base=",
+        "const s=current(),region=$('region').value,base=",
+    )
+    old_media = """const video=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Generated video unavailable</div>',query=s.query_visual_ready?`<img src="${api}/query-image?case=${encodeURIComponent(s.case)}&region=${encodeURIComponent(region)}&v=1">`:'<div class="pending">Query visualization unavailable</div>',heat=s.attention_ready&&entry?`<img src="${api}/heatmap?${base}&rank=${rank}&region=${encodeURIComponent(region)}&v=${Date.now()}">`:'<div class="pending">Attention capture 待生成<br>视频、SAM2 query 和 PCK 矩阵已可查看</div>';$('media').innerHTML=`<figure>${video}<figcaption>Legacy generated video · 40 steps / 49 frames</figcaption></figure><figure>${query}<figcaption>SAM2 mask + 8 object query points · F00/K00</figcaption></figure><figure>${heat}<figcaption>${entry?`#${rank+1} · S39 L${entry.block} H${entry.head} · ${region}`:'S039 attention'}</figcaption></figure>`;renderMatrix();"""
+    new_media = """const video=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Generated video unavailable</div>',query=s.query_visual_ready?`<img src="${api}/query-image?case=${encodeURIComponent(s.case)}&region=${encodeURIComponent(region)}&v=1">`:'<div class="pending">Query visualization unavailable</div>';$('media').innerHTML=`<figure>${video}<figcaption>Legacy generated video · 40 steps / 49 frames</figcaption></figure><figure>${query}<figcaption>SAM2 mask + 8 object query points · F00/K00</figcaption></figure>`;$('means').innerHTML=[30,50,100].map(n=>`<figure>${s.attention_ready?`<img loading="lazy" src="${api}/mean-heatmap?${base}&top_n=${n}&region=${encodeURIComponent(region)}&v=${Date.now()}">`:'<div class="pending">Top'+n+' capture 待生成</div>'}<figcaption>S039 Top${n} Head Mean · ${region}</figcaption></figure>`).join('');renderAblations(s,base);renderMatrix();"""
+    if old_media not in page:
+        raise RuntimeError("PhysicIQ67 visual page media template changed")
+    page = page.replace(old_media, new_media)
+    page = page.replace(
+        "function render(){",
+        """function renderAblations(s,base){const records=s.attention_zero_ablations||[],objects=s.regions.filter(x=>x.region_type==='object').map(x=>x.region_name),rows=[...objects.map((region,i)=>({mode:'single_object',region,label:`01.${i+1} · ${region} only`,detail:'该 object query → all K'})),{mode:'all_objects',region:'',label:'02 · All Objects Together',detail:'所有 object query → all K'},{mode:'full_qk',region:'',label:'03 · Full Head Q@K',detail:'selected heads · all Q → all K'}],card=(spec,n)=>{const r=records.find(x=>x.mode===spec.mode&&String(x.region||'')===spec.region&&Number(x.top_n)===n),suffix=spec.region?`&region=${encodeURIComponent(spec.region)}`:'',src=`${api}/ablation-video?${base}&mode=${encodeURIComponent(spec.mode)}&top_n=${n}${suffix}`,media=r?.ready?`<video controls muted playsinline preload="metadata" src="${src}"></video>`:`<div class="pending">${r?.error?'生成失败':'待生成'}</div>`;return `<figure>${media}<figcaption>Top${n} · A=0 · no renorm</figcaption></figure>`},baseline=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Baseline unavailable</div>';$('ablation').innerHTML=`<div class="ablation-baseline"><figure>${baseline}<figcaption>Baseline · No Attention Intervention</figcaption></figure></div><div class="ablation-table">${rows.map(spec=>`<div class="ablation-row"><div class="ablation-label"><strong>${e(spec.label)}</strong><small>${e(spec.detail)}</small></div>${[30,50,100].map(n=>card(spec,n)).join('')}</div>`).join('')}</div>`}function render(){""",
+    )
+    page = page.replace(
+        "options($('rank'),data.entries,(x,i)=>i,(x,i)=>`#${i+1} S39 L${String(x.block).padStart(2,'0')} H${String(x.head).padStart(2,'0')}`);if(q.get('rank'))$('rank').value=q.get('rank');",
+        "",
+    )
+    page = page.replace(
+        "for(const id of ['region','rank'])$(id).addEventListener('change',render);",
+        "$('region').addEventListener('change',render);",
+    )
+    page = page.replace(
+        " attention samples ready`;render()",
+        " attention samples ready · ${data.ablation_progress.ready}/${data.ablation_progress.expected} ablation videos ready`;render()",
+    )
+    return page
 
 
 def wan22_ti2v_legacy_test5_asset(name: str):
