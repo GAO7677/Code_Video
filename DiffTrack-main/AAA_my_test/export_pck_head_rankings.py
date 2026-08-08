@@ -33,6 +33,118 @@ LABELS = {
     "baseline": "Wan2.2 Baseline",
     "combined": "Three-model combined",
 }
+PROVENANCE = {
+    "common": {
+        "metric": "PCK@32, in percent",
+        "physical_heads": "30 blocks x 24 heads = 720 physical heads",
+        "source_steps": "40 denoising/source steps, S000-S039",
+        "views": {
+            "s039": "rank each series by its S039 PCK@32",
+            "all_steps_mean": (
+                "for every physical head, arithmetic mean of its S000-S039 "
+                "PCK@32 values, then rank the 720 heads again"
+            ),
+        },
+        "pairwise": (
+            "Top-K overlap and Pearson/Spearman correlations are computed after "
+            "aligning the same 720 physical (block, head) IDs inside each view. "
+            "They are not paired by case or seed."
+        ),
+    },
+    "legacy_s039": {
+        "runs": "6 cases x 50 unique seeds = 300 completed runs",
+        "cases": [
+            "0613pybullet_sample_000301_w000",
+            "0613pybullet_sample_000331_w001",
+            "0613pybullet_sample_001455_w000",
+            "0613pybullet_sample_000336_w001",
+            "0613pybullet_sample_001460_w002",
+            "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed",
+        ],
+        "seed_file": "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds.txt",
+        "source_video_root": "/data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B_frame49",
+        "input_json_root": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons",
+        "model": "Wan2.2 TI2V 5B, legacy DiffSynth backend",
+        "generation": "704x1280, 49 frames, 40 sampling steps, seed-specific generation, CFG 5.0, sample_shift 5.0",
+        "query_protocol": (
+            "first pixel frame / first latent frame object queries; "
+            "query_pixel_frame=0, query_latent_index=0, latent anchor frames 0,4,...,48"
+        ),
+        "query_region_distribution": (
+            "50 runs with 8 query points / 1 object region; 250 runs with "
+            "16 query points / 2 object regions"
+        ),
+        "region_protocol": (
+            "GroundingDINO first-frame boxes -> SAM2 video propagation; object regions only"
+        ),
+        "capture_protocol": (
+            "self-attention post RMSNorm and post 3D RoPE, pre flash-attention; "
+            "positive conditional first call only; per-target-frame Q-to-K argmax; "
+            "no averaging across heads"
+        ),
+        "aggregation": (
+            "micro aggregate: sum correct32/comparisons/error_sum over all 300 runs, "
+            "then PCK@32 = 100 * correct32 / comparisons"
+        ),
+        "effective_comparisons": (
+            "45,156 visible object-query point/latent comparisons per S/B/H; "
+            "1,806,240 comparisons per physical head when all 40 steps are summed"
+        ),
+        "source_scripts": [
+            "/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/run_legacy_ti2v_firstlatent_pck_worker.py",
+            "/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/aggregate_legacy_ti2v_firstlatent_pck50.py",
+            "/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/legacy_ti2v_firstlatent_common.py",
+        ],
+    },
+    "three_model_reference": {
+        "runs": "3 models x 50 case directories; no seed sweep, manifests use seed=42",
+        "validation": (
+            "validation.json PASS: each of gt/lora/baseline has 50 cases, "
+            "50 complete cases, 50 validated cases"
+        ),
+        "models": {
+            "gt": "Wan2.2-TI2V-5B, GT teacher-forced / clean-prefix protocol",
+            "lora": "Wan OpenVid 0613 PyBullet LoRA, checkpoint step-000500",
+            "baseline": "Wan2.2 TI2V 5B baseline, context-aware protocol without LoRA",
+        },
+        "generation": "512x896, 40 sampling steps, context_pixel_frames=8, seed=42",
+        "query_protocol": (
+            "SAM2 region cache, objects scope only; query_pixel_frame=4, "
+            "query_latent_index=1, latent anchor frames 0,4,...,24, "
+            "future latent indices 2-6"
+        ),
+        "query_region_distribution": (
+            "per-case object region counts vary across the 50 cases: "
+            "15 cases with 2 regions (16 query points), 20 cases with 3 regions "
+            "(24 query points), and 15 cases with 4 regions (32 query points)"
+        ),
+        "capture_protocol": (
+            "video self-attention post RMSNorm and post 3D RoPE, pre flash-attention; "
+            "headwise direct-token argmax; no averaging across heads"
+        ),
+        "per_model_object_scope": {
+            "gt": "50 valid object cases, 3,881 comparisons per S/B/H",
+            "lora": "49 valid object cases, 3,893 comparisons per S/B/H",
+            "baseline": "49 valid object cases, 3,064 comparisons per S/B/H",
+        },
+        "macro_vs_pooled": (
+            "rankings use macro_pck32, the unweighted mean of per-case PCK values; "
+            "pooled_pck32 exists in source CSV but is not used for these rankings"
+        ),
+        "combined": (
+            "Three-model combined is an equal-weight arithmetic mean of the GT, "
+            "LoRA, and Baseline macro metrics for the same step/block/head; "
+            "object-scope valid_cases=148 of total_cases=150 and comparisons=10,838 per S/B/H"
+        ),
+        "source_scripts": [
+            "/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/aggregate_allblocks_allsteps_headwise_50case.py",
+            "/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/aggregate_three_model_combined_rankings.py",
+            "/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/launch_wan_gt_toy_analysis_multigpu.py",
+            "/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/launch_lorav2v_toy_analysis_multigpu.py",
+            "/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/launch_wan22_baseline_toy_analysis_multigpu.py",
+        ],
+    },
+}
 
 
 def finite(value: str | float | int | None) -> float | None:
@@ -316,30 +428,35 @@ def build_payload() -> dict:
             "scope": "S039 only for the S039 view; all 40 source steps for the average view",
             "aggregation": "micro aggregate over 6 cases x 50 seeds per source step",
             "source_files": [str(LEGACY_ROOT / "aggregate" / "combined_counts.npz")],
+            "provenance": PROVENANCE["legacy_s039"],
         },
         "gt": {
             "label": LABELS["gt"],
             "scope": "objects",
             "aggregation": "50-case per-step macro PCK@32; arithmetic mean across S000-S039 in the average view",
             "source_files": [str(HEADWISE_SUMMARY)],
+            "provenance": PROVENANCE["three_model_reference"],
         },
         "lora": {
             "label": LABELS["lora"],
             "scope": "objects",
             "aggregation": "50-case per-step macro PCK@32; arithmetic mean across S000-S039 in the average view",
             "source_files": [str(HEADWISE_SUMMARY)],
+            "provenance": PROVENANCE["three_model_reference"],
         },
         "baseline": {
             "label": LABELS["baseline"],
             "scope": "objects",
             "aggregation": "50-case per-step macro PCK@32; arithmetic mean across S000-S039 in the average view",
             "source_files": [str(HEADWISE_SUMMARY)],
+            "provenance": PROVENANCE["three_model_reference"],
         },
         "combined": {
             "label": LABELS["combined"],
             "scope": "objects",
             "aggregation": "equal-weight mean of GT, LoRA, and Baseline macro PCK@32 per step; arithmetic mean across steps in the average view",
             "source_files": [str(COMBINED_SUMMARY)],
+            "provenance": PROVENANCE["three_model_reference"],
         },
     }
     return {
@@ -363,6 +480,7 @@ def build_payload() -> dict:
             view_key: list(view["series"]) for view_key, view in views.items()
         },
         "pairwise_comparisons_by_view": pairwise_comparisons,
+        "provenance": PROVENANCE,
     }
 
 
@@ -374,6 +492,8 @@ def write_markdown(payload: dict) -> None:
         "这份 JSON 只保留两个展示口径：`S039` 和 `所有 Step 平均`。",
         "每个口径包含 Legacy S039、GT teacher-forced、LoRA、Wan2.2 Baseline、三模型综合五组数据，",
         "每组都按相同的 720 个物理 `(Block, Head)` 重新排序。",
+        "这份导出对应的是 50-case 三模型 headwise 汇总加 6-case × 50-seed 的 Legacy 汇总；",
+        "它不同于旧的 `neighbor-diagonal-ranking?v=4` 页面，后者只是在 S039 上对 5 个 case 做三模型对角线统计。",
         "",
         "## 文件结构",
         "",
@@ -394,6 +514,49 @@ def write_markdown(payload: dict) -> None:
         "",
         "平均 view 平均的是每个 Head 的 PCK 数值，不是各个 step 的 rank；因此得到的是“平均性能排序”。",
         "Legacy 的平均 view 使用 Legacy 原始 40-step 聚合中的同样计算；S039 view 使用你指定的 Legacy S039。",
+        "",
+        "## 统计追溯与执行条件",
+        "",
+        "### 共同设置",
+        "",
+        "| 项目 | 值 |",
+        "|---|---|",
+        f"| metric | {payload['metric']} |",
+        f"| views | {payload['dimensions']['views']} 个视图（`S039` 与 `所有 Step 平均`） |",
+        f"| source steps | {payload['dimensions']['source_steps']} 个 step（S000-S039） |",
+        f"| physical heads | {payload['dimensions']['blocks']} 个 block × {payload['dimensions']['heads']} 个 head = {payload['dimensions']['heads_per_view']} 个物理 Head |",
+        "| pairwise 对齐单位 | 同一视图内的 720 个物理 `(Block, Head)`；不按 case 或 seed 配对 |",
+        "",
+        "### Legacy S039",
+        "",
+        "| 项目 | 值 |",
+        "|---|---|",
+        f"| runs | {PROVENANCE['legacy_s039']['runs']} |",
+        f"| cases | 6 个 case：`0613pybullet_sample_000301_w000`、`0613pybullet_sample_000331_w001`、`0613pybullet_sample_001455_w000`、`0613pybullet_sample_000336_w001`、`0613pybullet_sample_001460_w002`、`physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed` |",
+        f"| seed file | `{PROVENANCE['legacy_s039']['seed_file']}`，50 个唯一 seed |",
+        "| temporal protocol | 704×1280，49 帧，40 sampling steps，seed-specific generation，CFG 5.0，sample_shift 5.0 |",
+        "| query protocol | first pixel frame / first latent frame object queries；query_pixel_frame=0，query_latent_index=0，latent anchor frames 0,4,...,48 |",
+        f"| query region distribution | {PROVENANCE['legacy_s039']['query_region_distribution']} |",
+        "| region / capture / matching | GroundingDINO first-frame boxes + SAM2 传播；self-attention post RMSNorm / post 3D RoPE / pre flash-attention；positive conditional first call only；per-target-frame Q-to-K argmax；no head averaging |",
+        f"| aggregation | {PROVENANCE['legacy_s039']['aggregation']} |",
+        f"| effective comparisons | {PROVENANCE['legacy_s039']['effective_comparisons']} |",
+        "| source scripts | `run_legacy_ti2v_firstlatent_pck_worker.py`、`aggregate_legacy_ti2v_firstlatent_pck50.py`、`legacy_ti2v_firstlatent_common.py` |",
+        "",
+        "### 三模型参考系列",
+        "",
+        "| 项目 | 值 |",
+        "|---|---|",
+        f"| runs | {PROVENANCE['three_model_reference']['runs']} |",
+        f"| validation | {PROVENANCE['three_model_reference']['validation']} |",
+        f"| model protocol | GT={PROVENANCE['three_model_reference']['models']['gt']}；LoRA={PROVENANCE['three_model_reference']['models']['lora']}；Baseline={PROVENANCE['three_model_reference']['models']['baseline']} |",
+        f"| generation | {PROVENANCE['three_model_reference']['generation']} |",
+        f"| query protocol | {PROVENANCE['three_model_reference']['query_protocol']} |",
+        f"| query region distribution | {PROVENANCE['three_model_reference']['query_region_distribution']} |",
+        f"| capture / matching | {PROVENANCE['three_model_reference']['capture_protocol']} |",
+        f"| per-model object scope | GT={PROVENANCE['three_model_reference']['per_model_object_scope']['gt']}；LoRA={PROVENANCE['three_model_reference']['per_model_object_scope']['lora']}；Baseline={PROVENANCE['three_model_reference']['per_model_object_scope']['baseline']} |",
+        f"| macro vs pooled | {PROVENANCE['three_model_reference']['macro_vs_pooled']} |",
+        f"| combined | {PROVENANCE['three_model_reference']['combined']} |",
+        "| source scripts | `aggregate_allblocks_allsteps_headwise_50case.py`、`aggregate_three_model_combined_rankings.py`、`launch_wan_gt_toy_analysis_multigpu.py`、`launch_lorav2v_toy_analysis_multigpu.py`、`launch_wan22_baseline_toy_analysis_multigpu.py` |",
         "",
         "## 五组数据",
         "",
