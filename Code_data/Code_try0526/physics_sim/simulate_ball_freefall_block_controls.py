@@ -46,10 +46,11 @@ class DropScenario:
 
 
 SCENARIOS = (
-    DropScenario("freefall_baseline_h080_e05", "baseline: h=0.80m, block e=0.5", 0.8, 0.5, "baseline"),
-    DropScenario("freefall_height_h030_e05", "height: h=0.30m, block e=0.5", 0.3, 0.5, "drop_height"),
-    DropScenario("freefall_height_h130_e05", "height: h=1.30m, block e=0.5", 1.3, 0.5, "drop_height"),
+    DropScenario("freefall_height_h030_e07", "height: h=0.30m, block e=0.7", 0.3, 0.7, "drop_height"),
+    DropScenario("freefall_height_h080_e07", "height: h=0.80m, block e=0.7", 0.8, 0.7, "drop_height"),
+    DropScenario("freefall_height_h130_e07", "height: h=1.30m, block e=0.7", 1.3, 0.7, "drop_height"),
     DropScenario("freefall_restitution_h080_e01", "restitution: h=0.80m, block e=0.1", 0.8, 0.1, "block_restitution"),
+    DropScenario("freefall_restitution_h080_e05", "restitution: h=0.80m, block e=0.5", 0.8, 0.5, "block_restitution"),
     DropScenario("freefall_restitution_h080_e09", "restitution: h=0.80m, block e=0.9", 0.8, 0.9, "block_restitution"),
 )
 
@@ -166,7 +167,16 @@ def write_manifest(video_dir: Path) -> None:
     manifest = {
         "experiment": "ball_freefall_block_controlled",
         "design": "one_factor_at_a_time",
-        "baseline": {"drop_height_m": 0.8, "block_restitution": 0.5},
+        "comparison_groups": {
+            "drop_height": {
+                "values_m": [0.3, 0.8, 1.3],
+                "fixed_block_restitution": 0.7,
+            },
+            "block_restitution": {
+                "values": [0.1, 0.5, 0.9],
+                "fixed_drop_height_m": 0.8,
+            },
+        },
         "fixed_parameters": {
             "ball_initial_velocity_ms": [0.0, 0.0, 0.0],
             "ball_restitution": BALL_RESTITUTION,

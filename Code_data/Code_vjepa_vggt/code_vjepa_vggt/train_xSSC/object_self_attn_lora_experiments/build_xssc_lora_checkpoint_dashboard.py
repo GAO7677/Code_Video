@@ -1455,11 +1455,10 @@ def load_legacy_video_records(
     return prefix_video_records(enriched_records, videos_prefix)
 
 
-def load_test5_reference_records(
-    hub_root: Path,
+def load_reference_records(
+    manifest_path: Path,
     cases: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    manifest_path = hub_root / "physrvg-test5-lora-ablation" / "reference_models.json"
     if not manifest_path.is_file():
         return []
     payload = load_json(manifest_path)
@@ -1946,6 +1945,17 @@ def build_master_hub(
             Path(legacy_physiciq_metrics_root),
             hub_root / "history-physiciq-metrics",
         )
+    physrvg_physiciq_portal_root = config["paths"].get(
+        "physrvg_physiciq_lora_portal_root"
+    )
+    if (
+        physrvg_physiciq_portal_root
+        and Path(physrvg_physiciq_portal_root).is_dir()
+    ):
+        link_directory(
+            Path(physrvg_physiciq_portal_root),
+            hub_root / "physrvg-physiciq-lora-ablation",
+        )
     test5_metric_total = len(config["metrics"]["cpu"]) + len(config["metrics"]["gpu"])
     test5_live_messages = []
     for record in test_records:
@@ -1980,7 +1990,10 @@ def build_master_hub(
         "../history-gallery",
         test_cases,
     )
-    test5_reference_records = load_test5_reference_records(hub_root, test_cases)
+    test5_reference_records = load_reference_records(
+        hub_root / "physrvg-test5-lora-ablation" / "reference_models.json",
+        test_cases,
+    )
     legacy_test_records.extend(test5_reference_records)
     write_unified_videos_page(
         config=config,
@@ -2019,6 +2032,12 @@ def build_master_hub(
         if legacy_state_root and legacy_state_root.is_dir()
         else []
     )
+    physiciq_reference_records = load_reference_records(
+        hub_root / "physrvg-physiciq-lora-ablation" / "reference_models.json",
+        phys_cases,
+    )
+    legacy_phys_records.extend(physiciq_reference_records)
+    solid_mechanics_cases: list[dict[str, Any]] = []
     if phys_cases:
         write_unified_videos_page(
             config=config,
@@ -2042,7 +2061,8 @@ def build_master_hub(
             page_title="PhysicIQ · 67-case 平均指标",
         ).replace(
             "</header>",
-            '<p><a href="solid-mechanics/">Solid Mechanics · 39-case 平均指标</a></p></header>',
+            '<p><a href="../physiciq-solid-mechanics/">Solid Mechanics · 39-case 视频与逐 case 指标</a> · '
+            '<a href="solid-mechanics/">39-case 平均指标表</a></p></header>',
         )
         (phys_average_root / "index.html").write_text(
             phys_average_html,
@@ -2053,6 +2073,28 @@ def build_master_hub(
             for case in phys_cases
             if "_Solid_Mechanics_" in json.dumps(case, ensure_ascii=False)
         ]
+        solid_mechanics_video_root = hub_root / "physiciq-solid-mechanics"
+        write_unified_videos_page(
+            config=config,
+            page_root=solid_mechanics_video_root,
+            cases=solid_mechanics_cases,
+            current_records=phys_records,
+            legacy_records=legacy_phys_records,
+            current_site_prefix="../physiciq-gallery",
+            page_title=(
+                f"PhysicIQ · Solid Mechanics · {len(solid_mechanics_cases)}-case 子集"
+            ),
+        )
+        solid_mechanics_video_path = solid_mechanics_video_root / "index.html"
+        solid_mechanics_video_path.write_text(
+            solid_mechanics_video_path.read_text(encoding="utf-8").replace(
+                '<a href="../">返回监控页</a>',
+                '<a href="../">返回 8844 总览</a>'
+                '<a href="../physiciq-average-metrics/solid-mechanics/">39-case 平均指标表</a>'
+                '<a href="../physiciq/">返回 PhysicIQ 67-case</a>',
+            ),
+            encoding="utf-8",
+        )
         solid_mechanics_root = phys_average_root / "solid-mechanics"
         solid_mechanics_root.mkdir(parents=True, exist_ok=True)
         solid_mechanics_html = build_average_metrics_page(
@@ -2063,7 +2105,8 @@ def build_master_hub(
             ),
         ).replace(
             "</header>",
-            '<p><a href="../">返回 PhysicIQ 67-case 总平均</a></p></header>',
+            '<p><a href="../../physiciq-solid-mechanics/">查看 39-case 视频与逐 case 指标</a> · '
+            '<a href="../">返回 PhysicIQ 67-case 总平均</a></p></header>',
         )
         (solid_mechanics_root / "index.html").write_text(
             solid_mechanics_html,
@@ -2091,6 +2134,17 @@ def build_master_hub(
       <a href="physrvg-test5-lora-ablation/">进入 LoRA 消融对比</a>
       <a href="test5/">进入全模型合并视图</a></div>
       <div class="status">固定参考<strong>{len(test5_reference_records)}/2 组结果</strong><small>LoRA 是唯一模型变量</small></div>
+    </section>"""
+    physrvg_physiciq_entry = ""
+    physrvg_physiciq_root = hub_root / "physrvg-physiciq-lora-ablation"
+    if (physrvg_physiciq_root / "index.html").is_file():
+        physrvg_physiciq_entry = f"""
+    <section class="entry"><div><h2>PhysRVG PhysicIQ 67-case · LoRA ON/OFF</h2>
+      <div class="meta">原始 PhysicIQ 固定参考实验；逐 case 指标差异、双视频同步对比，并已加入 PhysicIQ 全模型合并页</div>
+      <a href="physrvg-physiciq-lora-ablation/">进入 LoRA 消融对比</a>
+      <a href="physiciq/">进入全模型合并视图</a>
+      <a href="physiciq-average-metrics/">查看 67-case 平均指标</a></div>
+      <div class="status">固定参考<strong>{len(physiciq_reference_records)}/2 组结果</strong><small>67 case · 40 inference steps</small></div>
     </section>"""
     physiciq_entry = ""
     if config.get("physiciq", {}).get("enabled"):
@@ -2146,6 +2200,7 @@ def build_master_hub(
                 '<a href="physiciq/">Case 合并对比</a>'
                 '<a href="physiciq-metrics/">指标曲线</a>'
                 '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
+                '<a href="physrvg-physiciq-lora-ablation/">PhysRVG LoRA ON/OFF</a>'
             )
         elif (
             legacy_physiciq_metrics_root
@@ -2161,6 +2216,7 @@ def build_master_hub(
                 '<a href="physiciq/">Case 合并对比</a>'
                 '<a href="physiciq-metrics/">指标曲线</a>'
                 '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
+                '<a href="physrvg-physiciq-lora-ablation/">PhysRVG LoRA ON/OFF</a>'
             )
         else:
             pending_metrics = watch_root / "site" / "physiciq-metrics"
@@ -2178,6 +2234,7 @@ def build_master_hub(
                 '<a href="physiciq/">Case 合并对比</a>'
                 '<a href="physiciq-metrics/">指标曲线</a>'
                 '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
+                '<a href="physrvg-physiciq-lora-ablation/">PhysRVG LoRA ON/OFF</a>'
             )
         step_text = (
             "每个新 checkpoint"
@@ -2193,6 +2250,15 @@ def build_master_hub(
     <section class="entry"><div><h2>PhysicIQ 67-case</h2>
       <div class="meta">{escape(method_text)} · 同一训练方案的不同 checkpoint step 合并展示 · 40 denoising steps</div>
       {action}</div><div class="status">{generated_text}<strong>{metric_text}</strong><em>{partial_text}</em><small>step {step_text}</small></div>
+    </section>"""
+    solid_mechanics_entry = ""
+    if solid_mechanics_cases:
+        solid_mechanics_entry = f"""
+    <section class="entry"><div><h2>PhysicIQ · Solid Mechanics 子集</h2>
+      <div class="meta">从 PhysicIQ 67-case 中筛选 Solid Mechanics；按 case 查看 GT、8 条件帧、全部模型结果与逐项指标</div>
+      <a href="physiciq-solid-mechanics/">39-case 视频与逐 case 指标</a>
+      <a href="physiciq-average-metrics/solid-mechanics/">39-case 平均指标表</a></div>
+      <div class="status">固定子集<strong>{len(solid_mechanics_cases)} cases</strong><small>复用现有视频与指标</small></div>
     </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
@@ -2243,7 +2309,9 @@ def build_master_hub(
       <div class="status">全部 step<strong>{total_inferred + legacy_checkpoint_count} 组结果</strong><small>持续增量更新</small></div>
     </section>
     {physrvg_test5_entry}
+    {physrvg_physiciq_entry}
     {physiciq_entry}
+    {solid_mechanics_entry}
     <section class="entry"><div><h2>初始四方案 case 对比</h2>
       <div class="meta">Object-only、Full-SA、S-head59、T-head70 的早期固定 case 对照页面</div>
       <a href="initial-gallery/">查看初始 case</a></div>

@@ -1,0 +1,1 @@
+/data/gaoya/agent-data/outputs/physrvg_test5_lora_onoff_cfg40_20260808/physRVG_test5_LoRA_ON_steps40_512x896_08_49f

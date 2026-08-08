@@ -157,6 +157,8 @@ class WMRewardRunner:
         video_tensor: Any,
         *,
         context_frames: int | None = None,
+        shuffle_future: bool = False,
+        shuffle_seed: int = 20260808,
     ) -> dict[str, Any]:
         encoder, target_encoder, predictor, img_size = self._load_models_once()
         active_context_frames = self.context_frames if context_frames is None else context_frames
@@ -186,6 +188,8 @@ class WMRewardRunner:
                 seed=self.seed,
                 stride=self.stride,
                 mode="mean",
+                shuffle_future=shuffle_future,
+                shuffle_seed=shuffle_seed,
             )
 
         surprise = float(loss.item())
@@ -200,6 +204,8 @@ class WMRewardRunner:
             "stride": self.stride,
             "seed": self.seed,
             "video_frames_loaded": loaded_frames,
+            "shuffle_future": shuffle_future,
+            "shuffle_seed": shuffle_seed if shuffle_future else None,
         }
 
     def score(

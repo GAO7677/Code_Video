@@ -2,6 +2,7 @@
   "paths": {
     "watch_root": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_three_run_watch",
     "master_hub_root": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub",
+    "physrvg_physiciq_lora_portal_root": "/data/gaoya/agent-data/outputs/physrvg_lora_metric_diff_portal",
     "legacy_watch_root": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_checkpoint_watch/site",
     "legacy_physiciq_metrics_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/_metric_plots/leaf_folders",
     "baseline_gallery_root": "/data/gaoya/agent-data/outputs/xssc_lora_latest_case5_compare/run_20260730T140000Z/gallery",

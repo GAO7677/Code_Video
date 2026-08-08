@@ -724,7 +724,8 @@ def compute_vjepa_loss_sliding_window(video_tensor, encoder, target_encoder, pre
                                           masking_mode="causal", context_frames=8, mask_ratio=None,
                                           spatial_pred_mask_scale=None, temporal_pred_mask_scale=None,
                                           aspect_ratio=None, npred=None, max_context_frames_ratio=None,
-                                          is_vae_output=True, seed=42, stride=2, mode='mean'):
+                                          is_vae_output=True, seed=42, stride=2, mode='mean',
+                                          shuffle_future=False, shuffle_seed=20260808):
     """
     Compute V-JEPA training-matched loss from a video tensor using sliding windows.
     Breaks 49-frame video into sub-chunks of 16 frames with sliding window approach.
@@ -798,6 +799,21 @@ def compute_vjepa_loss_sliding_window(video_tensor, encoder, target_encoder, pre
     pieces = clips.unfold(2, window_size, stride).permute(0, 2, -1, 1, 3, 4).contiguous()
     pieces = pieces.flatten(0, 1)
     pieces = rearrange(pieces, "b t c h w -> b c t h w")
+    if shuffle_future:
+        if masking_mode != "causal":
+            raise ValueError("shuffle_future requires masking_mode='causal'")
+        future_count = window_size - context_frames
+        if future_count < 2:
+            raise ValueError("shuffle_future requires at least two future frames")
+        for piece_index in range(pieces.shape[0]):
+            rng = np.random.default_rng(int(shuffle_seed) + piece_index)
+            future_order = np.arange(context_frames, window_size)
+            rng.shuffle(future_order)
+            if np.array_equal(future_order, np.arange(context_frames, window_size)):
+                future_order = np.roll(future_order, 1)
+            order = np.concatenate([np.arange(context_frames), future_order])
+            order_tensor = torch.as_tensor(order, device=pieces.device, dtype=torch.long)
+            pieces[piece_index] = pieces[piece_index].index_select(1, order_tensor)
     # print(f"pieces: {pieces.shape}")
 
     # Process chunks one by one for memory efficiency
