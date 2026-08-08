@@ -40,6 +40,7 @@ class WMRewardRunner:
         context_frames: int = 8,
         stride: int = 8,
         seed: int = 42,
+        max_frames: int = 49,
     ) -> None:
         self.cuda_visible_devices = cuda_visible_devices
         self.model_name = model_name
@@ -47,6 +48,7 @@ class WMRewardRunner:
         self.context_frames = context_frames
         self.stride = stride
         self.seed = seed
+        self.max_frames = max_frames
 
         self._torch = None
         self._load_vjepa_models = None
@@ -142,10 +144,32 @@ class WMRewardRunner:
         self._models = (encoder, target_encoder, predictor, img_size)
         return self._models
 
-    def score(self, video_path: Path) -> dict[str, Any]:
+    def load_video(self, video_path: Path, *, max_frames: int | None = None) -> Any:
         encoder, target_encoder, predictor, img_size = self._load_models_once()
-        video_tensor = self._load_video_as_tensor(str(video_path), max_frames=49, img_size=img_size)
-        video_tensor = video_tensor.to(self._device)
+        del encoder, target_encoder, predictor
+        frames_to_load = self.max_frames if max_frames is None else max_frames
+        return self._load_video_as_tensor(
+            str(video_path), max_frames=frames_to_load, img_size=img_size
+        ).to(self._device)
+
+    def score_tensor(
+        self,
+        video_tensor: Any,
+        *,
+        context_frames: int | None = None,
+    ) -> dict[str, Any]:
+        encoder, target_encoder, predictor, img_size = self._load_models_once()
+        active_context_frames = self.context_frames if context_frames is None else context_frames
+        loaded_frames = int(video_tensor.shape[2])
+        if active_context_frames <= 0 or active_context_frames >= self.window_size:
+            raise ValueError(
+                f"context_frames must be in [1, {self.window_size - 1}], "
+                f"got {active_context_frames}"
+            )
+        if loaded_frames < self.window_size:
+            raise ValueError(
+                f"Video has {loaded_frames} frames, fewer than window_size={self.window_size}"
+            )
 
         with self._torch.no_grad():
             loss = self._compute_loss(
@@ -157,7 +181,7 @@ class WMRewardRunner:
                 window_size=self.window_size,
                 loss_exp=2,
                 masking_mode="causal",
-                context_frames=self.context_frames,
+                context_frames=active_context_frames,
                 is_vae_output=True,
                 seed=self.seed,
                 stride=self.stride,
@@ -172,10 +196,21 @@ class WMRewardRunner:
             "model": self.model_name,
             "img_size": img_size,
             "window_size": self.window_size,
-            "context_frames": self.context_frames,
+            "context_frames": active_context_frames,
             "stride": self.stride,
             "seed": self.seed,
+            "video_frames_loaded": loaded_frames,
         }
+
+    def score(
+        self,
+        video_path: Path,
+        *,
+        context_frames: int | None = None,
+        max_frames: int | None = None,
+    ) -> dict[str, Any]:
+        video_tensor = self.load_video(video_path, max_frames=max_frames)
+        return self.score_tensor(video_tensor, context_frames=context_frames)
 
     def score_case(self, case: EvalCase | Path | str | dict[str, Any]) -> dict[str, Any]:
         normalized = coerce_eval_case(case)

@@ -219,7 +219,7 @@ def _vc_grey(n):
 class SceneRenderer:
     """Pyrender renderer with SpotLight shadow mapping."""
 
-    def __init__(self):
+    def __init__(self, camera_eye=None, camera_target=None, camera_up=None):
         self.scene = pyrender.Scene(bg_color=[0.55, 0.52, 0.48],
                                      ambient_light=[0.04, 0.04, 0.05])
 
@@ -241,7 +241,14 @@ class SceneRenderer:
 
         # Camera
         self.cam = pyrender.PerspectiveCamera(yfov=np.radians(55), aspectRatio=IMG_W/IMG_H)
-        self.scene.add(self.cam, pose=_look_at(CAM_EYE, CAM_TARGET, CAM_UP))
+        self.scene.add(
+            self.cam,
+            pose=_look_at(
+                CAM_EYE if camera_eye is None else camera_eye,
+                CAM_TARGET if camera_target is None else camera_target,
+                CAM_UP if camera_up is None else camera_up,
+            ),
+        )
 
         self.renderer = pyrender.OffscreenRenderer(IMG_W, IMG_H)
         self.ball_node = None

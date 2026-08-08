@@ -285,6 +285,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--worker-id", type=int, required=True)
     parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--task-index", type=int, default=None)
+    parser.add_argument("--task-indices", type=int, nargs="+", default=None)
     parser.add_argument("--manifest-path", type=Path, default=MANIFEST_PATH)
     parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
     parser.add_argument("--generate-missing-baselines", action="store_true")
@@ -482,7 +483,16 @@ def main() -> None:
     tasks = build_tasks(manifest)
     if args.generate_missing_baselines:
         tasks = baseline_tasks(manifest) + tasks
-    if args.task_index is not None:
+    if args.task_index is not None and args.task_indices is not None:
+        raise ValueError("--task-index and --task-indices are mutually exclusive")
+    if args.task_indices is not None:
+        if len(set(args.task_indices)) != len(args.task_indices):
+            raise ValueError("--task-indices contains duplicates")
+        invalid = [index for index in args.task_indices if not 0 <= index < len(tasks)]
+        if invalid:
+            raise ValueError(f"task-indices outside [0, {len(tasks)}): {invalid}")
+        tasks = [tasks[index] for index in args.task_indices]
+    elif args.task_index is not None:
         if not 0 <= args.task_index < len(tasks):
             raise ValueError(f"task-index must be in [0, {len(tasks)})")
         tasks = [tasks[args.task_index]]

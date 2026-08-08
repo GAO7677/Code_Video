@@ -805,10 +805,15 @@ def build_videos_page(
     const D={data};
     const caseSelect=document.getElementById("case");
     const stepFilter=document.getElementById("step-filter");
+    function formatStepLabel(step){{
+      return D.records.some(record=>record.step===step&&record.step_kind==="inference")
+        ? `inference ${{step}}`
+        : `step ${{step}}`;
+    }}
     D.cases.forEach((c,i)=>caseSelect.add(new Option(`${{String(i+1).padStart(2,"0")}} · ${{c.stem}}`,c.stem)));
     stepFilter.add(new Option("全部已完成 step","all"));
     [...new Set(D.records.map(record=>record.step))].sort((a,b)=>a-b)
-      .forEach(step=>stepFilter.add(new Option(`step ${{step}}`,String(step))));
+      .forEach(step=>stepFilter.add(new Option(formatStepLabel(step),String(step))));
     function visibleSteps(){{
       const steps=[...new Set(D.records.map(record=>record.step))].sort((a,b)=>a-b);
       return stepFilter.value==="all"
@@ -857,7 +862,9 @@ def build_videos_page(
         methodCell.textContent=row.record.method_label;
         methodCell.style.color=row.method?.color??"#172126";tr.append(methodCell);
         const stepCell=document.createElement("td");stepCell.className="step-col";
-        stepCell.textContent=row.record.step;tr.append(stepCell);
+        stepCell.textContent=row.record.step_kind==="inference"
+          ? `infer ${{row.record.step}}`
+          : row.record.step;tr.append(stepCell);
         D.metricSpecs.forEach(spec=>{{
           const td=document.createElement("td");const value=Number(row.values[spec.key]);
           if(!Number.isFinite(value)){{td.textContent="—";td.className="missing-value";}}
@@ -883,7 +890,7 @@ def build_videos_page(
       matrix.replaceChildren();
       matrix.style.gridTemplateColumns=`88px repeat(${{D.methods.length}},minmax(260px,1fr))`;
       const corner=document.createElement("div");corner.className="matrix-head";
-      corner.textContent="训练 step";matrix.append(corner);
+      corner.textContent="Step / Reference";matrix.append(corner);
       D.methods.forEach(method=>{{
         const header=document.createElement("div");header.className="matrix-head method";
         header.textContent=method.label;header.style.color=method.color;
@@ -892,7 +899,7 @@ def build_videos_page(
       let count=0;
       steps.forEach(step=>{{
         const stepLabel=document.createElement("div");stepLabel.className="step-label";
-        stepLabel.textContent=`step ${{step}}`;matrix.append(stepLabel);
+        stepLabel.textContent=formatStepLabel(step);matrix.append(stepLabel);
         D.methods.forEach(method=>{{
           const record=D.records.find(item=>
             item.step===step&&item.method_key===method.key);
@@ -904,7 +911,7 @@ def build_videos_page(
           const cell=document.createElement("div");cell.className="cell";
           cell.style.borderTop=`3px solid ${{method.color}}`;
           const label=document.createElement("div");label.className="label";
-          label.textContent=`${{record.method_label}} · step ${{record.step}}`;
+          label.textContent=`${{record.method_label}} · ${{record.step_kind==="inference"?"inference":"step"}} ${{record.step}}`;
           label.style.color=method.color;
           const video=document.createElement("video");
           video.preload="metadata";video.playsInline=true;video.muted=true;
@@ -1297,6 +1304,16 @@ def build_combined_test_page(
 
 
 MERGED_METHODS = [
+    {
+        "key": "physrvg_test5_lora_on",
+        "label": "PhysRVG finetuned DiT + LoRA · reference",
+        "color": "#0B6E4F",
+    },
+    {
+        "key": "physrvg_test5_lora_off",
+        "label": "PhysRVG finetuned DiT · LoRA OFF · reference",
+        "color": "#315C87",
+    },
     {"key": "object_only", "label": "Object-only", "color": "#4D4D4D"},
     {"key": "full_sa", "label": "Full-SA + Object", "color": "#D62728"},
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
@@ -1438,6 +1455,37 @@ def load_legacy_video_records(
     return prefix_video_records(enriched_records, videos_prefix)
 
 
+def load_test5_reference_records(
+    hub_root: Path,
+    cases: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    manifest_path = hub_root / "physrvg-test5-lora-ablation" / "reference_models.json"
+    if not manifest_path.is_file():
+        return []
+    payload = load_json(manifest_path)
+    records: list[dict[str, Any]] = []
+    for model in payload.get("models", []):
+        result_root = Path(model["result_root"]).resolve()
+        video_prefix = str(model["video_prefix"]).rstrip("/")
+        records.append(
+            {
+                "method_key": model["method_key"],
+                "method_label": model["method_label"],
+                "step": int(model["inference_steps"]),
+                "step_kind": "inference",
+                "checkpoint_dir": model["checkpoint_label"],
+                "origin": "fixed-reference",
+                "metrics": load_case_metrics(result_root, cases),
+                "videos": {
+                    case["stem"]: f"{video_prefix}/{case['stem']}.mp4"
+                    for case in cases
+                    if (result_root / f"{case['stem']}.mp4").is_file()
+                },
+            }
+        )
+    return records
+
+
 def load_physiciq_video_records_from_state(
     state_root: Path,
     cases: list[dict[str, Any]],
@@ -1517,6 +1565,7 @@ def build_average_metrics_page(
             "method_key": record["method_key"],
             "method_label": record["method_label"],
             "step": int(record["step"]),
+            "step_kind": record.get("step_kind", "training"),
             "metrics": {},
         }
         record_metrics = record.get("metrics", {})
@@ -1568,7 +1617,8 @@ def build_average_metrics_page(
             f'data-step="{row["step"]}"><td class="method" '
             f'style="color:{escape(color)}">'
             f'{escape(row["method_label"])}</td><td class="step">'
-            f'{row["step"]}</td>{"".join(cells)}</tr>'
+            f'{"infer " if row["step_kind"] == "inference" else ""}{row["step"]}'
+            f'</td>{"".join(cells)}</tr>'
         )
     method_order_json = json.dumps(method_order, ensure_ascii=True)
     metric_directions_json = json.dumps(metric_directions, ensure_ascii=True)
@@ -1930,6 +1980,8 @@ def build_master_hub(
         "../history-gallery",
         test_cases,
     )
+    test5_reference_records = load_test5_reference_records(hub_root, test_cases)
+    legacy_test_records.extend(test5_reference_records)
     write_unified_videos_page(
         config=config,
         page_root=hub_root / "test5",
@@ -2030,6 +2082,16 @@ def build_master_hub(
     total_discovered = sum(row["discovered"] for row in status)
     total_metrics = sum(row["metric_done"] for row in status)
     expected_metrics = sum(row["metric_total"] for row in status)
+    physrvg_test5_entry = ""
+    physrvg_test5_root = hub_root / "physrvg-test5-lora-ablation"
+    if (physrvg_test5_root / "index.html").is_file():
+        physrvg_test5_entry = f"""
+    <section class="entry"><div><h2>PhysRVG test_5 · LoRA ON/OFF</h2>
+      <div class="meta">20-case 固定参考模型；40 denoising steps、30 FPS、49 帧、8 条件帧；逐 case 指标差异与双视频同步对比</div>
+      <a href="physrvg-test5-lora-ablation/">进入 LoRA 消融对比</a>
+      <a href="test5/">进入全模型合并视图</a></div>
+      <div class="status">固定参考<strong>{len(test5_reference_records)}/2 组结果</strong><small>LoRA 是唯一模型变量</small></div>
+    </section>"""
     physiciq_entry = ""
     if config.get("physiciq", {}).get("enabled"):
         phys_config = config["physiciq"]
@@ -2180,6 +2242,7 @@ def build_master_hub(
       <a href="test5-average-metrics/">全 case 平均指标表</a></div>
       <div class="status">全部 step<strong>{total_inferred + legacy_checkpoint_count} 组结果</strong><small>持续增量更新</small></div>
     </section>
+    {physrvg_test5_entry}
     {physiciq_entry}
     <section class="entry"><div><h2>初始四方案 case 对比</h2>
       <div class="meta">Object-only、Full-SA、S-head59、T-head70 的早期固定 case 对照页面</div>
