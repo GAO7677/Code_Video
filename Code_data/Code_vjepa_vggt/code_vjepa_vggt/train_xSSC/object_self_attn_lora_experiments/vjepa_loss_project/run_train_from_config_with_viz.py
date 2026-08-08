@@ -3,7 +3,7 @@
 
 Usage:
   /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/run_train_from_config_with_viz.py \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/vjepa_loss_project/run_train_from_config_with_viz.py \
     /home/gaoya/.../formal_full_sa_no_object_gpu27.json
 """
 

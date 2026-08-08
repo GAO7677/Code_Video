@@ -13,6 +13,12 @@ import importlib
 from pathlib import Path
 import sys
 
+EXPERIMENT_ROOT = Path(__file__).resolve().parent.parent
+REPOSITORY_ROOT = EXPERIMENT_ROOT.parents[2]
+for _path in (EXPERIMENT_ROOT, REPOSITORY_ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
 import torch
 import torch.nn.functional as F
 

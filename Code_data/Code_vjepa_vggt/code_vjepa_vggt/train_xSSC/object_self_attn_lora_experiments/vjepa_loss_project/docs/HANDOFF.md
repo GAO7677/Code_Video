@@ -57,15 +57,15 @@
 当前脚本入口是：
 
 ```bash
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/visualize_vjepa_loss_heatmaps.py
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/vjepa_loss_project/visualize_vjepa_loss_heatmaps.py
 ```
 
 典型启动方式：
 
 ```bash
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/visualize_vjepa_loss_heatmaps.py \
-  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/configs/formal_full_sa_no_object_gpu27_vjepa_loss.json \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/vjepa_loss_project/visualize_vjepa_loss_heatmaps.py \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/vjepa_loss_project/configs/formal_full_sa_no_object_gpu27_vjepa_loss.json \
   --checkpoint /data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu01_formal_vjepa_loss/20260805T180305Z/checkpoints/interrupted-latest \
   --output-root /data/gaoya/agent-data/outputs/xssc_vjepa_loss_heatmaps \
   --run-tag no_step03463_lora_v2v_jsons_native_rect_flowweighted_vjepa_a2 \
@@ -145,7 +145,7 @@ pred_x0 = restore_condition_latents(...)
 
 ### 输入
 
-- 配置文件：`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/configs/formal_full_sa_no_object_gpu27_vjepa_loss.json`
+- 配置文件：`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/vjepa_loss_project/configs/formal_full_sa_no_object_gpu27_vjepa_loss.json`
 - checkpoint：`/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu01_formal_vjepa_loss/20260805T180305Z/checkpoints/interrupted-latest`
 - v2v case list：`/data/gaoya/agent-data/outputs/xssc_vjepa_loss_heatmaps/pybullet_multiobject_step03463_compare/v2v_json_case_list.txt`
 

@@ -8,11 +8,11 @@
 
 | 文档 | 内容 |
 |---|---|
-| [01_METHOD.md](01_METHOD.md) | loss 定义与梯度链路 |
-| [02_EXPERIMENTS.md](02_EXPERIMENTS.md) | 已完成实验与运行状态 |
-| [03_ANALYSIS.md](03_ANALYSIS.md) | 结论、风险与待验证项 |
-| [04_REPRODUCE.md](04_REPRODUCE.md) | 代码、权重、结果和复现入口 |
-| [05_LEGACY_INDEX.md](05_LEGACY_INDEX.md) | 早期 V-JEPA 结果目录索引 |
+| [01_METHOD.md](docs/01_METHOD.md) | loss 定义与梯度链路 |
+| [02_EXPERIMENTS.md](docs/02_EXPERIMENTS.md) | 已完成实验与运行状态 |
+| [03_ANALYSIS.md](docs/03_ANALYSIS.md) | 结论、风险与待验证项 |
+| [04_REPRODUCE.md](docs/04_REPRODUCE.md) | 代码、权重、结果和复现入口 |
+| [05_LEGACY_INDEX.md](docs/05_LEGACY_INDEX.md) | 早期 V-JEPA 结果目录索引 |
 
 ## 当前结论
 
@@ -24,8 +24,13 @@
 
 ## 原始文档
 
-- [VJEPA_LOSS_TRAINING_REQUIREMENTS.md](../VJEPA_LOSS_TRAINING_REQUIREMENTS.md)
-- [HANDOFF.md](../HANDOFF.md)
+- [VJEPA_LOSS_TRAINING_REQUIREMENTS.md](docs/VJEPA_LOSS_TRAINING_REQUIREMENTS.md)
+- [HANDOFF.md](docs/HANDOFF.md)
 - [项目实验记录](../EXPERIMENT_RECORD.md)
-- [V-JEPA2 MSE 原型说明](/home/gaoya/Code_Video/vjepa2_tinyvae_mse/README.md)
+- [V-JEPA2 MSE 原型说明](docs/VJEPA2_FEATURE_MSE.md)
 
+## Ball-block 视频对实验
+
+`visualize_ball_block_pairwise.py` 对目录内全部视频取前 49 帧，以 `384x672`
+native-rectangle 输入提取特征。页面先展示 8 个无 overlay 的原视频和 49 帧
+拼接图，再展示全部 pair 的 overlay 视频、49 帧热力图拼接图和差异排序。

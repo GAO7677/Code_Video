@@ -77,7 +77,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-id", type=Path, default=DEFAULT_MODEL_ID)
     parser.add_argument("--dit-checkpoint", type=Path, default=DEFAULT_DIT)
     parser.add_argument("--lora-checkpoint", type=Path, default=DEFAULT_LORA)
+    parser.add_argument(
+        "--disable-lora",
+        action="store_true",
+        help="Load the PhysRVG finetuned DiT without the PhysRVG LoRA adapter.",
+    )
+    parser.add_argument(
+        "--path-prefix-map",
+        action="append",
+        default=[],
+        metavar="SOURCE=DESTINATION",
+        help="Rewrite absolute paths from input lists/JSONs, for example /data/gaoya=/home/gaoya/data.",
+    )
     parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--width", type=int, default=832)
     parser.add_argument("--num-frames", type=int, default=49)
@@ -107,6 +121,25 @@ def _read_list_file(path: Path) -> list[Path]:
     return entries
 
 
+def _parse_path_prefix_maps(values: list[str]) -> list[tuple[str, str]]:
+    mappings: list[tuple[str, str]] = []
+    for value in values:
+        source, separator, destination = value.partition("=")
+        if not separator or not source or not destination:
+            raise ValueError(f"invalid --path-prefix-map value: {value!r}")
+        mappings.append((source.rstrip("/"), destination.rstrip("/")))
+    return mappings
+
+
+def _map_path(path: Path, mappings: list[tuple[str, str]]) -> Path:
+    value = str(path.expanduser())
+    for source, destination in mappings:
+        if value == source or value.startswith(source + "/"):
+            value = destination + value[len(source) :]
+            break
+    return Path(value).resolve()
+
+
 def _load_json(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
@@ -127,8 +160,16 @@ def _dataset_name_from_list_path(list_path: Path) -> str:
     return stem
 
 
-def _method_name(num_inference_steps: int, height: int, width: int, context_frames: int, output_frames: int) -> str:
-    return f"physRVG_steps{num_inference_steps}_{height}x{width}_{int(context_frames):02d}_{int(output_frames):02d}f"
+def _method_name(
+    num_inference_steps: int,
+    height: int,
+    width: int,
+    context_frames: int,
+    output_frames: int,
+    disable_lora: bool = False,
+) -> str:
+    prefix = "physRVG_finetunedDiT_noLoRA" if disable_lora else "physRVG"
+    return f"{prefix}_steps{num_inference_steps}_{height}x{width}_{int(context_frames):02d}_{int(output_frames):02d}f"
 
 
 def _crop_and_resize(image: Image.Image, target_height: int, target_width: int) -> Image.Image:
@@ -233,8 +274,9 @@ def _load_pipe(args: argparse.Namespace) -> WanImageToVideoPipeline:
 
     state_dict = load_file(str(args.dit_checkpoint))
     pipe.transformer.load_state_dict(state_dict)
-    pipe.transformer = PeftModel.from_pretrained(pipe.transformer, str(args.lora_checkpoint))
-    pipe.transformer.set_adapter("default")
+    if not args.disable_lora:
+        pipe.transformer = PeftModel.from_pretrained(pipe.transformer, str(args.lora_checkpoint))
+        pipe.transformer.set_adapter("default")
     pipe.to(torch.device(args.device))
     return pipe
 
@@ -248,16 +290,29 @@ def _run_single_case(
     payload: dict,
     summary_entries: dict[str, list[dict]],
 ) -> tuple[bool, str]:
-    input_video = Path(_ensure_str_field(payload, "input_video", input_json_path)).expanduser().resolve()
+    input_video = _map_path(
+        Path(_ensure_str_field(payload, "input_video", input_json_path)), args.path_prefix_maps
+    )
     input_caption = _ensure_str_field(payload, "input_caption", input_json_path)
     source_video = payload.get("source_video")
-    source_video = str(source_video).strip() if isinstance(source_video, str) and source_video.strip() else None
+    source_video = (
+        str(_map_path(Path(source_video.strip()), args.path_prefix_maps))
+        if isinstance(source_video, str) and source_video.strip()
+        else None
+    )
 
     context_frames = _load_context_video(
         input_video, target_height=int(args.height), target_width=int(args.width)
     )
     effective_context_frames = len(context_frames)
-    method_name = _method_name(args.num_inference_steps, args.height, args.width, effective_context_frames, int(args.num_frames)    )
+    method_name = _method_name(
+        args.num_inference_steps,
+        args.height,
+        args.width,
+        effective_context_frames,
+        int(args.num_frames),
+        disable_lora=bool(args.disable_lora),
+    )
     output_dir = args.output_root / dataset_name / method_name
     sample_stem = input_json_path.stem
     output_video = output_dir / f"{sample_stem}.mp4"
@@ -309,7 +364,8 @@ def _run_single_case(
             "fps": int(args.fps),
             "model_id": str(args.model_id),
             "dit_checkpoint": str(args.dit_checkpoint),
-            "lora_checkpoint": str(args.lora_checkpoint),
+            "lora_checkpoint": None if args.disable_lora else str(args.lora_checkpoint),
+            "model_variant": "finetuned_dit" if args.disable_lora else "finetuned_dit_plus_lora",
         },
     }
     _write_json(output_json, result)
@@ -331,9 +387,17 @@ def _run_single_case(
 
 def main() -> None:
     args = parse_args()
+    if args.shard_count <= 0:
+        raise ValueError("--shard-count must be positive")
+    if args.shard_index < 0 or args.shard_index >= args.shard_count:
+        raise ValueError("--shard-index must satisfy 0 <= shard-index < shard-count")
+    args.path_prefix_maps = _parse_path_prefix_maps(args.path_prefix_map)
     args.model_id = _ensure_exists(args.model_id, "model-id")
     args.dit_checkpoint = _ensure_exists(args.dit_checkpoint, "dit-checkpoint")
-    args.lora_checkpoint = _ensure_exists(args.lora_checkpoint, "lora-checkpoint")
+    if not args.disable_lora:
+        args.lora_checkpoint = _ensure_exists(args.lora_checkpoint, "lora-checkpoint")
+    else:
+        args.lora_checkpoint = args.lora_checkpoint.expanduser().resolve()
     args.output_root = args.output_root.expanduser().resolve()
 
     list_paths = [_ensure_exists(path, "input-json-list-path") for path in args.input_json_list_paths]
@@ -344,15 +408,26 @@ def main() -> None:
         dataset_output_root = args.output_root / dataset_name
         dataset_output_root.mkdir(parents=True, exist_ok=True)
 
-        input_json_paths = _read_list_file(list_path)
+        all_input_json_paths = [
+            _map_path(path, args.path_prefix_maps) for path in _read_list_file(list_path)
+        ]
+        input_json_paths = [
+            path
+            for index, path in enumerate(all_input_json_paths)
+            if index % args.shard_count == args.shard_index
+        ]
         manifest = {
             "input_json_list_path": str(list_path),
             "dataset": dataset_name,
             "num_items": len(input_json_paths),
+            "num_items_total": len(all_input_json_paths),
+            "shard_index": int(args.shard_index),
+            "shard_count": int(args.shard_count),
             "output_root": str(dataset_output_root),
             "model_id": str(args.model_id),
             "dit_checkpoint": str(args.dit_checkpoint),
-            "lora_checkpoint": str(args.lora_checkpoint),
+            "lora_checkpoint": None if args.disable_lora else str(args.lora_checkpoint),
+            "model_variant": "finetuned_dit" if args.disable_lora else "finetuned_dit_plus_lora",
             "device": str(args.device),
             "height": int(args.height),
             "width": int(args.width),
@@ -362,7 +437,19 @@ def main() -> None:
             "guidance_scale": float(args.guidance_scale),
             "seed": int(args.seed),
         }
-        _write_json(dataset_output_root / "batch_manifest.json", manifest)
+        shard_suffix = (
+            "" if args.shard_count == 1 else f".shard-{args.shard_index:02d}-of-{args.shard_count:02d}"
+        )
+        run_tag = "finetuned-dit-no-lora" if args.disable_lora else "finetuned-dit-plus-lora"
+        manifest_name = (
+            "batch_manifest.json"
+            if not args.disable_lora and args.shard_count == 1
+            else f"batch_manifest.{run_tag}{shard_suffix}.json"
+        )
+        _write_json(
+            dataset_output_root / manifest_name,
+            manifest,
+        )
 
         method_entries: dict[str, list[dict]] = defaultdict(list)
         num_success = 0
@@ -391,7 +478,7 @@ def main() -> None:
 
         for method_name, entries in method_entries.items():
             _write_json(
-                dataset_output_root / method_name / "result.json",
+                dataset_output_root / method_name / f"result{shard_suffix}.json",
                 {
                     "dataset": dataset_name,
                     "method": method_name,
@@ -401,8 +488,13 @@ def main() -> None:
                 },
             )
 
+        summary_name = (
+            "summary.json"
+            if not args.disable_lora and args.shard_count == 1
+            else f"summary.{run_tag}{shard_suffix}.json"
+        )
         _write_json(
-            dataset_output_root / "summary.json",
+            dataset_output_root / summary_name,
             {
                 "dataset": dataset_name,
                 "input_json_list_path": str(list_path),

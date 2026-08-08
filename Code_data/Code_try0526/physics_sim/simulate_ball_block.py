@@ -43,6 +43,8 @@ class Scenario:
     restitution: float
     lateral_friction: float
     ball_mass: float
+    ball_velocity: tuple[float, float, float] = (3.5, 0.0, 1.8)
+    ball_start_x: float = -1.0
 
 
 SCENARIOS = [
@@ -347,7 +349,9 @@ def run_scenario(
     block_h = (0.25, 0.20, 0.30)
 
     col_b = p.createCollisionShape(p.GEOM_SPHERE, radius=ball_r)
-    ball_id = p.createMultiBody(sc.ball_mass, col_b, basePosition=(-1.0, 0.0, ball_z))
+    ball_id = p.createMultiBody(
+        sc.ball_mass, col_b, basePosition=(sc.ball_start_x, 0.0, ball_z)
+    )
     col_bk = p.createCollisionShape(p.GEOM_BOX, halfExtents=block_h)
     block_id = p.createMultiBody(1.5, col_bk, basePosition=(0.3, 0.0, block_h[2]))
 
@@ -358,7 +362,7 @@ def run_scenario(
                      lateralFriction=sc.lateral_friction,
                      spinningFriction=0.008, linearDamping=0.06, angularDamping=0.06,
                      activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING)
-    p.resetBaseVelocity(ball_id, linearVelocity=[3.5, 0.0, 1.8])
+    p.resetBaseVelocity(ball_id, linearVelocity=sc.ball_velocity)
 
     for _ in range(10):
         p.stepSimulation()
@@ -441,8 +445,8 @@ def run_scenario(
         },
         "initial_conditions": {
             "ball_radius_m": ball_r,
-            "ball_start_xyz": [-1.0, 0.0, ball_z],
-            "ball_velocity_ms": [3.5, 0.0, 1.8],
+            "ball_start_xyz": [sc.ball_start_x, 0.0, ball_z],
+            "ball_velocity_ms": list(sc.ball_velocity),
             "block_half_extents_m": list(block_h),
             "block_start_xyz": [0.3, 0.0, block_h[2]],
             "gravity_ms2": [0, 0, -9.81],

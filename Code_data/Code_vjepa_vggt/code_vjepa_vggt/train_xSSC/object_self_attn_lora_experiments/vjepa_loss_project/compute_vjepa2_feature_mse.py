@@ -25,7 +25,7 @@ import torch.nn.functional as F
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
-VJEPA2_DIR = PROJECT_DIR / "vjepa2"
+VJEPA2_DIR = Path("/home/gaoya/Code_Video/vjepa2_tinyvae_mse/vjepa2")
 DEFAULT_VIZ_BASE = Path(
     "/data/gaoya/agent-data/checkpoints/xssc_viz/full_sa_no_object_gpu27_formal"
 )

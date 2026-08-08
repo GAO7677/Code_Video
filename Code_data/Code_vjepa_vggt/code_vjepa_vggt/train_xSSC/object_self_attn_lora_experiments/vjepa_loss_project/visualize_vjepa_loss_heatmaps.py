@@ -28,6 +28,7 @@ from decord import VideoReader, cpu
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+EXPERIMENT_ROOT = SCRIPT_DIR.parent
 PROJECT_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt")
 TRAIN_XSSC_DIR = PROJECT_ROOT / "code_vjepa_vggt/train_xSSC"
 DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main")
@@ -55,7 +56,13 @@ DEFAULT_COMPARISON_PAGE = "comparison_step03463.html"
 FLOW_WEIGHTED_VJEPA_ALPHA = 2.0
 FLOW_WEIGHTED_VJEPA_FLOW_QUANTILE = 0.995
 
-for _path in (PROJECT_ROOT, TRAIN_XSSC_DIR, DIFFSYNTH_ROOT, SCRIPT_DIR):
+for _path in (
+    PROJECT_ROOT,
+    TRAIN_XSSC_DIR,
+    DIFFSYNTH_ROOT,
+    EXPERIMENT_ROOT,
+    SCRIPT_DIR,
+):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
@@ -65,8 +72,8 @@ import code_vjepa_vggt.context_wan_v_newtrain as context_flow
 from code_vjepa_vggt.data import pybullet0713_no_gt_box_dataset as pybullet_data
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8
 from code_vjepa_vggt.train_xSSC import visualize_training_xt_v_x0_dinov3 as vis_single
-from code_vjepa_vggt.train_xSSC.object_self_attn_lora_experiments import (
-    launch_from_config,
+from code_vjepa_vggt.train_xSSC.object_self_attn_lora_experiments import launch_from_config
+from code_vjepa_vggt.train_xSSC.object_self_attn_lora_experiments.vjepa_loss_project import (
     train_xssc_object_self_attn_lora_vjepa_loss as vjepa_train,
 )
 

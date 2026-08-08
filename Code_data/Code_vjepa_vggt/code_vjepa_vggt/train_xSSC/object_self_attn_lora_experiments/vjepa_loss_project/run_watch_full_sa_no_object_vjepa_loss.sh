@@ -3,7 +3,8 @@
 
 set -u -o pipefail
 
-ROOT="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${PROJECT_DIR}/.." && pwd)"
 PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 CONFIG="${CONFIG:-${ROOT}/xssc_lora_three_train_watch_config_with_t_head.json}"
 METHOD="${METHOD:-full_sa_no_object_vjepa_loss}"

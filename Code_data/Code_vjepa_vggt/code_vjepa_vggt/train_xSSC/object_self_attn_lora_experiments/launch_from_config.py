@@ -16,7 +16,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 TRAIN_SCRIPT = ROOT / "train_xssc_object_self_attn_lora.py"
-VJEPA_LOSS_TRAIN_SCRIPT = ROOT / "train_xssc_object_self_attn_lora_vjepa_loss.py"
+VJEPA_LOSS_TRAIN_SCRIPT = (
+    ROOT / "vjepa_loss_project/train_xssc_object_self_attn_lora_vjepa_loss.py"
+)
 OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT = ROOT / "train_official_xssc_object_only.py"
 VALID_MODES = {"object_only", "full_sa", "s_head", "t_head"}
 HEAD_SELECTIVE_MODES = {"s_head", "t_head"}

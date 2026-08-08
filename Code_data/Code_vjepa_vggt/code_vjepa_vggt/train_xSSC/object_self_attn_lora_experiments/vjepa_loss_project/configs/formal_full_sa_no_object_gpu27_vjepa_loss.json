@@ -1,5 +1,5 @@
 {
-  "extends": "formal_full_sa_no_object_gpu27.json",
+  "extends": "../../configs/formal_full_sa_no_object_gpu27.json",
   "experiment": {
     "name": "full_sa_no_object_gpu01_formal_vjepa_loss",
     "description": "Formal Full-SA GPU01 run with frozen Tiny-VAE/V-JEPA2.1 auxiliary feature MSE"

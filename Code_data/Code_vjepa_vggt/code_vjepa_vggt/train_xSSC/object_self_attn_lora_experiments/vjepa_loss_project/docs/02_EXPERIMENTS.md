@@ -2,7 +2,7 @@
 
 ## 1. 高噪声 x0 可视化
 
-入口：`run_train_from_config_with_viz.py`
+入口：`../run_train_from_config_with_viz.py`
 
 - 从最高 sigma 候选区间内均匀抽取 timestep，仅增加一次可视化 forward，不改变训练 loss。
 - 用 Tiny VAE 解码 `GT`、`x_t` 和 `pred_x0`。
@@ -13,7 +13,7 @@
 
 ## 2. 离线 V-JEPA2 特征 MSE 原型
 
-入口：`/home/gaoya/Code_Video/vjepa2_tinyvae_mse/compute_vjepa2_feature_mse.py`
+入口：`../compute_vjepa2_feature_mse.py`
 
 | 项目 | 值 |
 |---|---|
@@ -70,4 +70,3 @@
 - 单帧页、全帧页和汇总比较页。
 
 当前只确认局部差异可被稳定计算和展示，尚未建立热图变化与生成质量提升的因果关系。
-

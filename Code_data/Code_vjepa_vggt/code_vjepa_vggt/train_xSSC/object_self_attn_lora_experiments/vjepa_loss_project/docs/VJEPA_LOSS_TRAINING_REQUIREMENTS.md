@@ -56,8 +56,8 @@
 ## Foreground launch
 
 ```bash
-bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/run_train_from_config_vjepa_loss.sh \
-  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/configs/formal_full_sa_no_object_gpu27_vjepa_loss.json
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/vjepa_loss_project/run_train_from_config_vjepa_loss.sh \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/vjepa_loss_project/configs/formal_full_sa_no_object_gpu27_vjepa_loss.json
 ```
 
 Use `--dry-run` first if command/config validation is desired without starting
