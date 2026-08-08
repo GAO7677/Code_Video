@@ -24,8 +24,10 @@ from .wmreward_official import WMRewardRunner
 
 
 DATASET_DIR = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos/ball_block")
-OUTPUT_DIR = Path("/data/gaoya/agent-data/outputs/wmreward_ball_block_context_full150")
-CONTEXT_LENGTHS = (1, 5, 8, 10)
+OUTPUT_DIR = Path(
+    "/data/gaoya/agent-data/outputs/wmreward_ball_block_context_full150_corrected_v2"
+)
+CONTEXT_LENGTHS = (2, 4, 8, 10)
 BASELINE = "e07_mu05_m1"
 
 
@@ -132,6 +134,8 @@ def save_json(records: list[dict[str, Any]], path: Path, args: argparse.Namespac
         "window_size": args.window_size,
         "stride": args.stride,
         "context_lengths": args.context_frames,
+        "context_policy": "tubelet-aligned; context_frames divisible by tubelet_size",
+        "cosine_dim": -1,
         "records": records,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -161,6 +165,8 @@ def score_all(args: argparse.Namespace, videos: list[Path]) -> list[dict[str, An
         stride=args.stride,
         seed=args.seed,
         max_frames=args.max_frames,
+        cosine_dim=-1,
+        require_tubelet_aligned_context=True,
     )
     print(f"Pending scores: {len(pending)}", flush=True)
     for video_index, video_path in enumerate(videos, 1):
@@ -203,6 +209,10 @@ def write_csv(records: list[dict[str, Any]], output_path: Path) -> None:
         "video_stem",
         "group",
         "context_frames",
+        "effective_context_frames",
+        "context_tubelets",
+        "tubelet_size",
+        "cosine_dim",
         "surprise",
         "similarity",
         "video_frames_loaded",
@@ -343,7 +353,7 @@ def write_dashboard(
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WMReward context audit</title><style>
 :root{{--ink:#19352f;--paper:#f1ecdf;--card:#fffdf7;--accent:#c4512d;--line:#d8d0bf}}*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at 88% 3%,#cedbc9 0,transparent 28%),var(--paper);color:var(--ink);font-family:Georgia,'Times New Roman',serif}}main{{width:min(1540px,95vw);margin:auto;padding:48px 0 80px}}.eyebrow{{font:700 12px sans-serif;letter-spacing:.18em;text-transform:uppercase;color:var(--accent)}}h1{{font-size:clamp(42px,6vw,82px);line-height:.94;margin:12px 0 20px;max-width:1100px}}.intro{{max-width:980px;font-size:18px;line-height:1.6}}.notice{{margin:25px 0;padding:17px 20px;background:#fff6e6;border-left:5px solid var(--accent);font:14px/1.55 sans-serif}}.actions{{display:flex;gap:10px;margin:22px 0}}button{{border:1px solid var(--ink);background:transparent;color:var(--ink);padding:9px 13px;font-weight:700;cursor:pointer}}button:hover{{background:var(--ink);color:white}}.plot{{width:100%;display:block;margin:25px 0;border:1px solid var(--line);background:white}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;margin-top:35px}}.card{{min-width:0;background:var(--card);border:1px solid var(--line);padding:18px;box-shadow:0 10px 30px #19352f12}}.card-head{{display:flex;justify-content:space-between;align-items:center;gap:10px}}.card-head span{{font:700 10px sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}}h2{{margin:4px 0 12px;font-size:22px;overflow-wrap:anywhere}}video{{width:100%;aspect-ratio:16/9;background:#111}}.card p,table,figcaption{{font:13px/1.45 sans-serif}}table{{width:100%;border-collapse:collapse;margin:12px 0}}th,td{{padding:7px;border-bottom:1px solid #e5dfd2;text-align:left}}.contexts{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}figure{{margin:0;min-width:0}}figure img{{width:100%;display:block;border:1px solid var(--line)}}figcaption{{padding:5px 0;color:#63726c}}@media(max-width:900px){{.grid,.contexts{{grid-template-columns:1fr}}main{{padding-top:30px}}}}
-</style></head><body><main><div class="eyebrow">WMReward / context-length audit</div><h1>How much context makes motion predictable?</h1><p class="intro">Thirty complete 150-frame ball-block videos are scored with causal context lengths 1, 5, 8, and 10. Every setting uses the same ViT-G/384 model, 16-frame window, stride 8, and seed 42.</p><div class="notice"><strong>Metric:</strong> surprise is the V-JEPA future-prediction loss and lower is more predictable; similarity is 1-surprise. Context is an internal causal mask within every sliding window, while the candidate input remains the complete video.</div><div class="actions"><button onclick="location.reload()">Manual refresh</button><button onclick="document.querySelectorAll('video').forEach(v=>{{v.currentTime=0;v.play()}})">Replay all</button><a href="wmreward_scores.csv"><button>Download CSV</button></a><a href="wmreward_scores.json"><button>Download JSON</button></a></div><img class="plot" src="plots/distributions.png" alt="score distributions"><img class="plot" src="plots/context_curves.png" alt="context curves"><img class="plot" src="plots/score_heatmap.png" alt="score heatmap"><div class="grid">{''.join(cards)}</div></main></body></html>"""
+</style></head><body><main><div class="eyebrow">WMReward / corrected context-length audit</div><h1>How much context makes motion predictable?</h1><p class="intro">Thirty complete 150-frame ball-block videos are scored with tubelet-aligned causal context lengths 2, 4, 8, and 10. Every setting uses the same ViT-G/384 model, 16-frame window, stride 8, seed 42, and per-token feature cosine on dim=-1.</p><div class="notice"><strong>Metric:</strong> surprise is the V-JEPA future-prediction loss and lower is more predictable; similarity is 1-surprise. Context is an internal causal mask within every sliding window. Increasing context also shortens the predicted future, so this is a joint context/horizon comparison rather than an isolated causal effect of context length.</div><div class="actions"><button onclick="location.reload()">Manual refresh</button><button onclick="document.querySelectorAll('video').forEach(v=>{{v.currentTime=0;v.play()}})">Replay all</button><a href="wmreward_scores.csv"><button>Download CSV</button></a><a href="wmreward_scores.json"><button>Download JSON</button></a></div><img class="plot" src="plots/distributions.png" alt="score distributions"><img class="plot" src="plots/context_curves.png" alt="context curves"><img class="plot" src="plots/score_heatmap.png" alt="score heatmap"><div class="grid">{''.join(cards)}</div></main></body></html>"""
     (args.output_dir / "index.html").write_text(page, encoding="utf-8")
 
 
@@ -360,11 +370,48 @@ def print_summary(records: list[dict[str, Any]], contexts: list[int]) -> None:
         )
 
 
+def write_statistical_summary(
+    records: list[dict[str, Any]], contexts: list[int], output_path: Path
+) -> None:
+    summaries = []
+    for context in contexts:
+        values = np.asarray(
+            [item["surprise"] for item in records if int(item["context_frames"]) == context],
+            dtype=np.float64,
+        )
+        sample_sd = float(values.std(ddof=1))
+        half_width = 1.959963984540054 * sample_sd / math.sqrt(len(values))
+        summaries.append(
+            {
+                "context_frames": context,
+                "n_videos": int(len(values)),
+                "mean_surprise": float(values.mean()),
+                "sample_sd": sample_sd,
+                "normal_approx_ci95": [
+                    float(values.mean() - half_width),
+                    float(values.mean() + half_width),
+                ],
+                "predicted_future_frames": int(16 - context),
+            }
+        )
+    payload = {
+        "unit": "video-level aggregate over 17 overlapping windows",
+        "ci_note": "95% normal-approximation interval across the 30 deterministic videos",
+        "causal_limit": "context length and predicted future horizon change together",
+        "summaries": summaries,
+    }
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def main() -> None:
     args = parse_args()
     args.context_frames = sorted(set(args.context_frames))
     if any(context <= 0 or context >= args.window_size for context in args.context_frames):
         raise ValueError("Every context length must be between 1 and window_size-1")
+    if any(context % 2 for context in args.context_frames):
+        raise ValueError("Every context length must align to the ViT-G tubelet_size=2")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "plots").mkdir(exist_ok=True)
     videos = sorted(args.dataset_dir.glob("*.mp4"))
@@ -389,6 +436,7 @@ def main() -> None:
     if len(records) != expected:
         raise RuntimeError(f"Expected {expected} score records, got {len(records)}")
     write_csv(records, args.output_dir / "wmreward_scores.csv")
+    write_statistical_summary(records, args.context_frames, args.output_dir / "summary.json")
     plot_distributions(records, args.output_dir / "plots" / "distributions.png", args.context_frames)
     plot_curves(records, args.output_dir / "plots" / "context_curves.png", args.context_frames)
     plot_heatmap(records, args.output_dir / "plots" / "score_heatmap.png", args.context_frames)

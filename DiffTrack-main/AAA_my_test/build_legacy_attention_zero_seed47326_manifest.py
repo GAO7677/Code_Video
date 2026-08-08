@@ -22,6 +22,7 @@ VISUAL_ROOT = Path(
 )
 OUTPUT_ROOT = VISUAL_ROOT / "attention_zero_seed47326"
 MANIFEST_PATH = OUTPUT_ROOT / "cases.json"
+MATRIX_ABLATION_ROOT = OUTPUT_ROOT / "attention_matrix_ablations_v2"
 OLD_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_pck50"
 )
@@ -114,6 +115,7 @@ def main() -> None:
                 "baseline_video": str(baseline),
                 "query_cache_dir": str(cache_root / case),
                 "ablation_root": str(OUTPUT_ROOT / "ablations"),
+                "matrix_ablation_root": str(MATRIX_ABLATION_ROOT),
                 "sample_group": "requested_seed47326",
                 "regions": [region_metadata(region) for region, _ in query_regions],
                 "matrices": matrices,

@@ -23,8 +23,10 @@ from .wmreward_official import WMRewardRunner
 
 
 DATASET_DIR = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos/ball_block")
-RESULT_ROOT = Path("/data/gaoya/agent-data/outputs/wmreward_ball_block_context_full150")
-CONTEXT_LENGTHS = (1, 5, 8, 10)
+RESULT_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/wmreward_ball_block_context_full150_corrected_v2"
+)
+CONTEXT_LENGTHS = (2, 4, 8, 10)
 SHUFFLE_SEED = 20260808
 
 
@@ -59,6 +61,8 @@ def save_results(records: list[dict[str, Any]], path: Path, args: argparse.Names
         "max_frames": args.max_frames,
         "window_size": args.window_size,
         "stride": args.stride,
+        "context_policy": "tubelet-aligned; context_frames divisible by tubelet_size",
+        "cosine_dim": -1,
         "records": records,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -156,6 +160,8 @@ def score_shuffled(
         stride=args.stride,
         seed=args.seed,
         max_frames=args.max_frames,
+        cosine_dim=-1,
+        require_tubelet_aligned_context=True,
     )
     for video_index, video in enumerate(videos, 1):
         missing = [context for context in args.context_frames if (video.stem, context) not in completed]
@@ -188,6 +194,10 @@ def score_shuffled(
                 "original_similarity": float(original["similarity"]),
                 "shuffled_similarity": float(shuffled["similarity"]),
                 "video_frames_loaded": int(shuffled["video_frames_loaded"]),
+                "effective_context_frames": int(shuffled["effective_context_frames"]),
+                "context_tubelets": int(shuffled["context_tubelets"]),
+                "tubelet_size": int(shuffled["tubelet_size"]),
+                "cosine_dim": int(shuffled["cosine_dim"]),
                 "windows": 1 + (args.max_frames - args.window_size) // args.stride,
                 "shuffle_seed": args.shuffle_seed,
             }
@@ -204,7 +214,8 @@ def write_csv(records: list[dict[str, Any]], output_path: Path) -> None:
     fields = (
         "video_stem", "group", "context_frames", "original_surprise", "shuffled_surprise",
         "surprise_delta", "surprise_ratio", "original_similarity", "shuffled_similarity",
-        "video_frames_loaded", "windows", "shuffle_seed", "video",
+        "video_frames_loaded", "effective_context_frames", "context_tubelets",
+        "tubelet_size", "cosine_dim", "windows", "shuffle_seed", "video",
     )
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
@@ -296,7 +307,7 @@ def write_dashboard(records: list[dict[str, Any]], videos: list[Path], args: arg
         )
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WMReward future shuffle</title><style>
 :root{{--ink:#19352f;--paper:#f1ecdf;--card:#fffdf7;--accent:#c4512d;--line:#d8d0bf}}*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at 88% 3%,#cedbc9 0,transparent 28%),var(--paper);color:var(--ink);font-family:Georgia,'Times New Roman',serif}}main{{width:min(1540px,95vw);margin:auto;padding:48px 0 80px}}.eyebrow{{font:700 12px sans-serif;letter-spacing:.18em;text-transform:uppercase;color:var(--accent)}}h1{{font-size:clamp(42px,6vw,80px);line-height:.95;margin:12px 0 20px;max-width:1100px}}.intro{{max-width:1000px;font-size:18px;line-height:1.6}}.notice{{margin:24px 0;padding:17px 20px;background:#fff6e6;border-left:5px solid var(--accent);font:14px/1.55 sans-serif}}.actions{{display:flex;gap:10px;flex-wrap:wrap;margin:22px 0}}button,.button{{border:1px solid var(--ink);background:transparent;color:var(--ink);padding:9px 13px;font:700 13px sans-serif;text-decoration:none;cursor:pointer}}.plot{{display:block;width:100%;margin:24px 0;background:white;border:1px solid var(--line)}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;margin-top:34px}}.card{{min-width:0;background:var(--card);border:1px solid var(--line);padding:18px}}.head{{display:flex;justify-content:space-between;gap:10px;align-items:center}}h2{{font-size:21px;overflow-wrap:anywhere}}video{{width:100%;aspect-ratio:16/9;background:#111}}table{{width:100%;border-collapse:collapse;margin:12px 0;font:12px sans-serif}}th,td{{padding:7px;border-bottom:1px solid #e4ddcf;text-align:left}}.sheets{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}figure{{margin:0;min-width:0}}figure img{{display:block;width:100%;border:1px solid var(--line)}}figcaption{{padding:5px 0;font:12px sans-serif;color:#66736d}}@media(max-width:900px){{.grid,.sheets{{grid-template-columns:1fr}}}}
-</style></head><body><main><div class="eyebrow">WMReward / temporal-order intervention</div><h1>Does future order matter?</h1><p class="intro">For every 16-frame window, the first N context frames remain fixed while only the future frames are independently permuted. Scores aggregate all 17 windows from each complete 150-frame video.</p><div class="notice"><strong>Paired comparison:</strong> positive delta means shuffling made prediction more surprising. Overlapping windows are shuffled independently, so the intervention is a window-level diagnostic rather than one globally coherent shuffled MP4.</div><div class="actions"><button onclick="location.reload()">Manual refresh</button><button onclick="document.querySelectorAll('video').forEach(v=>{{v.currentTime=0;v.play()}})">Replay all</button><a class="button" href="index.html">Original context audit</a><a class="button" href="future_shuffle/future_shuffle_scores.csv">CSV</a><a class="button" href="future_shuffle/future_shuffle_scores.json">JSON</a></div><img class="plot" src="future_shuffle/plots/paired_delta.png" alt="paired deltas"><img class="plot" src="future_shuffle/plots/original_vs_shuffled.png" alt="paired scatter"><img class="plot" src="future_shuffle/plots/delta_heatmap.png" alt="delta heatmap"><div class="grid">{''.join(cards)}</div></main></body></html>"""
+</style></head><body><main><div class="eyebrow">WMReward / corrected temporal-order intervention</div><h1>Does future order matter?</h1><p class="intro">For every 16-frame window, the first N tubelet-aligned context frames remain fixed while only the future frames are independently permuted. Scores use per-token feature cosine on dim=-1 and aggregate all 17 windows from each complete 150-frame video.</p><div class="notice"><strong>Paired comparison:</strong> positive delta means shuffling made prediction more surprising. Overlapping windows are shuffled independently, so the intervention is a window-level diagnostic rather than one globally coherent shuffled MP4. Mean effect size and directional consistency are reported separately; no unsupported significance claim is made.</div><div class="actions"><button onclick="location.reload()">Manual refresh</button><button onclick="document.querySelectorAll('video').forEach(v=>{{v.currentTime=0;v.play()}})">Replay all</button><a class="button" href="index.html">Original context audit</a><a class="button" href="future_shuffle/future_shuffle_scores.csv">CSV</a><a class="button" href="future_shuffle/future_shuffle_scores.json">JSON</a></div><img class="plot" src="future_shuffle/plots/paired_delta.png" alt="paired deltas"><img class="plot" src="future_shuffle/plots/original_vs_shuffled.png" alt="paired scatter"><img class="plot" src="future_shuffle/plots/delta_heatmap.png" alt="delta heatmap"><div class="grid">{''.join(cards)}</div></main></body></html>"""
     (args.result_root / "future_shuffle.html").write_text(page, encoding="utf-8")
 
 
@@ -314,9 +325,48 @@ def print_summary(records: list[dict[str, Any]], contexts: list[int]) -> None:
         )
 
 
+def write_statistical_summary(
+    records: list[dict[str, Any]], contexts: list[int], output_path: Path
+) -> None:
+    summaries = []
+    for context in contexts:
+        subset = [item for item in records if item["context_frames"] == context]
+        delta = np.asarray([item["surprise_delta"] for item in subset], dtype=np.float64)
+        sample_sd = float(delta.std(ddof=1))
+        half_width = 1.959963984540054 * sample_sd / math.sqrt(len(delta))
+        summaries.append(
+            {
+                "context_frames": context,
+                "n_video_pairs": int(len(delta)),
+                "mean_paired_delta": float(delta.mean()),
+                "sample_sd_paired_delta": sample_sd,
+                "normal_approx_ci95": [
+                    float(delta.mean() - half_width),
+                    float(delta.mean() + half_width),
+                ],
+                "positive": int(np.sum(delta > 0)),
+                "negative": int(np.sum(delta < 0)),
+                "zero": int(np.sum(delta == 0)),
+            }
+        )
+    payload = {
+        "unit": "paired video-level aggregate over 17 overlapping windows",
+        "ci_note": "95% normal-approximation interval across the 30 deterministic video pairs",
+        "inference_limit": "controlled variants are not independent stochastic replications",
+        "summaries": summaries,
+    }
+    output_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def main() -> None:
     args = parse_args()
     args.context_frames = sorted(set(args.context_frames))
+    if any(context <= 0 or context >= args.window_size for context in args.context_frames):
+        raise ValueError("Every context length must be between 1 and window_size-1")
+    if any(context % 2 for context in args.context_frames):
+        raise ValueError("Every context length must align to the ViT-G tubelet_size=2")
     output_dir = args.result_root / "future_shuffle"
     (output_dir / "plots").mkdir(parents=True, exist_ok=True)
     videos = sorted(args.dataset_dir.glob("*.mp4"))
@@ -329,6 +379,7 @@ def main() -> None:
     if len(records) != len(expected_keys):
         raise RuntimeError(f"Expected {len(expected_keys)} shuffled scores, got {len(records)}")
     write_csv(records, output_dir / "future_shuffle_scores.csv")
+    write_statistical_summary(records, args.context_frames, output_dir / "summary.json")
     plot_delta(records, output_dir / "plots" / "paired_delta.png", args.context_frames)
     plot_scatter(records, output_dir / "plots" / "original_vs_shuffled.png", args.context_frames)
     plot_heatmap(records, output_dir / "plots" / "delta_heatmap.png", args.context_frames)

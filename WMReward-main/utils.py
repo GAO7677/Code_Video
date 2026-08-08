@@ -725,7 +725,8 @@ def compute_vjepa_loss_sliding_window(video_tensor, encoder, target_encoder, pre
                                           spatial_pred_mask_scale=None, temporal_pred_mask_scale=None,
                                           aspect_ratio=None, npred=None, max_context_frames_ratio=None,
                                           is_vae_output=True, seed=42, stride=2, mode='mean',
-                                          shuffle_future=False, shuffle_seed=20260808):
+                                          shuffle_future=False, shuffle_seed=20260808,
+                                          cosine_dim=1):
     """
     Compute V-JEPA training-matched loss from a video tensor using sliding windows.
     Breaks 49-frame video into sub-chunks of 16 frames with sliding window approach.
@@ -750,6 +751,8 @@ def compute_vjepa_loss_sliding_window(video_tensor, encoder, target_encoder, pre
         seed (int): Random seed for reproducible masking
         stride (int): Stride for sliding window (default: 2)
         mode (str): How to aggregate losses from chunks - 'mean', 'max' (default: 'mean')
+        cosine_dim (int): Cosine axis. Use -1 for per-token feature cosine; the
+            upstream-compatible default 1 computes cosine across target tokens.
 
     Returns:
         torch.Tensor: V-JEPA training loss
@@ -863,7 +866,7 @@ def compute_vjepa_loss_sliding_window(video_tensor, encoder, target_encoder, pre
 
         def loss_fn(z, h):
             h = apply_masks(h, masks_pred, concat=False)
-            loss = 1 - F.cosine_similarity(z, h[0], dim=1).mean()
+            loss = 1 - F.cosine_similarity(z, h[0], dim=cosine_dim).mean()
             return loss
 
         # Compute features and loss for this chunk
@@ -887,3 +890,109 @@ def compute_vjepa_loss_sliding_window(video_tensor, encoder, target_encoder, pre
     print(f"aggregated loss ({mode}): {loss.item()} similarity: {1 - loss.item():.6f}")
 
     return loss
+
+
+def compute_vjepa_spatial_surprise_sliding_window(
+        video_tensor, encoder, target_encoder, predictor,
+        img_size=384, window_size=16, context_frames=8,
+        is_vae_output=True, seed=42, stride=8,
+        shuffle_future=False, shuffle_seed=20260808):
+    """Return a spatial map of per-predicted-token feature cosine surprise."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_dtype = next(encoder.parameters()).dtype
+    video_tensor = video_tensor.to(device=device, dtype=model_dtype)
+    transform = build_pt_video_transform(img_size)
+
+    if video_tensor.dim() == 4:
+        video_tensor = video_tensor.unsqueeze(0)
+    if is_vae_output:
+        video_255 = (video_tensor + 1.0) * 127.5
+    else:
+        video_255 = video_tensor
+    processed = []
+    for batch_index in range(video_255.shape[0]):
+        video_tcthw = video_255[batch_index].permute(1, 0, 2, 3).to(device)
+        processed.append(transform(video_tcthw))
+    clips = torch.stack(processed, dim=0).to(model_dtype)
+
+    pieces = clips.unfold(2, window_size, stride).permute(0, 2, -1, 1, 3, 4).contiguous()
+    pieces = pieces.flatten(0, 1)
+    pieces = rearrange(pieces, "b t c h w -> b c t h w")
+    if shuffle_future:
+        future_count = window_size - context_frames
+        if future_count < 2:
+            raise ValueError("shuffle_future requires at least two future frames")
+        for piece_index in range(pieces.shape[0]):
+            rng = np.random.default_rng(int(shuffle_seed) + piece_index)
+            future_order = np.arange(context_frames, window_size)
+            rng.shuffle(future_order)
+            if np.array_equal(future_order, np.arange(context_frames, window_size)):
+                future_order = np.roll(future_order, 1)
+            order = np.concatenate([np.arange(context_frames), future_order])
+            pieces[piece_index] = pieces[piece_index].index_select(
+                1,
+                torch.as_tensor(order, device=pieces.device, dtype=torch.long),
+            )
+
+    patch_size = getattr(encoder.patch_embed, "patch_size", 16)
+    if isinstance(patch_size, (tuple, list)):
+        patch_height, patch_width = int(patch_size[-2]), int(patch_size[-1])
+    else:
+        patch_height = patch_width = int(patch_size)
+    grid_height = img_size // patch_height
+    grid_width = img_size // patch_width
+    spatial_tokens = grid_height * grid_width
+    spatial_sum = torch.zeros(spatial_tokens, device=device, dtype=torch.float32)
+    spatial_count = torch.zeros(spatial_tokens, device=device, dtype=torch.float32)
+
+    for chunk_id in range(pieces.shape[0]):
+        chunk = pieces[chunk_id:chunk_id + 1]
+        ctxt_positions, tgt_positions = generate_vjepa_masks(
+            masking_mode="causal",
+            batch_size=1,
+            img_size=img_size,
+            frames_per_clip=window_size,
+            encoder=encoder,
+            context_frames=context_frames,
+            mask_ratio=None,
+            device=device,
+            spatial_pred_mask_scale=None,
+            temporal_pred_mask_scale=None,
+            aspect_ratio=None,
+            npred=None,
+            max_context_frames_ratio=None,
+            seed=seed + chunk_id,
+        )
+        target_features = target_encoder(chunk)
+        target_features = torch.stack(
+            [F.layer_norm(features, (features.size(-1),)) for features in target_features]
+        )
+        context_features = encoder(chunk, ctxt_positions)
+        predicted_features = predictor(
+            context_features, ctxt_positions, tgt_positions
+        )
+        predicted_features = F.layer_norm(
+            predicted_features, (predicted_features.size(-1),)
+        )
+        masked_targets = apply_masks(
+            target_features, tgt_positions, concat=False
+        )[0]
+        token_surprise = 1.0 - F.cosine_similarity(
+            predicted_features, masked_targets, dim=-1
+        )
+        token_surprise = token_surprise.reshape(-1).float()
+        spatial_index = tgt_positions.reshape(-1).remainder(spatial_tokens)
+        if token_surprise.numel() != spatial_index.numel():
+            raise RuntimeError(
+                f"Predicted token count {token_surprise.numel()} does not match "
+                f"mask count {spatial_index.numel()}"
+            )
+        spatial_sum.scatter_add_(0, spatial_index, token_surprise)
+        spatial_count.scatter_add_(
+            0, spatial_index, torch.ones_like(token_surprise)
+        )
+
+    if torch.any(spatial_count == 0):
+        raise RuntimeError("Some spatial patches received no predicted tokens")
+    spatial_mean = spatial_sum / spatial_count
+    return spatial_mean.reshape(grid_height, grid_width).detach().cpu()

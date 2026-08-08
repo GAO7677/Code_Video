@@ -41,6 +41,8 @@ class WMRewardRunner:
         stride: int = 8,
         seed: int = 42,
         max_frames: int = 49,
+        cosine_dim: int = 1,
+        require_tubelet_aligned_context: bool = False,
     ) -> None:
         self.cuda_visible_devices = cuda_visible_devices
         self.model_name = model_name
@@ -49,11 +51,14 @@ class WMRewardRunner:
         self.stride = stride
         self.seed = seed
         self.max_frames = max_frames
+        self.cosine_dim = cosine_dim
+        self.require_tubelet_aligned_context = require_tubelet_aligned_context
 
         self._torch = None
         self._load_vjepa_models = None
         self._load_video_as_tensor = None
         self._compute_loss = None
+        self._compute_spatial_loss = None
         self._load_vjepa_models_local = None
         self._models: tuple[Any, Any, Any, int] | None = None
         self._device = None
@@ -124,12 +129,17 @@ class WMRewardRunner:
                 sys.path.insert(0, path)
 
         from compute_wmreward import load_video_as_tensor
-        from utils import compute_vjepa_loss_sliding_window, load_vjepa_model_source
+        from utils import (
+            compute_vjepa_loss_sliding_window,
+            compute_vjepa_spatial_surprise_sliding_window,
+            load_vjepa_model_source,
+        )
 
         self._load_vjepa_models = None
         self._load_vjepa_models_local = load_vjepa_model_source
         self._load_video_as_tensor = load_video_as_tensor
         self._compute_loss = compute_vjepa_loss_sliding_window
+        self._compute_spatial_loss = compute_vjepa_spatial_surprise_sliding_window
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def _load_models_once(self) -> tuple[Any, Any, Any, int]:
@@ -172,6 +182,24 @@ class WMRewardRunner:
             raise ValueError(
                 f"Video has {loaded_frames} frames, fewer than window_size={self.window_size}"
             )
+        tubelet_size = int(encoder.tubelet_size)
+        if self.window_size % tubelet_size:
+            raise ValueError(
+                f"window_size={self.window_size} is not divisible by tubelet_size={tubelet_size}"
+            )
+        if self.require_tubelet_aligned_context and active_context_frames % tubelet_size:
+            raise ValueError(
+                f"context_frames={active_context_frames} must be divisible by "
+                f"tubelet_size={tubelet_size}"
+            )
+        effective_context_frames = (
+            active_context_frames // tubelet_size
+        ) * tubelet_size
+        if effective_context_frames < tubelet_size:
+            raise ValueError(
+                f"context_frames={active_context_frames} produces no context tubelet "
+                f"for tubelet_size={tubelet_size}"
+            )
 
         with self._torch.no_grad():
             loss = self._compute_loss(
@@ -190,6 +218,7 @@ class WMRewardRunner:
                 mode="mean",
                 shuffle_future=shuffle_future,
                 shuffle_seed=shuffle_seed,
+                cosine_dim=self.cosine_dim,
             )
 
         surprise = float(loss.item())
@@ -201,6 +230,10 @@ class WMRewardRunner:
             "img_size": img_size,
             "window_size": self.window_size,
             "context_frames": active_context_frames,
+            "effective_context_frames": effective_context_frames,
+            "context_tubelets": effective_context_frames // tubelet_size,
+            "tubelet_size": tubelet_size,
+            "cosine_dim": self.cosine_dim,
             "stride": self.stride,
             "seed": self.seed,
             "video_frames_loaded": loaded_frames,
@@ -217,6 +250,32 @@ class WMRewardRunner:
     ) -> dict[str, Any]:
         video_tensor = self.load_video(video_path, max_frames=max_frames)
         return self.score_tensor(video_tensor, context_frames=context_frames)
+
+    def spatial_score_tensor(
+        self,
+        video_tensor: Any,
+        *,
+        context_frames: int | None = None,
+        shuffle_future: bool = False,
+        shuffle_seed: int = 20260808,
+    ) -> Any:
+        encoder, target_encoder, predictor, img_size = self._load_models_once()
+        active_context_frames = self.context_frames if context_frames is None else context_frames
+        with self._torch.no_grad():
+            return self._compute_spatial_loss(
+                video_tensor=video_tensor,
+                encoder=encoder,
+                target_encoder=target_encoder,
+                predictor=predictor,
+                img_size=img_size,
+                window_size=self.window_size,
+                context_frames=active_context_frames,
+                is_vae_output=True,
+                seed=self.seed,
+                stride=self.stride,
+                shuffle_future=shuffle_future,
+                shuffle_seed=shuffle_seed,
+            ).numpy()
 
     def score_case(self, case: EvalCase | Path | str | dict[str, Any]) -> dict[str, Any]:
         normalized = coerce_eval_case(case)

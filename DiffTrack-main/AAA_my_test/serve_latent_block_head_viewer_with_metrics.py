@@ -1205,12 +1205,13 @@ class MetricsHandler(viewer.Handler):
             asset = wan22_ti2v_legacy_physiciq67_ablation_video(
                 params.get("case", [""])[0],
                 params.get("seed", [""])[0],
-                params.get("mode", [""])[0],
+                params.get("target_scope", [""])[0],
+                params.get("mask_mode", [""])[0],
                 params.get("top_n", [""])[0],
                 params.get("region", [""])[0],
             )
             if asset is None or not asset.is_file():
-                raise FileNotFoundError("PhysicIQ67 attention-zero video is not ready")
+                raise FileNotFoundError("PhysicIQ67 attention-matrix video is not ready")
             viewer.send_file_with_range(self, asset, "video/mp4")
             return
         if path == "/api/wan22-ti2v-legacy-test5/catalog":
@@ -1540,6 +1541,9 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_MANIFEST = (
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "attention_zero_ablations"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_ROOT = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "attention_matrix_ablations_v2"
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_ROOT / "attention_zero_seed47326"
@@ -2251,41 +2255,76 @@ def wan22_ti2v_legacy_physiciq67_visual_manifest():
         return {"ready": False, "reason": str(exc), "samples": [], "entries": []}
 
 
+WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_MASKS = (
+    "self_only",
+    "incoming_only",
+    "outgoing_only",
+    "query_row",
+    "key_value_column",
+    "cross_boundary",
+    "row_and_column",
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_ALL_TOKEN_CONTROLS = (
+    "qk_logits_zero",
+    "full_head_output",
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_PROTOCOL = "attention_matrix_ablation_v2"
+
+
 def _wan22_ti2v_legacy_physiciq67_ablation_variant(
-    mode: str, top_n: int, region: str = ""
+    target_scope: str, mask_mode: str, top_n: int, region: str = ""
 ):
     if top_n not in {30, 50, 100}:
         return None
-    if mode == "single_object":
+    if mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_ALL_TOKEN_CONTROLS:
+        if target_scope != "all_tokens":
+            return None
+        return f"{mask_mode}__all_tokens__top{top_n:03d}"
+    if mask_mode not in WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_MASKS + (
+        "literal_kv_zero",
+    ):
+        return None
+    if target_scope == "single_object":
         if not region:
             return None
         target = region
-    elif mode == "all_objects":
+    elif target_scope == "all_objects":
         target = "all_objects"
-    elif mode == "full_qk":
-        target = "all_queries"
     else:
         return None
-    return f"{mode}__{target}__top{top_n:03d}"
+    return f"{target_scope}__{target}__{mask_mode}__top{top_n:03d}"
 
 
 def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[dict]):
     case, seed = str(sample["case"]), int(sample["seed"])
     ablation_root = Path(
-        str(sample.get("ablation_root") or WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT)
+        str(
+            sample.get("matrix_ablation_root")
+            or WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_ROOT
+        )
     )
     regions = [
         str(row["region_name"])
         for row in sample.get("regions", [])
         if row.get("region_type") == "object"
     ]
-    specs = [("single_object", region) for region in regions]
-    specs.extend((("all_objects", ""), ("full_qk", "")))
+    targets = [("single_object", region) for region in regions]
+    targets.append(("all_objects", ""))
+    specs = [
+        (target_scope, region, mask_mode)
+        for target_scope, region in targets
+        for mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_MASKS
+        + ("literal_kv_zero",)
+    ]
+    specs.extend(
+        ("all_tokens", "", mask_mode)
+        for mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_ALL_TOKEN_CONTROLS
+    )
     records = []
-    for mode, region in specs:
+    for target_scope, region, mask_mode in specs:
         for top_n in (30, 50, 100):
             variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(
-                mode, top_n, region
+                target_scope, mask_mode, top_n, region
             )
             root = (
                 ablation_root
@@ -2303,18 +2342,20 @@ def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[d
                     ready = (
                         metadata.get("case") == case
                         and int(metadata.get("seed", -1)) == seed
-                        and metadata.get("mode") == mode
+                        and metadata.get("target_scope") == target_scope
+                        and metadata.get("mask_mode") == mask_mode
                         and int(metadata.get("top_n", -1)) == top_n
                         and str(metadata.get("region") or "") == region
                         and metadata.get("selected_entries") == entries[:top_n]
                         and metadata.get("protocol")
-                        == "post_softmax_attention_rows_zero_without_renormalization"
+                        == WAN22_TI2V_LEGACY_PHYSICIQ67_PROTOCOL
                     )
                 except (OSError, ValueError, TypeError, json.JSONDecodeError):
                     ready = False
             records.append(
                 {
-                    "mode": mode,
+                    "target_scope": target_scope,
+                    "mask_mode": mask_mode,
                     "region": region or None,
                     "top_n": top_n,
                     "variant_id": variant,
@@ -2377,7 +2418,7 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
             except (OSError, json.JSONDecodeError):
                 attention_matches_snapshot = False
         sample["attention_ready"] = attention_files_ready and attention_matches_snapshot
-        sample["attention_zero_ablations"] = (
+        sample["attention_matrix_ablations"] = (
             _wan22_ti2v_legacy_physiciq67_ablation_records(
                 sample, payload.get("entries", [])
             )
@@ -2386,7 +2427,7 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
     ablation_records = [
         record
         for sample in samples
-        for record in sample["attention_zero_ablations"]
+        for record in sample["attention_matrix_ablations"]
     ]
     return {
         **payload,
@@ -2436,7 +2477,12 @@ def wan22_ti2v_legacy_physiciq67_visual_video(case: str, seed: str):
 
 
 def wan22_ti2v_legacy_physiciq67_ablation_video(
-    case: str, seed: str, mode: str, top_n: str, region: str
+    case: str,
+    seed: str,
+    target_scope: str,
+    mask_mode: str,
+    top_n: str,
+    region: str,
 ):
     sample = _wan22_ti2v_legacy_physiciq67_sample(case, seed)
     if sample is None:
@@ -2450,18 +2496,20 @@ def wan22_ti2v_legacy_physiciq67_ablation_video(
         for row in sample.get("regions", [])
         if row.get("region_type") == "object"
     }
-    if mode == "single_object" and region not in object_regions:
+    if target_scope == "single_object" and region not in object_regions:
         return None
-    if mode != "single_object":
+    if target_scope != "single_object":
         region = ""
-    variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(mode, count, region)
+    variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(
+        target_scope, mask_mode, count, region
+    )
     if variant is None:
         return None
     return (
         Path(
             str(
-                sample.get("ablation_root")
-                or WAN22_TI2V_LEGACY_PHYSICIQ67_ZERO_ROOT
+                sample.get("matrix_ablation_root")
+                or WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_ROOT
             )
         )
         / case
@@ -2582,7 +2630,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     page = page.replace('<label>S039 Head <select id="rank"></select></label>', "")
     page = page.replace(
         '<section class="media"><div id="media" class="media-grid"></div></section><section class="performance"><h2>单 Run · 30 × 24 Head Matrix</h2>',
-        '<section class="media"><h2>Generated Video & Object Query</h2><div id="media" class="media-grid base-media"></div></section><section class="media"><h2>S039 Top-N Head Mean Attention Overlay</h2><div id="means" class="media-grid"></div></section><section class="ablation"><h2>Post-softmax Attention Response Zero Ablations</h2><p>冻结 S039 Top30/50/100 physical heads；全部 40 denoising steps、conditional + unconditional；置零后不重新归一化。</p><div id="ablation"></div></section><details class="performance"><summary>单 Run · 30 × 24 Head Matrix（点击展开）</summary>',
+        '<section class="media"><h2>Generated Video & Object Query</h2><div id="media" class="media-grid base-media"></div></section><section class="media"><h2>S039 Top-N Head Mean Attention Overlay</h2><div id="means" class="media-grid"></div></section><section class="ablation"><h2>完整 Attention Matrix Ablation</h2><p>R 是 F00 稀疏 object-query token，C 是其余 token。每个对象及所有对象并集分别展示 7 种 S/I/O 矩阵区域消融、literal K/V=0 对照和整-head 输出置零控制；冻结 S039 Top30/50/100 heads，应用全部 40 个去噪步及两个 CFG 分支。</p><div id="ablation"></div></section><details class="performance"><summary>单 Run · 30 × 24 Head Matrix（点击展开）</summary>',
     )
     page = page.replace(
         '<div id="matrix" class="performance-heat"></div></div></section><section class="ranking"><h2>捕获时的 provisional S039 Top10</h2>',
@@ -2617,7 +2665,15 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     page = page.replace(matrix_prefix, guarded_matrix_prefix)
     page = page.replace(
         "function render(){",
-        """function renderAblations(s,base){const records=s.attention_zero_ablations||[],objects=s.regions.filter(x=>x.region_type==='object').map(x=>x.region_name),rows=[...objects.map((region,i)=>({mode:'single_object',region,label:`01.${i+1} · ${region} only`,detail:'该 object query → all K'})),{mode:'all_objects',region:'',label:'02 · All Objects Together',detail:'所有 object query → all K'},{mode:'full_qk',region:'',label:'03 · Full Head Q@K',detail:'selected heads · all Q → all K'}],card=(spec,n)=>{const r=records.find(x=>x.mode===spec.mode&&String(x.region||'')===spec.region&&Number(x.top_n)===n),suffix=spec.region?`&region=${encodeURIComponent(spec.region)}`:'',src=`${api}/ablation-video?${base}&mode=${encodeURIComponent(spec.mode)}&top_n=${n}${suffix}`,media=r?.ready?`<video controls muted playsinline preload="metadata" src="${src}"></video>`:`<div class="pending">${r?.error?'生成失败':'待生成'}</div>`;return `<figure>${media}<figcaption>Top${n} · A=0 · no renorm</figcaption></figure>`},baseline=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Baseline unavailable</div>';$('ablation').innerHTML=`<div class="ablation-baseline"><figure>${baseline}<figcaption>Baseline · No Attention Intervention</figcaption></figure></div><div class="ablation-table">${rows.map(spec=>`<div class="ablation-row"><div class="ablation-label"><strong>${e(spec.label)}</strong><small>${e(spec.detail)}</small></div>${[30,50,100].map(n=>card(spec,n)).join('')}</div>`).join('')}</div>`}function render(){""",
+        """function renderAblations(s,base){const records=s.attention_matrix_ablations||[],region=$('region').value,masks=[['self_only','S · A[R,R]','selected queries 不读取 selected K/V'],['incoming_only','I · A[R,C]','只切断 unselected K/V → selected queries'],['outgoing_only','O · A[C,R]','只切断 selected K/V → unselected queries'],['query_row','S+I · A[R,:]','selected query rows 全部置零'],['key_value_column','S+O · A[:,R]','selected K/V columns 贡献置零，不重新归一化'],['cross_boundary','I+O · Cross boundary','切断双向跨边界连接，保留 A[R,R]'],['row_and_column','S+I+O · Row + column','selected rows 与 columns 联合消融'],['literal_kv_zero','Literal K_R=V_R=0','重新计算 softmax；与 post-softmax column zero 不等价']],targets=[['single_object',region,`Selected object · ${region}`],['all_objects','', 'All object-query tokens union']],rows=targets.flatMap(([target_scope,targetRegion,targetLabel])=>masks.map(([mask_mode,label,detail])=>({target_scope,mask_mode,region:targetRegion,label:`${targetLabel} · ${label}`,detail})));rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'Control · Full Head Output Zero',detail:'Y_h=A_hV_h 整个 head 输出置零；不是 QK logits=0'});const card=(spec,n)=>{const r=records.find(x=>x.target_scope===spec.target_scope&&x.mask_mode===spec.mask_mode&&String(x.region||'')===spec.region&&Number(x.top_n)===n),suffix=spec.region?`&region=${encodeURIComponent(spec.region)}`:'',src=`${api}/ablation-video?${base}&target_scope=${encodeURIComponent(spec.target_scope)}&mask_mode=${encodeURIComponent(spec.mask_mode)}&top_n=${n}${suffix}`,media=r?.ready?`<video controls muted playsinline preload="metadata" src="${src}"></video>`:`<div class="pending">${r?.error?'生成失败':'待生成'}</div>`,protocol=spec.mask_mode==='literal_kv_zero'?'literal K/V zero + softmax recompute':spec.mask_mode==='full_head_output'?'full A@V head output zero':'post-softmax block zero · no renorm';return `<figure>${media}<figcaption>Top${n} · ${protocol}</figcaption></figure>`},baseline=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Baseline unavailable</div>';$('ablation').innerHTML=`<div class="ablation-baseline"><figure>${baseline}<figcaption>Baseline · No Attention Intervention</figcaption></figure></div><div class="ablation-table">${rows.map(spec=>`<div class="ablation-row"><div class="ablation-label"><strong>${e(spec.label)}</strong><small>${e(spec.detail)}</small></div>${[30,50,100].map(n=>card(spec,n)).join('')}</div>`).join('')}</div>`}function render(){""",
+    )
+    page = page.replace(
+        "rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'Control · Full Head Output Zero',detail:'Y_h=A_hV_h 整个 head 输出置零；不是 QK logits=0'});",
+        "rows.push({target_scope:'all_tokens',mask_mode:'qk_logits_zero',region:'',label:'Control · QK Logits Zero',detail:'令选中 head 的完整 QK^T=0；softmax 后为均匀注意力，Y_h=mean(V_h)'});rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'Control · Full Head Output Zero',detail:'Y_h=A_hV_h 整个 head 输出置零；与 QK logits=0 不同'});",
+    )
+    page = page.replace(
+        "protocol=spec.mask_mode==='literal_kv_zero'?'literal K/V zero + softmax recompute':spec.mask_mode==='full_head_output'?'full A@V head output zero':'post-softmax block zero · no renorm';",
+        "protocol=spec.mask_mode==='literal_kv_zero'?'literal K/V zero + softmax recompute':spec.mask_mode==='qk_logits_zero'?'QK logits zero · uniform softmax · mean(V)':spec.mask_mode==='full_head_output'?'full A@V head output zero':'post-softmax block zero · no renorm';",
     )
     page = page.replace(
         "options($('rank'),data.entries,(x,i)=>i,(x,i)=>`#${i+1} S39 L${String(x.block).padStart(2,'0')} H${String(x.head).padStart(2,'0')}`);if(q.get('rank'))$('rank').value=q.get('rank');",
