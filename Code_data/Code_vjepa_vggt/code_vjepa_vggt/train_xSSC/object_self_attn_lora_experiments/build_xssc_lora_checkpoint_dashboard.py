@@ -1316,6 +1316,11 @@ MERGED_METHODS = [
     },
     {"key": "object_only", "label": "Object-only", "color": "#4D4D4D"},
     {"key": "full_sa", "label": "Full-SA + Object", "color": "#D62728"},
+    {
+        "key": "full_sa_physrvg_dit",
+        "label": "Full-SA + Object (PhysRVG DiT)",
+        "color": "#17BECF",
+    },
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
     {
         "key": "full_sa_no_object_vjepa_loss",
