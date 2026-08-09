@@ -287,17 +287,22 @@ M1–M7 具有严格的集合嵌套关系。选择只相差一个矩阵块的算
 
 可以。本次进一步对全部 49 个视频提取 RAFT 光流：每个视频计算 `F00→F01, ..., F47→F48` 共 48 个 forward flow field。模型固定为 torchvision RAFT Large `C_T_SKHT_V2`，输入统一缩放到 640×352，12 次迭代、FP32、确定性 CUDA 算法。光流是模型估计，不是真实 GT。
 
-为了避免全图静态背景淹没小物体运动，指标同时在四个空间范围计算：全图、object_A、object_B、all_objects。对象 ROI 不是从每个待测视频重新跟踪，而是固定使用同一 baseline CoTracker 轨迹：对每个源帧的轨迹点求凸包，并在 640×352 分辨率膨胀 6 px。这样不同消融视频使用完全相同的动态 ROI，不会把待测结果的跟踪失败混入 ROI 定义。
+为了避免全图静态背景淹没小物体运动，指标在 object_A、object_B、all_objects 等空间范围内计算。ROI 必须相对当前 reference 冻结，而不是从每个待测消融视频重新跟踪：
+
+- `vs Baseline`：使用 Baseline CoTracker 轨迹逐帧求凸包，并在 640×352 分辨率膨胀 6 px。
+- `vs GT`：使用 source render CoTracker 轨迹按相同规则构造 source-reference ROI。
+
+同一个 reference 下的 48 个消融结果共享完全相同的 ROI，因此不会把候选视频自身的跟踪失败混入 ROI 定义。不能让 `vs GT` 继续沿用 Baseline ROI：当 Baseline 与 source 轨迹已分离时，那样会在 source 视频中采到背景而不是 GT 对象运动。
 
 | 指标 | 精确含义 | 读法 |
 |---|---|---|
-| Flow EPE | `mean ||u_baseline - u_candidate||₂` | 两个估计光流场的空间、方向和幅值联合差异；越低越相似。这里是跨视频 disagreement，不是相对 GT 的 EPE |
-| EPE/ref | `Flow EPE / mean ||u_baseline||₂` | 对 baseline 运动量归一化，便于比较不同 ROI；baseline 近静止时不稳定 |
+| Flow EPE | `mean ||u_reference - u_candidate||₂` | 两个估计光流场的空间、方向和幅值联合差异；越低越相似。即使 reference 是 source render，这仍是 RAFT 跨视频 disagreement，不是光流真值 EPE |
+| EPE/ref | `Flow EPE / mean ||u_reference||₂` | 对当前 reference 运动量归一化；reference 近静止时不稳定 |
 | Flow vector cosine | 把 ROI 内全部光流向量展平后的 cosine | 越接近 1，整体方向场越一致；近零光流时方向不稳定 |
-| Motion/base | `mean ||u_candidate||₂ / mean ||u_baseline||₂` | 约 1 表示平均运动幅值保持，约 0 表示运动几乎消失；不能单独判断方向和位置是否正确 |
+| Motion/ref | `mean ||u_candidate||₂ / mean ||u_reference||₂` | 约 1 表示平均运动幅值接近 reference，约 0 表示候选运动几乎消失；不能单独判断方向和位置是否正确 |
 | Motion-profile correlation | 两视频 48 个逐帧平均光流幅值序列的 Pearson `r` | 判断运动发生时机是否一致；只看强弱时序，不保证空间位置一致 |
 
-240 组 RAFT 比较由 48 个 `vs baseline`、24 个同算子 `Fixed vs Tube`、168 个同协议同 target 的算子两两比较组成。与像素分析的 624 个全 pair 不同，RAFT 只保留能直接回答实验问题的配对。
+旧的专项 `raft_motion_top100_v1` 中，240 组 RAFT 比较由 48 个 `vs Baseline`、24 个同算子 `Fixed vs Tube`、168 个同协议同 target 的算子两两比较组成。新的完整指标 `report.json` 另为每个消融计算 `2 references × 3 scopes`，即 `48 × 2 × 3 = 288` 组 reference-relative RAFT 汇总；其中 GT 侧采用 source-reference ROI。两套统计回答的问题不同，不能混成同一张结果行。
 
 Baseline 自身的估计运动量证明两个对象的动力学角色明显不同：
 
@@ -333,9 +338,68 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 | SSIM vs Flow vector cosine | 0.424 | 0.268 |
 | SSIM vs Motion-profile correlation | 0.519 | 0.569 |
 
-相关方向总体合理，但绝对值远小于 1，说明外观相似度与运动相似度相关而不等价。RAFT 因而能补充判断生成运动是否保持。不过它仍不能证明运动“物理正确”：当前只比较消融结果是否接近未干预 baseline；若 baseline 本身不物理，RAFT 也不会将其纠正为真实运动。
+相关方向总体合理，但绝对值远小于 1，说明外观相似度与运动相似度相关而不等价。RAFT 因而能补充判断生成运动是否保持。`vs Baseline` 仍不能证明运动“物理正确”；新增 `vs GT` 可以检查与 source render 运动的差异，但 RAFT 本身仍是估计器，不应称为真实 flow GT。
 
-页面中的 HSV 光流视频统一使用 baseline 全图光流幅值 99.5% 分位 6.616 px 作为颜色上限：色相表示方向、亮度表示幅值。统一尺度允许 Fixed、Tube 与 baseline 直接目测对照；不要把黑暗区域自动解释为失败，它也可能表示真实的近零运动。
+页面中的 HSV 光流视频使用 `max(P99.5_baseline, P99.5_source)` 作为统一颜色上限；当前结果为 6.616 px。色相表示方向、亮度表示幅值。统一尺度允许 Fixed、Tube、Baseline 与 source render 直接目测对照；不要把黑暗区域自动解释为失败，它也可能表示真实的近零运动。overlay 上的橙/青轮廓就是该行实际进入 RAFT 指标计算的 reference-frozen Object A/B ROI。
+
+### 9.6 指标结果矩阵的展示规范（修正版）
+
+指标结果必须按“实验为行、指标为列”展示，不能再把一个指标作为一行，也不能把 Baseline 与 GT 混在同一结果表。最终使用四张独立宽表：
+
+| 结果表 | 行数 | 每一行的唯一键 | 指标列 |
+|---|---:|---|---|
+| Fixed `R_fixed` vs Baseline | 24 | `fixed × target × operator × Baseline` | #1–#25，每列一个指标 |
+| Fixed `R_fixed` vs GT | 24 | `fixed × target × operator × GT` | #1–#25，每列一个指标 |
+| Tube `R_tube` vs Baseline | 24 | `tube × target × operator × Baseline` | #1–#25，每列一个指标 |
+| Tube `R_tube` vs GT | 24 | `tube × target × operator × GT` | #1–#25，每列一个指标 |
+
+因此一组消融在逻辑上有两条结果行，但两条结果行分别放进 Baseline 表与 GT 表，不在同一张表中交错，例如：
+
+| Experiment ID | Reference | #1 GT Center-ADE Change | #2 Baseline Center-ADE | #7 Center-FDE | #14 RAFT ROI EPE | #16 DINO Similarity | #17 Object LPIPS | #24 SSIM/PSNR/MAE | ... |
+|---|---|---:|---:|---:|---:|---:|---:|---|---|
+| `fixed:single_object:object_A:self_only` | Baseline | — | 数值 | Baseline-relative | Baseline-ROI | Baseline crop | Baseline crop | Baseline frame | ... |
+| `fixed:single_object:object_A:self_only` | GT | GT error change | — | simulator GT | source-ROI | source crop | source crop | source frame | ... |
+
+这两行不能合并或取平均，因为它们回答不同问题：
+
+- `vs Baseline`：同 seed 未消融结果是反事实参照，衡量“干预造成了多大变化”。
+- `vs GT`：中心、速度、接触使用 `states.npz` simulator GT；没有 simulator 对应定义的点轨迹、mask、外观、像素和光流使用 source render 前 49 帧，衡量“结果离物理/source reference 多远”。
+
+对象级指标由页面的 `Metric object` 选择 `object_A` 或 `object_B`，但行键始终保留被消融的 target。这样可以明确区分“消融 A 后评估 A”和“消融 A 后评估 B（对外传播）”，不能把两个对象的分数无定义地平均。
+
+不适用于某个 reference 的指标显示 `—`：例如 #1 只在 GT 行有意义，#2 与 #6 只在 Baseline 行有意义。若 CoTracker 有效点不足或未检测到持续接触，也显示 `—/N/A`，不得用 0 填补。指标定义与数值结果分成两张表；定义表只解释公式、方向与对应 overlay，不再承载实验结果。
+
+#### #1–#25 指标含义与读法
+
+箭头表示数值方向，但“更大/更小”不总等于“生成质量更好”。尤其 #2、#6 衡量干预效应强度，#15 的目标是接近 1，#20–#23 只作生成质量 sanity check。
+
+| # | 指标 | 表示什么 | 数值如何解释 |
+|---:|---|---|---|
+| 1 | GT Center-ADE Change | 消融相对 simulator GT 的中心轨迹误差，减去 Baseline 的同一误差 | **越小越好**；`0` 表示未改变 Baseline 的 GT 误差，正值表示轨迹变差，负值表示改善 |
+| 2 | Baseline-relative Center-ADE | 消融中心轨迹与同 seed Baseline 中心轨迹的平均距离 | **越大表示干预可见效应越强**，但不表示物理上更差 |
+| 3 | GT Velocity Error Change | 消融相对 GT 的四帧差分速度向量误差，减去 Baseline 的同一误差 | **越小越好**；正值表示速度物理误差增加，负值表示改善 |
+| 4 | Contact-time Error Change | 候选 mask 接触时刻相对 simulator 接触时刻的误差，减去 Baseline 的同一误差 | **越小越好**；单位 frame；正值更差，未形成持续接触记 N/A |
+| 5 | Post-contact Velocity Error Change | GT 接触后 8 帧窗口内，候选与 Baseline 相对 GT 的速度误差差 | **越小越好**；正值表示碰撞后运动更差 |
+| 6 | Other-object Center-ADE | 单对象消融后，未被选中对象相对 Baseline 的轨迹变化 | **越大表示跨对象传播/spillover 越强**，不是质量分数 |
+| 7 | Center-FDE | 最后共同有效帧的对象中心到所选 reference 的距离 | **越小越接近 reference** |
+| 8 | Object-normalized PCK@5/10/20% | 点误差小于 F00 对象 bbox 对角线 `5%/10%/20%` 的比例 | **越大越接近 reference** |
+| 9 | Native PCK@16/32/64 | 在 1280×704 输出坐标中，点误差小于 `16/32/64 px` 的比例 | **越大越接近 reference**；不是 Attention Q→K PCK |
+| 10 | Point-ADE | 所有共同可见 CoTracker 表面点的平均距离 | **越小越接近 reference**；球体滚动会改变表面点对应关系 |
+| 11 | Velocity Speed / Direction / Vector Error | 四帧差分速度的大小误差、方向角误差和完整向量误差 | 三项均 **越小越接近 reference**；方向只统计双方非静止帧 |
+| 12 | Center-aligned Shape IoU | 只平移质心、不缩放后，两对象 SAM2 mask 的 IoU | **越大表示形状越接近**；`1` 为完全重合 |
+| 13 | Area / Aspect / Circularity Error | mask 面积对数比、bbox 长宽比对数比及圆度差 | 三项均 **越小越接近 reference**；`0` 最好 |
+| 14 | RAFT ROI Flow EPE | 在 reference-frozen ROI 内，候选与 reference RAFT 光流的端点差 | **越小越接近 reference**；是两个估计光流的 disagreement，不是真实 flow GT |
+| 15 | RAFT Motion Magnitude Ratio | 候选 ROI 平均运动幅值除以 reference ROI 平均运动幅值 | **越接近 1 越相似**；`<1` 表示运动量减少，`>1` 表示增加；reference 近静止时不稳定 |
+| 16 | Object DINOv2 Similarity | 质心对齐、固定 crop、mask pooling 后的 DINOv2 cosine | **越大表示对象身份/语义外观越接近**；理论上 1 最相似 |
+| 17 | Object LPIPS | 质心对齐、mask 外置灰后的对象 crop LPIPS-Alex | **越小表示局部纹理和形状越接近**；0 最相似 |
+| 18 | Outside-object LPIPS | 排除膨胀对象 mask 并集后，剩余区域的 LPIPS | **越小表示背景/非对象区域 spillover 越弱** |
+| 19 | Raw-mask IoU | 不做对齐的候选/reference SAM2 mask IoU | **越大越接近**；同时混合对象位置与形状变化 |
+| 20 | VBench Subject Consistency | 官方 VBench 主体跨帧一致性 | **越大越一致**；冻结视频也可能得高分，只作 sanity check |
+| 21 | VBench Motion Smoothness | 官方 VBench/AMT 运动平滑度 | **越大越平滑**；不表示方向或物理结果正确 |
+| 22 | VBench Dynamic Degree | 官方 VBench 对视频是否具有足够运动的分数 | **越大表示更动态**，只用于识别冻结；不是物理正确性分数 |
+| 23 | VBench Quality Suite | Background、Flicker、Imaging、Aesthetic 四项官方分数 | 各项通常 **越大越好**，仅检查生成崩坏和视觉质量 |
+| 24 | Full-frame SSIM / PSNR / MAE | 候选与 reference 的全帧像素相似度 | **SSIM/PSNR 越大越相似，MAE 越小越相似**；静态背景会稀释对象差异 |
+| 25 | Temporal Δ-MAE | 两视频相邻帧差分之间的平均绝对误差 | **越小表示逐帧变化模式越接近** |
 
 ## 10. Head 排名与因果解释限制
 
@@ -354,6 +418,9 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 - 五 seed GPU worker：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/run_legacy_object_ablation_001460_5seed_gpu.sh`
 - 五 seed 相似度等待器：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/wait_legacy_object_ablation_001460_5seed_similarity.sh`
 - RAFT 运动相似度脚本：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/analyze_legacy_ti2v_object_ablation_raft_motion.py`
+- 49 视频完整指标代码：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/`
+- 完整指标报告：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/seed_47326/report.json`
+- 核心指标摘要 CSV：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/seed_47326/summary.csv`；完整嵌套指标以 `report.json` 为准。
 - 固定 Q00 输出：`/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_v2`
 - Tube 输出：`/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1`
 - Tube 轨迹审计：Tube 输出目录下的 `frozen_baseline_tracks/tracks.npz` 与 `manifest.json`
@@ -361,6 +428,7 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 - RAFT 缓存与明细：Tube case/seed 输出目录下的 `raft_motion_top100_v1/flows`、`flow_videos`、`raft_motion_similarity_top100.json` 和 `raft_motion_similarity_top100.csv`
 - 新 seed 页面入口：保持同一 case，把 URL 的 `seed` 改为 `90094`、`68613`、`35075`、`32466` 或 `13248`；页面会只展示当前已经生成的卡片。
 - 对比页面：`http://localhost:8092/wan22-ti2v-legacy-physiciq67-samples?v=20&case=0613pybullet_sample_001460_w002&seed=47326`。页面对 `object_A`、`object_B`、`all_objects` 分别建立独立 section，每个 section 内将 `Fixed R_fixed` 与 `Tube R_tube` 拆成两条横向视频行，并为每条行设置可见、可拖动的水平滑动条。C2/C3 显示在独立的 `Global all-token controls` 行；未生成项不占位，页面顶部会分别标出 Fixed/Tube 的实时完成数。视频卡片下方的 VBench、像素相似度、RAFT 指标和光流详情暂时隐藏，但指标数据及页面上方汇总分析仍保留。seed 47326 完整口径为 48 个 R-dependent 视频加 2 个全局控制视频。
+- 指标矩阵页面：`http://localhost:8092/object-query-ablation-metrics?v=4`。结果严格拆成 `Fixed vs Baseline`、`Fixed vs GT`、`Tube vs Baseline`、`Tube vs GT` 四张表；每张表 24 行，横向列出 25 个指标。每个列头直接显示优先级、指标名与数值方向，悬停显示精确定义和公式；下方另有完整指标定义表。视频与 trajectory/mask/RAFT/pixel/perceptual audit assets 保持在上方。
 
 每个 manifest 必须记录：`target_scope`、`mask_mode`、冻结 Top100 entries、实际 token indices、逐 latent token 数、40 步双 CFG 调用审计、轨迹来源以及 softmax 是否重算。
 

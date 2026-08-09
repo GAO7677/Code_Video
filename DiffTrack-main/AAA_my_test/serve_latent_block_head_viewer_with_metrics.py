@@ -401,7 +401,7 @@ UNLISTED_PORTAL_CARD = r'''
 <a class="card new" href="/physiq025-object-query-frozen-trajectory?v=1"><div><span>32 / PHYSIQ025 FROZEN</span><h2>PhysIQ025 Frozen Trajectory</h2><p>PhysIQ025 case 的 frozen Object Query trajectory 页面，集中展示视频、对象轨迹和注意力图。</p></div><span class="go">打开 PhysIQ025 Frozen</span></a>
 <a class="card new" href="/wan22-ti2v-legacy-pck50?v=2"><div><span>33 / LEGACY PCK50</span><h2>五组 PCK Head 排名与重合</h2><p>首个 latent frame 固定为 object query；查看 Legacy、GT、LoRA、Baseline、三模型综合在 S039 与全步平均下的 720 Head 排名、30 × 24 矩阵、Top-K 重合和相关性。</p></div><span class="go">打开 PCK Head 对比</span></a>
 <a class="card new" href="/wan22-ti2v-legacy-physiciq67-samples?v=1"><div><span>34 / PHYSICIQ67 SAMPLES</span><h2>新 Legacy Object Query 样例</h2><p>固定随机抽取已完成的 PhysicIQ67 runs，展示生成视频、SAM2 object query、单 run PCK 矩阵和 S039 Top10 attention。</p></div><span class="go">打开 PhysicIQ67 样例</span></a>
-<a class="card new" href="/object-query-ablation-metrics?v=1"><div><span>35 / OBJECT QUERY METRICS</span><h2>Fixed × Tube 消融量化诊断</h2><p>001460 / seed 47326 的 49 个 Top100 视频；同时对比未消融 Baseline 与 simulator/source GT，并展示轨迹、mask、RAFT、DINO 和 LPIPS 的真实计算量。</p></div><span class="go">打开消融指标页</span></a>
+<a class="card new" href="/object-query-ablation-metrics?v=4"><div><span>35 / OBJECT QUERY METRICS</span><h2>Fixed × Tube 消融量化诊断</h2><p>001460 / seed 47326 的 49 个 Top100 视频；四张实验指标表逐列标注定义与数值方向，并展示全部审计量。</p></div><span class="go">打开消融指标页</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + "</section>", 1

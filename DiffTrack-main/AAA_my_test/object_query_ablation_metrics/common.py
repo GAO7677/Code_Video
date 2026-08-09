@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,9 @@ import numpy as np
 
 
 CASE = "0613pybullet_sample_001460_w002"
-SEED = 47326
+SEED = int(os.environ.get("OBJECT_QUERY_ABLATION_SEED", "47326"))
+if SEED < 0:
+    raise ValueError("OBJECT_QUERY_ABLATION_SEED must be non-negative")
 FRAME_COUNT = 49
 HEIGHT = 704
 WIDTH = 1280
@@ -140,4 +143,3 @@ def atomic_npz(path: Path, **arrays: Any) -> None:
     with temporary.open("wb") as handle:
         np.savez_compressed(handle, **arrays)
     temporary.replace(path)
-
