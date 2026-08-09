@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kind", choices=["cpu", "gpu"])
     parser.add_argument("--methods", default=None)
     parser.add_argument("--gpus", default=None)
+    parser.add_argument("--gpu-ready-max-used-mib", type=int, default=None)
     parser.add_argument("--once", action="store_true")
     return parser.parse_args()
 
@@ -797,6 +798,10 @@ def main() -> None:
         if 4 in gpu_ids:
             raise ValueError("GPU 4 is prohibited by workspace rules")
         config["runtime"]["gpu_ids"] = gpu_ids
+    if args.gpu_ready_max_used_mib is not None:
+        if args.gpu_ready_max_used_mib < 0:
+            raise ValueError("--gpu-ready-max-used-mib must be non-negative")
+        config["runtime"]["gpu_ready_max_used_mib"] = args.gpu_ready_max_used_mib
     prepare_directories(config)
     tasks = discover_checkpoints(config)
     write_discovery(config, tasks)

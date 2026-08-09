@@ -18,15 +18,15 @@ A=\operatorname{softmax}(QK^\top/\sqrt d),\qquad Y=AV.
 
 ## 2. 七种完整矩阵区域消融
 
-| ID | 实现名 | 置零矩阵块 | 精确计算含义 | 理论诊断目标 | 可能观察，非结果保证 |
-|---|---|---|---|---|---|
-| M1 | `self_only` | `S` | `R` Query 不读取 `R` K/V | 稀疏对象 token 的内部自支持 | 局部身份或形状维持变弱 |
-| M2 | `incoming_only` | `I` | `R` Query 不读取 `C` K/V | 外部场景向选中 Query 的输入 | 对环境、其他对象或运动背景响应变弱 |
-| M3 | `outgoing_only` | `O` | `C` Query 不读取 `R` K/V | 选中 token 向其他 token 的输出 | 其他区域受该对象影响减弱 |
-| M4 | `query_row` | `S+I` | `A[R,:]=0`，所以 `Y[R]=0` | 删除选中 Query 在该 head 的全部更新 | 选中位置的 head 信息通路消失 |
-| M5 | `key_value_column` | `S+O` | `A[:,R]=0`，不重新归一化 | 删除选中 token 的全部 Value 贡献 | 全局不再接收该稀疏对象信息 |
-| M6 | `cross_boundary` | `I+O` | 双向跨边界连接置零，保留 `A[R,R]` | 隔离 `R` 与 `C`，同时保留内部连接 | 对象内部可能保持但交互减弱 |
-| M7 | `row_and_column` | `S+I+O` | `R` 不读取任何 token，`C` 也不读取 `R` | 删除所有涉及 `R` 的连接 | 比单行或单列更强的联合效应 |
+| ID | 实现名 | 置零矩阵块 | 被切断的信息流 | 精确计算含义 | 理论诊断目标（这个实验在问什么） | 可能观察，非结果保证 |
+|---|---|---|---|---|---|---|
+| M1 | `self_only` | `S` | `R K/V ──X──> R Query` | 令 `A[R,R]=0`；`R` Query 仍可读取 `C`，但不能读取 `R` 自身的 Value | `R` 内部 Value 是否为 `R` Query 提供维持局部身份、形状和内部一致性的自支持 | 局部身份或形状维持可能变弱 |
+| M2 | `incoming_only` | `I` | `C K/V ──X──> R Query` | 令 `A[R,C]=0`；`R` Query 只保留对 `R` 的读取 | 环境、背景和其他对象的 Value 是否向 `R` Query 输入交互或运动上下文 | `R` 对环境、其他对象或运动背景的响应可能变弱 |
+| M3 | `outgoing_only` | `O` | `R K/V ──X──> C Query` | 令 `A[C,R]=0`；`R` Query 自身仍可读取 `R` 与 `C` | `R` 的 Value 是否作为信息源向背景、其他对象和其他位置广播影响 | 其他区域受该对象影响可能减弱 |
+| M4 | `query_row` | `S+I` | `全部 K/V ──X──> R Query` | 令 `A[R,:]=0`，因此该 head 的 `Y[R]=0`；`R` 的 K/V 仍可被 `C` Query 读取 | 该 head 写回 `R` 位置的完整 Query 更新是否必要；只删除接收端，不删除 `R` 作为发送端 | `R` 位置来自该 head 的更新完全消失 |
+| M5 | `key_value_column` | `S+O` | `R Value ──X──> 全部 Query` | 保持 softmax 权重 `A` 不变，令 `A[:,R]=0` 且不重新归一化；严格等价于 K 不变、仅令 `V_R=0` | `R` 的 Value 是否是供全局 Query 读取的信息源；`R` Query 仍能读取 `C`，只删除发送端贡献 | 全局不再接收该稀疏对象的 Value 信息 |
+| M6 | `cross_boundary` | `I+O` | `C K/V ──X──> R Query`；`R K/V ──X──> C Query` | 令 `A[R,C]=A[C,R]=0`；保留 `R→R` 和 `C→C` 的内部读取 | 把 `R` 与 `C` 隔离后，内部自支持能否保留，以及跨对象/场景双向交互是否是变化来源 | `R` 内部可能保持，但与环境及其他对象的交互可能减弱 |
+| M7 | `row_and_column` | `S+I+O` | `全部 K/V ──X──> R Query`；`R K/V ──X──> C Query` | 令 `A[R,:]=0` 且 `A[C,R]=0`；`R` 的 head 更新为零，也不能向 `C` 提供 Value，`C→C` 保持 | 同时删除 `R` 的接收端和发送端，诊断该 head 中所有涉及 `R` 的通信总效应 | 通常比仅行消融或仅列消融产生更强的联合效应 |
 
 这七种组合只在“固定二分集合 `{R,C}`、对涉及 `R` 的 attention entries 做二值置零”的定义下完备，并不覆盖缩放、噪声、替换、动态轨迹 mask 或分时段干预。
 

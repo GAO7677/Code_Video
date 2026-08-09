@@ -1214,6 +1214,22 @@ class MetricsHandler(viewer.Handler):
                 raise FileNotFoundError("PhysicIQ67 attention-matrix video is not ready")
             viewer.send_file_with_range(self, asset, "video/mp4")
             return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/temporal-tube-ablation-video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_physiciq67_temporal_tube_video(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("target_scope", [""])[0],
+                params.get("mask_mode", [""])[0],
+                params.get("top_n", [""])[0],
+                params.get("region", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("PhysicIQ67 temporal-tube ablation video is not ready")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
         if path == "/api/wan22-ti2v-legacy-test5/catalog":
             payload = json.dumps(
                 wan22_ti2v_legacy_test5_catalog(), ensure_ascii=False
@@ -1550,6 +1566,10 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT = (
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_MANIFEST = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT / "cases.json"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT
+    / "attention_matrix_ablations_temporal_tube_v1"
 )
 WAN22_TI2V_LEGACY_PCK50_SEEDS = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds.txt"
@@ -2269,6 +2289,10 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_ALL_TOKEN_CONTROLS = (
     "full_head_output",
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_PROTOCOL = "attention_matrix_ablation_v2"
+WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_PROTOCOL = (
+    "attention_matrix_ablation_temporal_object_tube_v1"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE = "0613pybullet_sample_001460_w002"
 
 
 def _wan22_ti2v_legacy_physiciq67_ablation_variant(
@@ -2366,6 +2390,66 @@ def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[d
     return records
 
 
+def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
+    sample: dict, entries: list[dict]
+):
+    case, seed = str(sample["case"]), int(sample["seed"])
+    regions = [
+        str(row["region_name"])
+        for row in sample.get("regions", [])
+        if row.get("region_type") == "object"
+    ]
+    targets = [("single_object", region) for region in regions]
+    targets.append(("all_objects", ""))
+    records = []
+    for target_scope, region in targets:
+        for mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_MASKS + (
+            "literal_kv_zero",
+        ):
+            variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(
+                target_scope, mask_mode, 100, region
+            )
+            root = (
+                WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT
+                / case
+                / f"seed_{seed:05d}"
+                / str(variant)
+            )
+            metadata_path = root / "manifest.json"
+            ready = all(
+                (root / name).is_file()
+                for name in ("complete.json", "manifest.json", "generated.mp4")
+            )
+            if ready:
+                try:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    ready = (
+                        metadata.get("case") == case
+                        and int(metadata.get("seed", -1)) == seed
+                        and metadata.get("target_scope") == target_scope
+                        and metadata.get("mask_mode") == mask_mode
+                        and int(metadata.get("top_n", -1)) == 100
+                        and str(metadata.get("region") or "") == region
+                        and metadata.get("selected_entries") == entries[:100]
+                        and metadata.get("protocol")
+                        == WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_PROTOCOL
+                    )
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    ready = False
+            records.append(
+                {
+                    "target_scope": target_scope,
+                    "mask_mode": mask_mode,
+                    "region": region or None,
+                    "top_n": 100,
+                    "variant_id": variant,
+                    "ready": ready,
+                    "error": (root / "error.txt").is_file(),
+                }
+            )
+    return records
+
+
 def wan22_ti2v_legacy_physiciq67_visual_catalog():
     payload = wan22_ti2v_legacy_physiciq67_visual_manifest()
     if payload.get("ready") is False:
@@ -2423,6 +2507,15 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
                 sample, payload.get("entries", [])
             )
         )
+        if (
+            case == WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE
+            and seed == 47326
+        ):
+            sample["temporal_tube_attention_matrix_ablations"] = (
+                _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
+                    sample, payload.get("entries", [])
+                )
+            )
         samples.append(sample)
     ablation_records = [
         record
@@ -2512,6 +2605,46 @@ def wan22_ti2v_legacy_physiciq67_ablation_video(
                 or WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_ROOT
             )
         )
+        / case
+        / f"seed_{seed_value:05d}"
+        / variant
+        / "generated.mp4"
+    )
+
+
+def wan22_ti2v_legacy_physiciq67_temporal_tube_video(
+    case: str,
+    seed: str,
+    target_scope: str,
+    mask_mode: str,
+    top_n: str,
+    region: str,
+):
+    sample = _wan22_ti2v_legacy_physiciq67_sample(case, seed)
+    if sample is None or case != WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE:
+        return None
+    try:
+        seed_value, count = int(seed), int(top_n)
+    except ValueError:
+        return None
+    if seed_value != 47326 or count != 100:
+        return None
+    object_regions = {
+        str(row["region_name"])
+        for row in sample.get("regions", [])
+        if row.get("region_type") == "object"
+    }
+    if target_scope == "single_object" and region not in object_regions:
+        return None
+    if target_scope != "single_object":
+        region = ""
+    variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(
+        target_scope, mask_mode, count, region
+    )
+    if variant is None or mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_ALL_TOKEN_CONTROLS:
+        return None
+    return (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT
         / case
         / f"seed_{seed_value:05d}"
         / variant
@@ -2630,15 +2763,62 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     page = page.replace('<label>S039 Head <select id="rank"></select></label>', "")
     page = page.replace(
         '<section class="media"><div id="media" class="media-grid"></div></section><section class="performance"><h2>单 Run · 30 × 24 Head Matrix</h2>',
-        '<section class="media"><h2>Generated Video & Object Query</h2><div id="media" class="media-grid base-media"></div></section><section class="media"><h2>S039 Top-N Head Mean Attention Overlay</h2><div id="means" class="media-grid"></div></section><section class="ablation"><h2>完整 Attention Matrix Ablation</h2><p>R 是 F00 稀疏 object-query token，C 是其余 token。每个对象及所有对象并集分别展示 7 种 S/I/O 矩阵区域消融、literal K/V=0 对照和整-head 输出置零控制；冻结 S039 Top30/50/100 heads，应用全部 40 个去噪步及两个 CFG 分支。</p><div id="ablation"></div></section><details class="performance"><summary>单 Run · 30 × 24 Head Matrix（点击展开）</summary>',
+        '<section class="media"><h2>Generated Video & Object Query</h2><div id="media" class="media-grid base-media"></div></section><section class="media"><h2>S039 Top-N Head Mean Attention Overlay</h2><div id="means" class="media-grid"></div></section><section class="ablation"><h2>完整 Attention Matrix Ablation</h2><p>R 是 F00 稀疏 object-query token，C 是其余 token。每个对象及所有对象并集分别展示 7 种 S/I/O 矩阵区域消融、literal K/V=0 对照和整-head 输出置零控制；冻结 S039 Top30/50/100 heads，应用全部 40 个去噪步及两个 CFG 分支。</p><details class="ablation-definitions" open><summary>消融矩阵定义（M1–M7、C1–C3）</summary><p class="definition-formula"><code>A = softmax(QK<sup>T</sup>/√d)，Y = AV</code></p><div class="definition-symbols"><span><strong>R</strong>：F00 稀疏 query points 映射并去重后的 latent tokens；不是完整 object mask，也不是跨时间 object tube</span><span><strong>C</strong>：当前 attention 序列中除 R 外的全部 tokens</span><span><strong>S=A[R,R]</strong>：selected token 内部连接</span><span><strong>I=A[R,C]</strong>：C K/V → R Query</span><span><strong>O=A[C,R]</strong>：R K/V → C Query</span></div><div class="definition-table"><table><thead><tr><th>ID</th><th>实现名</th><th>置零矩阵块</th><th>精确计算含义</th><th>理论诊断目标</th><th>可能观察（非结果保证）</th></tr></thead><tbody><tr><td>M1</td><td><code>self_only</code></td><td>S</td><td>R Query 不读取 R K/V</td><td>稀疏对象 token 的内部自支持</td><td>局部身份或形状维持变弱</td></tr><tr><td>M2</td><td><code>incoming_only</code></td><td>I</td><td>R Query 不读取 C K/V</td><td>外部场景向选中 Query 的输入</td><td>对环境、其他对象或运动背景响应变弱</td></tr><tr><td>M3</td><td><code>outgoing_only</code></td><td>O</td><td>C Query 不读取 R K/V</td><td>选中 token 向其他 token 的输出</td><td>其他区域受该对象影响减弱</td></tr><tr><td>M4</td><td><code>query_row</code></td><td>S+I</td><td><code>A[R,:]=0</code>，所以 <code>Y[R]=0</code></td><td>删除选中 Query 在该 head 的全部更新</td><td>选中位置的 head 信息通路消失</td></tr><tr><td>M5</td><td><code>key_value_column</code></td><td>S+O</td><td><code>A[:,R]=0</code>，不重新归一化</td><td>删除选中 token 的全部 Value 贡献</td><td>全局不再接收该稀疏对象信息</td></tr><tr><td>M6</td><td><code>cross_boundary</code></td><td>I+O</td><td>双向跨边界连接置零，保留 <code>A[R,R]</code></td><td>隔离 R 与 C，同时保留内部连接</td><td>对象内部可能保持但交互减弱</td></tr><tr><td>M7</td><td><code>row_and_column</code></td><td>S+I+O</td><td>R 不读取任何 token，C 也不读取 R</td><td>删除所有涉及 R 的连接</td><td>比单行或单列更强的联合效应</td></tr></tbody></table></div><h3>必须分开展示的算子对照</h3><div class="definition-table"><table><thead><tr><th>ID</th><th>实现名</th><th>实际操作</th><th>与 M5 等价</th><th>含义</th></tr></thead><tbody><tr><td>C1</td><td><code>literal_kv_zero</code></td><td>选中 head 上令 <code>K<sub>R</sub>=V<sub>R</sub>=0</code>，重新计算 attention</td><td>否</td><td>对应列仍进入 softmax；logits 变为 0，并占用概率质量</td></tr><tr><td>C2</td><td><code>qk_logits_zero</code></td><td>选中 head 的全部 token 上令 <code>q<sub>h</sub>=0</code>，重新计算 softmax</td><td>否</td><td><code>softmax(0)=1/N</code>，每行输出相同的 <code>mean(V<sub>h</sub>)</code>，不是零输出</td></tr><tr><td>C3</td><td><code>full_head_output</code></td><td>令选中 head 的整个 <code>Y<sub>h</sub>=A<sub>h</sub>V<sub>h</sub>=0</code></td><td>否</td><td>删除整个 head 输出；与 QK logits 置零不同</td></tr><tr><td>Baseline</td><td>无</td><td>不干预</td><td>—</td><td>同 seed 基线视频</td></tr></tbody></table></div><p class="definition-warning"><strong>关键区别：</strong>M1–M7 是 post-softmax attention entries 置零且不重新归一化。M5 与保持 K 不变、仅令 <code>V<sub>R</sub>=0</code> 严格等价；C1 同时修改 K 和 V，因此会改变 softmax。Top heads 来自 S039 positive-conditional 的冻结 provisional PCK ranking，但干预覆盖 S000–S039 全部 40 步及 conditional/unconditional 两个 CFG 分支。</p></details><div id="ablation"></div></section><details class="performance"><summary>单 Run · 30 × 24 Head Matrix（点击展开）</summary>',
     )
+    page = page.replace(
+        "<th>置零矩阵块</th><th>精确计算含义</th><th>理论诊断目标</th>",
+        "<th>置零矩阵块</th><th>被切断的信息流</th><th>精确计算含义</th><th>理论诊断目标（这个实验在问什么）</th>",
+    )
+    definition_rows = (
+        (
+            "<tr><td>M1</td><td><code>self_only</code></td><td>S</td><td>R Query 不读取 R K/V</td><td>稀疏对象 token 的内部自支持</td><td>局部身份或形状维持变弱</td></tr>",
+            "<tr><td>M1</td><td><code>self_only</code></td><td>S</td><td><code>R K/V ──X──&gt; R Query</code></td><td>令 <code>A[R,R]=0</code>；R Query 仍可读取 C，但不能读取 R 自身的 Value</td><td>R 内部 Value 是否为 R Query 提供维持局部身份、形状和内部一致性的自支持</td><td>局部身份或形状维持可能变弱</td></tr>",
+        ),
+        (
+            "<tr><td>M2</td><td><code>incoming_only</code></td><td>I</td><td>R Query 不读取 C K/V</td><td>外部场景向选中 Query 的输入</td><td>对环境、其他对象或运动背景响应变弱</td></tr>",
+            "<tr><td>M2</td><td><code>incoming_only</code></td><td>I</td><td><code>C K/V ──X──&gt; R Query</code></td><td>令 <code>A[R,C]=0</code>；R Query 只保留对 R 的读取</td><td>环境、背景和其他对象的 Value 是否向 R Query 输入交互或运动上下文</td><td>R 对环境、其他对象或运动背景的响应可能变弱</td></tr>",
+        ),
+        (
+            "<tr><td>M3</td><td><code>outgoing_only</code></td><td>O</td><td>C Query 不读取 R K/V</td><td>选中 token 向其他 token 的输出</td><td>其他区域受该对象影响减弱</td></tr>",
+            "<tr><td>M3</td><td><code>outgoing_only</code></td><td>O</td><td><code>R K/V ──X──&gt; C Query</code></td><td>令 <code>A[C,R]=0</code>；R Query 自身仍可读取 R 与 C</td><td>R 的 Value 是否作为信息源向背景、其他对象和其他位置广播影响</td><td>其他区域受该对象影响可能减弱</td></tr>",
+        ),
+        (
+            "<tr><td>M4</td><td><code>query_row</code></td><td>S+I</td><td><code>A[R,:]=0</code>，所以 <code>Y[R]=0</code></td><td>删除选中 Query 在该 head 的全部更新</td><td>选中位置的 head 信息通路消失</td></tr>",
+            "<tr><td>M4</td><td><code>query_row</code></td><td>S+I</td><td><code>全部 K/V ──X──&gt; R Query</code></td><td>令 <code>A[R,:]=0</code>，因此该 head 的 <code>Y[R]=0</code>；R 的 K/V 仍可被 C Query 读取</td><td>该 head 写回 R 位置的完整 Query 更新是否必要；只删除接收端，不删除 R 作为发送端</td><td>R 位置来自该 head 的更新完全消失</td></tr>",
+        ),
+        (
+            "<tr><td>M5</td><td><code>key_value_column</code></td><td>S+O</td><td><code>A[:,R]=0</code>，不重新归一化</td><td>删除选中 token 的全部 Value 贡献</td><td>全局不再接收该稀疏对象信息</td></tr>",
+            "<tr><td>M5</td><td><code>key_value_column</code></td><td>S+O</td><td><code>R Value ──X──&gt; 全部 Query</code></td><td>保持 softmax 权重 A 不变，令 <code>A[:,R]=0</code> 且不重新归一化；严格等价于 K 不变、仅令 <code>V_R=0</code></td><td>R 的 Value 是否是供全局 Query 读取的信息源；R Query 仍能读取 C，只删除发送端贡献</td><td>全局不再接收该稀疏对象的 Value 信息</td></tr>",
+        ),
+        (
+            "<tr><td>M6</td><td><code>cross_boundary</code></td><td>I+O</td><td>双向跨边界连接置零，保留 <code>A[R,R]</code></td><td>隔离 R 与 C，同时保留内部连接</td><td>对象内部可能保持但交互减弱</td></tr>",
+            "<tr><td>M6</td><td><code>cross_boundary</code></td><td>I+O</td><td><code>C K/V ──X──&gt; R Query</code><br><code>R K/V ──X──&gt; C Query</code></td><td>令 <code>A[R,C]=A[C,R]=0</code>；保留 R→R 和 C→C 的内部读取</td><td>把 R 与 C 隔离后，内部自支持能否保留，以及跨对象/场景双向交互是否是变化来源</td><td>R 内部可能保持，但与环境及其他对象的交互可能减弱</td></tr>",
+        ),
+        (
+            "<tr><td>M7</td><td><code>row_and_column</code></td><td>S+I+O</td><td>R 不读取任何 token，C 也不读取 R</td><td>删除所有涉及 R 的连接</td><td>比单行或单列更强的联合效应</td></tr>",
+            "<tr><td>M7</td><td><code>row_and_column</code></td><td>S+I+O</td><td><code>全部 K/V ──X──&gt; R Query</code><br><code>R K/V ──X──&gt; C Query</code></td><td>令 <code>A[R,:]=0</code> 且 <code>A[C,R]=0</code>；R 的 head 更新为零，也不能向 C 提供 Value，C→C 保持</td><td>同时删除 R 的接收端和发送端，诊断该 head 中所有涉及 R 的通信总效应</td><td>通常比仅行消融或仅列消融产生更强的联合效应</td></tr>",
+        ),
+    )
+    for old_row, new_row in definition_rows:
+        if old_row not in page:
+            raise RuntimeError("PhysicIQ67 ablation definition row changed")
+        page = page.replace(old_row, new_row)
     page = page.replace(
         '<div id="matrix" class="performance-heat"></div></div></section><section class="ranking"><h2>捕获时的 provisional S039 Top10</h2>',
         '<div id="matrix" class="performance-heat"></div></div></details><section class="ranking"><h2>捕获时的 provisional S039 Top100</h2>',
     )
     page = page.replace(
         ".media-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}",
-        ".media-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}.base-media{grid-template-columns:repeat(2,minmax(0,1fr))}.ablation{overflow:hidden}.ablation-baseline{max-width:520px;margin:12px 0 18px}.ablation-table{overflow-x:auto}.ablation-row{display:grid;grid-template-columns:minmax(190px,.7fr) repeat(3,minmax(300px,1fr));gap:10px;min-width:1150px;padding:10px 0;border-top:1px solid var(--line)}.ablation-label{display:flex;flex-direction:column;justify-content:center;padding:12px;background:#17443a;color:#fff}.ablation-label small{margin-top:7px;opacity:.8}.ablation-row video{aspect-ratio:1280/704}.requested-top100{overflow:visible}.requested-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.requested-grid figure{min-width:0}.requested-grid figcaption{overflow-wrap:anywhere}.requested-note{margin:8px 0 14px;padding:10px 12px;background:#e8dfcc;border-left:6px solid var(--gold)}summary{cursor:pointer;font-size:20px;font-weight:900}details[open] summary{margin-bottom:12px}@media(max-width:900px){.requested-grid{grid-template-columns:1fr}}",
+        ".media-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}.base-media{grid-template-columns:repeat(2,minmax(0,1fr))}.ablation{overflow:hidden}.ablation-baseline{max-width:520px;margin:12px 0 18px}.ablation-table{overflow-x:auto}.ablation-row{display:grid;grid-template-columns:minmax(190px,.7fr) repeat(3,minmax(300px,1fr));gap:10px;min-width:1150px;padding:10px 0;border-top:1px solid var(--line)}.ablation-label{display:flex;flex-direction:column;justify-content:center;padding:12px;background:#17443a;color:#fff}.ablation-label small{margin-top:7px;opacity:.8}.ablation-row video{aspect-ratio:1280/704}.ablation-definitions{margin:14px 0 18px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#f8f1e5}.definition-formula{font-size:18px}.definition-symbols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}.definition-symbols span{padding:9px 11px;border-left:5px solid var(--gold);background:#fff}.definition-table{overflow-x:auto;margin:10px 0 15px;border:1px solid var(--line);background:#fff}.definition-table table{min-width:1050px}.definition-table td{text-align:left;vertical-align:top;line-height:1.45}.definition-table td:first-child,.definition-table td:nth-child(2){white-space:nowrap}.definition-warning{padding:11px 13px;border-left:6px solid var(--gold);background:#fff;line-height:1.55}.requested-top100{overflow:visible}.requested-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.requested-grid figure{min-width:0}.requested-grid figcaption{overflow-wrap:anywhere}.requested-note{margin:8px 0 14px;padding:10px 12px;background:#e8dfcc;border-left:6px solid var(--gold)}summary{cursor:pointer;font-size:20px;font-weight:900}details[open] summary{margin-bottom:12px}@media(max-width:900px){.requested-grid,.definition-symbols{grid-template-columns:1fr}}",
+    )
+    page = page.replace(
+        ".requested-grid figcaption{overflow-wrap:anywhere}",
+        ".requested-grid figcaption{overflow-wrap:anywhere;line-height:1.45}.caption-matrix,.caption-flow,.caption-exact,.caption-protocol{display:block;margin-top:5px}.caption-matrix{font:12px ui-monospace,monospace;color:var(--deep)}.caption-flow,.caption-exact{font-weight:500}.caption-protocol{font:11px ui-monospace,monospace;color:#6b665c}",
+    )
+    page = page.replace(
+        "</style>",
+        ".tube-compare{display:grid;gap:12px}.tube-compare-row{display:grid;grid-template-columns:minmax(210px,.65fr) repeat(2,minmax(0,1fr));gap:10px;align-items:stretch}.tube-compare-row>div,.tube-column-head{padding:12px;background:#17443a;color:#fff;border-radius:10px}.tube-compare-row figure{min-width:0}.tube-compare-row video{width:100%;aspect-ratio:1280/704;background:#111}.tube-column-head{text-align:center;font-weight:900;background:#a35f1d}.tube-row-label{display:flex;flex-direction:column;justify-content:center}.tube-row-label small{margin-top:7px;opacity:.82;line-height:1.4}.tube-compare .pending{height:100%;min-height:180px}.tube-baseline{max-width:640px;margin-bottom:12px}@media(max-width:900px){.tube-compare-row{grid-template-columns:1fr}.tube-column-head:first-child{display:none}}</style>",
+        1,
     )
     page = page.replace(
         ".note,.media,.performance,.ranking{",
@@ -2668,21 +2848,42 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         """function renderAblations(s,base){const records=s.attention_matrix_ablations||[],region=$('region').value,masks=[['self_only','S · A[R,R]','selected queries 不读取 selected K/V'],['incoming_only','I · A[R,C]','只切断 unselected K/V → selected queries'],['outgoing_only','O · A[C,R]','只切断 selected K/V → unselected queries'],['query_row','S+I · A[R,:]','selected query rows 全部置零'],['key_value_column','S+O · A[:,R]','selected K/V columns 贡献置零，不重新归一化'],['cross_boundary','I+O · Cross boundary','切断双向跨边界连接，保留 A[R,R]'],['row_and_column','S+I+O · Row + column','selected rows 与 columns 联合消融'],['literal_kv_zero','Literal K_R=V_R=0','重新计算 softmax；与 post-softmax column zero 不等价']],targets=[['single_object',region,`Selected object · ${region}`],['all_objects','', 'All object-query tokens union']],rows=targets.flatMap(([target_scope,targetRegion,targetLabel])=>masks.map(([mask_mode,label,detail])=>({target_scope,mask_mode,region:targetRegion,label:`${targetLabel} · ${label}`,detail})));rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'Control · Full Head Output Zero',detail:'Y_h=A_hV_h 整个 head 输出置零；不是 QK logits=0'});const card=(spec,n)=>{const r=records.find(x=>x.target_scope===spec.target_scope&&x.mask_mode===spec.mask_mode&&String(x.region||'')===spec.region&&Number(x.top_n)===n),suffix=spec.region?`&region=${encodeURIComponent(spec.region)}`:'',src=`${api}/ablation-video?${base}&target_scope=${encodeURIComponent(spec.target_scope)}&mask_mode=${encodeURIComponent(spec.mask_mode)}&top_n=${n}${suffix}`,media=r?.ready?`<video controls muted playsinline preload="metadata" src="${src}"></video>`:`<div class="pending">${r?.error?'生成失败':'待生成'}</div>`,protocol=spec.mask_mode==='literal_kv_zero'?'literal K/V zero + softmax recompute':spec.mask_mode==='full_head_output'?'full A@V head output zero':'post-softmax block zero · no renorm';return `<figure>${media}<figcaption>Top${n} · ${protocol}</figcaption></figure>`},baseline=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Baseline unavailable</div>';$('ablation').innerHTML=`<div class="ablation-baseline"><figure>${baseline}<figcaption>Baseline · No Attention Intervention</figcaption></figure></div><div class="ablation-table">${rows.map(spec=>`<div class="ablation-row"><div class="ablation-label"><strong>${e(spec.label)}</strong><small>${e(spec.detail)}</small></div>${[30,50,100].map(n=>card(spec,n)).join('')}</div>`).join('')}</div>`}function render(){""",
     )
     page = page.replace(
+        "masks=[['self_only','S · A[R,R]','selected queries 不读取 selected K/V'],['incoming_only','I · A[R,C]','只切断 unselected K/V → selected queries'],['outgoing_only','O · A[C,R]','只切断 selected K/V → unselected queries'],['query_row','S+I · A[R,:]','selected query rows 全部置零'],['key_value_column','S+O · A[:,R]','selected K/V columns 贡献置零，不重新归一化'],['cross_boundary','I+O · Cross boundary','切断双向跨边界连接，保留 A[R,R]'],['row_and_column','S+I+O · Row + column','selected rows 与 columns 联合消融'],['literal_kv_zero','Literal K_R=V_R=0','重新计算 softmax；与 post-softmax column zero 不等价']]",
+        "masks=[['self_only','M1 · S=A[R,R]=0','R Query 不读取 R K/V；仍可读取 C'],['incoming_only','M2 · I=A[R,C]=0','R Query 不读取 C K/V；只保留对 R 的读取'],['outgoing_only','M3 · O=A[C,R]=0','C Query 不读取 R K/V；R Query 读取保持'],['query_row','M4 · A[R,:]=0','R Query 整行 attention 置零，因此 Y[R]=0'],['key_value_column','M5 · A[:,R]=0','softmax A 保持不变，删除 R 的全部 Value 贡献且不重新归一化'],['cross_boundary','M6 · A[R,C]=A[C,R]=0','双向跨边界连接置零，保留 R→R 与 C→C'],['row_and_column','M7 · A[R,:]=0 且 A[C,R]=0','R 的接收端更新为零，同时 R 不再向 C 提供 Value'],['literal_kv_zero','C1 · K_R=V_R=0','修改 K_R 与 V_R 后重新计算 softmax；R 列 logits=0 且仍占概率质量']]",
+    )
+    page = page.replace(
         "rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'Control · Full Head Output Zero',detail:'Y_h=A_hV_h 整个 head 输出置零；不是 QK logits=0'});",
-        "rows.push({target_scope:'all_tokens',mask_mode:'qk_logits_zero',region:'',label:'Control · QK Logits Zero',detail:'令选中 head 的完整 QK^T=0；softmax 后为均匀注意力，Y_h=mean(V_h)'});rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'Control · Full Head Output Zero',detail:'Y_h=A_hV_h 整个 head 输出置零；与 QK logits=0 不同'});",
+        "rows.push({target_scope:'all_tokens',mask_mode:'qk_logits_zero',region:'',label:'C2 · Control · QK Logits Zero',detail:'令 Q_h=0，所以完整 QK^T=0；重新计算 softmax 后 A_h=1/N，Y_h=mean(V_h)'});rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'C3 · Control · Full Head Output Zero',detail:'令整个 Y_h=A_hV_h=0；直接删除 head 输出，与 QK logits=0 不同'});",
     )
     page = page.replace(
         "protocol=spec.mask_mode==='literal_kv_zero'?'literal K/V zero + softmax recompute':spec.mask_mode==='full_head_output'?'full A@V head output zero':'post-softmax block zero · no renorm';",
         "protocol=spec.mask_mode==='literal_kv_zero'?'literal K/V zero + softmax recompute':spec.mask_mode==='qk_logits_zero'?'QK logits zero · uniform softmax · mean(V)':spec.mask_mode==='full_head_output'?'full A@V head output zero':'post-softmax block zero · no renorm';",
     )
     page = page.replace(
-        "rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'Control · Full Head Output Zero',detail:'Y_h=A_hV_h 整个 head 输出置零；与 QK logits=0 不同'});const card=",
-        "rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'Control · Full Head Output Zero',detail:'Y_h=A_hV_h 整个 head 输出置零；与 QK logits=0 不同'});if(Number(s.seed)===47326)return renderRequestedTop100(s);const card=",
+        "rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'C3 · Control · Full Head Output Zero',detail:'令整个 Y_h=A_hV_h=0；直接删除 head 输出，与 QK logits=0 不同'});const card=",
+        "rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'C3 · Control · Full Head Output Zero',detail:'令整个 Y_h=A_hV_h=0；直接删除 head 输出，与 QK logits=0 不同'});if(Number(s.seed)===47326)return renderRequestedTop100(s);const card=",
+    )
+    page = page.replace(
+        "return `<figure>${media}<figcaption>Top${n} · ${protocol}</figcaption></figure>`",
+        "return `<figure>${media}<figcaption><strong>${e(spec.label)} · Top${n}</strong><span class=\"caption-exact\"><b>精确计算：</b>${e(spec.detail)}</span><span class=\"caption-protocol\">${e(protocol)}</span></figcaption></figure>`",
     )
     page = page.replace(
         "function render(){",
-        """function renderRequestedTop100(s){const base=`case=${encodeURIComponent(s.case)}&seed=${s.seed}`,records=(s.attention_matrix_ablations||[]).filter(r=>Number(r.top_n)===100),ready=records.filter(r=>r.ready),maskLabels={self_only:'S · A[R,R]',incoming_only:'I · A[R,C]',outgoing_only:'O · A[C,R]',query_row:'S+I · Query row',key_value_column:'S+O · K/V column',cross_boundary:'I+O · Cross boundary',row_and_column:'S+I+O · Row + column',literal_kv_zero:'Literal K_R=V_R=0',qk_logits_zero:'QK logits zero · mean(V)',full_head_output:'Full head output zero'},targetLabel=r=>r.target_scope==='single_object'?`Selected object · ${r.region}`:r.target_scope==='all_objects'?'All object-query tokens union':'All tokens',card=r=>{const suffix=r.region?`&region=${encodeURIComponent(r.region)}`:'',src=`${api}/ablation-video?${base}&target_scope=${encodeURIComponent(r.target_scope)}&mask_mode=${encodeURIComponent(r.mask_mode)}&top_n=100${suffix}`;return `<figure><video controls muted playsinline preload="metadata" src="${src}"></video><figcaption><strong>${e(targetLabel(r))}</strong><br>${e(maskLabels[r.mask_mode]||r.mask_mode)} · Top100</figcaption></figure>`},baseline=s.video_ready?`<figure><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline</strong><br>No attention intervention</figcaption></figure>`:'';$('ablation').innerHTML=`<div class="requested-note">${e(s.case)} · seed=47326 · 原视频 + 已生成 Top100 消融 ${ready.length}/${records.length}；未生成项不占位，Top30/Top50 不显示</div><div class="requested-grid requested-top100">${baseline}${ready.map(card).join('')}</div>`}function render(){""",
+        """function renderRequestedTop100(s){const base=`case=${encodeURIComponent(s.case)}&seed=${s.seed}`,records=(s.attention_matrix_ablations||[]).filter(r=>Number(r.top_n)===100),ready=records.filter(r=>r.ready),definitions={self_only:{id:'M1',matrix:'S=A[R,R]=0',flow:'R K/V ──X──> R Query',exact:'R Query 不读取 R K/V；仍可读取 C'},incoming_only:{id:'M2',matrix:'I=A[R,C]=0',flow:'C K/V ──X──> R Query',exact:'R Query 不读取 C K/V；只保留对 R 的读取'},outgoing_only:{id:'M3',matrix:'O=A[C,R]=0',flow:'R K/V ──X──> C Query',exact:'C Query 不读取 R K/V；R Query 的读取保持不变'},query_row:{id:'M4',matrix:'A[R,:]=0',flow:'全部 K/V ──X──> R Query',exact:'R Query 整行 attention 置零，因此该 head 的 Y[R]=0；R K/V 仍可被 C Query 读取'},key_value_column:{id:'M5',matrix:'A[:,R]=0 · no renorm',flow:'R Value ──X──> 全部 Query',exact:'保持 softmax A 不变，删除 R 的全部 Value 贡献且不重新归一化；等价于 K 不变、仅 V_R=0'},cross_boundary:{id:'M6',matrix:'A[R,C]=A[C,R]=0',flow:'C K/V ──X──> R Query；R K/V ──X──> C Query',exact:'双向跨边界连接置零，保留 R→R 与 C→C 的内部读取'},row_and_column:{id:'M7',matrix:'A[R,:]=0 且 A[C,R]=0',flow:'全部 K/V ──X──> R Query；R K/V ──X──> C Query',exact:'R 的接收端 head 更新为零，同时 R 不再向 C 提供 Value；C→C 保持'},literal_kv_zero:{id:'C1',matrix:'K_R=V_R=0 · recompute softmax',flow:'R Value 贡献为零，但 R 列仍参与路由概率分配',exact:'同时修改 K_R 与 V_R 后重新计算 attention；R 列 logits 变为 0，并继续占用 softmax 概率质量'},qk_logits_zero:{id:'C2',matrix:'Q_h=0 ⇒ QK^T=0 ⇒ A_h=1/N',flow:'所有 Query 均匀读取全部 Value',exact:'重新计算 softmax 后每一行均匀，Y_h=mean(V_h)，不是零输出'},full_head_output:{id:'C3',matrix:'Y_h=A_hV_h=0',flow:'该 head ──X──> 后续输出',exact:'直接令选中 head 的整个输出为零；与 QK logits=0 的均匀注意力不同'}},targetLabel=r=>r.target_scope==='single_object'?`Selected object · ${r.region}`:r.target_scope==='all_objects'?'All object-query tokens union':'All tokens',card=r=>{const definition=definitions[r.mask_mode]||{id:r.mask_mode,matrix:r.mask_mode,flow:'未定义',exact:'未定义'},suffix=r.region?`&region=${encodeURIComponent(r.region)}`:'',src=`${api}/ablation-video?${base}&target_scope=${encodeURIComponent(r.target_scope)}&mask_mode=${encodeURIComponent(r.mask_mode)}&top_n=100${suffix}`;return `<figure><video controls muted playsinline preload="metadata" src="${src}"></video><figcaption><strong>${e(definition.id)} · ${e(r.mask_mode)} · ${e(targetLabel(r))} · Top100</strong><span class="caption-matrix">${e(definition.matrix)}</span><span class="caption-flow">信息流：${e(definition.flow)}</span><span class="caption-exact">精确计算：${e(definition.exact)}</span></figcaption></figure>`},baseline=s.video_ready?`<figure><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline · No intervention</strong><span class="caption-flow">信息流：全部保留</span><span class="caption-exact">精确计算：保持原始 Q/K/V、softmax attention 与所有 head 输出不变</span></figcaption></figure>`:'';$('ablation').innerHTML=`<div class="requested-note">${e(s.case)} · seed=47326 · 原视频 + 已生成 Top100 消融 ${ready.length}/${records.length}；未生成项不占位，Top30/Top50 不显示</div><div class="requested-grid requested-top100">${baseline}${ready.map(card).join('')}</div>`}function render(){""",
         1,
+    )
+    page = page.replace(
+        "function renderRequestedTop100(s){",
+        """function renderTemporalTubeComparison(s){const base=`case=${encodeURIComponent(s.case)}&seed=${s.seed}`,fixed=(s.attention_matrix_ablations||[]).filter(r=>Number(r.top_n)===100),tube=s.temporal_tube_attention_matrix_ablations||[],region=$('region').value,defs={self_only:{id:'M1',matrix:'S=A[R,R]=0',flow:'R K/V ──X──> R Query',exact:'R Query 不读取 R K/V；仍可读取 C'},incoming_only:{id:'M2',matrix:'I=A[R,C]=0',flow:'C K/V ──X──> R Query',exact:'R Query 不读取 C K/V；只保留对 R 的读取'},outgoing_only:{id:'M3',matrix:'O=A[C,R]=0',flow:'R K/V ──X──> C Query',exact:'C Query 不读取 R K/V；R Query 的读取保持'},query_row:{id:'M4',matrix:'A[R,:]=0',flow:'全部 K/V ──X──> R Query',exact:'该 head 的 Y[R]=0；R K/V 仍可被 C Query 读取'},key_value_column:{id:'M5',matrix:'A[:,R]=0 · no renorm',flow:'R Value ──X──> 全部 Query',exact:'保持 A 不变并删除 R 的全部 Value 贡献；等价于仅 V_R=0'},cross_boundary:{id:'M6',matrix:'A[R,C]=A[C,R]=0',flow:'C K/V ──X──> R Query；R K/V ──X──> C Query',exact:'切断双向跨边界读取，保留 R→R 与 C→C'},row_and_column:{id:'M7',matrix:'A[R,:]=0 且 A[C,R]=0',flow:'全部 K/V ──X──> R Query；R K/V ──X──> C Query',exact:'R 接收端更新为零，同时 R 不再向 C 提供 Value'},literal_kv_zero:{id:'C1',matrix:'K_R=V_R=0 · recompute softmax',flow:'R Value 为零；R 列仍参与 softmax 路由',exact:'K_R、V_R 同时置零后重算 attention；R 列 logits=0 且仍占概率质量'}},modes=['self_only','incoming_only','outgoing_only','query_row','key_value_column','cross_boundary','row_and_column','literal_kv_zero'],targets=[['single_object',region,`Selected object · ${region}`],['all_objects','', 'All objects union']],specs=targets.flatMap(([target_scope,targetRegion,targetLabel])=>modes.map(mask_mode=>({target_scope,region:targetRegion,targetLabel,mask_mode}))),find=(rows,x)=>rows.find(r=>r.target_scope===x.target_scope&&r.mask_mode===x.mask_mode&&String(r.region||'')===x.region),src=(kind,x)=>`${api}/${kind==='fixed'?'ablation-video':'temporal-tube-ablation-video'}?${base}&target_scope=${encodeURIComponent(x.target_scope)}&mask_mode=${encodeURIComponent(x.mask_mode)}&top_n=100${x.region?`&region=${encodeURIComponent(x.region)}`:''}`,card=(kind,x,r)=>{const d=defs[x.mask_mode],label=kind==='fixed'?'左 · Fixed Query (Q00 only)':'右 · All-time Query Tube (Q00–Q12)',rdef=kind==='fixed'?'R_fixed：F00 稀疏点映射出的唯一 t=0 tokens':'R_tube：baseline CoTracker 轨迹在 F00,F04,…,F48 映射出的 13 帧 token 并集',media=r?.ready?`<video controls muted playsinline preload="metadata" src="${src(kind,x)}"></video>`:`<div class="pending">${r?.error?'生成失败':'待生成'}</div>`;return `<figure>${media}<figcaption><strong>${e(label)}</strong><span class="caption-matrix">${e(rdef)}</span><span class="caption-exact"><b>算子：</b>${e(d.exact)}</span></figcaption></figure>`},rows=specs.map(x=>{const d=defs[x.mask_mode];return `<div class="tube-compare-row"><div class="tube-row-label"><strong>${e(d.id)} · ${e(x.mask_mode)}<br>${e(x.targetLabel)}</strong><small>${e(d.matrix)}</small><small>信息流：${e(d.flow)}</small></div>${card('fixed',x,find(fixed,x))}${card('tube',x,find(tube,x))}</div>`}).join(''),done=tube.filter(r=>r.ready).length,baseline=s.video_ready?`<figure class="tube-baseline"><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption></figure>`:'';$('ablation').innerHTML=`<div class="requested-note"><b>固定 Query vs 全时序 Query Tube</b><br>唯一自变量是 R：左侧只含 F00/t=0 token；右侧使用同一 baseline 上冻结的 CoTracker pseudo-GT，将每个 object point 映射到 Q00–Q12（对应视频 F00,F04,…,F48）。两侧使用完全相同的 Top100 heads、seed、40 denoising steps、两个 CFG 分支和 M1–M7/C1 计算。动态进度 ${done}/${tube.length}。C2/C3 与 R 无关，因此不重复生成。</div>${baseline}<div class="tube-compare"><div class="tube-compare-row"><div class="tube-column-head">实验 ID / 精确信息流</div><div class="tube-column-head">左：Fixed Q00</div><div class="tube-column-head">右：All-time Q00–Q12</div></div>${rows}</div>`}function renderRequestedTop100(s){if(s.temporal_tube_attention_matrix_ablations)return renderTemporalTubeComparison(s);""",
+        1,
+    )
+    page = page.replace(
+        '<span class="caption-flow">信息流：${e(definition.flow)}</span><span class="caption-exact">精确计算：${e(definition.exact)}</span>',
+        '<span class="caption-flow"><b>信息流：</b>${e(definition.flow)}</span><span class="caption-exact"><b>精确计算：</b>${e(definition.exact)}</span>',
+    )
+    page = page.replace(
+        '<span class="caption-flow">信息流：全部保留</span><span class="caption-exact">精确计算：保持原始 Q/K/V、softmax attention 与所有 head 输出不变</span>',
+        '<span class="caption-flow"><b>信息流：</b>全部保留</span><span class="caption-exact"><b>精确计算：</b>保持原始 Q/K/V、softmax attention 与所有 head 输出不变</span>',
     )
     page = page.replace(
         "options($('rank'),data.entries,(x,i)=>i,(x,i)=>`#${i+1} S39 L${String(x.block).padStart(2,'0')} H${String(x.head).padStart(2,'0')}`);if(q.get('rank'))$('rank').value=q.get('rank');",
