@@ -3107,7 +3107,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     )
     page = page.replace(
         "label=kind==='fixed'?'左 · Fixed Query (Q00 only)':'右 · All-time Query Tube (Q00–Q12)',rdef=kind==='fixed'?'R_fixed：F00 稀疏点映射出的唯一 t=0 tokens':'R_tube：baseline CoTracker 轨迹在 F00,F04,…,F48 映射出的 13 帧 token 并集'",
-        "label=`${d.id} · ${x.mask_mode} · ${kind==='fixed'?'Fixed R_fixed':'Tube R_tube'}`,tokenCount=Number.isInteger(r?.selected_token_count)?r.selected_token_count:'—',perFrame=Array.isArray(r?.latent_frame_token_counts)?r.latent_frame_token_counts.join(','):'—',rdef=kind==='fixed'?`R_fixed：仅 F00 / latent t=0；|R|=${tokenCount}`:`R_tube：冻结 baseline 轨迹在 Q00–Q12 的联合集合；|R|=${tokenCount}；逐 latent=[${perFrame}]`",
+        "isControl=x.target_scope==='all_tokens',label=isControl?`${d.id} · ${x.mask_mode} · Global control`:`${d.id} · ${x.mask_mode} · ${kind==='fixed'?'Fixed R_fixed':'Tube R_tube'}`,tokenCount=Number.isInteger(r?.selected_token_count)?r.selected_token_count:'—',perFrame=Array.isArray(r?.latent_frame_token_counts)?r.latent_frame_token_counts.join(','):'—',rdef=isControl?'All tokens · operator 与 object token 集 R 无关':kind==='fixed'?`R_fixed：仅 F00 / latent t=0；|R|=${tokenCount}`:`R_tube：冻结 baseline 轨迹在 Q00–Q12 的联合集合；|R|=${tokenCount}；逐 latent=[${perFrame}]`",
     )
     page = page.replace(
         "rows=specs.map(x=>{const d=defs[x.mask_mode];return `<div class=\"tube-compare-row\"><div class=\"tube-row-label\"><strong>${e(d.id)} · ${e(x.mask_mode)}<br>${e(x.targetLabel)}</strong><small>${e(d.matrix)}</small><small>信息流：${e(d.flow)}</small></div>${card('fixed',x,find(fixed,x))}${card('tube',x,find(tube,x))}</div>`}).join('')",
@@ -3115,7 +3115,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     )
     page = page.replace(
         '<div class="requested-note"><b>固定 Query vs 全时序 Query Tube</b><br>唯一自变量是 R：左侧只含 F00/t=0 token；右侧使用同一 baseline 上冻结的 CoTracker pseudo-GT，将每个 object point 映射到 Q00–Q12（对应视频 F00,F04,…,F48）。两侧使用完全相同的 Top100 heads、seed、40 denoising steps、两个 CFG 分支和 M1–M7/C1 计算。页面同时展示 object_A、object_B 与 all_objects；动态进度 ${done}/${tube.length}。C2/C3 与 R 无关，因此不重复生成。</div>',
-        '<div class="requested-note"><h3>实验问题：扩大 R 的视频时间范围后，同一算子的生成效应如何变化？</h3><p>左右两侧保持 Top100 heads、seed=47326、采样参数、40 个去噪步、conditional/unconditional 两个 CFG 分支和 M1–M7/C1 公式完全一致。</p><div class="tube-protocol-grid"><span><b>左 · R_fixed</b><br>F00 稀疏 object points 只映射到 latent t=0；不是完整 mask，也不复制到未来帧。</span><span><b>右 · R_tube</b><br>同一批点在 baseline 上由 CoTracker 冻结，映射 Q00–Q12 / F00,F04,…,F48 后取联合集合。</span><span><b>Tube 内部含义</b><br>A[R_tube,R_tube] 同时包含帧内和跨帧对象连接；右侧不是 13 次彼此独立的逐帧实验。</span><span><b>两条时间轴</b><br>t=0…12 是视频 latent 时间；s=0…39 是扩散去噪时间。右侧覆盖全部 t，两侧均覆盖全部 s。</span></div><p class="tube-dose-warning"><b>解释限制：</b>R_tube 的 token 数显著多于 R_fixed，因此右侧更强变化可能来自更大的干预剂量，不能直接证明每一帧的 PCK head 都准确。当前 Tube 消融也不等于 Q_t×K_s 的 13×13 响应/PCK 验证；轨迹标签为 CoTracker pseudo-GT，不是真实 GT。</p><p>页面展示 object_A、object_B、all_objects 三组；动态进度 <b>${done}/${tube.length}</b>。C2/C3 不依赖 R，直接复用已有控制视频。</p></div>',
+        '<div class="requested-note"><h3>实验问题：扩大 R 的视频时间范围后，同一算子的生成效应如何变化？</h3><p>左右两侧保持 Top100 heads、seed=47326、采样参数、40 个去噪步、conditional/unconditional 两个 CFG 分支和 M1–M7/C1 公式完全一致。</p><div class="tube-protocol-grid"><span><b>左 · R_fixed</b><br>F00 稀疏 object points 只映射到 latent t=0；不是完整 mask，也不复制到未来帧。</span><span><b>右 · R_tube</b><br>同一批点在 baseline 上由 CoTracker 冻结，映射 Q00–Q12 / F00,F04,…,F48 后取联合集合。</span><span><b>Tube 内部含义</b><br>A[R_tube,R_tube] 同时包含帧内和跨帧对象连接；右侧不是 13 次彼此独立的逐帧实验。</span><span><b>两条时间轴</b><br>t=0…12 是视频 latent 时间；s=0…39 是扩散去噪时间。右侧覆盖全部 t，两侧均覆盖全部 s。</span></div><p class="tube-dose-warning"><b>解释限制：</b>R_tube 的 token 数显著多于 R_fixed，因此右侧更强变化可能来自更大的干预剂量，不能直接证明每一帧的 PCK head 都准确。当前 Tube 消融也不等于 Q_t×K_s 的 13×13 响应/PCK 验证；轨迹标签为 CoTracker pseudo-GT，不是真实 GT。</p><p>页面展示 object_A、object_B、all_objects 三组；R-dependent 生成进度：Fixed <b>${fixedDone}/24</b> · Tube <b>${done}/${tube.length}</b>。C2/C3 不依赖 R，不重复生成 Tube，并在 Global all-token controls 行展示已有 Fixed 控制视频。</p></div>',
     )
     page = page.replace(
         '<div class="tube-column-head">实验 ID / 精确信息流</div><div class="tube-column-head">左：Fixed Q00</div><div class="tube-column-head">右：All-time Q00–Q12</div>',
@@ -3176,7 +3176,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         '<figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption>${vbenchSummary(s,true)}</figure>',
     )
     temporal_defs_tail = "literal_kv_zero:{id:'C1',matrix:'K_R=V_R=0 · recompute softmax',flow:'R Value 为零；R 列仍参与 softmax 路由',exact:'K_R、V_R 同时置零后重算 attention；R 列 logits=0 且仍占概率质量'}},modes="
-    temporal_defs_with_logic = """literal_kv_zero:{id:'C1',matrix:'K_R=V_R=0 · recompute softmax',flow:'R Value 为零；R 列仍参与 softmax 路由',exact:'K_R、V_R 同时置零后重算 attention；R 列 logits=0 且仍占概率质量'}},logic={self_only:{calc:\"Y'_R=I V_C；Y'_C=O V_R+B V_C\",theory:'只删除 S V_R。若结果变化，说明 R 内部 Value 对 R 接收端有因果贡献；不代表对象 token 被删除。'},incoming_only:{calc:\"Y'_R=S V_R；Y'_C=O V_R+B V_C\",theory:'只删除 I V_C。R 仍能内部读取并继续向 C 输出；变化诊断 tube 外上下文进入 R 的作用。'},outgoing_only:{calc:\"Y'_R=S V_R+I V_C；Y'_C=B V_C\",theory:'只删除 O V_R。R 自身更新不变，但 C 不再接收 R Value；接近 baseline 表明该实验下 O 的可见边际效应较弱。'},query_row:{calc:\"Y'_R=0；Y'_C=O V_R+B V_C\",theory:'删除该 head 对 R 的全部接收端更新，但残差、其他 heads 和 FFN 仍保留，所以 R token 本身不会被置零。'},key_value_column:{calc:\"Y'_R=I V_C；Y'_C=B V_C\",theory:'保持 A 不变，删除所有 S/O 中的 R Value 且不重归一化；等价于只令 V_R=0，不等价于 K_R=V_R=0。'},cross_boundary:{calc:\"Y'_R=S V_R；Y'_C=B V_C\",theory:'同时删除 I 与 O，保留 R 内部和 C 内部通信；变化诊断 R–C 双向耦合的联合效应。'},row_and_column:{calc:\"Y'_R=0；Y'_C=B V_C\",theory:'删除 S、I、O，所有涉及 R 的该 head 通信均消失；残差和未选 heads 仍可补偿。'},literal_kv_zero:{calc:\"K'_R=V'_R=0；A'=softmax(QK'^T/√d)；Y'=A'V'\",theory:'R Value 为零，但 R 列 logits 变为 0 后仍进入 softmax。与 M5 的差异测到的是重新路由/概率质量效应。'}},modes="""
+    temporal_defs_with_logic = """literal_kv_zero:{id:'C1',matrix:'K_R=V_R=0 · recompute softmax',flow:'R Value 为零；R 列仍参与 softmax 路由',exact:'K_R、V_R 同时置零后重算 attention；R 列 logits=0 且仍占概率质量'},qk_logits_zero:{id:'C2',matrix:'Q_h=0 ⇒ A_h=1/N',flow:'所有 Query 改为均匀读取全部 Value',exact:'令 Q_h=0，完整 QK^T logits 为 0；重算 softmax 后 A_h=1/N，Y_h=mean(V_h)'},full_head_output:{id:'C3',matrix:'Y_h=A_hV_h=0',flow:'该 head ──X──> 后续输出',exact:'直接令选中 head 的完整输出为 0；Q/K/V 与 softmax A 本身不变'}},logic={self_only:{calc:\"Y'_R=I V_C；Y'_C=O V_R+B V_C\",theory:'只删除 S V_R。若结果变化，说明 R 内部 Value 对 R 接收端有因果贡献；不代表对象 token 被删除。'},incoming_only:{calc:\"Y'_R=S V_R；Y'_C=O V_R+B V_C\",theory:'只删除 I V_C。R 仍能内部读取并继续向 C 输出；变化诊断 tube 外上下文进入 R 的作用。'},outgoing_only:{calc:\"Y'_R=S V_R+I V_C；Y'_C=B V_C\",theory:'只删除 O V_R。R 自身更新不变，但 C 不再接收 R Value；接近 baseline 表明该实验下 O 的可见边际效应较弱。'},query_row:{calc:\"Y'_R=0；Y'_C=O V_R+B V_C\",theory:'删除该 head 对 R 的全部接收端更新，但残差、其他 heads 和 FFN 仍保留，所以 R token 本身不会被置零。'},key_value_column:{calc:\"Y'_R=I V_C；Y'_C=B V_C\",theory:'保持 A 不变，删除所有 S/O 中的 R Value 且不重归一化；等价于只令 V_R=0，不等价于 K_R=V_R=0。'},cross_boundary:{calc:\"Y'_R=S V_R；Y'_C=B V_C\",theory:'同时删除 I 与 O，保留 R 内部和 C 内部通信；变化诊断 R–C 双向耦合的联合效应。'},row_and_column:{calc:\"Y'_R=0；Y'_C=B V_C\",theory:'删除 S、I、O，所有涉及 R 的该 head 通信均消失；残差和未选 heads 仍可补偿。'},literal_kv_zero:{calc:\"K'_R=V'_R=0；A'=softmax(QK'^T/√d)；Y'=A'V'\",theory:'R Value 为零，但 R 列 logits 变为 0 后仍进入 softmax。与 M5 的差异测到的是重新路由/概率质量效应。'},qk_logits_zero:{calc:'Q_h=0；A_h=softmax(0)=1/N；Y_h=mean(V_h)',theory:'把该 head 改为全 token 均匀平均，不是删除输出；用于区分均匀路由与真正 head 消融。'},full_head_output:{calc:'Y_h=A_hV_h=0',theory:'直接删除该 head 对残差分支的全部贡献；它不依赖 object token 集 R。'}},modes="""
     if page.count(temporal_defs_tail) != 1:
         raise RuntimeError("PhysicIQ67 temporal definitions changed")
     page = page.replace(temporal_defs_tail, temporal_defs_with_logic, 1)
@@ -3194,7 +3194,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     page = page.replace(temporal_raft_anchor, temporal_raft_helpers, 1)
 
     temporal_card_caption = '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span></figcaption>${vbenchSummary(r)}</figure>'
-    temporal_card_with_similarity = '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span>${similarityCard(kind,x)}${raftCard(kind,x)}</figcaption>${vbenchSummary(r)}${raftFlowDetails(simId(kind,x))}</figure>'
+    temporal_card_with_similarity = '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span>${x.target_scope===\'all_tokens\'?\'\':similarityCard(kind,x)}${x.target_scope===\'all_tokens\'?\'\':raftCard(kind,x)}</figcaption>${vbenchSummary(r)}${x.target_scope===\'all_tokens\'?\'\':raftFlowDetails(simId(kind,x))}</figure>'
     if page.count(temporal_card_caption) != 1:
         raise RuntimeError("PhysicIQ67 temporal card caption changed")
     page = page.replace(temporal_card_caption, temporal_card_with_similarity, 1)
@@ -3239,36 +3239,48 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         1,
     )
 
-    temporal_card_start = "card=(kind,x,r)=>{const d=defs[x.mask_mode],label="
+    temporal_card_start = "card=(kind,x,r)=>{const d=defs[x.mask_mode],isControl="
     if page.count(temporal_card_start) != 1:
         raise RuntimeError("PhysicIQ67 temporal card builder changed")
     page = page.replace(
         temporal_card_start,
-        "card=(kind,x,r)=>{if(!r?.ready)return '';const d=defs[x.mask_mode],label=",
+        "card=(kind,x,r)=>{if(!r?.ready)return '';const d=defs[x.mask_mode],isControl=",
         1,
     )
-    temporal_card_logic = '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span>${similarityCard(kind,x)}'
-    temporal_card_logic_expanded = '<span class="caption-exact"><b>矩阵块：</b>${e(d.matrix)}</span><span class="caption-flow"><b>切断信息流：</b>${e(d.flow)}</span><span class="caption-exact"><b>精确计算：</b>${e(logic[x.mask_mode].calc)}</span><span class="caption-exact"><b>理论后果：</b>${e(logic[x.mask_mode].theory)}</span>${similarityCard(kind,x)}'
+    temporal_card_logic = '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span>'
+    temporal_card_logic_expanded = '<span class="caption-exact"><b>矩阵块：</b>${e(d.matrix)}</span><span class="caption-flow"><b>切断信息流：</b>${e(d.flow)}</span><span class="caption-exact"><b>精确计算：</b>${e(logic[x.mask_mode].calc)}</span><span class="caption-exact"><b>理论后果：</b>${e(logic[x.mask_mode].theory)}</span>'
     if page.count(temporal_card_logic) != 1:
         raise RuntimeError("PhysicIQ67 temporal card logic changed")
     page = page.replace(temporal_card_logic, temporal_card_logic_expanded, 1)
 
+    temporal_modes_anchor = "modes=['self_only','incoming_only','outgoing_only','query_row','key_value_column','cross_boundary','row_and_column','literal_kv_zero'],objectTargets="
+    temporal_modes_with_controls = "modes=['self_only','incoming_only','outgoing_only','query_row','key_value_column','cross_boundary','row_and_column','literal_kv_zero'],controlModes=['qk_logits_zero','full_head_output'],objectTargets="
+    if page.count(temporal_modes_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 temporal modes changed")
+    page = page.replace(temporal_modes_anchor, temporal_modes_with_controls, 1)
+
     temporal_rows_start = page.index("rows=targets.map(([targetScope")
     temporal_rows_end = page.index(",done=tube.filter", temporal_rows_start)
-    temporal_rows = """rows=targets.map(([targetScope,targetRegion,targetLabel])=>{const group=specs.filter(x=>x.target_scope===targetScope&&x.region===targetRegion),cards=group.flatMap(x=>[card('fixed',x,find(fixed,x)),card('tube',x,find(tube,x))]).filter(Boolean),readyCount=cards.length;if(!readyCount)return '';return `<section class="object-ablation-row"><div class="object-ablation-heading"><h3>${e(targetLabel)}</h3><span>${readyCount} 个已生成 Top100 消融 · 按 M1 Fixed、M1 Tube、M2 Fixed、M2 Tube…排列</span></div><div class="object-ablation-strip">${cards.join('')}</div></section>`}).join('')"""
+    temporal_rows = """rows=(()=>{const objectRows=targets.map(([targetScope,targetRegion,targetLabel])=>{const group=specs.filter(x=>x.target_scope===targetScope&&x.region===targetRegion),fixedCards=group.map(x=>card('fixed',x,find(fixed,x))).filter(Boolean),tubeCards=group.map(x=>card('tube',x,find(tube,x))).filter(Boolean),readyCount=fixedCards.length+tubeCards.length;if(!readyCount)return '';const protocolRow=(kind,cards)=>cards.length?`<div class="object-protocol-row ${kind}"><div class="object-protocol-heading"><strong>${kind==='fixed'?'Fixed · R_fixed · 仅 latent t=0':'Tube · R_tube · latent t=0…12 联合集合'}</strong><span>${cards.length} 个已生成视频 · M1→C1</span></div><div class="object-ablation-strip">${cards.join('')}</div></div>`:'';return `<section class="object-ablation-row"><div class="object-ablation-heading"><h3>${e(targetLabel)}</h3><span>${readyCount} 个已生成 Top100 消融</span></div>${protocolRow('fixed',fixedCards)}${protocolRow('tube',tubeCards)}</section>`}).join(''),controlSpecs=controlModes.map(mask_mode=>({target_scope:'all_tokens',region:'',targetLabel:'Global all-token controls',mask_mode})),controlCards=controlSpecs.map(x=>card('fixed',x,find(fixed,x))).filter(Boolean),controlRow=controlCards.length?`<section class="object-ablation-row control-row"><div class="object-ablation-heading"><h3>Global all-token controls</h3><span>${controlCards.length} 个已生成 Top100 控制 · C2/C3 不依赖 R，无 Tube 重复项</span></div><div class="object-ablation-strip">${controlCards.join('')}</div></section>`:'';return objectRows+controlRow})()"""
     page = page[:temporal_rows_start] + temporal_rows + page[temporal_rows_end:]
+
+    temporal_progress_anchor = ",done=tube.filter(r=>r.ready).length,baseline="
+    temporal_progress_with_fixed = ",fixedDone=fixed.filter(r=>r.ready&&r.target_scope!=='all_tokens'&&modes.includes(r.mask_mode)).length,done=tube.filter(r=>r.ready).length,baseline="
+    if page.count(temporal_progress_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 temporal progress changed")
+    page = page.replace(temporal_progress_anchor, temporal_progress_with_fixed, 1)
 
     temporal_column_header = '<div class="tube-compare-row"><div class="tube-column-head">算子 ID / 被切断的信息流</div><div class="tube-column-head">左：R_fixed · 仅 latent t=0</div><div class="tube-column-head">右：R_tube · latent t=0…12 联合集合</div></div>'
     if page.count(temporal_column_header) != 1:
         raise RuntimeError("PhysicIQ67 temporal column header changed")
     page = page.replace(
         temporal_column_header,
-        '<div class="object-layout-note">每个 object/target 单独占一条横向视频行；行内只放已经生成的 Top100 视频，未生成项不占位。每个算子按 Fixed、Tube 相邻排列，使用行底部的水平滑动条查看全部视频。</div>',
+        '<div class="object-layout-note">每个 object/target 分成两条独立横向视频行：Fixed R_fixed 一行、Tube R_tube 一行，均按 M1→C1 排列；C2/C3 放在独立的 Global all-token controls 行。只显示已经生成的 Top100 视频，未生成项不占位；拖动各行底部的水平滑动条查看全部视频。</div>',
         1,
     )
     page = page.replace(
         "</style>",
-        ".object-layout-note{padding:10px 12px;border-left:6px solid var(--gold);background:#f8f1e5;line-height:1.5}.object-ablation-row{margin:16px 0 24px}.object-ablation-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:10px 12px;background:#17443a;color:#fff}.object-ablation-heading h3{margin:0}.object-ablation-heading span{font:11px ui-monospace,monospace}.object-ablation-strip{display:flex;flex-wrap:nowrap;gap:10px;overflow-x:scroll;overflow-y:hidden;padding:10px 2px 18px;scrollbar-gutter:stable;scrollbar-width:auto;scrollbar-color:#a35f1d #e8dfcc}.object-ablation-strip::-webkit-scrollbar{height:16px}.object-ablation-strip::-webkit-scrollbar-track{background:#e8dfcc;border-radius:9px}.object-ablation-strip::-webkit-scrollbar-thumb{background:#a35f1d;border:3px solid #e8dfcc;border-radius:9px}.object-ablation-strip::-webkit-scrollbar-thumb:hover{background:#17443a}.object-ablation-strip>figure{flex:0 0 clamp(300px,27vw,430px);min-width:0}.object-ablation-strip video{width:100%;aspect-ratio:1280/704}@media(max-width:700px){.object-ablation-heading{align-items:flex-start;flex-direction:column}.object-ablation-strip>figure{flex-basis:82vw}}</style>",
+        ".object-layout-note{padding:10px 12px;border-left:6px solid var(--gold);background:#f8f1e5;line-height:1.5}.tube-compare,.object-ablation-row,.object-protocol-row,.object-ablation-strip{min-width:0;max-width:100%;width:100%}.object-ablation-row{margin:16px 0 28px}.object-ablation-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:10px 12px;background:#17443a;color:#fff}.control-row .object-ablation-heading{background:#7a4b18}.object-ablation-heading h3{margin:0}.object-ablation-heading span,.object-protocol-heading span{font:11px ui-monospace,monospace}.object-protocol-row{margin-top:10px;padding:8px 9px 0;border:1px solid #d4c8b5;background:#f8f4eb}.object-protocol-row.tube{border-color:#86aa9f;background:#edf6f2}.object-protocol-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:4px 3px}.object-protocol-row.fixed .object-protocol-heading strong{color:#9a5318}.object-protocol-row.tube .object-protocol-heading strong{color:#176654}.object-ablation-strip{display:flex;flex-wrap:nowrap;gap:10px;overflow-x:scroll;overflow-y:hidden;padding:8px 2px 18px;scrollbar-gutter:stable;scrollbar-width:auto;scrollbar-color:#a35f1d #e8dfcc;overscroll-behavior-inline:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}.object-protocol-row.tube .object-ablation-strip{scrollbar-color:#176654 #d9e8e2}.object-ablation-strip::-webkit-scrollbar{height:16px}.object-ablation-strip::-webkit-scrollbar-track{background:#e8dfcc;border-radius:9px}.object-ablation-strip::-webkit-scrollbar-thumb{background:#a35f1d;border:3px solid #e8dfcc;border-radius:9px}.object-protocol-row.tube .object-ablation-strip::-webkit-scrollbar-track{background:#d9e8e2}.object-protocol-row.tube .object-ablation-strip::-webkit-scrollbar-thumb{background:#176654;border-color:#d9e8e2}.object-ablation-strip::-webkit-scrollbar-thumb:hover{background:#17443a}.object-ablation-strip>figure{flex:0 0 clamp(300px,27vw,430px);min-width:0}.object-ablation-strip video{width:100%;aspect-ratio:1280/704}@media(max-width:700px){.object-ablation-heading,.object-protocol-heading{align-items:flex-start;flex-direction:column}.object-ablation-strip>figure{flex-basis:82vw}}</style>",
         1,
     )
     return page

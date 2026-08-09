@@ -360,7 +360,7 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 - 相似度明细：Tube case/seed 输出目录下的 `video_similarity_top100.json` 和 `video_similarity_top100.csv`
 - RAFT 缓存与明细：Tube case/seed 输出目录下的 `raft_motion_top100_v1/flows`、`flow_videos`、`raft_motion_similarity_top100.json` 和 `raft_motion_similarity_top100.csv`
 - 新 seed 页面入口：保持同一 case，把 URL 的 `seed` 改为 `90094`、`68613`、`35075`、`32466` 或 `13248`；页面会只展示当前已经生成的卡片。
-- 对比页面：`http://localhost:8092/wan22-ti2v-legacy-physiciq67-samples?v=16&case=0613pybullet_sample_001460_w002&seed=47326`。页面按 `object_A`、`object_B`、`all_objects` 各建立一条横向视频行；每行用明确可见的水平滑动条浏览该 target 已生成的全部 Top100 Fixed/Tube 消融，未生成项不占位。
+- 对比页面：`http://localhost:8092/wan22-ti2v-legacy-physiciq67-samples?v=19&case=0613pybullet_sample_001460_w002&seed=47326`。页面对 `object_A`、`object_B`、`all_objects` 分别建立独立 section，每个 section 内将 `Fixed R_fixed` 与 `Tube R_tube` 拆成两条横向视频行，并为每条行设置可见、可拖动的水平滑动条。C2/C3 显示在独立的 `Global all-token controls` 行；未生成项不占位，页面顶部会分别标出 Fixed/Tube 的实时完成数。seed 47326 完整口径为 48 个 R-dependent 视频加 2 个全局控制视频。
 
 每个 manifest 必须记录：`target_scope`、`mask_mode`、冻结 Top100 entries、实际 token indices、逐 latent token 数、40 步双 CFG 调用审计、轨迹来源以及 softmax 是否重算。
 
