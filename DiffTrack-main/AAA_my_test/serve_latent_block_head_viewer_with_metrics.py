@@ -2579,11 +2579,7 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
     sample: dict, entries: list[dict], baseline_scores: dict[str, float]
 ):
     case, seed = str(sample["case"]), int(sample["seed"])
-    directional_masks = (
-        WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
-        if seed == 47326
-        else ()
-    )
+    directional_masks = WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
     regions = [
         str(row["region_name"])
         for row in sample.get("regions", [])
@@ -3424,16 +3420,11 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         1,
     )
     auto_refresh_anchor = "$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));load();\n</script>"
-    auto_refresh_insert = """$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));let directionalPoll=null;async function pollDirectionalCompletion(){if(!data)return;const selected=current();if(selected?.case!=='0613pybullet_sample_001460_w002'||Number(selected?.seed)!==47326)return;const oldRows=selected.temporal_tube_attention_matrix_ablations||[],oldExpected=oldRows.filter(r=>r.temporal_directional).length,oldReady=oldRows.filter(r=>r.temporal_directional&&r.ready).length;if(oldExpected&&oldReady===oldExpected){if(directionalPoll)clearInterval(directionalPoll);return}try{const fresh=await fetch(`${api}/catalog?v=${Date.now()}`,{cache:'no-store'}).then(r=>r.json()),freshSample=(fresh.samples||[]).find(x=>x.case===selected.case&&Number(x.seed)===Number(selected.seed)),freshRows=freshSample?.temporal_tube_attention_matrix_ablations||[],expected=freshRows.filter(r=>r.temporal_directional).length,ready=freshRows.filter(r=>r.temporal_directional&&r.ready).length;$('status').textContent=`Temporal M1/M2/M3 Same/Future/Past ${ready}/${expected||27} · 完成后自动刷新`;if(expected&&ready===expected){if(directionalPoll)clearInterval(directionalPoll);await load();$('status').textContent+=` · temporal ${ready}/${expected} 已自动发布`}}catch(err){console.warn('temporal auto-refresh failed',err)}}load().then(()=>{directionalPoll=setInterval(pollDirectionalCompletion,20000);pollDirectionalCompletion()});
+    auto_refresh_insert = """$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));let directionalPoll=null;const temporalProgress=catalog=>{const samples=(catalog.samples||[]).filter(x=>x.case==='0613pybullet_sample_001460_w002'&&Array.isArray(x.temporal_tube_attention_matrix_ablations)),perSeed=samples.map(x=>{const rows=x.temporal_tube_attention_matrix_ablations.filter(r=>r.temporal_directional),ready=rows.filter(r=>r.ready).length;return {seed:x.seed,ready,expected:rows.length,complete:rows.length>0&&ready===rows.length}});return {ready:perSeed.reduce((n,x)=>n+x.ready,0),expected:perSeed.reduce((n,x)=>n+x.expected,0),completeSeeds:perSeed.filter(x=>x.complete).length,seedCount:perSeed.length}};async function pollDirectionalCompletion(){if(!data)return;const old=temporalProgress(data);if(old.expected&&old.ready===old.expected){if(directionalPoll)clearInterval(directionalPoll);return}try{const fresh=await fetch(`${api}/catalog?v=${Date.now()}`,{cache:'no-store'}).then(r=>r.json()),next=temporalProgress(fresh);$('status').textContent=`Temporal M1/M2/M3 Same/Future/Past ${next.ready}/${next.expected} · seeds ${next.completeSeeds}/${next.seedCount} · 完成后自动刷新`;if(next.completeSeeds>old.completeSeeds||next.ready===next.expected){if(next.ready===next.expected&&directionalPoll)clearInterval(directionalPoll);await load();$('status').textContent+=` · 已自动发布 ${next.completeSeeds}/${next.seedCount} seeds`}}catch(err){console.warn('temporal auto-refresh failed',err)}}load().then(()=>{directionalPoll=setInterval(pollDirectionalCompletion,20000);pollDirectionalCompletion()});
 </script>"""
     if page.count(auto_refresh_anchor) != 1:
         raise RuntimeError("PhysicIQ67 directional auto-refresh anchor changed")
     page = page.replace(auto_refresh_anchor, auto_refresh_insert, 1)
-    directional_poll_scope = "const selected=current();if(selected?.case!=='0613pybullet_sample_001460_w002'||Number(selected?.seed)!==47326)return;"
-    directional_poll_target = "const selected=(data.samples||[]).find(x=>x.case==='0613pybullet_sample_001460_w002'&&Number(x.seed)===47326);if(!selected)return;"
-    if page.count(directional_poll_scope) != 1:
-        raise RuntimeError("PhysicIQ67 directional poll scope changed")
-    page = page.replace(directional_poll_scope, directional_poll_target, 1)
     return page
 
 

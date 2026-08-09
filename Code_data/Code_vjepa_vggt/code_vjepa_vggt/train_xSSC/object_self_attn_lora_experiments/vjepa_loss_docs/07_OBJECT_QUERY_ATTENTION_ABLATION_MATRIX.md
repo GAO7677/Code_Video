@@ -218,11 +218,13 @@ object_A 的 13 个 latent 时刻分别为 `[6,7,6,8,6,7,6,5,6,6,5,6,5]`。这�
 | 每个 seed 的 baseline | 使用该 seed 已生成、未干预的视频；不跨 seed 共用 baseline |
 | 固定协议 | `3 targets × 8 object-dependent operators = 24` 个 Top100 视频 |
 | Tube 协议 | `3 targets × 8 object-dependent operators = 24` 个 Top100 视频 |
-| 总规模 | `5 seeds × (24 Fixed + 24 Tube) = 240` 个新视频 |
+| Tube 时间分解 | `3 targets × 3 base blocks (M1/M2/M3) × 3 time blocks (Same/Future/Past) = 27` 个 Top100 视频 |
+| 原 Fixed/Tube 规模 | `5 seeds × (24 Fixed + 24 Tube) = 240` 个视频 |
+| 时间分解新增规模 | `5 seeds × 27 = 135` 个视频；扩展后五 seed 合计 `375` 个消融视频 |
 | Head 排名 | 六个 seed 均使用与 seed 47326 相同的冻结 provisional Top100 排名，以固定被干预 head 这一变量 |
 | Tube 轨迹 | 每个 seed 从自己的 baseline 独立运行 CoTracker、冻结轨迹并映射到 latent token；不复用 seed 47326 的 token 集合 |
 | 采样控制 | 同一 seed 内 baseline、Fixed 与 Tube 保持相同扩散 seed；跨 seed 只改变采样随机性 |
-| 计算资源 | 生成使用 GPU 0/1/2/3；指标提取使用 GPU 0/1/2/3/5；全程不使用 GPU 4 |
+| 时间分解计算资源 | 4-way task shard 使用 GPU 1/2/3/5；全程不使用 GPU 4 |
 
 跨 seed 结论应比较同一 `protocol × target × operator` 相对各自 baseline 的效应分布。若多个 seed 中方向一致，可提高结果对采样随机性的稳健性；若差异显著，则说明当前最终视频后果具有 seed 依赖。它仍不能单独证明 Top100 对所有时刻都具有 tracking 特异性。
 
@@ -521,6 +523,15 @@ cd /home/gaoya/Code_Video/DiffTrack-main
 bash AAA_my_test/start_legacy_object_ablation_001460_5seed_tmux.sh
 tmux attach -t legacy_object_ablation_001460_5seed
 ```
+
+五个新 seed 的 M1/M2/M3 × Same/Future/Past 使用同一 Tube runner 和每个 seed 自己冻结的 CoTracker 轨迹。四个 worker 在每个 seed 的 27 个任务上做稳定切片，已有 `complete.json` 会自动跳过：
+
+```bash
+cd /home/gaoya/Code_Video/DiffTrack-main
+bash AAA_my_test/run_legacy_temporal_sfp_multiseed_001460_gpu.sh 1 0 4
+```
+
+实际批次同时在 GPU 1/2/3/5 上运行 worker 0/1/2/3；页面 catalog 对六个 seed 共审计 `6 × 27 = 162` 个时间分解结果。
 
 RAFT 首次提取需要 GPU，后续会复用 `/data` 下的 float16 flow cache。不得使用 GPU 4；下面示例使用 GPU 3：
 
