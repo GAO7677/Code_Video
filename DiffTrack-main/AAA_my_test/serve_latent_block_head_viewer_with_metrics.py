@@ -1571,6 +1571,15 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT
     / "attention_matrix_ablations_temporal_tube_v1"
 )
+WAN22_TI2V_LEGACY_PHYSICIQ67_VBENCH_METRICS = (
+    ("vbench_subject_consistency", "Subject"),
+    ("vbench_background_consistency", "Background"),
+    ("vbench_temporal_flickering", "Flicker"),
+    ("vbench_motion_smoothness", "Smoothness"),
+    ("vbench_dynamic_degree", "Dynamic"),
+    ("vbench_aesthetic_quality", "Aesthetic"),
+    ("vbench_imaging_quality", "Imaging"),
+)
 WAN22_TI2V_LEGACY_PCK50_SEEDS = Path(
     "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460/seeds.txt"
 )
@@ -2295,6 +2304,41 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_PROTOCOL = (
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE = "0613pybullet_sample_001460_w002"
 
 
+def _wan22_ti2v_legacy_physiciq67_vbench_scores(payload: dict) -> dict[str, float]:
+    scores = {}
+    for field, _label in WAN22_TI2V_LEGACY_PHYSICIQ67_VBENCH_METRICS:
+        metric = payload.get(field)
+        value = finite_number(metric.get("score")) if isinstance(metric, dict) else None
+        if value is not None:
+            scores[field] = value
+    return scores
+
+
+def _wan22_ti2v_legacy_physiciq67_vbench_report(
+    payload: dict, baseline_scores: dict[str, float]
+) -> dict[str, Any]:
+    scores = _wan22_ti2v_legacy_physiciq67_vbench_scores(payload)
+    metrics = []
+    for field, label in WAN22_TI2V_LEGACY_PHYSICIQ67_VBENCH_METRICS:
+        score, baseline = scores.get(field), baseline_scores.get(field)
+        metrics.append(
+            {
+                "field": field,
+                "label": label,
+                "score": score,
+                "baseline": baseline,
+                "delta": None
+                if score is None or baseline is None
+                else round(score - baseline, 6),
+            }
+        )
+    return {
+        "completed": len(scores),
+        "expected": len(WAN22_TI2V_LEGACY_PHYSICIQ67_VBENCH_METRICS),
+        "metrics": metrics,
+    }
+
+
 def _wan22_ti2v_legacy_physiciq67_ablation_variant(
     target_scope: str, mask_mode: str, top_n: int, region: str = ""
 ):
@@ -2319,7 +2363,9 @@ def _wan22_ti2v_legacy_physiciq67_ablation_variant(
     return f"{target_scope}__{target}__{mask_mode}__top{top_n:03d}"
 
 
-def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[dict]):
+def _wan22_ti2v_legacy_physiciq67_ablation_records(
+    sample: dict, entries: list[dict], baseline_scores: dict[str, float]
+):
     case, seed = str(sample["case"]), int(sample["seed"])
     ablation_root = Path(
         str(
@@ -2360,6 +2406,8 @@ def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[d
             metadata_path = root / "manifest.json"
             complete_path = root / "complete.json"
             ready = video_path.is_file() and metadata_path.is_file() and complete_path.is_file()
+            selected_token_count = None
+            vbench = _wan22_ti2v_legacy_physiciq67_vbench_report({}, baseline_scores)
             if ready:
                 try:
                     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -2374,6 +2422,14 @@ def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[d
                         and metadata.get("protocol")
                         == WAN22_TI2V_LEGACY_PHYSICIQ67_PROTOCOL
                     )
+                    if ready and target_scope != "all_tokens":
+                        selected_token_count = len(
+                            metadata.get("audit", {}).get("query_token_indices") or []
+                        )
+                    if ready:
+                        vbench = _wan22_ti2v_legacy_physiciq67_vbench_report(
+                            metadata, baseline_scores
+                        )
                 except (OSError, ValueError, TypeError, json.JSONDecodeError):
                     ready = False
             records.append(
@@ -2385,13 +2441,15 @@ def _wan22_ti2v_legacy_physiciq67_ablation_records(sample: dict, entries: list[d
                     "variant_id": variant,
                     "ready": ready,
                     "error": (root / "error.txt").is_file(),
+                    "selected_token_count": selected_token_count,
+                    "vbench": vbench,
                 }
             )
     return records
 
 
 def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
-    sample: dict, entries: list[dict]
+    sample: dict, entries: list[dict], baseline_scores: dict[str, float]
 ):
     case, seed = str(sample["case"]), int(sample["seed"])
     regions = [
@@ -2420,6 +2478,9 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
                 (root / name).is_file()
                 for name in ("complete.json", "manifest.json", "generated.mp4")
             )
+            selected_token_count = None
+            latent_frame_token_counts = None
+            vbench = _wan22_ti2v_legacy_physiciq67_vbench_report({}, baseline_scores)
             if ready:
                 try:
                     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -2434,6 +2495,13 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
                         and metadata.get("protocol")
                         == WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_PROTOCOL
                     )
+                    if ready:
+                        audit = metadata.get("audit", {})
+                        selected_token_count = len(audit.get("query_token_indices") or [])
+                        latent_frame_token_counts = audit.get("latent_frame_token_counts")
+                        vbench = _wan22_ti2v_legacy_physiciq67_vbench_report(
+                            metadata, baseline_scores
+                        )
                 except (OSError, ValueError, TypeError, json.JSONDecodeError):
                     ready = False
             records.append(
@@ -2445,6 +2513,9 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
                     "variant_id": variant,
                     "ready": ready,
                     "error": (root / "error.txt").is_file(),
+                    "selected_token_count": selected_token_count,
+                    "latent_frame_token_counts": latent_frame_token_counts,
+                    "vbench": vbench,
                 }
             )
     return records
@@ -2484,6 +2555,18 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
             )
         )
         sample["video_ready"] = video_path.is_file()
+        try:
+            baseline_payload = json.loads(
+                (video_path.parent / "manifest.json").read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            baseline_payload = {}
+        baseline_scores = _wan22_ti2v_legacy_physiciq67_vbench_scores(
+            baseline_payload
+        )
+        sample["vbench"] = _wan22_ti2v_legacy_physiciq67_vbench_report(
+            baseline_payload, baseline_scores
+        )
         sample["query_visual_ready"] = (query_root / "sam2_regions_points.png").is_file()
         attention_files_ready = (
             (heatmap_root / "complete.json").is_file()
@@ -2504,7 +2587,7 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
         sample["attention_ready"] = attention_files_ready and attention_matches_snapshot
         sample["attention_matrix_ablations"] = (
             _wan22_ti2v_legacy_physiciq67_ablation_records(
-                sample, payload.get("entries", [])
+                sample, payload.get("entries", []), baseline_scores
             )
         )
         if (
@@ -2513,7 +2596,7 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
         ):
             sample["temporal_tube_attention_matrix_ablations"] = (
                 _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
-                    sample, payload.get("entries", [])
+                    sample, payload.get("entries", []), baseline_scores
                 )
             )
         samples.append(sample)
@@ -2760,10 +2843,38 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         "S039 provisional Top10 attention",
         "S039 provisional Top30/50/100 Head mean attention",
     )
+    page = page.replace(
+        "固定随机抽取已完成 runs；F00/K00 object query，704×1280，S039 provisional Top30/50/100 Head mean attention。样例不覆盖旧 6-case 稳定排名。",
+        "704×1280 / 49 帧 / 13 个 latent 时刻。Top heads 只由 S039 positive-conditional 的 Q00→未来 K PCK 排名选出；页面同时区分固定 Q00 token 集与冻结轨迹形成的 Q00–Q12 时空 tube。",
+    )
     page = page.replace('<label>S039 Head <select id="rank"></select></label>', "")
     page = page.replace(
         '<section class="media"><div id="media" class="media-grid"></div></section><section class="performance"><h2>单 Run · 30 × 24 Head Matrix</h2>',
         '<section class="media"><h2>Generated Video & Object Query</h2><div id="media" class="media-grid base-media"></div></section><section class="media"><h2>S039 Top-N Head Mean Attention Overlay</h2><div id="means" class="media-grid"></div></section><section class="ablation"><h2>完整 Attention Matrix Ablation</h2><p>R 是 F00 稀疏 object-query token，C 是其余 token。每个对象及所有对象并集分别展示 7 种 S/I/O 矩阵区域消融、literal K/V=0 对照和整-head 输出置零控制；冻结 S039 Top30/50/100 heads，应用全部 40 个去噪步及两个 CFG 分支。</p><details class="ablation-definitions" open><summary>消融矩阵定义（M1–M7、C1–C3）</summary><p class="definition-formula"><code>A = softmax(QK<sup>T</sup>/√d)，Y = AV</code></p><div class="definition-symbols"><span><strong>R</strong>：F00 稀疏 query points 映射并去重后的 latent tokens；不是完整 object mask，也不是跨时间 object tube</span><span><strong>C</strong>：当前 attention 序列中除 R 外的全部 tokens</span><span><strong>S=A[R,R]</strong>：selected token 内部连接</span><span><strong>I=A[R,C]</strong>：C K/V → R Query</span><span><strong>O=A[C,R]</strong>：R K/V → C Query</span></div><div class="definition-table"><table><thead><tr><th>ID</th><th>实现名</th><th>置零矩阵块</th><th>精确计算含义</th><th>理论诊断目标</th><th>可能观察（非结果保证）</th></tr></thead><tbody><tr><td>M1</td><td><code>self_only</code></td><td>S</td><td>R Query 不读取 R K/V</td><td>稀疏对象 token 的内部自支持</td><td>局部身份或形状维持变弱</td></tr><tr><td>M2</td><td><code>incoming_only</code></td><td>I</td><td>R Query 不读取 C K/V</td><td>外部场景向选中 Query 的输入</td><td>对环境、其他对象或运动背景响应变弱</td></tr><tr><td>M3</td><td><code>outgoing_only</code></td><td>O</td><td>C Query 不读取 R K/V</td><td>选中 token 向其他 token 的输出</td><td>其他区域受该对象影响减弱</td></tr><tr><td>M4</td><td><code>query_row</code></td><td>S+I</td><td><code>A[R,:]=0</code>，所以 <code>Y[R]=0</code></td><td>删除选中 Query 在该 head 的全部更新</td><td>选中位置的 head 信息通路消失</td></tr><tr><td>M5</td><td><code>key_value_column</code></td><td>S+O</td><td><code>A[:,R]=0</code>，不重新归一化</td><td>删除选中 token 的全部 Value 贡献</td><td>全局不再接收该稀疏对象信息</td></tr><tr><td>M6</td><td><code>cross_boundary</code></td><td>I+O</td><td>双向跨边界连接置零，保留 <code>A[R,R]</code></td><td>隔离 R 与 C，同时保留内部连接</td><td>对象内部可能保持但交互减弱</td></tr><tr><td>M7</td><td><code>row_and_column</code></td><td>S+I+O</td><td>R 不读取任何 token，C 也不读取 R</td><td>删除所有涉及 R 的连接</td><td>比单行或单列更强的联合效应</td></tr></tbody></table></div><h3>必须分开展示的算子对照</h3><div class="definition-table"><table><thead><tr><th>ID</th><th>实现名</th><th>实际操作</th><th>与 M5 等价</th><th>含义</th></tr></thead><tbody><tr><td>C1</td><td><code>literal_kv_zero</code></td><td>选中 head 上令 <code>K<sub>R</sub>=V<sub>R</sub>=0</code>，重新计算 attention</td><td>否</td><td>对应列仍进入 softmax；logits 变为 0，并占用概率质量</td></tr><tr><td>C2</td><td><code>qk_logits_zero</code></td><td>选中 head 的全部 token 上令 <code>q<sub>h</sub>=0</code>，重新计算 softmax</td><td>否</td><td><code>softmax(0)=1/N</code>，每行输出相同的 <code>mean(V<sub>h</sub>)</code>，不是零输出</td></tr><tr><td>C3</td><td><code>full_head_output</code></td><td>令选中 head 的整个 <code>Y<sub>h</sub>=A<sub>h</sub>V<sub>h</sub>=0</code></td><td>否</td><td>删除整个 head 输出；与 QK logits 置零不同</td></tr><tr><td>Baseline</td><td>无</td><td>不干预</td><td>—</td><td>同 seed 基线视频</td></tr></tbody></table></div><p class="definition-warning"><strong>关键区别：</strong>M1–M7 是 post-softmax attention entries 置零且不重新归一化。M5 与保持 K 不变、仅令 <code>V<sub>R</sub>=0</code> 严格等价；C1 同时修改 K 和 V，因此会改变 softmax。Top heads 来自 S039 positive-conditional 的冻结 provisional PCK ranking，但干预覆盖 S000–S039 全部 40 步及 conditional/unconditional 两个 CFG 分支。</p></details><div id="ablation"></div></section><details class="performance"><summary>单 Run · 30 × 24 Head Matrix（点击展开）</summary>',
+    )
+    page = page.replace(
+        "<h2>完整 Attention Matrix Ablation</h2><p>R 是 F00 稀疏 object-query token，C 是其余 token。每个对象及所有对象并集分别展示 7 种 S/I/O 矩阵区域消融、literal K/V=0 对照和整-head 输出置零控制；冻结 S039 Top30/50/100 heads，应用全部 40 个去噪步及两个 CFG 分支。</p>",
+        "<h2>Object Query Attention 因果消融</h2><p>先选定 token 集合 R，再令 C=N\\R。M1–M7/C1 的计算公式固定；固定 Q00 与全时序 Tube 的区别仅在 R 的构造。视频/latent 时间 t=0…12 决定 R 覆盖哪些位置，去噪时间 s=0…39 决定何时应用干预；当前干预覆盖全部 40 步及 conditional/unconditional 两个 CFG 分支。</p>",
+    )
+    page = page.replace(
+        "消融矩阵定义（M1–M7、C1–C3）",
+        "共同算子定义：先确定 R，再解释 M1–M7 / C1–C3",
+    )
+    page = page.replace(
+        "<strong>R</strong>：F00 稀疏 query points 映射并去重后的 latent tokens；不是完整 object mask，也不是跨时间 object tube",
+        "<strong>R</strong>：协议选中的 token 集；固定版为 R_fixed（仅 t=0），Tube pilot 为 R_tube（冻结轨迹在 t=0…12 的并集）",
+    )
+    page = page.replace(
+        "<strong>C</strong>：当前 attention 序列中除 R 外的全部 tokens",
+        "<strong>C=N\\R</strong>：完整 self-attention 序列中不属于当前 R 的全部 tokens；左右两侧的 C 也随 R 改变",
+    )
+    page = page.replace(
+        "<strong>S=A[R,R]</strong>：selected token 内部连接",
+        "<strong>S=A[R,R]</strong>：R 内部读取；当 R=R_tube 时同时包含帧内连接和跨帧连接",
+    )
+    page = page.replace(
+        "<strong>关键区别：</strong>M1–M7 是 post-softmax attention entries 置零且不重新归一化。M5 与保持 K 不变、仅令 <code>V<sub>R</sub>=0</code> 严格等价；C1 同时修改 K 和 V，因此会改变 softmax。Top heads 来自 S039 positive-conditional 的冻结 provisional PCK ranking，但干预覆盖 S000–S039 全部 40 步及 conditional/unconditional 两个 CFG 分支。",
+        "<strong>阅读顺序：</strong>先确认本列使用 R_fixed 还是 R_tube，再读被置零的 S/I/O 分块，最后确认 softmax 是否重算。M1–M7 是 post-softmax A@V 分块置零且不重归一化；M5 严格等价于保持 K 不变、仅令 V_R=0。C1 同时修改 K、V 并重算 softmax。Top heads 只由 S039 positive-conditional 的 Q00→未来 K PCK 排名选出；把它们用于 R_tube 是新的因果干预，不是逐 query 帧 tracking accuracy 的证明。",
     )
     page = page.replace(
         "<th>置零矩阵块</th><th>精确计算含义</th><th>理论诊断目标</th>",
@@ -2817,7 +2928,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     )
     page = page.replace(
         "</style>",
-        ".tube-compare{display:grid;gap:12px}.tube-compare-row{display:grid;grid-template-columns:minmax(210px,.65fr) repeat(2,minmax(0,1fr));gap:10px;align-items:stretch}.tube-compare-row>div,.tube-column-head{padding:12px;background:#17443a;color:#fff;border-radius:10px}.tube-compare-row figure{min-width:0}.tube-compare-row video{width:100%;aspect-ratio:1280/704;background:#111}.tube-column-head{text-align:center;font-weight:900;background:#a35f1d}.tube-row-label{display:flex;flex-direction:column;justify-content:center}.tube-row-label small{margin-top:7px;opacity:.82;line-height:1.4}.tube-compare .pending{height:100%;min-height:180px}.tube-baseline{max-width:640px;margin-bottom:12px}@media(max-width:900px){.tube-compare-row{grid-template-columns:1fr}.tube-column-head:first-child{display:none}}</style>",
+        ".tube-compare{display:grid;gap:12px}.tube-compare-row{display:grid;grid-template-columns:minmax(210px,.65fr) repeat(2,minmax(0,1fr));gap:10px;align-items:stretch}.tube-compare-row>div,.tube-column-head{padding:12px;background:#17443a;color:#fff;border-radius:10px}.tube-compare-row figure{min-width:0}.tube-compare-row video{width:100%;aspect-ratio:1280/704;background:#111}.tube-column-head{text-align:center;font-weight:900;background:#a35f1d}.tube-row-label{display:flex;flex-direction:column;justify-content:center}.tube-row-label small{margin-top:7px;opacity:.82;line-height:1.4}.tube-compare .pending{height:100%;min-height:180px}.tube-baseline{max-width:640px;margin-bottom:12px}.tube-protocol-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}.tube-protocol-grid span{padding:10px 12px;background:#fff;border-left:5px solid var(--deep);line-height:1.5}.tube-dose-warning{padding:10px 12px;background:#fff1d8;border-left:6px solid #b95031;line-height:1.55}.tube-scope-title{margin:22px 0 2px;padding:10px 12px;background:#d8cab4;border-left:7px solid var(--gold)}@media(max-width:900px){.tube-compare-row,.tube-protocol-grid{grid-template-columns:1fr}.tube-column-head:first-child{display:none}}</style>",
         1,
     )
     page = page.replace(
@@ -2874,8 +2985,24 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     )
     page = page.replace(
         "function renderRequestedTop100(s){",
-        """function renderTemporalTubeComparison(s){const base=`case=${encodeURIComponent(s.case)}&seed=${s.seed}`,fixed=(s.attention_matrix_ablations||[]).filter(r=>Number(r.top_n)===100),tube=s.temporal_tube_attention_matrix_ablations||[],region=$('region').value,defs={self_only:{id:'M1',matrix:'S=A[R,R]=0',flow:'R K/V ──X──> R Query',exact:'R Query 不读取 R K/V；仍可读取 C'},incoming_only:{id:'M2',matrix:'I=A[R,C]=0',flow:'C K/V ──X──> R Query',exact:'R Query 不读取 C K/V；只保留对 R 的读取'},outgoing_only:{id:'M3',matrix:'O=A[C,R]=0',flow:'R K/V ──X──> C Query',exact:'C Query 不读取 R K/V；R Query 的读取保持'},query_row:{id:'M4',matrix:'A[R,:]=0',flow:'全部 K/V ──X──> R Query',exact:'该 head 的 Y[R]=0；R K/V 仍可被 C Query 读取'},key_value_column:{id:'M5',matrix:'A[:,R]=0 · no renorm',flow:'R Value ──X──> 全部 Query',exact:'保持 A 不变并删除 R 的全部 Value 贡献；等价于仅 V_R=0'},cross_boundary:{id:'M6',matrix:'A[R,C]=A[C,R]=0',flow:'C K/V ──X──> R Query；R K/V ──X──> C Query',exact:'切断双向跨边界读取，保留 R→R 与 C→C'},row_and_column:{id:'M7',matrix:'A[R,:]=0 且 A[C,R]=0',flow:'全部 K/V ──X──> R Query；R K/V ──X──> C Query',exact:'R 接收端更新为零，同时 R 不再向 C 提供 Value'},literal_kv_zero:{id:'C1',matrix:'K_R=V_R=0 · recompute softmax',flow:'R Value 为零；R 列仍参与 softmax 路由',exact:'K_R、V_R 同时置零后重算 attention；R 列 logits=0 且仍占概率质量'}},modes=['self_only','incoming_only','outgoing_only','query_row','key_value_column','cross_boundary','row_and_column','literal_kv_zero'],targets=[['single_object',region,`Selected object · ${region}`],['all_objects','', 'All objects union']],specs=targets.flatMap(([target_scope,targetRegion,targetLabel])=>modes.map(mask_mode=>({target_scope,region:targetRegion,targetLabel,mask_mode}))),find=(rows,x)=>rows.find(r=>r.target_scope===x.target_scope&&r.mask_mode===x.mask_mode&&String(r.region||'')===x.region),src=(kind,x)=>`${api}/${kind==='fixed'?'ablation-video':'temporal-tube-ablation-video'}?${base}&target_scope=${encodeURIComponent(x.target_scope)}&mask_mode=${encodeURIComponent(x.mask_mode)}&top_n=100${x.region?`&region=${encodeURIComponent(x.region)}`:''}`,card=(kind,x,r)=>{const d=defs[x.mask_mode],label=kind==='fixed'?'左 · Fixed Query (Q00 only)':'右 · All-time Query Tube (Q00–Q12)',rdef=kind==='fixed'?'R_fixed：F00 稀疏点映射出的唯一 t=0 tokens':'R_tube：baseline CoTracker 轨迹在 F00,F04,…,F48 映射出的 13 帧 token 并集',media=r?.ready?`<video controls muted playsinline preload="metadata" src="${src(kind,x)}"></video>`:`<div class="pending">${r?.error?'生成失败':'待生成'}</div>`;return `<figure>${media}<figcaption><strong>${e(label)}</strong><span class="caption-matrix">${e(rdef)}</span><span class="caption-exact"><b>算子：</b>${e(d.exact)}</span></figcaption></figure>`},rows=specs.map(x=>{const d=defs[x.mask_mode];return `<div class="tube-compare-row"><div class="tube-row-label"><strong>${e(d.id)} · ${e(x.mask_mode)}<br>${e(x.targetLabel)}</strong><small>${e(d.matrix)}</small><small>信息流：${e(d.flow)}</small></div>${card('fixed',x,find(fixed,x))}${card('tube',x,find(tube,x))}</div>`}).join(''),done=tube.filter(r=>r.ready).length,baseline=s.video_ready?`<figure class="tube-baseline"><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption></figure>`:'';$('ablation').innerHTML=`<div class="requested-note"><b>固定 Query vs 全时序 Query Tube</b><br>唯一自变量是 R：左侧只含 F00/t=0 token；右侧使用同一 baseline 上冻结的 CoTracker pseudo-GT，将每个 object point 映射到 Q00–Q12（对应视频 F00,F04,…,F48）。两侧使用完全相同的 Top100 heads、seed、40 denoising steps、两个 CFG 分支和 M1–M7/C1 计算。动态进度 ${done}/${tube.length}。C2/C3 与 R 无关，因此不重复生成。</div>${baseline}<div class="tube-compare"><div class="tube-compare-row"><div class="tube-column-head">实验 ID / 精确信息流</div><div class="tube-column-head">左：Fixed Q00</div><div class="tube-column-head">右：All-time Q00–Q12</div></div>${rows}</div>`}function renderRequestedTop100(s){if(s.temporal_tube_attention_matrix_ablations)return renderTemporalTubeComparison(s);""",
+        """function renderTemporalTubeComparison(s){const base=`case=${encodeURIComponent(s.case)}&seed=${s.seed}`,fixed=(s.attention_matrix_ablations||[]).filter(r=>Number(r.top_n)===100),tube=s.temporal_tube_attention_matrix_ablations||[],defs={self_only:{id:'M1',matrix:'S=A[R,R]=0',flow:'R K/V ──X──> R Query',exact:'R Query 不读取 R K/V；仍可读取 C'},incoming_only:{id:'M2',matrix:'I=A[R,C]=0',flow:'C K/V ──X──> R Query',exact:'R Query 不读取 C K/V；只保留对 R 的读取'},outgoing_only:{id:'M3',matrix:'O=A[C,R]=0',flow:'R K/V ──X──> C Query',exact:'C Query 不读取 R K/V；R Query 的读取保持'},query_row:{id:'M4',matrix:'A[R,:]=0',flow:'全部 K/V ──X──> R Query',exact:'该 head 的 Y[R]=0；R K/V 仍可被 C Query 读取'},key_value_column:{id:'M5',matrix:'A[:,R]=0 · no renorm',flow:'R Value ──X──> 全部 Query',exact:'保持 A 不变并删除 R 的全部 Value 贡献；等价于仅 V_R=0'},cross_boundary:{id:'M6',matrix:'A[R,C]=A[C,R]=0',flow:'C K/V ──X──> R Query；R K/V ──X──> C Query',exact:'切断双向跨边界读取，保留 R→R 与 C→C'},row_and_column:{id:'M7',matrix:'A[R,:]=0 且 A[C,R]=0',flow:'全部 K/V ──X──> R Query；R K/V ──X──> C Query',exact:'R 接收端更新为零，同时 R 不再向 C 提供 Value'},literal_kv_zero:{id:'C1',matrix:'K_R=V_R=0 · recompute softmax',flow:'R Value 为零；R 列仍参与 softmax 路由',exact:'K_R、V_R 同时置零后重算 attention；R 列 logits=0 且仍占概率质量'}},modes=['self_only','incoming_only','outgoing_only','query_row','key_value_column','cross_boundary','row_and_column','literal_kv_zero'],objectTargets=[...new Set(tube.filter(r=>r.target_scope==='single_object').map(r=>String(r.region)))].map(region=>['single_object',region,`Selected object · ${region}`]),targets=[...objectTargets,['all_objects','', 'All objects union']],specs=targets.flatMap(([target_scope,targetRegion,targetLabel])=>modes.map(mask_mode=>({target_scope,region:targetRegion,targetLabel,mask_mode}))),find=(rows,x)=>rows.find(r=>r.target_scope===x.target_scope&&r.mask_mode===x.mask_mode&&String(r.region||'')===x.region),src=(kind,x)=>`${api}/${kind==='fixed'?'ablation-video':'temporal-tube-ablation-video'}?${base}&target_scope=${encodeURIComponent(x.target_scope)}&mask_mode=${encodeURIComponent(x.mask_mode)}&top_n=100${x.region?`&region=${encodeURIComponent(x.region)}`:''}`,card=(kind,x,r)=>{const d=defs[x.mask_mode],label=kind==='fixed'?'左 · Fixed Query (Q00 only)':'右 · All-time Query Tube (Q00–Q12)',rdef=kind==='fixed'?'R_fixed：F00 稀疏点映射出的唯一 t=0 tokens':'R_tube：baseline CoTracker 轨迹在 F00,F04,…,F48 映射出的 13 帧 token 并集',media=r?.ready?`<video controls muted playsinline preload="metadata" src="${src(kind,x)}"></video>`:`<div class="pending">${r?.error?'生成失败':'待生成'}</div>`;return `<figure>${media}<figcaption><strong>${e(label)}</strong><span class="caption-matrix">${e(rdef)}</span><span class="caption-exact"><b>算子：</b>${e(d.exact)}</span></figcaption></figure>`},rows=specs.map(x=>{const d=defs[x.mask_mode];return `<div class="tube-compare-row"><div class="tube-row-label"><strong>${e(d.id)} · ${e(x.mask_mode)}<br>${e(x.targetLabel)}</strong><small>${e(d.matrix)}</small><small>信息流：${e(d.flow)}</small></div>${card('fixed',x,find(fixed,x))}${card('tube',x,find(tube,x))}</div>`}).join(''),done=tube.filter(r=>r.ready).length,baseline=s.video_ready?`<figure class="tube-baseline"><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption></figure>`:'';$('ablation').innerHTML=`<div class="requested-note"><b>固定 Query vs 全时序 Query Tube</b><br>唯一自变量是 R：左侧只含 F00/t=0 token；右侧使用同一 baseline 上冻结的 CoTracker pseudo-GT，将每个 object point 映射到 Q00–Q12（对应视频 F00,F04,…,F48）。两侧使用完全相同的 Top100 heads、seed、40 denoising steps、两个 CFG 分支和 M1–M7/C1 计算。页面同时展示 object_A、object_B 与 all_objects；动态进度 ${done}/${tube.length}。C2/C3 与 R 无关，因此不重复生成。</div>${baseline}<div class="tube-compare"><div class="tube-compare-row"><div class="tube-column-head">实验 ID / 精确信息流</div><div class="tube-column-head">左：Fixed Q00</div><div class="tube-column-head">右：All-time Q00–Q12</div></div>${rows}</div>`}function renderRequestedTop100(s){if(s.temporal_tube_attention_matrix_ablations)return renderTemporalTubeComparison(s);""",
         1,
+    )
+    page = page.replace(
+        "label=kind==='fixed'?'左 · Fixed Query (Q00 only)':'右 · All-time Query Tube (Q00–Q12)',rdef=kind==='fixed'?'R_fixed：F00 稀疏点映射出的唯一 t=0 tokens':'R_tube：baseline CoTracker 轨迹在 F00,F04,…,F48 映射出的 13 帧 token 并集'",
+        "label=kind==='fixed'?'左 · 固定 token 集 R_fixed':'右 · 全时序 token tube R_tube',tokenCount=Number.isInteger(r?.selected_token_count)?r.selected_token_count:'—',perFrame=Array.isArray(r?.latent_frame_token_counts)?r.latent_frame_token_counts.join(','):'—',rdef=kind==='fixed'?`R_fixed：仅 F00 / latent t=0；|R|=${tokenCount}`:`R_tube：冻结 baseline 轨迹在 Q00–Q12 的联合集合；|R|=${tokenCount}；逐 latent=[${perFrame}]`",
+    )
+    page = page.replace(
+        "rows=specs.map(x=>{const d=defs[x.mask_mode];return `<div class=\"tube-compare-row\"><div class=\"tube-row-label\"><strong>${e(d.id)} · ${e(x.mask_mode)}<br>${e(x.targetLabel)}</strong><small>${e(d.matrix)}</small><small>信息流：${e(d.flow)}</small></div>${card('fixed',x,find(fixed,x))}${card('tube',x,find(tube,x))}</div>`}).join('')",
+        "rows=targets.map(([targetScope,targetRegion,targetLabel])=>{const group=specs.filter(x=>x.target_scope===targetScope&&x.region===targetRegion);return `<h3 class=\"tube-scope-title\">Target：${e(targetLabel)} · 8 个 R-dependent operators</h3>`+group.map(x=>{const d=defs[x.mask_mode];return `<div class=\"tube-compare-row\"><div class=\"tube-row-label\"><strong>${e(d.id)} · ${e(x.mask_mode)}</strong><small>${e(d.matrix)}</small><small>被切断：${e(d.flow)}</small></div>${card('fixed',x,find(fixed,x))}${card('tube',x,find(tube,x))}</div>`}).join('')}).join('')",
+    )
+    page = page.replace(
+        '<div class="requested-note"><b>固定 Query vs 全时序 Query Tube</b><br>唯一自变量是 R：左侧只含 F00/t=0 token；右侧使用同一 baseline 上冻结的 CoTracker pseudo-GT，将每个 object point 映射到 Q00–Q12（对应视频 F00,F04,…,F48）。两侧使用完全相同的 Top100 heads、seed、40 denoising steps、两个 CFG 分支和 M1–M7/C1 计算。页面同时展示 object_A、object_B 与 all_objects；动态进度 ${done}/${tube.length}。C2/C3 与 R 无关，因此不重复生成。</div>',
+        '<div class="requested-note"><h3>实验问题：扩大 R 的视频时间范围后，同一算子的生成效应如何变化？</h3><p>左右两侧保持 Top100 heads、seed=47326、采样参数、40 个去噪步、conditional/unconditional 两个 CFG 分支和 M1–M7/C1 公式完全一致。</p><div class="tube-protocol-grid"><span><b>左 · R_fixed</b><br>F00 稀疏 object points 只映射到 latent t=0；不是完整 mask，也不复制到未来帧。</span><span><b>右 · R_tube</b><br>同一批点在 baseline 上由 CoTracker 冻结，映射 Q00–Q12 / F00,F04,…,F48 后取联合集合。</span><span><b>Tube 内部含义</b><br>A[R_tube,R_tube] 同时包含帧内和跨帧对象连接；右侧不是 13 次彼此独立的逐帧实验。</span><span><b>两条时间轴</b><br>t=0…12 是视频 latent 时间；s=0…39 是扩散去噪时间。右侧覆盖全部 t，两侧均覆盖全部 s。</span></div><p class="tube-dose-warning"><b>解释限制：</b>R_tube 的 token 数显著多于 R_fixed，因此右侧更强变化可能来自更大的干预剂量，不能直接证明每一帧的 PCK head 都准确。当前 Tube 消融也不等于 Q_t×K_s 的 13×13 响应/PCK 验证；轨迹标签为 CoTracker pseudo-GT，不是真实 GT。</p><p>页面展示 object_A、object_B、all_objects 三组；动态进度 <b>${done}/${tube.length}</b>。C2/C3 不依赖 R，直接复用已有控制视频。</p></div>',
+    )
+    page = page.replace(
+        '<div class="tube-column-head">实验 ID / 精确信息流</div><div class="tube-column-head">左：Fixed Q00</div><div class="tube-column-head">右：All-time Q00–Q12</div>',
+        '<div class="tube-column-head">算子 ID / 被切断的信息流</div><div class="tube-column-head">左：R_fixed · 仅 latent t=0</div><div class="tube-column-head">右：R_tube · latent t=0…12 联合集合</div>',
     )
     page = page.replace(
         '<span class="caption-flow">信息流：${e(definition.flow)}</span><span class="caption-exact">精确计算：${e(definition.exact)}</span>',
@@ -2896,6 +3023,40 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     page = page.replace(
         " attention samples ready`;render()",
         " attention samples ready · ${data.ablation_progress.ready}/${data.ablation_progress.expected} ablation videos ready`;render()",
+    )
+    page = page.replace(
+        "</style>",
+        ".vbench-summary{margin:8px 0 0;padding:8px;border-top:1px solid #ddd2c0;background:#f8f4eb}.vbench-summary>strong{display:block;margin-bottom:6px;font:12px ui-monospace,monospace}.vbench-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}.vbench-chip{display:grid;grid-template-columns:1fr auto auto;gap:5px;padding:5px 6px;background:#fff;border:1px solid #e1d8c9;font:10px ui-monospace,monospace}.vbench-chip b{overflow:hidden;text-overflow:ellipsis}.vbench-chip em,.vbench-chip i{font-style:normal;font-variant-numeric:tabular-nums}.vbench-chip .positive{color:#08704e}.vbench-chip .negative{color:#b33b28}.vbench-chip .neutral{color:#6c665d}.vbench-pending{padding:9px;background:#f1ece2;color:#756d61;font:11px ui-monospace,monospace}@media(max-width:900px){.vbench-grid{grid-template-columns:1fr}}</style>",
+        1,
+    )
+    page = page.replace(
+        "function renderTemporalTubeComparison(s){",
+        """function vbenchSummary(x,isBaseline=false){const report=x?.vbench,metrics=(report?.metrics||[]).filter(m=>Number.isFinite(m.score));if(!metrics.length)return `<div class="vbench-pending">VBench 待评测 · 0/${report?.expected||7}</div>`;const chips=metrics.map(m=>{const score=Number(m.score),delta=Number(m.delta),hasDelta=Number.isFinite(delta),deltaClass=!hasDelta||Math.abs(delta)<5e-7?'neutral':delta>0?'positive':'negative',deltaText=isBaseline?'baseline':hasDelta?`Δ ${delta>=0?'+':''}${delta.toFixed(4)}`:'Δ —';return `<span class="vbench-chip" title="${e(m.field)} · baseline ${Number.isFinite(m.baseline)?Number(m.baseline).toFixed(6):'—'}"><b>${e(m.label)}</b><em>${score.toFixed(4)}</em><i class="${deltaClass}">${deltaText}</i></span>`}).join('');return `<div class="vbench-summary"><strong>VBench ${isBaseline?'未扰动基线':'相比未扰动 Δ'} · ${report.completed}/${report.expected}</strong><div class="vbench-grid">${chips}</div></div>`}function renderTemporalTubeComparison(s){""",
+        1,
+    )
+    page = page.replace(
+        '<span class="caption-protocol">${e(protocol)}</span></figcaption></figure>',
+        '<span class="caption-protocol">${e(protocol)}</span></figcaption>${vbenchSummary(r)}</figure>',
+    )
+    page = page.replace(
+        '<div class="ablation-baseline"><figure>${baseline}<figcaption>Baseline · No Attention Intervention</figcaption></figure></div>',
+        '<div class="ablation-baseline"><figure>${baseline}<figcaption>Baseline · No Attention Intervention</figcaption>${vbenchSummary(s,true)}</figure></div>',
+    )
+    page = page.replace(
+        '<span class="caption-exact"><b>精确计算：</b>${e(definition.exact)}</span></figcaption></figure>',
+        '<span class="caption-exact"><b>精确计算：</b>${e(definition.exact)}</span></figcaption>${vbenchSummary(r)}</figure>',
+    )
+    page = page.replace(
+        '<span class="caption-exact"><b>精确计算：</b>保持原始 Q/K/V、softmax attention 与所有 head 输出不变</span></figcaption></figure>',
+        '<span class="caption-exact"><b>精确计算：</b>保持原始 Q/K/V、softmax attention 与所有 head 输出不变</span></figcaption>${vbenchSummary(s,true)}</figure>',
+    )
+    page = page.replace(
+        '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span></figcaption></figure>',
+        '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span></figcaption>${vbenchSummary(r)}</figure>',
+    )
+    page = page.replace(
+        '<figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption></figure>',
+        '<figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption>${vbenchSummary(s,true)}</figure>',
     )
     return page
 
