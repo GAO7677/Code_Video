@@ -170,10 +170,11 @@ class AttentionMatrixAblator:
         target_scope: str,
         mask_mode: str,
         region: str | None,
+        extra_mask_modes: tuple[str, ...] = (),
     ) -> None:
         if target_scope not in TARGET_SCOPES + ("all_tokens",):
             raise ValueError(f"unsupported target scope: {target_scope}")
-        if mask_mode not in MATRIX_MASKS + CONTROL_MASKS:
+        if mask_mode not in MATRIX_MASKS + CONTROL_MASKS + extra_mask_modes:
             raise ValueError(f"unsupported mask mode: {mask_mode}")
         if mask_mode in ALL_TOKEN_CONTROLS and target_scope != "all_tokens":
             raise ValueError(f"{mask_mode} requires target_scope=all_tokens")
@@ -448,6 +449,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest-path", type=Path, default=MANIFEST_PATH)
     parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
     parser.add_argument("--generate-missing-baselines", action="store_true")
+    parser.add_argument(
+        "--baselines-only",
+        action="store_true",
+        help="generate only missing seed-matched baselines from the manifest",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -687,7 +693,9 @@ def main() -> None:
         tasks = [task for task in tasks if int(task["top_n"]) in selected_top_counts]
     if args.object_dependent_only:
         tasks = [task for task in tasks if task["target_scope"] != "all_tokens"]
-    if args.generate_missing_baselines:
+    if args.baselines_only:
+        tasks = baseline_tasks(manifest)
+    elif args.generate_missing_baselines:
         tasks = baseline_tasks(manifest) + tasks
     if args.task_index is not None and args.task_indices is not None:
         raise ValueError("--task-index and --task-indices are mutually exclusive")

@@ -2363,6 +2363,20 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_PROTOCOL = "attention_matrix_ablation_v2"
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_PROTOCOL = (
     "attention_matrix_ablation_temporal_object_tube_v1"
 )
+WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS = (
+    "self_same",
+    "self_future",
+    "self_past",
+    "incoming_same",
+    "incoming_future",
+    "incoming_past",
+    "outgoing_same",
+    "outgoing_future",
+    "outgoing_past",
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_PROTOCOL = (
+    "attention_matrix_ablation_temporal_direction_v1"
+)
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE = "0613pybullet_sample_001460_w002"
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_SEEDS = frozenset(
     (47326, 90094, 68613, 35075, 32466, 13248)
@@ -2459,8 +2473,10 @@ def _wan22_ti2v_legacy_physiciq67_ablation_variant(
         if target_scope != "all_tokens":
             return None
         return f"{mask_mode}__all_tokens__top{top_n:03d}"
-    if mask_mode not in WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_MASKS + (
-        "literal_kv_zero",
+    if mask_mode not in (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_MASKS
+        + WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
+        + ("literal_kv_zero",)
     ):
         return None
     if target_scope == "single_object":
@@ -2563,6 +2579,11 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
     sample: dict, entries: list[dict], baseline_scores: dict[str, float]
 ):
     case, seed = str(sample["case"]), int(sample["seed"])
+    directional_masks = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
+        if seed == 47326
+        else ()
+    )
     regions = [
         str(row["region_name"])
         for row in sample.get("regions", [])
@@ -2572,8 +2593,10 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
     targets.append(("all_objects", ""))
     records = []
     for target_scope, region in targets:
-        for mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_MASKS + (
-            "literal_kv_zero",
+        for mask_mode in (
+            WAN22_TI2V_LEGACY_PHYSICIQ67_MATRIX_MASKS
+            + directional_masks
+            + ("literal_kv_zero",)
         ):
             variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(
                 target_scope, mask_mode, 100, region
@@ -2595,6 +2618,18 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
             if ready:
                 try:
                     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    complete = json.loads(
+                        (root / "complete.json").read_text(encoding="utf-8")
+                    )
+                    is_directional = (
+                        mask_mode
+                        in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
+                    )
+                    expected_protocol = (
+                        WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_PROTOCOL
+                        if is_directional
+                        else WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_PROTOCOL
+                    )
                     ready = (
                         metadata.get("case") == case
                         and int(metadata.get("seed", -1)) == seed
@@ -2603,16 +2638,56 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
                         and int(metadata.get("top_n", -1)) == 100
                         and str(metadata.get("region") or "") == region
                         and metadata.get("selected_entries") == entries[:100]
-                        and metadata.get("protocol")
-                        == WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_PROTOCOL
+                        and metadata.get("protocol") == expected_protocol
                     )
                     if ready:
                         audit = metadata.get("audit", {})
                         selected_token_count = len(audit.get("query_token_indices") or [])
                         latent_frame_token_counts = audit.get("latent_frame_token_counts")
-                        vbench = _wan22_ti2v_legacy_physiciq67_vbench_report(
-                            metadata, baseline_scores
-                        )
+                        if is_directional:
+                            directional_spec = audit.get(
+                                "temporal_directional_spec", {}
+                            )
+                            expected_block = {
+                                "self": "S",
+                                "incoming": "I",
+                                "outgoing": "O",
+                            }[mask_mode.rsplit("_", 1)[0]]
+                            expected_direction = mask_mode.rsplit("_", 1)[1]
+                            expected_events = int(
+                                audit.get("expected_head_events", -1)
+                            )
+                            modified_events = int(
+                                audit.get("modified_head_events", -2)
+                            )
+                            ready = (
+                                directional_spec.get("base_block")
+                                == expected_block
+                                and directional_spec.get("direction")
+                                == expected_direction
+                                and expected_events > 0
+                                and modified_events == expected_events
+                                and int(
+                                    audit.get(
+                                        "temporal_zeroed_entries_per_head", 0
+                                    )
+                                )
+                                > 0
+                                and complete.get("case") == case
+                                and int(complete.get("seed", -1)) == seed
+                                and complete.get("variant_id") == variant
+                                and complete.get("protocol") == expected_protocol
+                                and int(
+                                    complete.get("selected_temporal_tokens", -1)
+                                )
+                                == selected_token_count
+                                and int(complete.get("modified_head_events", -1))
+                                == modified_events
+                            )
+                        if ready:
+                            vbench = _wan22_ti2v_legacy_physiciq67_vbench_report(
+                                metadata, baseline_scores
+                            )
                 except (OSError, ValueError, TypeError, json.JSONDecodeError):
                     ready = False
             records.append(
@@ -2626,6 +2701,8 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
                     "error": (root / "error.txt").is_file(),
                     "selected_token_count": selected_token_count,
                     "latent_frame_token_counts": latent_frame_token_counts,
+                    "temporal_directional": mask_mode
+                    in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS,
                     "vbench": vbench,
                 }
             )
@@ -3222,6 +3299,18 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         raise RuntimeError("PhysicIQ67 temporal definitions changed")
     page = page.replace(temporal_defs_tail, temporal_defs_with_logic, 1)
 
+    directional_defs_anchor = "full_head_output:{id:'C3',matrix:'Y_h=A_hV_h=0',flow:'该 head ──X──> 后续输出',exact:'直接令选中 head 的完整输出为 0；Q/K/V 与 softmax A 本身不变'}},logic={"
+    directional_defs_insert = """full_head_output:{id:'C3',matrix:'Y_h=A_hV_h=0',flow:'该 head ──X──> 后续输出',exact:'直接令选中 head 的完整输出为 0；Q/K/V 与 softmax A 本身不变'},self_same:{id:'M1-same',matrix:'A[R_tq,R_tk]=0 · tq=tk',flow:'R_t K/V ──X──> R_t Query',exact:'删除同一 latent 时刻内全部 R_t Query×R_t K/V 配对；不是只删除 q=k 主对角线，全部跨时刻 R→R 保留'},self_future:{id:'M1-future',matrix:'A[R_tq,R_tk]=0 · tq>tk',flow:'R_t K/V ──X──> R_t′ Query · t′>t',exact:'只删除 object tube 内从较早 key 时刻流向较晚 query 时刻的 post-softmax A@V 项；同帧与反向时间项保留'},self_past:{id:'M1-past',matrix:'A[R_tq,R_tk]=0 · tq<tk',flow:'R_t K/V ──X──> R_t′ Query · t′<t',exact:'只删除 object tube 内从较晚 key 时刻流向较早 query 时刻的 post-softmax A@V 项；同帧与正向时间项保留'},incoming_same:{id:'M2-same',matrix:'A[R_tq,C_tk]=0 · tq=tk',flow:'C_t K/V ──X──> R_t Query',exact:'删除同一 latent 时刻内全部 C_t Value 对 R_t Query 的贡献；全部跨时刻 C→R 保留'},incoming_future:{id:'M2-future',matrix:'A[R_tq,C_tk]=0 · tq>tk',flow:'C_t K/V ──X──> R_t′ Query · t′>t',exact:'只删除较早时刻的非 R Value 对较晚 object-query 的贡献；R→R 与同帧/反向 C→R 保留'},incoming_past:{id:'M2-past',matrix:'A[R_tq,C_tk]=0 · tq<tk',flow:'C_t K/V ──X──> R_t′ Query · t′<t',exact:'只删除较晚时刻的非 R Value 对较早 object-query 的贡献；R→R 与同帧/正向 C→R 保留'},outgoing_same:{id:'M3-same',matrix:'A[C_tq,R_tk]=0 · tq=tk',flow:'R_t K/V ──X──> C_t Query',exact:'删除同一 latent 时刻内全部 R_t Value 对 C_t Query 的贡献；R Query 更新与全部跨时刻 R→C 保留'},outgoing_future:{id:'M3-future',matrix:'A[C_tq,R_tk]=0 · tq>tk',flow:'R_t K/V ──X──> C_t′ Query · t′>t',exact:'只删除较早 object Value 对较晚非 R query 的贡献；R query 的读取与同帧/反向 R→C 保留'},outgoing_past:{id:'M3-past',matrix:'A[C_tq,R_tk]=0 · tq<tk',flow:'R_t K/V ──X──> C_t′ Query · t′<t',exact:'只删除较晚 object Value 对较早非 R query 的贡献；R query 的读取与同帧/正向 R→C 保留'}},logic={"""
+    if page.count(directional_defs_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 temporal directional definitions changed")
+    page = page.replace(directional_defs_anchor, directional_defs_insert, 1)
+
+    directional_logic_anchor = "full_head_output:{calc:'Y_h=A_hV_h=0',theory:'直接删除该 head 对残差分支的全部贡献；它不依赖 object token 集 R。'}},modes="
+    directional_logic_insert = """full_head_output:{calc:'Y_h=A_hV_h=0',theory:'直接删除该 head 对残差分支的全部贡献；它不依赖 object token 集 R。'},self_same:{calc:"Y'_{R,tq}=Y_{R,tq}−Σ_{tk=tq} A[R_tq,R_tk]V_{R,tk}",theory:'隔离对象 tube 内的同帧自交互，保留过去→未来与未来→过去的全部 R→R 跨帧项。'},self_future:{calc:"Y'_{R,tq}=Y_{R,tq}−Σ_{tk<tq} A[R_tq,R_tk]V_{R,tk}",theory:'隔离 object tube 内由过去对象状态写入未来对象 query 的前向时间贡献；不删除同帧自作用，也不删除未来→过去项。'},self_past:{calc:"Y'_{R,tq}=Y_{R,tq}−Σ_{tk>tq} A[R_tq,R_tk]V_{R,tk}",theory:'隔离 object tube 内未来对象状态写回过去 object query 的反向时间贡献；用于和 M1-future 检查时间方向不对称。'},incoming_same:{calc:"Y'_{R,tq}=Y_{R,tq}−Σ_{tk=tq} A[R_tq,C_tk]V_{C,tk}",theory:'检验对象 Query 的同帧环境输入；全部跨帧 C→R 输入及 R→R 自作用保留。'},incoming_future:{calc:"Y'_{R,tq}=Y_{R,tq}−Σ_{tk<tq} A[R_tq,C_tk]V_{C,tk}",theory:'检验过去环境/其他 token 是否把状态传入未来 object query；同帧上下文和 object 自身 tube 仍保留。'},incoming_past:{calc:"Y'_{R,tq}=Y_{R,tq}−Σ_{tk>tq} A[R_tq,C_tk]V_{C,tk}",theory:'检验较晚环境 token 对较早 object query 的反向时间读取效应；与 future 差异反映方向性而非总剂量。'},outgoing_same:{calc:"Y'_{C,tq}=Y_{C,tq}−Σ_{tk=tq} A[C_tq,R_tk]V_{R,tk}",theory:'检验对象 Value 对同帧环境/其他对象的广播；object Query 更新和跨帧 R→C 全部保留。'},outgoing_future:{calc:"Y'_{C,tq}=Y_{C,tq}−Σ_{tk<tq} A[C_tq,R_tk]V_{R,tk}",theory:'检验过去对象状态向未来环境/其他对象传播的可见作用；object query 自身更新完全保留。'},outgoing_past:{calc:"Y'_{C,tq}=Y_{C,tq}−Σ_{tk>tq} A[C_tq,R_tk]V_{R,tk}",theory:'检验较晚对象状态向较早非 R query 的反向传播；与 M3-future 对照时间方向性。'}},modes="""
+    if page.count(directional_logic_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 temporal directional logic changed")
+    page = page.replace(directional_logic_anchor, directional_logic_insert, 1)
+
     temporal_find = "find=(rows,x)=>rows.find(r=>r.target_scope===x.target_scope&&r.mask_mode===x.mask_mode&&String(r.region||'')===x.region),src="
     temporal_similarity_helpers = """find=(rows,x)=>rows.find(r=>r.target_scope===x.target_scope&&r.mask_mode===x.mask_mode&&String(r.region||'')===x.region),similarity=s.ablation_video_similarity||{},comparisons=similarity.comparisons||[],simId=(kind,x,mode=x.mask_mode)=>`${kind}:${x.target_scope}:${x.region||'all_objects'}:${mode}`,pair=(left,right)=>comparisons.find(c=>(c.left_id===left&&c.right_id===right)||(c.left_id===right&&c.right_id===left)),metricText=m=>m?`SSIM ${Number(m.ssim_mean).toFixed(4)} · PSNR ${m.psnr_db===null?'∞':Number(m.psnr_db).toFixed(2)+' dB'} · MAE ${Number(m.mae_0_1).toFixed(4)} · Δt-MAE ${Number(m.temporal_delta_mae_0_1).toFixed(4)}${m.decoded_equal?' · 逐像素相同':' · 非逐像素相同'}`:'待计算',similarityCard=(kind,x)=>{const own=simId(kind,x),baseMetric=pair('baseline',own),fixedTube=pair(simId('fixed',x),simId('tube',x));return `<span class=\"similarity-card\"><b>vs Baseline：</b>${e(metricText(baseMetric))}<br><b>Fixed ↔ Tube：</b>${e(metricText(fixedTube))}</span>`},prettyId=id=>String(id).replace('single_object:','').replace('all_objects:all_objects','all_objects').replace('key_value_column','M5').replace('literal_kv_zero','C1').replace('cross_boundary','M6').replace('incoming_only','M2').replace('outgoing_only','M3').replace('query_row','M4').replace('row_and_column','M7').replace('self_only','M1'),marginalPairs={S:[['baseline','self_only'],['incoming_only','query_row'],['outgoing_only','key_value_column'],['cross_boundary','row_and_column']],I:[['baseline','incoming_only'],['self_only','query_row'],['outgoing_only','cross_boundary'],['key_value_column','row_and_column']],O:[['baseline','outgoing_only'],['self_only','key_value_column'],['incoming_only','cross_boundary'],['query_row','row_and_column']]},marginalScore=(kind,x,block)=>{const values=marginalPairs[block].map(([a,b])=>pair(a==='baseline'?'baseline':simId(kind,x,a),simId(kind,x,b))?.ssim_mean).filter(Number.isFinite);return values.length?values.reduce((u,v)=>u+v,0)/values.length:null},similarityPanel=()=>{if(!similarity.ready)return `<div class=\"similarity-panel pending\">视频相似度待计算：${e(similarity.reason||'metrics unavailable')}</div>`;const closest=(similarity.closest_same_target_pairs||[]).slice(0,6).map(c=>`<li><code>${e(prettyId(c.left_id))}</code> ↔ <code>${e(prettyId(c.right_id))}</code> · SSIM ${Number(c.ssim_mean).toFixed(4)} · MAE ${Number(c.mae_0_1).toFixed(4)}</li>`).join(''),diagnostics=targets.flatMap(([target_scope,region,label])=>['fixed','tube'].map(kind=>{const x={target_scope,region};return `<tr><td>${e(kind)}</td><td>${e(label)}</td>${['S','I','O'].map(block=>{const score=marginalScore(kind,x,block);return `<td>${Number.isFinite(score)?score.toFixed(4):'—'}</td>`}).join('')}</tr>`})).join(''),exactCount=(similarity.exact_decoded_groups||[]).length,res=similarity.comparison_resolution_hwc||[];return `<section class=\"similarity-panel\"><h3>视频相似度与“看起来一致”的诊断</h3><p><b>${similarity.video_count} 个视频 / ${similarity.comparison_count} 组比较</b>；全部 49 帧在 ${res[1]||'—'}×${res[0]||'—'} 上计算 SSIM、PSNR、MAE 和时间差分 MAE。原始尺寸解码帧哈希重复组：<b>${exactCount}</b>，因此当前没有两个结果逐像素完全相同。</p><div class=\"similarity-grid\"><div><h4>最相似的同 target 算子对</h4><ol>${closest}</ol></div><div><h4>如何从相似算子反推弱信息流</h4><p>M1↔M5、M2↔M6、M4↔M7 只多切一个 O；M1↔M4、M3↔M6、M5↔M7 只多切一个 I；M2↔M4、M3↔M5、M6↔M7 只多切一个 S。对应 pair 越相似，只能说明该上下文中新增矩阵块的<b>最终视频边际效应较弱</b>，不能说明内部 attention 数值为零。</p></div></div><div class=\"similarity-table\"><table><thead><tr><th>协议</th><th>Target</th><th>仅差 S 的平均 SSIM</th><th>仅差 I 的平均 SSIM</th><th>仅差 O 的平均 SSIM</th></tr></thead><tbody>${diagnostics}</tbody></table></div><p class=\"similarity-warning\"><b>为什么仍会很像：</b>R_fixed/R_tube 分别只占 6–14 / 79–179 个 token；只干预 Top100/720 个物理 heads。残差连接、其余 heads、FFN、cross-attention 与后续 40 步扩散可补偿或压低差异。高 SSIM 也可能来自变化集中在小物体区域；它不等于实验未执行。所有 manifest 的干预审计仍需与相似度一起判断。</p></section>`},src="""
     if page.count(temporal_find) != 1:
@@ -3302,11 +3391,11 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 
     temporal_rows_start = page.index("rows=targets.map(([targetScope")
     temporal_rows_end = page.index(",done=tube.filter", temporal_rows_start)
-    temporal_rows = """rows=(()=>{const objectRows=targets.map(([targetScope,targetRegion,targetLabel])=>{const group=specs.filter(x=>x.target_scope===targetScope&&x.region===targetRegion),fixedCards=group.map(x=>card('fixed',x,find(fixed,x))).filter(Boolean),tubeCards=group.map(x=>card('tube',x,find(tube,x))).filter(Boolean),readyCount=fixedCards.length+tubeCards.length;if(!readyCount)return '';const protocolRow=(kind,cards)=>cards.length?`<div class="object-protocol-row ${kind}"><div class="object-protocol-heading"><strong>${kind==='fixed'?'Fixed · R_fixed · 仅 latent t=0':'Tube · R_tube · latent t=0…12 联合集合'}</strong><span>${cards.length} 个已生成视频 · M1→C1</span></div><div class="object-ablation-strip">${cards.join('')}</div></div>`:'';return `<section class="object-ablation-row"><div class="object-ablation-heading"><h3>${e(targetLabel)}</h3><span>${readyCount} 个已生成 Top100 消融</span></div>${protocolRow('fixed',fixedCards)}${protocolRow('tube',tubeCards)}</section>`}).join(''),controlSpecs=controlModes.map(mask_mode=>({target_scope:'all_tokens',region:'',targetLabel:'Global all-token controls',mask_mode})),controlCards=controlSpecs.map(x=>card('fixed',x,find(fixed,x))).filter(Boolean),controlRow=controlCards.length?`<section class="object-ablation-row control-row"><div class="object-ablation-heading"><h3>Global all-token controls</h3><span>${controlCards.length} 个已生成 Top100 控制 · C2/C3 不依赖 R，无 Tube 重复项</span></div><div class="object-ablation-strip">${controlCards.join('')}</div></section>`:'';return objectRows+controlRow})()"""
+    temporal_rows = """rows=(()=>{const directionalAfter={self_only:['self_same','self_future','self_past'],incoming_only:['incoming_same','incoming_future','incoming_past'],outgoing_only:['outgoing_same','outgoing_future','outgoing_past']},objectRows=targets.map(([targetScope,targetRegion,targetLabel])=>{const group=specs.filter(x=>x.target_scope===targetScope&&x.region===targetRegion),tubeGroup=group.flatMap(x=>[x,...(directionalAfter[x.mask_mode]||[]).map(mask_mode=>({...x,mask_mode}))]),fixedCards=group.map(x=>card('fixed',x,find(fixed,x))).filter(Boolean),tubeCards=tubeGroup.map(x=>card('tube',x,find(tube,x))).filter(Boolean),readyCount=fixedCards.length+tubeCards.length;if(!readyCount)return '';const protocolRow=(kind,cards)=>cards.length?`<div class="object-protocol-row ${kind}"><div class="object-protocol-heading"><strong>${kind==='fixed'?'Fixed · R_fixed · 仅 latent t=0':'Tube · R_tube · latent t=0…12 联合集合'}</strong><span>${cards.length} 个已生成视频 · ${kind==='fixed'?'M1→C1':'M1/Base→Same→Future→Past · M2/Base→Same→Future→Past · M3/Base→Same→Future→Past · M4→C1'}</span></div><div class="object-ablation-strip">${cards.join('')}</div></div>`:'';return `<section class="object-ablation-row"><div class="object-ablation-heading"><h3>${e(targetLabel)}</h3><span>${readyCount} 个已生成 Top100 消融</span></div>${protocolRow('fixed',fixedCards)}${protocolRow('tube',tubeCards)}</section>`}).join(''),controlSpecs=controlModes.map(mask_mode=>({target_scope:'all_tokens',region:'',targetLabel:'Global all-token controls',mask_mode})),controlCards=controlSpecs.map(x=>card('fixed',x,find(fixed,x))).filter(Boolean),controlRow=controlCards.length?`<section class="object-ablation-row control-row"><div class="object-ablation-heading"><h3>Global all-token controls</h3><span>${controlCards.length} 个已生成 Top100 控制 · C2/C3 不依赖 R，无 Tube 重复项</span></div><div class="object-ablation-strip">${controlCards.join('')}</div></section>`:'';return objectRows+controlRow})()"""
     page = page[:temporal_rows_start] + temporal_rows + page[temporal_rows_end:]
 
     temporal_progress_anchor = ",done=tube.filter(r=>r.ready).length,baseline="
-    temporal_progress_with_fixed = ",fixedDone=fixed.filter(r=>r.ready&&r.target_scope!=='all_tokens'&&modes.includes(r.mask_mode)).length,done=tube.filter(r=>r.ready).length,baseline="
+    temporal_progress_with_fixed = ",fixedDone=fixed.filter(r=>r.ready&&r.target_scope!=='all_tokens'&&modes.includes(r.mask_mode)).length,baseTubeDone=tube.filter(r=>r.ready&&!r.temporal_directional).length,baseTubeExpected=tube.filter(r=>!r.temporal_directional).length,directionalDone=tube.filter(r=>r.ready&&r.temporal_directional).length,directionalExpected=tube.filter(r=>r.temporal_directional).length,done=tube.filter(r=>r.ready).length,baseline="
     if page.count(temporal_progress_anchor) != 1:
         raise RuntimeError("PhysicIQ67 temporal progress changed")
     page = page.replace(temporal_progress_anchor, temporal_progress_with_fixed, 1)
@@ -3316,7 +3405,12 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         raise RuntimeError("PhysicIQ67 temporal column header changed")
     page = page.replace(
         temporal_column_header,
-        '<div class="object-layout-note">每个 object/target 分成两条独立横向视频行：Fixed R_fixed 一行、Tube R_tube 一行，均按 M1→C1 排列；C2/C3 放在独立的 Global all-token controls 行。只显示已经生成的 Top100 视频，未生成项不占位；拖动各行底部的水平滑动条查看全部视频。</div>',
+        '<div class="object-layout-note">每个 object/target 分成两条独立横向视频行。Tube 行在每个基础算子旁按 <b>M1 → M1-same → M1-future → M1-past</b>、<b>M2 → M2-same → M2-future → M2-past</b>、<b>M3 → M3-same → M3-future → M3-past</b> 排列，随后为 M4→C1。Same 表示同一 latent 帧的全部配对，不是仅 q=k 主对角线。只显示已经生成的 Top100 视频，未生成项不占位；27/27 完成后页面会自动重新读取 catalog。</div>',
+        1,
+    )
+    page = page.replace(
+        "页面展示 object_A、object_B、all_objects 三组；R-dependent 生成进度：Fixed <b>${fixedDone}/24</b> · Tube <b>${done}/${tube.length}</b>。C2/C3 不依赖 R，不重复生成 Tube，并在 Global all-token controls 行展示已有 Fixed 控制视频。",
+        "页面展示 object_A、object_B、all_objects 三组；基础消融进度：Fixed <b>${fixedDone}/24</b> · Tube <b>${baseTubeDone}/${baseTubeExpected}</b>；时间分解对照：<b>${directionalDone}/${directionalExpected}</b>。Same/Future/Past 分别删除 tq=tk、tq>tk、tq<tk，三者互斥且并集等于对应完整 M1/M2/M3 块。C2/C3 不依赖 R，不重复生成 Tube。",
         1,
     )
     page = page.replace(
@@ -3329,6 +3423,17 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         ".ablation figure .similarity-card,.ablation figure .raft-card,.ablation figure .vbench-summary,.ablation figure .vbench-pending,.ablation figure .raft-flow{display:none!important}</style>",
         1,
     )
+    auto_refresh_anchor = "$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));load();\n</script>"
+    auto_refresh_insert = """$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));let directionalPoll=null;async function pollDirectionalCompletion(){if(!data)return;const selected=current();if(selected?.case!=='0613pybullet_sample_001460_w002'||Number(selected?.seed)!==47326)return;const oldRows=selected.temporal_tube_attention_matrix_ablations||[],oldExpected=oldRows.filter(r=>r.temporal_directional).length,oldReady=oldRows.filter(r=>r.temporal_directional&&r.ready).length;if(oldExpected&&oldReady===oldExpected){if(directionalPoll)clearInterval(directionalPoll);return}try{const fresh=await fetch(`${api}/catalog?v=${Date.now()}`,{cache:'no-store'}).then(r=>r.json()),freshSample=(fresh.samples||[]).find(x=>x.case===selected.case&&Number(x.seed)===Number(selected.seed)),freshRows=freshSample?.temporal_tube_attention_matrix_ablations||[],expected=freshRows.filter(r=>r.temporal_directional).length,ready=freshRows.filter(r=>r.temporal_directional&&r.ready).length;$('status').textContent=`Temporal M1/M2/M3 Same/Future/Past ${ready}/${expected||27} · 完成后自动刷新`;if(expected&&ready===expected){if(directionalPoll)clearInterval(directionalPoll);await load();$('status').textContent+=` · temporal ${ready}/${expected} 已自动发布`}}catch(err){console.warn('temporal auto-refresh failed',err)}}load().then(()=>{directionalPoll=setInterval(pollDirectionalCompletion,20000);pollDirectionalCompletion()});
+</script>"""
+    if page.count(auto_refresh_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 directional auto-refresh anchor changed")
+    page = page.replace(auto_refresh_anchor, auto_refresh_insert, 1)
+    directional_poll_scope = "const selected=current();if(selected?.case!=='0613pybullet_sample_001460_w002'||Number(selected?.seed)!==47326)return;"
+    directional_poll_target = "const selected=(data.samples||[]).find(x=>x.case==='0613pybullet_sample_001460_w002'&&Number(x.seed)===47326);if(!selected)return;"
+    if page.count(directional_poll_scope) != 1:
+        raise RuntimeError("PhysicIQ67 directional poll scope changed")
+    page = page.replace(directional_poll_scope, directional_poll_target, 1)
     return page
 
 

@@ -50,7 +50,73 @@ DEFAULT_MANIFEST = Path(
 )
 DEFAULT_OUTPUT_ROOT = DEFAULT_MANIFEST.parent / "attention_matrix_ablations_temporal_tube_v1"
 TOP_N = 100
-MASK_MODES = MATRIX_MASKS + ("literal_kv_zero",)
+TEMPORAL_DIRECTIONAL_SPECS = {
+    "self_future": {
+        "id": "M1-future",
+        "base_block": "S",
+        "target_partition": "R",
+        "source_partition": "R",
+        "direction": "future",
+    },
+    "incoming_future": {
+        "id": "M2-future",
+        "base_block": "I",
+        "target_partition": "R",
+        "source_partition": "C",
+        "direction": "future",
+    },
+    "outgoing_future": {
+        "id": "M3-future",
+        "base_block": "O",
+        "target_partition": "C",
+        "source_partition": "R",
+        "direction": "future",
+    },
+    "self_same": {
+        "id": "M1-same",
+        "base_block": "S",
+        "target_partition": "R",
+        "source_partition": "R",
+        "direction": "same",
+    },
+    "incoming_same": {
+        "id": "M2-same",
+        "base_block": "I",
+        "target_partition": "R",
+        "source_partition": "C",
+        "direction": "same",
+    },
+    "outgoing_same": {
+        "id": "M3-same",
+        "base_block": "O",
+        "target_partition": "C",
+        "source_partition": "R",
+        "direction": "same",
+    },
+    "self_past": {
+        "id": "M1-past",
+        "base_block": "S",
+        "target_partition": "R",
+        "source_partition": "R",
+        "direction": "past",
+    },
+    "incoming_past": {
+        "id": "M2-past",
+        "base_block": "I",
+        "target_partition": "R",
+        "source_partition": "C",
+        "direction": "past",
+    },
+    "outgoing_past": {
+        "id": "M3-past",
+        "base_block": "O",
+        "target_partition": "C",
+        "source_partition": "R",
+        "direction": "past",
+    },
+}
+TEMPORAL_DIRECTIONAL_MODES = tuple(TEMPORAL_DIRECTIONAL_SPECS)
+MASK_MODES = MATRIX_MASKS + ("literal_kv_zero",) + TEMPORAL_DIRECTIONAL_MODES
 PROTOCOL = "attention_matrix_ablation_temporal_object_tube_v1"
 
 
@@ -58,12 +124,37 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", default=DEFAULT_CASE)
     parser.add_argument("--seed", type=int, default=47326)
+    parser.add_argument(
+        "--all-samples",
+        action="store_true",
+        help="process every manifest sample; workers are sharded by case/seed sample",
+    )
     parser.add_argument("--manifest-path", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--worker-id", type=int, default=0)
+    parser.add_argument("--num-workers", type=int, default=1)
+    parser.add_argument("--mask-modes", nargs="+", choices=MASK_MODES, default=None)
     parser.add_argument("--task-index", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
+
+
+def temporal_variant_id(task: dict) -> str:
+    mask_mode = str(task["mask_mode"])
+    if mask_mode not in TEMPORAL_DIRECTIONAL_MODES:
+        return variant_id(
+            str(task["target_scope"]),
+            mask_mode,
+            int(task["top_n"]),
+            task.get("region"),
+        )
+    target = (
+        str(task["region"])
+        if str(task["target_scope"]) == "single_object"
+        else "all_objects"
+    )
+    return f"{task['target_scope']}__{target}__{mask_mode}__top{int(task['top_n']):03d}"
 
 
 def build_tasks(sample: dict) -> list[dict]:
@@ -93,12 +184,7 @@ def task_root(task: dict, output_root: Path) -> Path:
         output_root
         / str(task["case"])
         / f"seed_{int(task['seed']):05d}"
-        / variant_id(
-            str(task["target_scope"]),
-            str(task["mask_mode"]),
-            int(task["top_n"]),
-            task.get("region"),
-        )
+        / temporal_variant_id(task)
     )
 
 
@@ -201,11 +287,90 @@ def prepare_tracks(
     return track_path
 
 
+def temporal_directional_groups(
+    tokens_by_time: list[list[int]],
+    frame_token_count: int,
+    mask_mode: str,
+    device: torch.device,
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """Return (target query rows, source V rows) for one strict time direction."""
+    spec = TEMPORAL_DIRECTIONAL_SPECS[mask_mode]
+    partition_rows: dict[str, list[torch.Tensor]] = {"R": [], "C": []}
+    for time_index, values in enumerate(tokens_by_time):
+        frame_start = time_index * frame_token_count
+        frame_rows = torch.arange(
+            frame_start, frame_start + frame_token_count, device=device, dtype=torch.long
+        )
+        r_rows = torch.as_tensor(values, device=device, dtype=torch.long)
+        if r_rows.numel():
+            keep = ~torch.isin(frame_rows, r_rows)
+            c_rows = frame_rows[keep]
+        else:
+            c_rows = frame_rows
+        partition_rows["R"].append(r_rows)
+        partition_rows["C"].append(c_rows)
+
+    groups: list[tuple[torch.Tensor, torch.Tensor]] = []
+    time_count = len(tokens_by_time)
+    for target_time in range(time_count):
+        if spec["direction"] == "future":
+            source_times = range(target_time)
+        elif spec["direction"] == "past":
+            source_times = range(target_time + 1, time_count)
+        elif spec["direction"] == "same":
+            source_times = (target_time,)
+        else:
+            raise ValueError(f"unsupported temporal direction: {spec['direction']}")
+        source_parts = [
+            partition_rows[str(spec["source_partition"])][source_time]
+            for source_time in source_times
+        ]
+        target_rows = partition_rows[str(spec["target_partition"])][target_time]
+        if not source_parts or not target_rows.numel():
+            continue
+        source_rows = torch.cat(source_parts)
+        if source_rows.numel():
+            groups.append((target_rows, source_rows))
+    return groups
+
+
+def apply_temporal_directional_ablation(
+    output: torch.Tensor,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    original,
+    heads: tuple[int, ...] | list[int],
+    num_heads: int,
+    groups: list[tuple[torch.Tensor, torch.Tensor]],
+) -> tuple[int, int, int]:
+    """Subtract exact post-softmax A@V contributions for directional token groups."""
+    output_heads = AttentionMatrixAblator._head_view(output, num_heads)
+    source_heads = AttentionMatrixAblator._head_view(v, num_heads)
+    selected_v = torch.zeros_like(v)
+    selected_heads = AttentionMatrixAblator._head_view(selected_v, num_heads)
+    affected_rows = 0
+    zeroed_entries_per_head = 0
+    for target_rows, source_rows in groups:
+        selected_heads.zero_()
+        for head in heads:
+            selected_heads[:, source_rows, head, :] = source_heads[:, source_rows, head, :]
+        contribution = original(q[:, target_rows, :], k, selected_v)
+        contribution_heads = AttentionMatrixAblator._head_view(contribution, num_heads)
+        for head in heads:
+            output_heads[:, target_rows, head, :] = (
+                output_heads[:, target_rows, head, :] - contribution_heads[:, :, head, :]
+            )
+        affected_rows += int(target_rows.numel())
+        zeroed_entries_per_head += int(target_rows.numel() * source_rows.numel())
+    return len(groups), affected_rows, zeroed_entries_per_head
+
+
 class TemporalObjectTubeAblator(AttentionMatrixAblator):
     """Use tracked object tokens at every latent time as the R partition."""
 
     def __init__(self, *args, tracks: np.ndarray, anchor_frames: np.ndarray, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, extra_mask_modes=TEMPORAL_DIRECTIONAL_MODES, **kwargs)
         self.tracks = torch.as_tensor(tracks, dtype=torch.float32)
         self.anchor_frames = torch.as_tensor(anchor_frames, dtype=torch.long)
         if self.tracks.ndim != 3 or self.tracks.shape[-1] != 2:
@@ -213,6 +378,8 @@ class TemporalObjectTubeAblator(AttentionMatrixAblator):
         if self.tracks.shape[1] != self.query_points.shape[0]:
             raise ValueError("track point count does not match cached object query points")
         self.query_token_indices_by_latent_frame: list[list[int]] | None = None
+        self.temporal_zeroed_entries_per_head: int | None = None
+        self.temporal_auxiliary_attention_calls = 0
 
     def _rows(self, device: torch.device) -> torch.Tensor | None:
         if self.current_grid is None:
@@ -243,12 +410,55 @@ class TemporalObjectTubeAblator(AttentionMatrixAblator):
             raise RuntimeError("temporal object tube token mapping changed during generation")
         return rows
 
+    def _attention(self, q, k, v, original, block: int):
+        if self.mask_mode not in TEMPORAL_DIRECTIONAL_MODES:
+            return super()._attention(q, k, v, original, block)
+        heads = self.by_block.get(block, ())
+        if not self.active or not heads:
+            return original(q, k, v)
+        if self.current_grid is None:
+            raise RuntimeError("attention grid is unavailable")
+        num_heads = int(q.shape[-1] // 128)
+        if num_heads <= 0 or q.shape[-1] % num_heads:
+            raise RuntimeError(f"query width {q.shape[-1]} is not head-aligned")
+
+        self._rows(q.device)
+        if not self.query_token_indices_by_latent_frame:
+            raise RuntimeError("temporal object tube rows were not resolved")
+        _, height, width = self.current_grid
+        groups = temporal_directional_groups(
+            self.query_token_indices_by_latent_frame,
+            height * width,
+            self.mask_mode,
+            q.device,
+        )
+        output = original(q, k, v)
+        auxiliary_calls, affected_rows, zeroed_entries = apply_temporal_directional_ablation(
+            output, q, k, v, original, heads, num_heads, groups
+        )
+        if self.temporal_zeroed_entries_per_head is None:
+            self.temporal_zeroed_entries_per_head = zeroed_entries
+        elif self.temporal_zeroed_entries_per_head != zeroed_entries:
+            raise RuntimeError("directional temporal mask size changed during generation")
+        self.auxiliary_attention_calls += auxiliary_calls
+        self.temporal_auxiliary_attention_calls += auxiliary_calls
+        self.modified_forward_calls += 1
+        self.modified_head_events += len(heads)
+        self.affected_query_vectors += output.shape[0] * affected_rows * len(heads)
+        return output
+
     def audit(self) -> dict:
         result = super().audit()
         result["query_token_indices_by_latent_frame"] = self.query_token_indices_by_latent_frame
         result["latent_frame_token_counts"] = [
             len(row) for row in (self.query_token_indices_by_latent_frame or [])
         ]
+        if self.mask_mode in TEMPORAL_DIRECTIONAL_MODES:
+            result["temporal_directional_spec"] = TEMPORAL_DIRECTIONAL_SPECS[self.mask_mode]
+            result["temporal_zeroed_entries_per_head"] = self.temporal_zeroed_entries_per_head
+            result["temporal_auxiliary_attention_calls"] = (
+                self.temporal_auxiliary_attention_calls
+            )
         return result
 
 
@@ -309,13 +519,12 @@ def process(
 
     metadata = {
         **task,
-        "variant_id": variant_id(
-            str(task["target_scope"]),
-            str(task["mask_mode"]),
-            int(task["top_n"]),
-            task.get("region"),
+        "variant_id": temporal_variant_id(task),
+        "protocol": (
+            "attention_matrix_ablation_temporal_direction_v1"
+            if str(task["mask_mode"]) in TEMPORAL_DIRECTIONAL_MODES
+            else PROTOCOL
         ),
-        "protocol": PROTOCOL,
         "attention_definition": "A=softmax(QK^T/sqrt(d)); Y=A@V",
         "selected_token_definition": (
             "union of sparse object points tracked on the seed-matched baseline and "
@@ -328,14 +537,30 @@ def process(
             "I": "A[R,C] (C K/V -> R queries)",
             "O": "A[C,R] (R K/V -> C queries)",
         },
-        "zeroed_matrix_blocks": list(MASK_BLOCKS[str(task["mask_mode"])]),
+        "zeroed_matrix_blocks": (
+            [
+                f"{TEMPORAL_DIRECTIONAL_SPECS[str(task['mask_mode'])]['base_block']}_"
+                f"{TEMPORAL_DIRECTIONAL_SPECS[str(task['mask_mode'])]['direction']}"
+            ]
+            if str(task["mask_mode"]) in TEMPORAL_DIRECTIONAL_MODES
+            else list(MASK_BLOCKS[str(task["mask_mode"])])
+        ),
+        "temporal_directional_spec": TEMPORAL_DIRECTIONAL_SPECS.get(
+            str(task["mask_mode"])
+        ),
         "semantic_qkv_projection_intervention": str(task["mask_mode"]) == "literal_kv_zero",
         "post_mask_renormalization": False,
         "softmax_recomputed_after_k_intervention": str(task["mask_mode"]) == "literal_kv_zero",
         "implementation": (
             "literal selected temporal-tube K/V vectors set to zero before attention"
             if str(task["mask_mode"]) == "literal_kv_zero"
-            else "post-softmax A@V block decomposition; column masks use exact V_R=0 equivalence"
+            else (
+                "post-softmax A@V temporal contribution subtraction; strict "
+                "t_query>t_key for future, t_query<t_key for past, and "
+                "t_query=t_key for same"
+                if str(task["mask_mode"]) in TEMPORAL_DIRECTIONAL_MODES
+                else "post-softmax A@V block decomposition; column masks use exact V_R=0 equivalence"
+            )
         ),
         "trajectory_source": "CoTracker pseudo-GT on seed-matched no-intervention baseline",
         "trajectory_is_frozen_before_intervention": True,
@@ -360,7 +585,7 @@ def process(
                 "case": task["case"],
                 "seed": task["seed"],
                 "variant_id": metadata["variant_id"],
-                "protocol": PROTOCOL,
+                "protocol": metadata["protocol"],
                 "selected_temporal_tokens": len(audit["query_token_indices"]),
                 "modified_head_events": audit["modified_head_events"],
             },
@@ -375,54 +600,100 @@ def process(
 
 def main() -> None:
     args = parse_args()
+    if not 0 <= args.worker_id < args.num_workers:
+        raise ValueError("worker-id must be in [0, num-workers)")
     manifest = json.loads(args.manifest_path.read_text(encoding="utf-8"))
-    sample = next(
-        (
-            row
-            for row in manifest["samples"]
-            if str(row["case"]) == args.case and int(row["seed"]) == args.seed
-        ),
-        None,
-    )
-    if sample is None:
-        raise KeyError(f"case/seed not found in manifest: {args.case}/{args.seed}")
     if len(manifest.get("entries", [])) < TOP_N:
         raise RuntimeError("manifest does not contain the frozen Top100 ranking")
-    tasks = build_tasks(sample)
+    if args.all_samples:
+        samples = list(manifest["samples"])
+    else:
+        sample = next(
+            (
+                row
+                for row in manifest["samples"]
+                if str(row["case"]) == args.case and int(row["seed"]) == args.seed
+            ),
+            None,
+        )
+        if sample is None:
+            raise KeyError(f"case/seed not found in manifest: {args.case}/{args.seed}")
+        samples = [sample]
+
+    selected_modes = set(args.mask_modes) if args.mask_modes is not None else None
+    sample_tasks: list[tuple[dict, list[dict]]] = []
+    for sample in samples:
+        tasks = build_tasks(sample)
+        if selected_modes is not None:
+            tasks = [task for task in tasks if str(task["mask_mode"]) in selected_modes]
+        if tasks:
+            sample_tasks.append((sample, tasks))
+
     if args.task_index is not None:
-        if not 0 <= args.task_index < len(tasks):
-            raise ValueError(f"task-index must be in [0, {len(tasks)})")
-        tasks = [tasks[args.task_index]]
+        flattened = [
+            (sample, task)
+            for sample, tasks in sample_tasks
+            for task in tasks
+        ]
+        if not 0 <= args.task_index < len(flattened):
+            raise ValueError(f"task-index must be in [0, {len(flattened)})")
+        sample, task = flattened[args.task_index]
+        sample_tasks = [(sample, [task])]
+    elif args.all_samples:
+        sample_tasks = sample_tasks[args.worker_id :: args.num_workers]
+    else:
+        sample, tasks = sample_tasks[0]
+        sample_tasks = [(sample, tasks[args.worker_id :: args.num_workers])]
+    sample_tasks = [(sample, tasks) for sample, tasks in sample_tasks if tasks]
+    if not sample_tasks:
+        return
 
     from AAA_my_test.legacy_ti2v_firstlatent_physiciq67_common import CASES
 
     case_lookup = {case.key: case for case in CASES}
-    track_path = prepare_tracks(
-        sample, case_lookup, args.output_root, str(args.device), bool(args.overwrite)
-    )
-    pipe = build_wan_ti2v_pipeline(build_args(int(sample["seed"])))
-    for index, task in enumerate(tasks, start=1):
-        output = task_root(task, args.output_root)
-        print(f"[{index}/{len(tasks)}] start {output.relative_to(args.output_root)}", flush=True)
-        try:
-            process(
-                pipe,
-                manifest,
-                sample,
-                case_lookup,
-                task,
-                args.output_root,
-                track_path,
-                bool(args.overwrite),
+    track_paths: dict[tuple[str, int], Path] = {}
+    for sample, _ in sample_tasks:
+        sample_key = (str(sample["case"]), int(sample["seed"]))
+        print(f"prepare frozen tracks {sample_key[0]}/seed_{sample_key[1]:05d}", flush=True)
+        track_paths[sample_key] = prepare_tracks(
+            sample, case_lookup, args.output_root, str(args.device), bool(args.overwrite)
+        )
+
+    total_tasks = sum(len(tasks) for _, tasks in sample_tasks)
+    pipe = build_wan_ti2v_pipeline(build_args(int(sample_tasks[0][0]["seed"])))
+    completed = 0
+    for sample, tasks in sample_tasks:
+        sample_key = (str(sample["case"]), int(sample["seed"]))
+        track_path = track_paths[sample_key]
+        for task in tasks:
+            completed += 1
+            output = task_root(task, args.output_root)
+            print(
+                f"[{completed}/{total_tasks}] start {output.relative_to(args.output_root)}",
+                flush=True,
             )
-        except Exception:
-            output.mkdir(parents=True, exist_ok=True)
-            (output / "error.txt").write_text(traceback.format_exc(), encoding="utf-8")
-            print(traceback.format_exc(), flush=True)
-            raise
-        gc.collect()
-        torch.cuda.empty_cache()
-        print(f"[{index}/{len(tasks)}] complete {output.relative_to(args.output_root)}", flush=True)
+            try:
+                process(
+                    pipe,
+                    manifest,
+                    sample,
+                    case_lookup,
+                    task,
+                    args.output_root,
+                    track_path,
+                    bool(args.overwrite),
+                )
+            except Exception:
+                output.mkdir(parents=True, exist_ok=True)
+                (output / "error.txt").write_text(traceback.format_exc(), encoding="utf-8")
+                print(traceback.format_exc(), flush=True)
+                raise
+            gc.collect()
+            torch.cuda.empty_cache()
+            print(
+                f"[{completed}/{total_tasks}] complete {output.relative_to(args.output_root)}",
+                flush=True,
+            )
 
 
 if __name__ == "__main__":

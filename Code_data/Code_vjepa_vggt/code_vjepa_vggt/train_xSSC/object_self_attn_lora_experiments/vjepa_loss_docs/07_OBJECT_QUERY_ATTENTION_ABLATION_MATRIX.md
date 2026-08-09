@@ -131,6 +131,30 @@ Y_C=OV_R+BV_C.
 
 M1–M7 是 post-softmax `A@V` 分块置零且不重新归一化。它们只在固定二分集合 `{R,C}` 下构成完整的七种“涉及 R 的非空矩阵块组合”。
 
+### 5.1 M1–M3 的时间分解实验
+
+时间方向实验只对 `R_tube={R_0,...,R_12}` 定义，不生成 Fixed 版本。令矩阵行的 Query 时间为 `t_q`，列的 K/V 时间为 `t_k`：
+
+- `future` 只删除 `t_q>t_k`，即过去 K/V 向未来 Query 的贡献；
+- `past` 是反向控制，只删除 `t_q<t_k`，即未来 K/V 向过去 Query 的贡献；
+- `same` 只删除 `t_q=t_k`，即同一 latent 时刻内的对应 S/I/O 连接，并保留全部跨时刻连接。
+
+这里的 `t_q=t_k` 是“Query 与 K/V 属于同一 latent 帧”，不是只删除矩阵主对角线 `q=k`。例如 M1-same 会删除同一时刻内所有 `R_t Query × R_t K/V` 配对。
+
+| ID | 实现名 | 精确删除项 | 诊断含义 |
+|---|---|---|---|
+| M1-same | `self_same` | `Σ_{t_k=t_q} A[R_tq,R_tk]V_Rtk` | 对象 tube 内同一时刻的自交互；跨帧 R→R 全部保留 |
+| M2-same | `incoming_same` | `Σ_{t_k=t_q} A[R_tq,C_tk]V_Ctk` | 同一时刻环境/其他 token 向对象 Query 的输入 |
+| M3-same | `outgoing_same` | `Σ_{t_k=t_q} A[C_tq,R_tk]V_Rtk` | 同一时刻对象 Value 向环境/其他 token 的广播 |
+| M1-future | `self_future` | `Σ_{t_k<t_q} A[R_tq,R_tk]V_Rtk` | 对象历史状态向未来对象状态的传播 |
+| M2-future | `incoming_future` | `Σ_{t_k<t_q} A[R_tq,C_tk]V_Ctk` | 历史背景/其他对象向未来对象状态的输入 |
+| M3-future | `outgoing_future` | `Σ_{t_k<t_q} A[C_tq,R_tk]V_Rtk` | 历史对象状态向未来背景/其他对象的广播 |
+| M1-past | `self_past` | `Σ_{t_k>t_q} A[R_tq,R_tk]V_Rtk` | M1-future 的未来→过去反向控制 |
+| M2-past | `incoming_past` | `Σ_{t_k>t_q} A[R_tq,C_tk]V_Ctk` | M2-future 的未来→过去反向控制 |
+| M3-past | `outgoing_past` | `Σ_{t_k>t_q} A[C_tq,R_tk]V_Rtk` | M3-future 的未来→过去反向控制 |
+
+九项都先用原始 `Q/K` 和完整 K 序列保持 baseline softmax 分母，再从对应 Query 输出中减去指定时间块的 `A@V` contribution；不修改 Q/K 投影、不重新归一化。它们同样作用于 Top100 heads、全部 40 个去噪步和两个 CFG 分支。对每个基础块都有 `base = same ∪ future ∪ past` 的互斥完备时间分解；因此 Same、Future、Past 必须联合比较，避免把被删除连接数量或同帧局部交互误判成特定的过去→未来因果方向。
+
 ## 6. C1–C3：不要与矩阵分块混用
 
 | ID | 实现名 | 精确计算逻辑 | 理论后果 / 与 M1–M7 的区别 |
@@ -344,7 +368,7 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 
 页面中的 HSV 光流视频使用 `max(P99.5_baseline, P99.5_source)` 作为统一颜色上限；当前结果为 6.616 px。色相表示方向、亮度表示幅值。统一尺度允许 Fixed、Tube、Baseline 与 source render 直接目测对照；不要把黑暗区域自动解释为失败，它也可能表示真实的近零运动。overlay 上的橙/青轮廓就是该行实际进入 RAFT 指标计算的 reference-frozen Object A/B ROI。
 
-### 9.6 指标结果矩阵的展示规范（修正版）
+### 9.6 指标曲线与数值审计的展示规范（修正版）
 
 当前页面的统计样本严格固定为：
 
@@ -367,16 +391,33 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 
 其中 \(e\) 是一个固定的 `protocol × target × operator × reference × metric-object`。只有 6 个 \(m_{e,s}\) 全部为有限值时才显示 \(\bar m_e\)；否则显示 `N/A`。因此页面上不会出现某一列是 6 个 seed 平均、另一列却只是 3–5 个 seed 平均的情况。需要注意，这个口径衡量的是**同一 case 上跨采样 seed 的稳健性**，不是跨 6 个不同场景的泛化均值。
 
-指标结果必须按“实验为行、指标为列”展示，不能再把一个指标作为一行，也不能把 Baseline 与 GT 混在同一结果表。最终使用四张独立宽表：
+页面顶部设置“六 seed 实验结论”区。其中的直接效应、跨对象传播、关键算子对比、GT 变化和全帧 SSIM 数值均在页面加载时从当前聚合报告动态计算，不把数值手写死在页面中。该区必须同时显示“单一 case、六 seed”的结论边界。
 
-| 结果表 | 行数 | 每一行的唯一键 | 指标列 |
-|---|---:|---|---|
-| Fixed `R_fixed` vs Baseline | 24 | `fixed × target × operator × Baseline` | #1–#25，每列一个指标 |
-| Fixed `R_fixed` vs GT | 24 | `fixed × target × operator × GT` | #1–#25，每列一个指标 |
-| Tube `R_tube` vs Baseline | 24 | `tube × target × operator × Baseline` | #1–#25，每列一个指标 |
-| Tube `R_tube` vs GT | 24 | `tube × target × operator × GT` | #1–#25，每列一个指标 |
+主展示改为“每个指标一张曲线图”，`vs Baseline` 和 `vs GT` 分成两个独立图组。每张图使用相同的视觉编码：
 
-因此一组消融在逻辑上有两条结果行，但两条结果行分别放进 Baseline 表与 GT 表，不在同一张表中交错，例如：
+| 视觉元素 | 精确含义 |
+|---|---|
+| 横轴 1–8 | 固定对应 `M1, M2, M3, M4, M5, M6, M7, C1` 八个消融算子 |
+| 红色 | 被消融 target 是 `object_A` |
+| 青色 | 被消融 target 是 `object_B` |
+| 紫色 | 被消融 target 是 `all_objects` |
+| 实线 | Tube `R_tube` |
+| 虚线 | Fixed `R_fixed` |
+| 线上单点 | 对应 `protocol × target × operator` 在严格共同 cohort 上的 `N=6` 均值 |
+| 断线 | 该点有任一 seed 缺失或不可定义，因此不使用更小分母聚合 |
+
+页面顶部的 `Metric object` 选择器只决定“评估 object_A 还是 object_B”；曲线颜色表示的始终是**被消融 target**，两者不能混淆。对 #8/#9/#11/#13/#20–#24 这些含多个子量的复合指标，同一指标卡右上角提供分量切换，不把不同量纲画在同一纵轴。
+
+原四张宽表作为折叠的“数值审计表”保留，便于查看每个精确数值：
+
+| 审计表 | 行数 | 每一行的唯一键 |
+|---|---:|---|
+| Fixed `R_fixed` vs Baseline | 24 | `fixed × target × operator × Baseline` |
+| Fixed `R_fixed` vs GT | 24 | `fixed × target × operator × GT` |
+| Tube `R_tube` vs Baseline | 24 | `tube × target × operator × Baseline` |
+| Tube `R_tube` vs GT | 24 | `tube × target × operator × GT` |
+
+因此一组消融在逻辑上仍有 Baseline 与 GT 两个 reference 结果，但它们位于不同曲线图组与不同审计表，不进行交错或平均。数值审计例如：
 
 | Experiment ID | Reference | #1 GT Center-ADE Change | #2 Baseline Center-ADE | #7 Center-FDE | #14 RAFT ROI EPE | #16 DINO Similarity | #17 Object LPIPS | #24 SSIM/PSNR/MAE | ... |
 |---|---|---:|---:|---:|---:|---:|---:|---|---|
@@ -453,7 +494,7 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 - RAFT 缓存与明细：Tube case/seed 输出目录下的 `raft_motion_top100_v1/flows`、`flow_videos`、`raft_motion_similarity_top100.json` 和 `raft_motion_similarity_top100.csv`
 - 新 seed 页面入口：保持同一 case，把 URL 的 `seed` 改为 `90094`、`68613`、`35075`、`32466` 或 `13248`；页面会只展示当前已经生成的卡片。
 - 对比页面：`http://localhost:8092/wan22-ti2v-legacy-physiciq67-samples?v=20&case=0613pybullet_sample_001460_w002&seed=47326`。页面对 `object_A`、`object_B`、`all_objects` 分别建立独立 section，每个 section 内将 `Fixed R_fixed` 与 `Tube R_tube` 拆成两条横向视频行，并为每条行设置可见、可拖动的水平滑动条。C2/C3 显示在独立的 `Global all-token controls` 行；未生成项不占位，页面顶部会分别标出 Fixed/Tube 的实时完成数。视频卡片下方的 VBench、像素相似度、RAFT 指标和光流详情暂时隐藏，但指标数据及页面上方汇总分析仍保留。seed 47326 完整口径为 48 个 R-dependent 视频加 2 个全局控制视频。
-- 指标矩阵页面：`http://localhost:8092/object-query-ablation-metrics?v=5`。结果严格拆成 `Fixed vs Baseline`、`Fixed vs GT`、`Tube vs Baseline`、`Tube vs GT` 四张表；每张表 24 行，横向列出 25 个指标。所有可显示标量是同一批 6 个 case-seed 样本的宏平均，不完整指标显示 `—`。每个列头直接显示优先级、指标名与数值方向，悬停显示精确定义和公式；下方另有完整指标定义表。页面中的视频与 trajectory/mask/RAFT/pixel/perceptual overlay 仅用 `seed=47326` 作为代表样本。
+- 指标曲线页面：`http://localhost:8092/object-query-ablation-metrics?v=7`。页面顶部先从当前聚合报告动态生成六 seed 结论摘要；主视图将 `vs Baseline` 与 `vs GT` 分开，每个指标一张曲线图；横轴 1–8 为 M1–M7/C1，红/青/紫分别为被消融 target A/B/all，Tube 为实线，Fixed 为虚线。复合指标可在卡片内切换分量；四张原始宽表折叠保留作数值审计。所有可显示标量是同一批 6 个 case-seed 样本的宏平均，不完整点断线并显示 `N/A`。页面中的视频与 trajectory/mask/RAFT/pixel/perceptual overlay 仅用 `seed=47326` 作为代表样本。
 
 每个 manifest 必须记录：`target_scope`、`mask_mode`、冻结 Top100 entries、实际 token indices、逐 latent token 数、40 步双 CFG 调用审计、轨迹来源以及 softmax 是否重算。
 
