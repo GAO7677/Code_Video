@@ -68,6 +68,11 @@ COLORS = ((239, 112, 55), (43, 189, 190))
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--overwrite-overlays", action="store_true")
+    parser.add_argument(
+        "--skip-overlays",
+        action="store_true",
+        help="compute the complete metric report without rendering per-seed audit videos",
+    )
     parser.add_argument("--only", default="", help="optional exact ablation id")
     return parser.parse_args()
 
@@ -878,26 +883,34 @@ def main() -> None:
                 for object_name in OBJECTS
             },
         }
-        if args.overwrite_overlays or not (OUTPUT_ROOT / assets["trajectory"]).is_file():
+        if not args.skip_overlays and (
+            args.overwrite_overlays or not (OUTPUT_ROOT / assets["trajectory"]).is_file()
+        ):
             render_trajectory_overlay(
                 OUTPUT_ROOT / assets["trajectory"], candidate_id,
                 baseline_frames, candidate_frames, source_frames,
                 baseline_tracks, candidate_tracks, source_tracks, gt_centers,
             )
-        if args.overwrite_overlays or not (OUTPUT_ROOT / assets["mask"]).is_file():
+        if not args.skip_overlays and (
+            args.overwrite_overlays or not (OUTPUT_ROOT / assets["mask"]).is_file()
+        ):
             render_mask_overlay(
                 OUTPUT_ROOT / assets["mask"], candidate_id,
                 baseline_frames, candidate_frames, source_frames,
                 baseline_masks, candidate_masks, source_masks, gt_centers,
                 {"baseline": baseline_contact_distances, "candidate": candidate_contact_distances, "source": source_contact_distances},
             )
-        if args.overwrite_overlays or not (OUTPUT_ROOT / assets["pixel"]).is_file():
+        if not args.skip_overlays and (
+            args.overwrite_overlays or not (OUTPUT_ROOT / assets["pixel"]).is_file()
+        ):
             render_pixel_overlay(
                 OUTPUT_ROOT / assets["pixel"], candidate_id,
                 baseline_frames, candidate_frames, source_frames,
                 candidate_masks, baseline_masks,
             )
-        if args.overwrite_overlays or not (OUTPUT_ROOT / assets["raft"]).is_file():
+        if not args.skip_overlays and (
+            args.overwrite_overlays or not (OUTPUT_ROOT / assets["raft"]).is_file()
+        ):
             render_raft_overlay(
                 OUTPUT_ROOT / assets["raft"], candidate_id,
                 baseline_flow, candidate_flow, source_flow,

@@ -53,6 +53,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--skip-flow-videos", action="store_true")
+    parser.add_argument(
+        "--flows-only",
+        action="store_true",
+        help="extract/cache all 49 RAFT fields, then stop before standalone pair analysis",
+    )
     return parser.parse_args()
 
 
@@ -528,6 +533,25 @@ def main() -> None:
     del model
     if device.type == "cuda":
         torch.cuda.empty_cache()
+
+    if args.flows_only:
+        manifest = {
+            "schema_version": 1,
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "case": args.case,
+            "seed": args.seed,
+            "video_count": len(videos),
+            "settings": settings,
+            "roi_audit": roi_audit,
+            "extraction": extraction_records,
+            "note": "flows-only cache; final report computes required comparisons directly",
+        }
+        (output_root / "flows_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"wrote {output_root / 'flows_manifest.json'}")
+        return
 
     baseline_flow = np.load(flow_paths["baseline"], mmap_mode="r")
     baseline_magnitude = np.sqrt(

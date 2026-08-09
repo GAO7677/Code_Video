@@ -198,7 +198,7 @@ object_A 的 13 个 latent 时刻分别为 `[6,7,6,8,6,7,6,5,6,6,5,6,5]`。这�
 | Head 排名 | 六个 seed 均使用与 seed 47326 相同的冻结 provisional Top100 排名，以固定被干预 head 这一变量 |
 | Tube 轨迹 | 每个 seed 从自己的 baseline 独立运行 CoTracker、冻结轨迹并映射到 latent token；不复用 seed 47326 的 token 集合 |
 | 采样控制 | 同一 seed 内 baseline、Fixed 与 Tube 保持相同扩散 seed；跨 seed 只改变采样随机性 |
-| 计算资源 | GPU 0/1/2/3 并行；明确不使用 GPU 4 |
+| 计算资源 | 生成使用 GPU 0/1/2/3；指标提取使用 GPU 0/1/2/3/5；全程不使用 GPU 4 |
 
 跨 seed 结论应比较同一 `protocol × target × operator` 相对各自 baseline 的效应分布。若多个 seed 中方向一致，可提高结果对采样随机性的稳健性；若差异显著，则说明当前最终视频后果具有 seed 依赖。它仍不能单独证明 Top100 对所有时刻都具有 tracking 特异性。
 
@@ -217,7 +217,9 @@ object_A 的 13 个 latent 时刻分别为 `[6,7,6,8,6,7,6,5,6,6,5,6,5]`。这�
 
 ### 9.1 计算口径
 
-本次对同一个 case/seed 的 49 个视频统一计算：1 个 baseline、24 个固定 Q00 Top100 消融、24 个 Tube Top100 消融，共 624 组比较。
+单 seed 管线对 49 个视频统一计算：1 个 baseline、24 个固定 Q00 Top100 消融、24 个 Tube Top100 消融，共 624 组两两视频比较。当前已对同一个 case 的 6 个 seed 全部计算这套指标，即 `6 个 case-seed 样本×49 个视频=294 个视频`，其中 288 个为消融视频。
+
+9.2–9.5 中已经写出的具体数值是早期 `seed=47326` 单 seed 诊断，用于解释指标和典型现象，**不是六 seed 均值**。当前可视化页面的四张指标表已改为 9.6 所定义的六 seed 严格共同 cohort 聚合。
 
 | 指标 | 计算与作用 |
 |---|---|
@@ -344,6 +346,27 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 
 ### 9.6 指标结果矩阵的展示规范（修正版）
 
+当前页面的统计样本严格固定为：
+
+| 项目 | 当前口径 |
+|---|---|
+| 真实 case 数 | `1`：`0613pybullet_sample_001460_w002` |
+| Seed / case-seed 样本数 | `6`：`13248, 32466, 35075, 47326, 68613, 90094` |
+| 每个样本的视频 | `1 Baseline + 24 Fixed + 24 Tube = 49` |
+| 总视频数 | `6×49=294`，其中消融视频 `6×48=288` |
+| 表格实验行 | `48`个唯一 `protocol × target × operator`；每张表按 protocol 分为 24 行 |
+| 聚合单位 | case-seed 宏平均；每个 seed 先与自己的同 seed Baseline 比较 |
+| 共同 cohort 约束 | 所有展示的标量都必须有同一批 `N=6` 的有限值才计算均值；任一 seed 缺失或不可定义就显示 `—/N/A`，禁止按列缩小分母 |
+| 视频与 overlay | 只用 `seed=47326` 作为可视化代表；它们不是六 seed 平均图像，不改变表格的 `N=6` 口径 |
+
+严格聚合可写成
+
+\[
+\bar m_e=\frac{1}{6}\sum_{s\in\{13248,32466,35075,47326,68613,90094\}}m_{e,s},
+\]
+
+其中 \(e\) 是一个固定的 `protocol × target × operator × reference × metric-object`。只有 6 个 \(m_{e,s}\) 全部为有限值时才显示 \(\bar m_e\)；否则显示 `N/A`。因此页面上不会出现某一列是 6 个 seed 平均、另一列却只是 3–5 个 seed 平均的情况。需要注意，这个口径衡量的是**同一 case 上跨采样 seed 的稳健性**，不是跨 6 个不同场景的泛化均值。
+
 指标结果必须按“实验为行、指标为列”展示，不能再把一个指标作为一行，也不能把 Baseline 与 GT 混在同一结果表。最终使用四张独立宽表：
 
 | 结果表 | 行数 | 每一行的唯一键 | 指标列 |
@@ -418,9 +441,11 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 - 五 seed GPU worker：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/run_legacy_object_ablation_001460_5seed_gpu.sh`
 - 五 seed 相似度等待器：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/wait_legacy_object_ablation_001460_5seed_similarity.sh`
 - RAFT 运动相似度脚本：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/analyze_legacy_ti2v_object_ablation_raft_motion.py`
-- 49 视频完整指标代码：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/`
-- 完整指标报告：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/seed_47326/report.json`
-- 核心指标摘要 CSV：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/seed_47326/summary.csv`；完整嵌套指标以 `report.json` 为准。
+- 单 seed 49 视频完整指标代码：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/`
+- 六 seed 严格共同 cohort 聚合脚本：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/aggregate_reports.py`
+- 六 seed 聚合报告：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/aggregate/report.json`
+- 标量完整性审计：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/aggregate/scalar_completeness.csv`；只有 `finite_sample_count=expected_sample_count=6` 的标量才可显示数值。
+- 单 seed 报告：同一输出根目录下的 `seed_<seed>/report.json` 和 `seed_<seed>/summary.csv`。
 - 固定 Q00 输出：`/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_v2`
 - Tube 输出：`/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1`
 - Tube 轨迹审计：Tube 输出目录下的 `frozen_baseline_tracks/tracks.npz` 与 `manifest.json`
@@ -428,7 +453,7 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 - RAFT 缓存与明细：Tube case/seed 输出目录下的 `raft_motion_top100_v1/flows`、`flow_videos`、`raft_motion_similarity_top100.json` 和 `raft_motion_similarity_top100.csv`
 - 新 seed 页面入口：保持同一 case，把 URL 的 `seed` 改为 `90094`、`68613`、`35075`、`32466` 或 `13248`；页面会只展示当前已经生成的卡片。
 - 对比页面：`http://localhost:8092/wan22-ti2v-legacy-physiciq67-samples?v=20&case=0613pybullet_sample_001460_w002&seed=47326`。页面对 `object_A`、`object_B`、`all_objects` 分别建立独立 section，每个 section 内将 `Fixed R_fixed` 与 `Tube R_tube` 拆成两条横向视频行，并为每条行设置可见、可拖动的水平滑动条。C2/C3 显示在独立的 `Global all-token controls` 行；未生成项不占位，页面顶部会分别标出 Fixed/Tube 的实时完成数。视频卡片下方的 VBench、像素相似度、RAFT 指标和光流详情暂时隐藏，但指标数据及页面上方汇总分析仍保留。seed 47326 完整口径为 48 个 R-dependent 视频加 2 个全局控制视频。
-- 指标矩阵页面：`http://localhost:8092/object-query-ablation-metrics?v=4`。结果严格拆成 `Fixed vs Baseline`、`Fixed vs GT`、`Tube vs Baseline`、`Tube vs GT` 四张表；每张表 24 行，横向列出 25 个指标。每个列头直接显示优先级、指标名与数值方向，悬停显示精确定义和公式；下方另有完整指标定义表。视频与 trajectory/mask/RAFT/pixel/perceptual audit assets 保持在上方。
+- 指标矩阵页面：`http://localhost:8092/object-query-ablation-metrics?v=5`。结果严格拆成 `Fixed vs Baseline`、`Fixed vs GT`、`Tube vs Baseline`、`Tube vs GT` 四张表；每张表 24 行，横向列出 25 个指标。所有可显示标量是同一批 6 个 case-seed 样本的宏平均，不完整指标显示 `—`。每个列头直接显示优先级、指标名与数值方向，悬停显示精确定义和公式；下方另有完整指标定义表。页面中的视频与 trajectory/mask/RAFT/pixel/perceptual overlay 仅用 `seed=47326` 作为代表样本。
 
 每个 manifest 必须记录：`target_scope`、`mask_mode`、冻结 Top100 entries、实际 token indices、逐 latent token 数、40 步双 CFG 调用审计、轨迹来源以及 softmax 是否重算。
 
