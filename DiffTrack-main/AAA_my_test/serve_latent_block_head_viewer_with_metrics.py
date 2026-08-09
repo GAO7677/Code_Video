@@ -2786,7 +2786,10 @@ def wan22_ti2v_legacy_physiciq67_temporal_tube_video(
         seed_value, count = int(seed), int(top_n)
     except ValueError:
         return None
-    if seed_value != 47326 or count != 100:
+    if (
+        seed_value not in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_SEEDS
+        or count != 100
+    ):
         return None
     object_regions = {
         str(row["region_name"])
@@ -2820,7 +2823,10 @@ def wan22_ti2v_legacy_physiciq67_raft_flow_video(
         seed_value = int(seed)
     except ValueError:
         return None
-    if seed_value != 47326 or not video_id:
+    if (
+        seed_value not in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_SEEDS
+        or not video_id
+    ):
         return None
     payload = _wan22_ti2v_legacy_physiciq67_raft_motion(case, seed_value)
     if not payload.get("ready"):
@@ -2965,7 +2971,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     )
     page = page.replace(
         "<h2>完整 Attention Matrix Ablation</h2><p>R 是 F00 稀疏 object-query token，C 是其余 token。每个对象及所有对象并集分别展示 7 种 S/I/O 矩阵区域消融、literal K/V=0 对照和整-head 输出置零控制；冻结 S039 Top30/50/100 heads，应用全部 40 个去噪步及两个 CFG 分支。</p>",
-        "<h2>Object Query Attention 因果消融</h2><p>先选定 token 集合 R，再令 C=N\\R。M1–M7/C1 的计算公式固定；固定 Q00 与全时序 Tube 的区别仅在 R 的构造。视频/latent 时间 t=0…12 决定 R 覆盖哪些位置，去噪时间 s=0…39 决定何时应用干预；当前干预覆盖全部 40 步及 conditional/unconditional 两个 CFG 分支。</p>",
+        "<h2>Object Query Attention 因果消融</h2><p>先选定 token 集合 R，再令 C=N\\R。M1–M7/C1 的计算公式固定；固定 Q00 与全时序 Tube 的区别仅在 R 的构造。视频/latent 时间 t=0…12 决定 R 覆盖哪些位置，去噪时间 s=0…39 决定何时应用干预；当前干预覆盖全部 40 步及 conditional/unconditional 两个 CFG 分支。</p><p><b>VBench 读法：</b>每项先显示消融视频绝对分数，再显示 <code>Δ = 消融分数 − 同 case、同 seed 未扰动分数</code>。7 项均为越高越好；绿色正值表示该 VBench 维度上升，红色负值表示下降。Dynamic 上升只表示运动幅度判定增加，不等价于物理正确性提高。</p>",
     )
     page = page.replace(
         "消融矩阵定义（M1–M7、C1–C3）",
@@ -3101,7 +3107,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     )
     page = page.replace(
         "label=kind==='fixed'?'左 · Fixed Query (Q00 only)':'右 · All-time Query Tube (Q00–Q12)',rdef=kind==='fixed'?'R_fixed：F00 稀疏点映射出的唯一 t=0 tokens':'R_tube：baseline CoTracker 轨迹在 F00,F04,…,F48 映射出的 13 帧 token 并集'",
-        "label=kind==='fixed'?'左 · 固定 token 集 R_fixed':'右 · 全时序 token tube R_tube',tokenCount=Number.isInteger(r?.selected_token_count)?r.selected_token_count:'—',perFrame=Array.isArray(r?.latent_frame_token_counts)?r.latent_frame_token_counts.join(','):'—',rdef=kind==='fixed'?`R_fixed：仅 F00 / latent t=0；|R|=${tokenCount}`:`R_tube：冻结 baseline 轨迹在 Q00–Q12 的联合集合；|R|=${tokenCount}；逐 latent=[${perFrame}]`",
+        "label=`${d.id} · ${x.mask_mode} · ${kind==='fixed'?'Fixed R_fixed':'Tube R_tube'}`,tokenCount=Number.isInteger(r?.selected_token_count)?r.selected_token_count:'—',perFrame=Array.isArray(r?.latent_frame_token_counts)?r.latent_frame_token_counts.join(','):'—',rdef=kind==='fixed'?`R_fixed：仅 F00 / latent t=0；|R|=${tokenCount}`:`R_tube：冻结 baseline 轨迹在 Q00–Q12 的联合集合；|R|=${tokenCount}；逐 latent=[${perFrame}]`",
     )
     page = page.replace(
         "rows=specs.map(x=>{const d=defs[x.mask_mode];return `<div class=\"tube-compare-row\"><div class=\"tube-row-label\"><strong>${e(d.id)} · ${e(x.mask_mode)}<br>${e(x.targetLabel)}</strong><small>${e(d.matrix)}</small><small>信息流：${e(d.flow)}</small></div>${card('fixed',x,find(fixed,x))}${card('tube',x,find(tube,x))}</div>`}).join('')",
@@ -3230,6 +3236,39 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     page = page.replace(
         "R_fixed/R_tube 分别只占 6–14 / 79–179 个 token",
         "R 只占 11440 个 token 中的一小部分；本 seed 的实际 |R| 见每张视频卡片",
+        1,
+    )
+
+    temporal_card_start = "card=(kind,x,r)=>{const d=defs[x.mask_mode],label="
+    if page.count(temporal_card_start) != 1:
+        raise RuntimeError("PhysicIQ67 temporal card builder changed")
+    page = page.replace(
+        temporal_card_start,
+        "card=(kind,x,r)=>{if(!r?.ready)return '';const d=defs[x.mask_mode],label=",
+        1,
+    )
+    temporal_card_logic = '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span>${similarityCard(kind,x)}'
+    temporal_card_logic_expanded = '<span class="caption-exact"><b>矩阵块：</b>${e(d.matrix)}</span><span class="caption-flow"><b>切断信息流：</b>${e(d.flow)}</span><span class="caption-exact"><b>精确计算：</b>${e(logic[x.mask_mode].calc)}</span><span class="caption-exact"><b>理论后果：</b>${e(logic[x.mask_mode].theory)}</span>${similarityCard(kind,x)}'
+    if page.count(temporal_card_logic) != 1:
+        raise RuntimeError("PhysicIQ67 temporal card logic changed")
+    page = page.replace(temporal_card_logic, temporal_card_logic_expanded, 1)
+
+    temporal_rows_start = page.index("rows=targets.map(([targetScope")
+    temporal_rows_end = page.index(",done=tube.filter", temporal_rows_start)
+    temporal_rows = """rows=targets.map(([targetScope,targetRegion,targetLabel])=>{const group=specs.filter(x=>x.target_scope===targetScope&&x.region===targetRegion),cards=group.flatMap(x=>[card('fixed',x,find(fixed,x)),card('tube',x,find(tube,x))]).filter(Boolean),readyCount=cards.length;if(!readyCount)return '';return `<section class="object-ablation-row"><div class="object-ablation-heading"><h3>${e(targetLabel)}</h3><span>${readyCount} 个已生成 Top100 消融 · 按 M1 Fixed、M1 Tube、M2 Fixed、M2 Tube…排列</span></div><div class="object-ablation-strip">${cards.join('')}</div></section>`}).join('')"""
+    page = page[:temporal_rows_start] + temporal_rows + page[temporal_rows_end:]
+
+    temporal_column_header = '<div class="tube-compare-row"><div class="tube-column-head">算子 ID / 被切断的信息流</div><div class="tube-column-head">左：R_fixed · 仅 latent t=0</div><div class="tube-column-head">右：R_tube · latent t=0…12 联合集合</div></div>'
+    if page.count(temporal_column_header) != 1:
+        raise RuntimeError("PhysicIQ67 temporal column header changed")
+    page = page.replace(
+        temporal_column_header,
+        '<div class="object-layout-note">每个 object/target 单独占一条横向视频行；行内只放已经生成的 Top100 视频，未生成项不占位。每个算子按 Fixed、Tube 相邻排列，使用行底部的水平滑动条查看全部视频。</div>',
+        1,
+    )
+    page = page.replace(
+        "</style>",
+        ".object-layout-note{padding:10px 12px;border-left:6px solid var(--gold);background:#f8f1e5;line-height:1.5}.object-ablation-row{margin:16px 0 24px}.object-ablation-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:10px 12px;background:#17443a;color:#fff}.object-ablation-heading h3{margin:0}.object-ablation-heading span{font:11px ui-monospace,monospace}.object-ablation-strip{display:flex;flex-wrap:nowrap;gap:10px;overflow-x:scroll;overflow-y:hidden;padding:10px 2px 18px;scrollbar-gutter:stable;scrollbar-width:auto;scrollbar-color:#a35f1d #e8dfcc}.object-ablation-strip::-webkit-scrollbar{height:16px}.object-ablation-strip::-webkit-scrollbar-track{background:#e8dfcc;border-radius:9px}.object-ablation-strip::-webkit-scrollbar-thumb{background:#a35f1d;border:3px solid #e8dfcc;border-radius:9px}.object-ablation-strip::-webkit-scrollbar-thumb:hover{background:#17443a}.object-ablation-strip>figure{flex:0 0 clamp(300px,27vw,430px);min-width:0}.object-ablation-strip video{width:100%;aspect-ratio:1280/704}@media(max-width:700px){.object-ablation-heading{align-items:flex-start;flex-direction:column}.object-ablation-strip>figure{flex-basis:82vw}}</style>",
         1,
     )
     return page

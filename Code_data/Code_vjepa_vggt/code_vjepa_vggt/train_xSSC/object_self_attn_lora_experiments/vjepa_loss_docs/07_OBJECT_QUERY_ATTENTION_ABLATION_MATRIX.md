@@ -360,7 +360,7 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 - 相似度明细：Tube case/seed 输出目录下的 `video_similarity_top100.json` 和 `video_similarity_top100.csv`
 - RAFT 缓存与明细：Tube case/seed 输出目录下的 `raft_motion_top100_v1/flows`、`flow_videos`、`raft_motion_similarity_top100.json` 和 `raft_motion_similarity_top100.csv`
 - 新 seed 页面入口：保持同一 case，把 URL 的 `seed` 改为 `90094`、`68613`、`35075`、`32466` 或 `13248`；页面会只展示当前已经生成的卡片。
-- 左右对比页面：`http://localhost:8092/wan22-ti2v-legacy-physiciq67-samples?v=12&case=0613pybullet_sample_001460_w002&seed=47326`
+- 对比页面：`http://localhost:8092/wan22-ti2v-legacy-physiciq67-samples?v=16&case=0613pybullet_sample_001460_w002&seed=47326`。页面按 `object_A`、`object_B`、`all_objects` 各建立一条横向视频行；每行用明确可见的水平滑动条浏览该 target 已生成的全部 Top100 Fixed/Tube 消融，未生成项不占位。
 
 每个 manifest 必须记录：`target_scope`、`mask_mode`、冻结 Top100 entries、实际 token indices、逐 latent token 数、40 步双 CFG 调用审计、轨迹来源以及 softmax 是否重算。
 
