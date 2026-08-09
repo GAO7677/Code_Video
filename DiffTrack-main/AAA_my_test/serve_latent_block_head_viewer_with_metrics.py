@@ -401,6 +401,7 @@ UNLISTED_PORTAL_CARD = r'''
 <a class="card new" href="/physiq025-object-query-frozen-trajectory?v=1"><div><span>32 / PHYSIQ025 FROZEN</span><h2>PhysIQ025 Frozen Trajectory</h2><p>PhysIQ025 case 的 frozen Object Query trajectory 页面，集中展示视频、对象轨迹和注意力图。</p></div><span class="go">打开 PhysIQ025 Frozen</span></a>
 <a class="card new" href="/wan22-ti2v-legacy-pck50?v=2"><div><span>33 / LEGACY PCK50</span><h2>五组 PCK Head 排名与重合</h2><p>首个 latent frame 固定为 object query；查看 Legacy、GT、LoRA、Baseline、三模型综合在 S039 与全步平均下的 720 Head 排名、30 × 24 矩阵、Top-K 重合和相关性。</p></div><span class="go">打开 PCK Head 对比</span></a>
 <a class="card new" href="/wan22-ti2v-legacy-physiciq67-samples?v=1"><div><span>34 / PHYSICIQ67 SAMPLES</span><h2>新 Legacy Object Query 样例</h2><p>固定随机抽取已完成的 PhysicIQ67 runs，展示生成视频、SAM2 object query、单 run PCK 矩阵和 S039 Top10 attention。</p></div><span class="go">打开 PhysicIQ67 样例</span></a>
+<a class="card new" href="/object-query-ablation-metrics?v=1"><div><span>35 / OBJECT QUERY METRICS</span><h2>Fixed × Tube 消融量化诊断</h2><p>001460 / seed 47326 的 49 个 Top100 视频；同时对比未消融 Baseline 与 simulator/source GT，并展示轨迹、mask、RAFT、DINO 和 LPIPS 的真实计算量。</p></div><span class="go">打开消融指标页</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + "</section>", 1
@@ -408,10 +409,50 @@ viewer.PORTAL = viewer.PORTAL.replace(
 
 
 from AAA_my_test import serve_attention_noise_metrics as combined_metrics
+from AAA_my_test.object_query_ablation_metrics import dashboard as object_query_metrics_dashboard
 
 
 class MetricsHandler(viewer.Handler):
     def do_GET(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/object-query-ablation-metrics":
+            self.send_payload(
+                object_query_metrics_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/object-query-ablation-metrics/catalog":
+            payload = json.dumps(
+                object_query_metrics_dashboard.catalog(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/object-query-ablation-metrics/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_metrics_dashboard.asset(params.get("path", [""])[0])
+            if asset is None:
+                raise FileNotFoundError("unknown object-query metric asset")
+            content_type = {
+                ".mp4": "video/mp4",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".json": "application/json; charset=utf-8",
+                ".csv": "text/csv; charset=utf-8",
+            }.get(asset.suffix.lower(), "application/octet-stream")
+            viewer.send_file_with_range(self, asset, content_type)
+            return
+        if path == "/api/object-query-ablation-metrics/input-video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_metrics_dashboard.input_video(params.get("id", [""])[0])
+            if asset is None:
+                raise FileNotFoundError("unknown object-query input video")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
         if urlparse(self.path).path == "/pck-extreme-benchmark":
             self.send_payload(
                 combined_metrics.PAGE.encode("utf-8"), "text/html; charset=utf-8"
@@ -3281,6 +3322,11 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     page = page.replace(
         "</style>",
         ".object-layout-note{padding:10px 12px;border-left:6px solid var(--gold);background:#f8f1e5;line-height:1.5}.tube-compare,.object-ablation-row,.object-protocol-row,.object-ablation-strip{min-width:0;max-width:100%;width:100%}.object-ablation-row{margin:16px 0 28px}.object-ablation-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:10px 12px;background:#17443a;color:#fff}.control-row .object-ablation-heading{background:#7a4b18}.object-ablation-heading h3{margin:0}.object-ablation-heading span,.object-protocol-heading span{font:11px ui-monospace,monospace}.object-protocol-row{margin-top:10px;padding:8px 9px 0;border:1px solid #d4c8b5;background:#f8f4eb}.object-protocol-row.tube{border-color:#86aa9f;background:#edf6f2}.object-protocol-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:4px 3px}.object-protocol-row.fixed .object-protocol-heading strong{color:#9a5318}.object-protocol-row.tube .object-protocol-heading strong{color:#176654}.object-ablation-strip{display:flex;flex-wrap:nowrap;gap:10px;overflow-x:scroll;overflow-y:hidden;padding:8px 2px 18px;scrollbar-gutter:stable;scrollbar-width:auto;scrollbar-color:#a35f1d #e8dfcc;overscroll-behavior-inline:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}.object-protocol-row.tube .object-ablation-strip{scrollbar-color:#176654 #d9e8e2}.object-ablation-strip::-webkit-scrollbar{height:16px}.object-ablation-strip::-webkit-scrollbar-track{background:#e8dfcc;border-radius:9px}.object-ablation-strip::-webkit-scrollbar-thumb{background:#a35f1d;border:3px solid #e8dfcc;border-radius:9px}.object-protocol-row.tube .object-ablation-strip::-webkit-scrollbar-track{background:#d9e8e2}.object-protocol-row.tube .object-ablation-strip::-webkit-scrollbar-thumb{background:#176654;border-color:#d9e8e2}.object-ablation-strip::-webkit-scrollbar-thumb:hover{background:#17443a}.object-ablation-strip>figure{flex:0 0 clamp(300px,27vw,430px);min-width:0}.object-ablation-strip video{width:100%;aspect-ratio:1280/704}@media(max-width:700px){.object-ablation-heading,.object-protocol-heading{align-items:flex-start;flex-direction:column}.object-ablation-strip>figure{flex-basis:82vw}}</style>",
+        1,
+    )
+    page = page.replace(
+        "</style>",
+        ".ablation figure .similarity-card,.ablation figure .raft-card,.ablation figure .vbench-summary,.ablation figure .vbench-pending,.ablation figure .raft-flow{display:none!important}</style>",
         1,
     )
     return page
