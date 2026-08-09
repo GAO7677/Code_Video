@@ -389,6 +389,9 @@ def resolve_candidate_video_path(result_json_path: Path, result_payload: dict[st
     candidate_video_path = result_json_path.with_suffix(".mp4")
     if candidate_video_path.is_file():
         return candidate_video_path.resolve()
+    generated_video_path = result_json_path.parent / "generated.mp4"
+    if generated_video_path.is_file():
+        return generated_video_path.resolve()
     candidate_video = result_payload.get("output_video")
     if isinstance(candidate_video, str) and candidate_video.strip():
         path = Path(candidate_video).expanduser().resolve()

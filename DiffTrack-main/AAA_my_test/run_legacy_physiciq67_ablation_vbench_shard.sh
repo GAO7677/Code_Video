@@ -28,11 +28,6 @@ if [[ "${GPU}" == "4" ]]; then
 fi
 
 mkdir -p "${OUTPUT}"
-echo "[vbench:wait] completed-video snapshot waits for fixed and tube generation"
-while pgrep -u gaoya -f 'run_legacy_ti2v_firstlatent_physiciq67_attention_zero_ablations.py|run_legacy_ti2v_temporal_object_tube_ablations.py' >/dev/null; do
-  sleep 30
-done
-
 echo "[vbench:wait] gpu=${GPU} shard=${SHARD_INDEX}/${NUM_SHARDS}"
 while true; do
   used=$(nvidia-smi -i "${GPU}" --query-compute-apps=used_memory --format=csv,noheader,nounits 2>/dev/null | awk '{sum += $1} END {print sum + 0}')

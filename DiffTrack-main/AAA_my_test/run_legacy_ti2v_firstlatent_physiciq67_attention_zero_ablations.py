@@ -440,6 +440,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task-index", type=int, default=None)
     parser.add_argument("--task-indices", type=int, nargs="+", default=None)
     parser.add_argument("--top-counts", type=int, nargs="+", choices=TOP_COUNTS, default=None)
+    parser.add_argument(
+        "--object-dependent-only",
+        action="store_true",
+        help="run M1-M7/C1 targets only; omit the R-independent C2/C3 controls",
+    )
     parser.add_argument("--manifest-path", type=Path, default=MANIFEST_PATH)
     parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
     parser.add_argument("--generate-missing-baselines", action="store_true")
@@ -680,6 +685,8 @@ def main() -> None:
     if args.top_counts is not None:
         selected_top_counts = set(args.top_counts)
         tasks = [task for task in tasks if int(task["top_n"]) in selected_top_counts]
+    if args.object_dependent_only:
+        tasks = [task for task in tasks if task["target_scope"] != "all_tokens"]
     if args.generate_missing_baselines:
         tasks = baseline_tasks(manifest) + tasks
     if args.task_index is not None and args.task_indices is not None:

@@ -111,4 +111,4 @@ original 与 shuffle 按同一 `(video, context)` 配对；每个 context 有 30
 - 修正版 Future shuffle：`/data/gaoya/agent-data/outputs/wmreward_ball_block_context_full150_corrected_v2/future_shuffle.html`
 - 旧版结果只作实现审计：`/data/gaoya/agent-data/outputs/wmreward_ball_block_context_full150`
 
-Object Query 的固定 Q00 / 全时序 Tube 定义、M1–M7 矩阵区域消融、C1–C3 算子控制及左右对比解释边界，统一见 `07_OBJECT_QUERY_ATTENTION_ABLATION_MATRIX.md`。
+Object Query 的固定 Q00 / 全时序 Tube 定义、M1–M7 矩阵区域消融、C1–C3 算子控制、像素相似度、RAFT 动态 ROI 运动相似度及“不同消融为何看起来一致”的诊断，统一见 `07_OBJECT_QUERY_ATTENTION_ABLATION_MATRIX.md`。

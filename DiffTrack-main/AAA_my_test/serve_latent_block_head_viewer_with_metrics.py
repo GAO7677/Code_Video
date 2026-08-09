@@ -1230,6 +1230,19 @@ class MetricsHandler(viewer.Handler):
                 raise FileNotFoundError("PhysicIQ67 temporal-tube ablation video is not ready")
             viewer.send_file_with_range(self, asset, "video/mp4")
             return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/raft-flow-video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_physiciq67_raft_flow_video(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("video_id", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("PhysicIQ67 RAFT flow video is not ready")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
         if path == "/api/wan22-ti2v-legacy-test5/catalog":
             payload = json.dumps(
                 wan22_ti2v_legacy_test5_catalog(), ensure_ascii=False
@@ -1566,6 +1579,9 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT = (
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_MANIFEST = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT / "cases.json"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_MULTISEED_MANIFEST = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT / "cases_001460_5seeds.json"
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT
@@ -2262,14 +2278,19 @@ def wan22_ti2v_legacy_physiciq67_visual_manifest():
         payload = json.loads(
             WAN22_TI2V_LEGACY_PHYSICIQ67_VISUAL_MANIFEST.read_text(encoding="utf-8")
         )
-        if WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_MANIFEST.is_file():
+        for requested_path in (
+            WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_MANIFEST,
+            WAN22_TI2V_LEGACY_PHYSICIQ67_MULTISEED_MANIFEST,
+        ):
+            if not requested_path.is_file():
+                continue
             requested = json.loads(
-                WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_MANIFEST.read_text(
-                    encoding="utf-8"
-                )
+                requested_path.read_text(encoding="utf-8")
             )
             if requested.get("entries") != payload.get("entries"):
-                raise ValueError("requested seed47326 ranking snapshot does not match")
+                raise ValueError(
+                    f"requested ranking snapshot does not match: {requested_path}"
+                )
             seen = {
                 (str(row.get("case")), int(row.get("seed", -1)))
                 for row in payload.get("samples", [])
@@ -2302,6 +2323,55 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_PROTOCOL = (
     "attention_matrix_ablation_temporal_object_tube_v1"
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE = "0613pybullet_sample_001460_w002"
+WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_SEEDS = frozenset(
+    (47326, 90094, 68613, 35075, 32466, 13248)
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_RAFT_DIR = "raft_motion_top100_v1"
+
+
+def _wan22_ti2v_legacy_physiciq67_similarity(case: str, seed: int) -> dict[str, Any]:
+    path = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT
+        / case
+        / f"seed_{seed:05d}"
+        / "video_similarity_top100.json"
+    )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            payload.get("case") != case
+            or int(payload.get("seed", -1)) != seed
+            or int(payload.get("video_count", -1)) != 49
+            or int(payload.get("ablation_video_count", -1)) != 48
+        ):
+            raise ValueError("video similarity payload does not match the pilot")
+        return {**payload, "ready": True}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return {"ready": False, "reason": str(exc)}
+
+
+def _wan22_ti2v_legacy_physiciq67_raft_motion(
+    case: str, seed: int
+) -> dict[str, Any]:
+    path = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT
+        / case
+        / f"seed_{seed:05d}"
+        / WAN22_TI2V_LEGACY_PHYSICIQ67_RAFT_DIR
+        / "raft_motion_similarity_top100.json"
+    )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            payload.get("case") != case
+            or int(payload.get("seed", -1)) != seed
+            or int(payload.get("video_count", -1)) != 49
+            or int(payload.get("comparison_count", -1)) != 240
+        ):
+            raise ValueError("RAFT motion payload does not match the pilot")
+        return {**payload, "ready": True}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return {"ready": False, "reason": str(exc)}
 
 
 def _wan22_ti2v_legacy_physiciq67_vbench_scores(payload: dict) -> dict[str, float]:
@@ -2592,12 +2662,18 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
         )
         if (
             case == WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE
-            and seed == 47326
+            and seed in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_SEEDS
         ):
             sample["temporal_tube_attention_matrix_ablations"] = (
                 _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
                     sample, payload.get("entries", []), baseline_scores
                 )
+            )
+            sample["ablation_video_similarity"] = (
+                _wan22_ti2v_legacy_physiciq67_similarity(case, seed)
+            )
+            sample["ablation_raft_motion"] = (
+                _wan22_ti2v_legacy_physiciq67_raft_motion(case, seed)
             )
         samples.append(sample)
     ablation_records = [
@@ -2733,6 +2809,41 @@ def wan22_ti2v_legacy_physiciq67_temporal_tube_video(
         / variant
         / "generated.mp4"
     )
+
+
+def wan22_ti2v_legacy_physiciq67_raft_flow_video(
+    case: str, seed: str, video_id: str
+):
+    if case != WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE:
+        return None
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    if seed_value != 47326 or not video_id:
+        return None
+    payload = _wan22_ti2v_legacy_physiciq67_raft_motion(case, seed_value)
+    if not payload.get("ready"):
+        return None
+    record = next(
+        (row for row in payload.get("videos", []) if row.get("id") == video_id),
+        None,
+    )
+    if record is None or not record.get("raft_flow_video"):
+        return None
+    allowed_root = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT
+        / case
+        / f"seed_{seed_value:05d}"
+        / WAN22_TI2V_LEGACY_PHYSICIQ67_RAFT_DIR
+        / "flow_videos"
+    ).resolve()
+    asset = Path(str(record["raft_flow_video"])).resolve()
+    try:
+        asset.relative_to(allowed_root)
+    except ValueError:
+        return None
+    return asset if asset.suffix.lower() == ".mp4" else None
 
 
 def wan22_ti2v_legacy_physiciq67_query_image(
@@ -2941,7 +3052,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         "const s=current(),region=$('region').value,base=",
     )
     old_media = """const video=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Generated video unavailable</div>',query=s.query_visual_ready?`<img src="${api}/query-image?case=${encodeURIComponent(s.case)}&region=${encodeURIComponent(region)}&v=1">`:'<div class="pending">Query visualization unavailable</div>',heat=s.attention_ready&&entry?`<img src="${api}/heatmap?${base}&rank=${rank}&region=${encodeURIComponent(region)}&v=${Date.now()}">`:'<div class="pending">Attention capture 待生成<br>视频、SAM2 query 和 PCK 矩阵已可查看</div>';$('media').innerHTML=`<figure>${video}<figcaption>Legacy generated video · 40 steps / 49 frames</figcaption></figure><figure>${query}<figcaption>SAM2 mask + 8 object query points · F00/K00</figcaption></figure><figure>${heat}<figcaption>${entry?`#${rank+1} · S39 L${entry.block} H${entry.head} · ${region}`:'S039 attention'}</figcaption></figure>`;renderMatrix();"""
-    new_media = """const video=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Generated video unavailable</div>',query=s.query_visual_ready?`<img src="${api}/query-image?case=${encodeURIComponent(s.case)}&region=${encodeURIComponent(region)}&v=1">`:'<div class="pending">Query visualization unavailable</div>';$('media').innerHTML=Number(s.seed)===47326?`<figure>${query}<figcaption>SAM2 mask + 8 object query points · F00/K00</figcaption></figure>`:`<figure>${video}<figcaption>Legacy generated video · 40 steps / 49 frames</figcaption></figure><figure>${query}<figcaption>SAM2 mask + 8 object query points · F00/K00</figcaption></figure>`;$('means').innerHTML=(Number(s.seed)===47326?[100]:[30,50,100]).map(n=>`<figure>${s.attention_ready?`<img loading="lazy" src="${api}/mean-heatmap?${base}&top_n=${n}&region=${encodeURIComponent(region)}&v=${Date.now()}">`:'<div class="pending">Top'+n+' capture 待生成</div>'}<figcaption>S039 Top${n} Head Mean · ${region}</figcaption></figure>`).join('');renderAblations(s,base);renderMatrix();"""
+    new_media = """const video=s.video_ready?`<video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video>`:'<div class="pending">Generated video unavailable</div>',query=s.query_visual_ready?`<img src="${api}/query-image?case=${encodeURIComponent(s.case)}&region=${encodeURIComponent(region)}&v=1">`:'<div class="pending">Query visualization unavailable</div>',isTubePilot=Array.isArray(s.temporal_tube_attention_matrix_ablations);$('media').innerHTML=isTubePilot?`<figure>${query}<figcaption>SAM2 mask + 8 object query points · F00/K00</figcaption></figure>`:`<figure>${video}<figcaption>Legacy generated video · 40 steps / 49 frames</figcaption></figure><figure>${query}<figcaption>SAM2 mask + 8 object query points · F00/K00</figcaption></figure>`;$('means').innerHTML=(isTubePilot?[100]:[30,50,100]).map(n=>`<figure>${s.attention_ready?`<img loading="lazy" src="${api}/mean-heatmap?${base}&top_n=${n}&region=${encodeURIComponent(region)}&v=${Date.now()}">`:'<div class="pending">Top'+n+' capture 待生成</div>'}<figcaption>S039 Top${n} Head Mean · ${region}</figcaption></figure>`).join('');renderAblations(s,base);renderMatrix();"""
     if old_media not in page:
         raise RuntimeError("PhysicIQ67 visual page media template changed")
     page = page.replace(old_media, new_media)
@@ -2972,7 +3083,7 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     )
     page = page.replace(
         "rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'C3 · Control · Full Head Output Zero',detail:'令整个 Y_h=A_hV_h=0；直接删除 head 输出，与 QK logits=0 不同'});const card=",
-        "rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'C3 · Control · Full Head Output Zero',detail:'令整个 Y_h=A_hV_h=0；直接删除 head 输出，与 QK logits=0 不同'});if(Number(s.seed)===47326)return renderRequestedTop100(s);const card=",
+        "rows.push({target_scope:'all_tokens',mask_mode:'full_head_output',region:'',label:'C3 · Control · Full Head Output Zero',detail:'令整个 Y_h=A_hV_h=0；直接删除 head 输出，与 QK logits=0 不同'});if(Array.isArray(s.temporal_tube_attention_matrix_ablations))return renderRequestedTop100(s);const card=",
     )
     page = page.replace(
         "return `<figure>${media}<figcaption>Top${n} · ${protocol}</figcaption></figure>`",
@@ -3057,6 +3168,69 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     page = page.replace(
         '<figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption></figure>',
         '<figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption>${vbenchSummary(s,true)}</figure>',
+    )
+    temporal_defs_tail = "literal_kv_zero:{id:'C1',matrix:'K_R=V_R=0 · recompute softmax',flow:'R Value 为零；R 列仍参与 softmax 路由',exact:'K_R、V_R 同时置零后重算 attention；R 列 logits=0 且仍占概率质量'}},modes="
+    temporal_defs_with_logic = """literal_kv_zero:{id:'C1',matrix:'K_R=V_R=0 · recompute softmax',flow:'R Value 为零；R 列仍参与 softmax 路由',exact:'K_R、V_R 同时置零后重算 attention；R 列 logits=0 且仍占概率质量'}},logic={self_only:{calc:\"Y'_R=I V_C；Y'_C=O V_R+B V_C\",theory:'只删除 S V_R。若结果变化，说明 R 内部 Value 对 R 接收端有因果贡献；不代表对象 token 被删除。'},incoming_only:{calc:\"Y'_R=S V_R；Y'_C=O V_R+B V_C\",theory:'只删除 I V_C。R 仍能内部读取并继续向 C 输出；变化诊断 tube 外上下文进入 R 的作用。'},outgoing_only:{calc:\"Y'_R=S V_R+I V_C；Y'_C=B V_C\",theory:'只删除 O V_R。R 自身更新不变，但 C 不再接收 R Value；接近 baseline 表明该实验下 O 的可见边际效应较弱。'},query_row:{calc:\"Y'_R=0；Y'_C=O V_R+B V_C\",theory:'删除该 head 对 R 的全部接收端更新，但残差、其他 heads 和 FFN 仍保留，所以 R token 本身不会被置零。'},key_value_column:{calc:\"Y'_R=I V_C；Y'_C=B V_C\",theory:'保持 A 不变，删除所有 S/O 中的 R Value 且不重归一化；等价于只令 V_R=0，不等价于 K_R=V_R=0。'},cross_boundary:{calc:\"Y'_R=S V_R；Y'_C=B V_C\",theory:'同时删除 I 与 O，保留 R 内部和 C 内部通信；变化诊断 R–C 双向耦合的联合效应。'},row_and_column:{calc:\"Y'_R=0；Y'_C=B V_C\",theory:'删除 S、I、O，所有涉及 R 的该 head 通信均消失；残差和未选 heads 仍可补偿。'},literal_kv_zero:{calc:\"K'_R=V'_R=0；A'=softmax(QK'^T/√d)；Y'=A'V'\",theory:'R Value 为零，但 R 列 logits 变为 0 后仍进入 softmax。与 M5 的差异测到的是重新路由/概率质量效应。'}},modes="""
+    if page.count(temporal_defs_tail) != 1:
+        raise RuntimeError("PhysicIQ67 temporal definitions changed")
+    page = page.replace(temporal_defs_tail, temporal_defs_with_logic, 1)
+
+    temporal_find = "find=(rows,x)=>rows.find(r=>r.target_scope===x.target_scope&&r.mask_mode===x.mask_mode&&String(r.region||'')===x.region),src="
+    temporal_similarity_helpers = """find=(rows,x)=>rows.find(r=>r.target_scope===x.target_scope&&r.mask_mode===x.mask_mode&&String(r.region||'')===x.region),similarity=s.ablation_video_similarity||{},comparisons=similarity.comparisons||[],simId=(kind,x,mode=x.mask_mode)=>`${kind}:${x.target_scope}:${x.region||'all_objects'}:${mode}`,pair=(left,right)=>comparisons.find(c=>(c.left_id===left&&c.right_id===right)||(c.left_id===right&&c.right_id===left)),metricText=m=>m?`SSIM ${Number(m.ssim_mean).toFixed(4)} · PSNR ${m.psnr_db===null?'∞':Number(m.psnr_db).toFixed(2)+' dB'} · MAE ${Number(m.mae_0_1).toFixed(4)} · Δt-MAE ${Number(m.temporal_delta_mae_0_1).toFixed(4)}${m.decoded_equal?' · 逐像素相同':' · 非逐像素相同'}`:'待计算',similarityCard=(kind,x)=>{const own=simId(kind,x),baseMetric=pair('baseline',own),fixedTube=pair(simId('fixed',x),simId('tube',x));return `<span class=\"similarity-card\"><b>vs Baseline：</b>${e(metricText(baseMetric))}<br><b>Fixed ↔ Tube：</b>${e(metricText(fixedTube))}</span>`},prettyId=id=>String(id).replace('single_object:','').replace('all_objects:all_objects','all_objects').replace('key_value_column','M5').replace('literal_kv_zero','C1').replace('cross_boundary','M6').replace('incoming_only','M2').replace('outgoing_only','M3').replace('query_row','M4').replace('row_and_column','M7').replace('self_only','M1'),marginalPairs={S:[['baseline','self_only'],['incoming_only','query_row'],['outgoing_only','key_value_column'],['cross_boundary','row_and_column']],I:[['baseline','incoming_only'],['self_only','query_row'],['outgoing_only','cross_boundary'],['key_value_column','row_and_column']],O:[['baseline','outgoing_only'],['self_only','key_value_column'],['incoming_only','cross_boundary'],['query_row','row_and_column']]},marginalScore=(kind,x,block)=>{const values=marginalPairs[block].map(([a,b])=>pair(a==='baseline'?'baseline':simId(kind,x,a),simId(kind,x,b))?.ssim_mean).filter(Number.isFinite);return values.length?values.reduce((u,v)=>u+v,0)/values.length:null},similarityPanel=()=>{if(!similarity.ready)return `<div class=\"similarity-panel pending\">视频相似度待计算：${e(similarity.reason||'metrics unavailable')}</div>`;const closest=(similarity.closest_same_target_pairs||[]).slice(0,6).map(c=>`<li><code>${e(prettyId(c.left_id))}</code> ↔ <code>${e(prettyId(c.right_id))}</code> · SSIM ${Number(c.ssim_mean).toFixed(4)} · MAE ${Number(c.mae_0_1).toFixed(4)}</li>`).join(''),diagnostics=targets.flatMap(([target_scope,region,label])=>['fixed','tube'].map(kind=>{const x={target_scope,region};return `<tr><td>${e(kind)}</td><td>${e(label)}</td>${['S','I','O'].map(block=>{const score=marginalScore(kind,x,block);return `<td>${Number.isFinite(score)?score.toFixed(4):'—'}</td>`}).join('')}</tr>`})).join(''),exactCount=(similarity.exact_decoded_groups||[]).length,res=similarity.comparison_resolution_hwc||[];return `<section class=\"similarity-panel\"><h3>视频相似度与“看起来一致”的诊断</h3><p><b>${similarity.video_count} 个视频 / ${similarity.comparison_count} 组比较</b>；全部 49 帧在 ${res[1]||'—'}×${res[0]||'—'} 上计算 SSIM、PSNR、MAE 和时间差分 MAE。原始尺寸解码帧哈希重复组：<b>${exactCount}</b>，因此当前没有两个结果逐像素完全相同。</p><div class=\"similarity-grid\"><div><h4>最相似的同 target 算子对</h4><ol>${closest}</ol></div><div><h4>如何从相似算子反推弱信息流</h4><p>M1↔M5、M2↔M6、M4↔M7 只多切一个 O；M1↔M4、M3↔M6、M5↔M7 只多切一个 I；M2↔M4、M3↔M5、M6↔M7 只多切一个 S。对应 pair 越相似，只能说明该上下文中新增矩阵块的<b>最终视频边际效应较弱</b>，不能说明内部 attention 数值为零。</p></div></div><div class=\"similarity-table\"><table><thead><tr><th>协议</th><th>Target</th><th>仅差 S 的平均 SSIM</th><th>仅差 I 的平均 SSIM</th><th>仅差 O 的平均 SSIM</th></tr></thead><tbody>${diagnostics}</tbody></table></div><p class=\"similarity-warning\"><b>为什么仍会很像：</b>R_fixed/R_tube 分别只占 6–14 / 79–179 个 token；只干预 Top100/720 个物理 heads。残差连接、其余 heads、FFN、cross-attention 与后续 40 步扩散可补偿或压低差异。高 SSIM 也可能来自变化集中在小物体区域；它不等于实验未执行。所有 manifest 的干预审计仍需与相似度一起判断。</p></section>`},src="""
+    if page.count(temporal_find) != 1:
+        raise RuntimeError("PhysicIQ67 temporal record finder changed")
+    page = page.replace(temporal_find, temporal_similarity_helpers, 1)
+
+    temporal_raft_anchor = "</p></section>`},src="
+    temporal_raft_helpers = """</p></section>`},raft=s.ablation_raft_motion||{},raftComparisons=raft.comparisons||[],raftVideos=raft.videos||[],raftPair=(left,right)=>raftComparisons.find(c=>(c.left_id===left&&c.right_id===right)||(c.left_id===right&&c.right_id===left)),raftScope=x=>x.target_scope==='all_objects'?'all_objects_roi':`${x.region}_roi`,raftMetrics=(kind,x)=>raftPair('baseline',simId(kind,x))?.scopes?.[raftScope(x)],raftFixedTube=(x)=>raftPair(simId('fixed',x),simId('tube',x))?.scopes?.[raftScope(x)],fmt=(v,n=3)=>Number.isFinite(Number(v))?Number(v).toFixed(n):'—',raftMetricText=m=>m?`EPE/ref ${fmt(m.flow_epe_over_reference_magnitude)} · vector cos ${fmt(m.flow_vector_cosine)} · motion ×${fmt(m.motion_magnitude_ratio)} · profile r ${fmt(m.motion_profile_correlation)}`:'待计算',raftCard=(kind,x)=>{const own=raftMetrics(kind,x),fixedTube=raftFixedTube(x);return `<span class="raft-card"><b>RAFT vs Baseline · ${e(raftScope(x))}：</b>${e(raftMetricText(own))}<br><b>Fixed → Tube：</b>${e(raftMetricText(fixedTube))}</span>`},raftFlowSrc=id=>`${api}/raft-flow-video?${base}&video_id=${encodeURIComponent(id)}`,raftFlowDetails=id=>raft.ready&&raftVideos.some(v=>v.id===id)?`<details class="raft-flow"><summary>查看 RAFT 光流场 · HSV 方向/幅值（全视频同尺度）</summary><video controls muted playsinline preload="none" src="${raftFlowSrc(id)}"></video></details>`:'',raftPanel=()=>{if(!raft.ready)return `<div class="raft-panel pending">RAFT 运动相似度待计算：${e(raft.reason||'metrics unavailable')}</div>`;const baselineVideo=raftVideos.find(v=>v.id==='baseline'),baseRows=[['object_A_roi','object_A'],['object_B_roi','object_B'],['all_objects_roi','all_objects']].map(([scope,label])=>`<tr><td>${e(label)}</td><td>${fmt(baselineVideo?.motion?.[scope]?.mean_magnitude_px,4)}</td><td>${fmt(baselineVideo?.motion?.[scope]?.p95_magnitude_px,4)}</td></tr>`).join(''),metricRows=targets.flatMap(([target_scope,region,label])=>modes.map(mask_mode=>{const x={target_scope,region,mask_mode},d=defs[mask_mode],fixedMetric=raftMetrics('fixed',x),tubeMetric=raftMetrics('tube',x);return `<tr><td>${e(label)}</td><td>${e(d.id)}</td><td>${fmt(fixedMetric?.motion_magnitude_ratio)}</td><td>${fmt(fixedMetric?.flow_epe_over_reference_magnitude)}</td><td>${fmt(tubeMetric?.motion_magnitude_ratio)}</td><td>${fmt(tubeMetric?.flow_epe_over_reference_magnitude)}</td></tr>`})).join(''),corr=raft.analysis?.pixel_motion_correlation||{},epeCorr=corr.pixel_ssim_vs_flow_epe||{},cosCorr=corr.pixel_ssim_vs_flow_vector_cosine||{},profileCorr=corr.pixel_ssim_vs_motion_profile_correlation||{},settings=raft.settings||{},scale=raft.flow_visualization?.shared_max_magnitude_px;return `<section class="raft-panel"><h3>RAFT 运动相似度 · 生成运动是否真的保持</h3><p><b>${raft.video_count} 个视频 / ${raft.comparison_count} 组光流比较</b>；RAFT Large ${e(settings.weights||'')}，${settings.width||'—'}×${settings.height||'—'}，相邻 48 帧对。EPE 是两个生成视频的估计光流差，不是对 GT 光流的误差。每个实验默认读取自己的 baseline-frozen target ROI。</p><div class="raft-grid"><div><h4>Baseline ROI 运动量（px/frame）</h4><table><thead><tr><th>ROI</th><th>Mean</th><th>P95</th></tr></thead><tbody>${baseRows}</tbody></table><p>object_B 接近静止，方向 cosine 与倍率容易被小分母放大，应优先看绝对 EPE。</p></div><div><h4>像素 SSIM 与运动指标并不等价</h4><p>${corr.sample_count||0} 个 vs-baseline 实验：SSIM↔EPE Pearson ${fmt(epeCorr.pearson)} / Spearman ${fmt(epeCorr.spearman)}；SSIM↔flow cosine ${fmt(cosCorr.pearson)} / ${fmt(cosCorr.spearman)}；SSIM↔运动时序 profile ${fmt(profileCorr.pearson)} / ${fmt(profileCorr.spearman)}。</p><p>负的 SSIM↔EPE 符合“画面越像，光流差通常越小”，但相关性不是 ±1，因此 RAFT 提供了额外的运动诊断。</p>${raftFlowDetails('baseline')}</div></div><div class="raft-table"><table><thead><tr><th>Target</th><th>ID</th><th>Fixed motion/base</th><th>Fixed EPE/ref</th><th>Tube motion/base</th><th>Tube EPE/ref</th></tr></thead><tbody>${metricRows}</tbody></table></div><p class="raft-warning"><b>读取方法：</b>motion/base≈1 表示目标 ROI 的平均运动幅值接近基线，≈0 表示运动几乎消失；EPE/ref 越小，说明方向、幅值和空间分布的联合光流越接近。两者必须一起看。HSV 光流视频统一使用 baseline 全图 99.5% 分位 ${fmt(scale)} px 的幅值上限，所以不同结果可直接目测比较。</p></section>`},src="""
+    if page.count(temporal_raft_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 temporal RAFT helper anchor changed")
+    page = page.replace(temporal_raft_anchor, temporal_raft_helpers, 1)
+
+    temporal_card_caption = '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span></figcaption>${vbenchSummary(r)}</figure>'
+    temporal_card_with_similarity = '<span class="caption-exact"><b>算子：</b>${e(d.exact)}</span>${similarityCard(kind,x)}${raftCard(kind,x)}</figcaption>${vbenchSummary(r)}${raftFlowDetails(simId(kind,x))}</figure>'
+    if page.count(temporal_card_caption) != 1:
+        raise RuntimeError("PhysicIQ67 temporal card caption changed")
+    page = page.replace(temporal_card_caption, temporal_card_with_similarity, 1)
+
+    temporal_baseline_caption = '<figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption>${vbenchSummary(s,true)}</figure>'
+    temporal_baseline_with_raft = '<figcaption><strong>Baseline · seed=47326 · No intervention</strong></figcaption>${vbenchSummary(s,true)}${raftFlowDetails(\'baseline\')}</figure>'
+    if page.count(temporal_baseline_caption) != 1:
+        raise RuntimeError("PhysicIQ67 temporal baseline caption changed")
+    page = page.replace(temporal_baseline_caption, temporal_baseline_with_raft, 1)
+
+    temporal_row_logic = '<small>被切断：${e(d.flow)}</small></div>${card(\'fixed\',x,find(fixed,x))}'
+    temporal_row_with_logic = '<small>被切断：${e(d.flow)}</small><small><b>精确计算：</b>${e(logic[x.mask_mode].calc)}</small><small><b>理论后果：</b>${e(logic[x.mask_mode].theory)}</small></div>${card(\'fixed\',x,find(fixed,x))}'
+    if page.count(temporal_row_logic) != 1:
+        raise RuntimeError("PhysicIQ67 temporal row logic changed")
+    page = page.replace(temporal_row_logic, temporal_row_with_logic, 1)
+
+    temporal_panel_anchor = '</p></div>${baseline}<div class="tube-compare"><div class="tube-compare-row"><div class="tube-column-head">算子 ID / 被切断的信息流</div>'
+    temporal_panel_insert = '</p></div>${similarityPanel()}${raftPanel()}${baseline}<div class="tube-compare"><div class="tube-compare-row"><div class="tube-column-head">算子 ID / 被切断的信息流</div>'
+    if page.count(temporal_panel_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 temporal similarity panel anchor changed")
+    page = page.replace(temporal_panel_anchor, temporal_panel_insert, 1)
+
+    page = page.replace(
+        "</style>",
+        ".similarity-card{display:block;margin-top:8px;padding:7px 8px;border-left:4px solid var(--gold);background:#f8f1e5;font:11px/1.5 ui-monospace,monospace;color:#3f463f}.similarity-panel{margin:14px 0;padding:13px;border:1px solid var(--line);border-radius:12px;background:#f7f3e9}.similarity-panel h3,.similarity-panel h4{margin:0 0 8px}.similarity-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.similarity-grid>div{padding:11px;background:#fff}.similarity-grid ol{margin:0;padding-left:22px}.similarity-grid li{margin:5px 0;overflow-wrap:anywhere}.similarity-table{overflow-x:auto;margin-top:10px}.similarity-table table{min-width:760px}.similarity-warning{padding:10px 12px;border-left:6px solid #b95031;background:#fff1d8;line-height:1.55}@media(max-width:900px){.similarity-grid{grid-template-columns:1fr}}</style>",
+        1,
+    )
+    page = page.replace(
+        "</style>",
+        ".raft-card{display:block;margin-top:8px;padding:7px 8px;border-left:4px solid #238171;background:#e7f4ef;font:11px/1.5 ui-monospace,monospace;color:#183f37}.raft-panel{margin:14px 0;padding:13px;border:1px solid #76a99d;border-radius:12px;background:#eaf5f1}.raft-panel h3,.raft-panel h4{margin:0 0 8px}.raft-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.raft-grid>div{padding:11px;background:#fff}.raft-table{overflow-x:auto;margin-top:10px}.raft-table table{min-width:820px}.raft-warning{padding:10px 12px;border-left:6px solid #238171;background:#fff;line-height:1.55}.raft-flow{margin:8px;padding:7px;border:1px solid #76a99d;background:#eef8f4}.raft-flow summary{cursor:pointer;font-weight:900}.raft-flow video{margin-top:8px;aspect-ratio:640/352;image-rendering:auto}@media(max-width:900px){.raft-grid{grid-template-columns:1fr}}</style>",
+        1,
+    )
+    page = page.replace(
+        "Baseline · seed=47326 · No intervention",
+        "Baseline · seed=${s.seed} · No intervention",
+        1,
+    )
+    page = page.replace("seed=47326、采样参数", "seed=${s.seed}、采样参数", 1)
+    page = page.replace(
+        "R_fixed/R_tube 分别只占 6–14 / 79–179 个 token",
+        "R 只占 11440 个 token 中的一小部分；本 seed 的实际 |R| 见每张视频卡片",
+        1,
     )
     return page
 
