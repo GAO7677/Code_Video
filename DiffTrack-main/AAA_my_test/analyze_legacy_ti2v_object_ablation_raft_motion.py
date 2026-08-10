@@ -444,7 +444,11 @@ def main() -> None:
             "deterministic CUDA RAFT requires CUBLAS_WORKSPACE_CONFIG=:4096:8"
         )
 
-    case_root = DEFAULT_EXPERIMENT_ROOT / args.case / f"seed_{args.seed:05d}"
+    case_root = (
+        args.inventory.expanduser().resolve().parent
+        if args.inventory is not None
+        else DEFAULT_EXPERIMENT_ROOT / args.case / f"seed_{args.seed:05d}"
+    )
     inventory_path = args.inventory or case_root / "video_similarity_top100.json"
     output_root = args.output_root or case_root / "raft_motion_top100_v1"
     flow_root = output_root / "flows"

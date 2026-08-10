@@ -10,7 +10,8 @@ import cv2
 import numpy as np
 
 
-CASE = "0613pybullet_sample_001460_w002"
+DEFAULT_CASE = "0613pybullet_sample_001460_w002"
+CASE = os.environ.get("OBJECT_QUERY_ABLATION_CASE", DEFAULT_CASE)
 SEED = int(os.environ.get("OBJECT_QUERY_ABLATION_SEED", "47326"))
 if SEED < 0:
     raise ValueError("OBJECT_QUERY_ABLATION_SEED must be non-negative")
@@ -18,29 +19,46 @@ FRAME_COUNT = 49
 HEIGHT = 704
 WIDTH = 1280
 
-TUBE_CASE_ROOT = Path(
+DEFAULT_RESULT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/"
     "wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/"
     "attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1/"
     f"{CASE}/seed_{SEED:05d}"
 )
-INVENTORY_PATH = TUBE_CASE_ROOT / "video_similarity_top100.json"
+TUBE_CASE_ROOT = Path(
+    os.environ.get("OBJECT_QUERY_ABLATION_RESULT_DIR", str(DEFAULT_RESULT_ROOT))
+).expanduser().resolve()
+INVENTORY_PATH = Path(
+    os.environ.get(
+        "OBJECT_QUERY_ABLATION_INVENTORY",
+        str(TUBE_CASE_ROOT / "video_similarity_top100.json"),
+    )
+).expanduser().resolve()
 RAFT_ROOT = TUBE_CASE_ROOT / "raft_motion_top100_v1"
 BASELINE_TRACKS = TUBE_CASE_ROOT / "frozen_baseline_tracks/tracks.npz"
-REGION_CACHE = Path(
+DEFAULT_REGION_CACHE = Path(
     "/data/gaoya/agent-data/cache/"
     "wan22_ti2v_legacy_firstlatent_regions_704x1280"
 ) / CASE
-SOURCE_ROOT = Path(
+REGION_CACHE = Path(
+    os.environ.get("OBJECT_QUERY_ABLATION_REGION_CACHE", str(DEFAULT_REGION_CACHE))
+).expanduser().resolve()
+DEFAULT_SOURCE_ROOT = Path(
     "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/"
     "industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_001460"
 )
+SOURCE_ROOT = Path(
+    os.environ.get("OBJECT_QUERY_ABLATION_SOURCE_ROOT", str(DEFAULT_SOURCE_ROOT))
+).expanduser().resolve()
 SOURCE_VIDEO = SOURCE_ROOT / "source_video.mp4"
 SOURCE_STATES = SOURCE_ROOT / "states.npz"
-OUTPUT_ROOT = Path(
+DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/object_query_ablation_metrics/"
     f"{CASE}/seed_{SEED:05d}"
 )
+OUTPUT_ROOT = Path(
+    os.environ.get("OBJECT_QUERY_ABLATION_OUTPUT_ROOT", str(DEFAULT_OUTPUT_ROOT))
+).expanduser().resolve()
 
 OBJECTS = ("object_A", "object_B")
 OBJECT_LABELS = {"object_A": "sphere / drop_ball", "object_B": "box / support_platform"}

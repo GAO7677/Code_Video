@@ -485,6 +485,7 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 - 五 seed 相似度等待器：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/wait_legacy_object_ablation_001460_5seed_similarity.sh`
 - RAFT 运动相似度脚本：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/analyze_legacy_ti2v_object_ablation_raft_motion.py`
 - 单 seed 49 视频完整指标代码：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/`
+- 全指标一键入口：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/bench.sh`；输入单个 `seed_<seed>` 结果目录，或包含多个直接 `seed_*` 子目录的 case 目录。
 - 六 seed 严格共同 cohort 聚合脚本：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/aggregate_reports.py`
 - 六 seed 聚合报告：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/aggregate/report.json`
 - 标量完整性审计：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/aggregate/scalar_completeness.csv`；只有 `finite_sample_count=expected_sample_count=6` 的标量才可显示数值。
@@ -501,6 +502,27 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 每个 manifest 必须记录：`target_scope`、`mask_mode`、冻结 Top100 entries、实际 token indices、逐 latent token 数、40 步双 CFG 调用审计、轨迹来源以及 softmax 是否重算。
 
 ## 12. 重跑命令
+
+### 12.1 一键计算全部 #1–#25 指标与 overlay
+
+输入目录必须已有 `video_similarity_top100.json`，且其 inventory 严格包含 `1` 个同 seed Baseline、`24` 个 Fixed Top100 和 `24` 个 Tube Top100 视频。默认流水线依次补齐官方 VBench、CoTracker、SAM2、候选/source-render RAFT、DINOv2/LPIPS、非神经指标及全部 overlay，随后执行完整性校验并重建共同 seed 汇总；各阶段都有内容哈希/文件缓存，可以断点续跑。
+
+```bash
+cd /home/gaoya/Code_Video/DiffTrack-main
+GPU=5 bash AAA_my_test/object_query_ablation_metrics/bench.sh \
+  /data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1/0613pybullet_sample_001460_w002/seed_47326
+```
+
+若输入上一级 case 目录，则顺序处理其所有直接 `seed_*` 子目录：
+
+```bash
+GPU=5 bash AAA_my_test/object_query_ablation_metrics/bench.sh \
+  /data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1/0613pybullet_sample_001460_w002
+```
+
+正式运行前可用 `--dry-run` 完成输入、Baseline、source render、`states.npz`、region cache 与 frozen tracks 校验，并打印将执行的全部命令。GPU 参数是物理编号，禁止使用 GPU 4。默认报告写入 `/data/gaoya/agent-data/outputs/object_query_ablation_metrics/<case>/seed_<seed>/`，汇总写入同一 case 下的 `aggregate/`。
+
+### 12.2 生成与单阶段重跑
 
 ```bash
 cd /home/gaoya/Code_Video/DiffTrack-main

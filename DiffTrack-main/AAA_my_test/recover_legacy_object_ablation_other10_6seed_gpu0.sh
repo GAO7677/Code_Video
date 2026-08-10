@@ -21,14 +21,7 @@ echo "[$(date -u +%FT%TZ)] fill every remaining baseline"
   --output-root "${fixed_root}" \
   --baselines-only
 
-echo "[$(date -u +%FT%TZ)] scan and fill every remaining Fixed Top100 task"
-"${python_bin}" -u AAA_my_test/run_legacy_ti2v_firstlatent_physiciq67_attention_zero_ablations.py \
-  --worker-id 0 --num-workers 1 \
-  --manifest-path "${manifest}" \
-  --output-root "${fixed_root}" \
-  --top-counts 100
-
-echo "[$(date -u +%FT%TZ)] resume Tube worker 0/5"
+echo "[$(date -u +%FT%TZ)] run Tube worker 0/5 before Fixed recovery"
 "${python_bin}" -u AAA_my_test/run_legacy_ti2v_temporal_object_tube_ablations.py \
   --all-samples --worker-id 0 --num-workers 5 \
   --manifest-path "${manifest}" \
@@ -38,4 +31,11 @@ echo "[$(date -u +%FT%TZ)] resume Tube worker 0/5"
     self_only incoming_only outgoing_only query_row key_value_column \
     cross_boundary row_and_column literal_kv_zero
 
-echo "[$(date -u +%FT%TZ)] recovery worker0 complete"
+echo "[$(date -u +%FT%TZ)] Tube worker0 complete; scan remaining Fixed Top100 tasks"
+"${python_bin}" -u AAA_my_test/run_legacy_ti2v_firstlatent_physiciq67_attention_zero_ablations.py \
+  --worker-id 0 --num-workers 1 \
+  --manifest-path "${manifest}" \
+  --output-root "${fixed_root}" \
+  --top-counts 100
+
+echo "[$(date -u +%FT%TZ)] recovery complete"

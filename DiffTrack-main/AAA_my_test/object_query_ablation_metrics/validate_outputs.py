@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -24,6 +26,26 @@ from AAA_my_test.object_query_ablation_metrics.metric_definitions import (  # no
     METRIC_DEFINITIONS,
 )
 
+VBENCH_FIELDS = (
+    "vbench_subject_consistency",
+    "vbench_background_consistency",
+    "vbench_temporal_flickering",
+    "vbench_motion_smoothness",
+    "vbench_dynamic_degree",
+    "vbench_aesthetic_quality",
+    "vbench_imaging_quality",
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--require-vbench",
+        action="store_true",
+        help="require finite official VBench scores for baseline and all 48 ablations",
+    )
+    return parser.parse_args()
+
 
 def video_frames(path: Path) -> int:
     capture = cv2.VideoCapture(str(path))
@@ -35,6 +57,7 @@ def video_frames(path: Path) -> int:
 
 
 def main() -> None:
+    args = parse_args()
     report_path = OUTPUT_ROOT / "report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     records = report["records"]
@@ -42,6 +65,19 @@ def main() -> None:
     assert report["ablation_count"] == 48 == len(records)
     assert [row["rank"] for row in METRIC_DEFINITIONS] == list(range(1, 26))
     assert len({row["id"] for row in METRIC_DEFINITIONS}) == 25
+
+    if args.require_vbench:
+        for field in VBENCH_FIELDS:
+            baseline_score = report["baseline"]["vbench"][field]["score"]
+            if not isinstance(baseline_score, (int, float)) or not math.isfinite(
+                float(baseline_score)
+            ):
+                raise RuntimeError(f"missing baseline VBench score: {field}")
+        for row in records:
+            for field in VBENCH_FIELDS:
+                score = row["vbench"][field]["score"]
+                if not isinstance(score, (int, float)) or not math.isfinite(float(score)):
+                    raise RuntimeError(f"{row['id']}: missing VBench score: {field}")
 
     for video_id in ["baseline", "source_gt_video", *[row["id"] for row in records]]:
         with np.load(OUTPUT_ROOT / "tracks" / f"{safe_id(video_id)}.npz") as arrays:

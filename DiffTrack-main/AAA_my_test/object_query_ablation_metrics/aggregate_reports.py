@@ -39,12 +39,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_report(root: Path, seed: int) -> dict[str, Any]:
+def load_report(root: Path, seed: int, expected_case: str | None = None) -> dict[str, Any]:
     path = root / f"seed_{seed:05d}" / "report.json"
     if not path.is_file():
         raise FileNotFoundError(f"missing report for seed {seed}: {path}")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("case") != CASE or int(payload.get("seed", -1)) != seed:
+    if (
+        (expected_case is not None and payload.get("case") != expected_case)
+        or int(payload.get("seed", -1)) != seed
+    ):
         raise RuntimeError(f"report identity mismatch: {path}")
     if int(payload.get("ablation_count", -1)) != 48:
         raise RuntimeError(f"expected 48 ablations: {path}")
@@ -102,8 +105,18 @@ def main() -> None:
     if args.representative_seed not in seeds:
         raise ValueError("representative seed must belong to the common cohort")
 
-    reports = {seed: load_report(args.root, seed) for seed in seeds}
-    representative = reports[args.representative_seed]
+    representative = load_report(args.root, args.representative_seed)
+    case = str(representative.get("case") or "")
+    if not case:
+        raise RuntimeError("representative report has no case identity")
+    reports = {
+        seed: (
+            representative
+            if seed == args.representative_seed
+            else load_report(args.root, seed, case)
+        )
+        for seed in seeds
+    }
     expected_ids = [record["id"] for record in representative["records"]]
     for seed, report in reports.items():
         actual_ids = [record["id"] for record in report["records"]]
@@ -139,7 +152,7 @@ def main() -> None:
     payload = {
         "schema_version": 2,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "case": CASE,
+        "case": case,
         "seed": None,
         "seeds": list(seeds),
         "seed_count": len(seeds),
