@@ -12,6 +12,11 @@ from AAA_my_test.object_query_ablation_metrics.compute_head_scope_trajectory_met
     object_centers,
     object_trajectory_metrics,
 )
+from AAA_my_test.object_query_ablation_metrics.compute_head_scope_object_survival_metrics import (
+    object_survival_metrics,
+    pack_masks,
+    unpack_masks,
+)
 
 
 class HeadScopeBaselineMetricTest(unittest.TestCase):
@@ -117,6 +122,8 @@ class HeadScopeTrajectoryMetricTest(unittest.TestCase):
         self.assertEqual(metrics["center_ade_px"], 10.0)
         self.assertEqual(metrics["center_ade_norm"], 0.1)
         self.assertEqual(metrics["common_center_coverage"], 1.0)
+        self.assertEqual(metrics["track_retention_score_0_100"], 100.0)
+        self.assertEqual(metrics["track_loss_score_0_100"], 0.0)
 
     def test_low_visibility_is_unrankable(self) -> None:
         candidate_visibility = self.visibility.copy()
@@ -126,6 +133,51 @@ class HeadScopeTrajectoryMetricTest(unittest.TestCase):
         self.assertFalse(metrics["quality_pass"])
         self.assertEqual(metrics["common_center_valid_frames"], 3)
         self.assertLess(metrics["common_center_coverage"], 0.8)
+        self.assertAlmostEqual(metrics["track_loss_score_0_100"], 93.87755102)
+
+
+class HeadScopeObjectSurvivalMetricTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.masks = np.zeros((49, 32, 32), dtype=bool)
+        self.masks[:, 8:24, 8:24] = True
+        self.features = np.zeros((49, 4), dtype=np.float32)
+        self.features[:, 0] = 1.0
+
+    def test_mask_pack_round_trip(self) -> None:
+        packed = pack_masks(self.masks)
+        restored = unpack_masks(packed, self.masks.shape)
+        np.testing.assert_array_equal(restored, self.masks)
+
+    def test_identical_object_has_full_survival(self) -> None:
+        metrics = object_survival_metrics(
+            self.masks,
+            self.masks,
+            self.features,
+            self.features,
+            self.masks[0],
+            0.8,
+        )
+        self.assertTrue(metrics["quality_pass"])
+        self.assertEqual(metrics["survival_rate"], 1.0)
+        self.assertEqual(metrics["disappearance_score_0_100"], 0.0)
+        self.assertIsNone(metrics["first_sustained_loss_frame"])
+
+    def test_identity_loss_is_measured_without_tracker(self) -> None:
+        candidate = self.features.copy()
+        candidate[10:, 0] = 0.0
+        candidate[10:, 1] = 1.0
+        metrics = object_survival_metrics(
+            self.masks,
+            self.masks,
+            candidate,
+            self.features,
+            self.masks[0],
+            0.8,
+        )
+        self.assertTrue(metrics["quality_pass"])
+        self.assertEqual(metrics["alive_frame_count"], 10)
+        self.assertEqual(metrics["first_sustained_loss_frame"], 10)
+        self.assertAlmostEqual(metrics["disappearance_score_0_100"], 100 * 39 / 49)
 
 
 if __name__ == "__main__":

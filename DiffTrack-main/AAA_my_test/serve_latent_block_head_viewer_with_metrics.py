@@ -404,6 +404,7 @@ UNLISTED_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-ablation-metrics?v=4"><div><span>35 / OBJECT QUERY METRICS</span><h2>Fixed × Tube 消融量化诊断</h2><p>001460 / seed 47326 的 49 个 Top100 视频；四张实验指标表逐列标注定义与数值方向，并展示全部审计量。</p></div><span class="go">打开消融指标页</span></a>
 <a class="card new" href="/object-query-m1-temporal-gallery?v=1"><div><span>36 / M1 TEMPORAL GALLERY</span><h2>M1 Same / Future / Past</h2><p>只展示 001460 / seed 47326；每条时间方向行汇总 Object A、Object B、all_objects 与 Top100、Bottom100、All720。</p></div><span class="go">打开 M1 时间消融页</span></a>
 <a class="card new" href="/object-query-all720-ablation-gallery?v=1"><div><span>37 / ALL720 ABLATION GALLERY</span><h2>All720 全部时序消融</h2><p>汇总现有全部 All720 视频：M1/M2/M3 × All-time/Same/Future/Past × Object A/Object B/all_objects。</p></div><span class="go">打开 All720 消融页</span></a>
+<a class="card new" href="/object-query-m123-temporal-batch?v=1"><div><span>38 / M1–M3 TEMPORAL BATCH</span><h2>M1/M2/M3 · Same/Future/Past</h2><p>当前多 case、多 seed 的 Top100/Bottom100 批次独立入口；按 case、seed、target 查看已生成视频。</p></div><span class="go">打开 M1–M3 批次</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + "</section>", 1
@@ -429,11 +430,33 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/object-query-m123-temporal-batch":
+            self.send_payload(
+                wan22_ti2v_legacy_m123_temporal_batch_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
         if path == "/object-query-all720-ablation-gallery":
             self.send_payload(
                 wan22_ti2v_legacy_all720_ablation_gallery_page().encode("utf-8"),
                 "text/html; charset=utf-8",
             )
+            return
+        if path == "/api/object-query-m123-temporal-batch/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            case = params.get("case", [None])[0]
+            seed_text = params.get("seed", [None])[0]
+            try:
+                seed = int(seed_text) if seed_text is not None else None
+            except ValueError:
+                seed = None
+            payload = json.dumps(
+                wan22_ti2v_legacy_m123_temporal_batch_catalog(case, seed),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
             return
         if path == "/api/object-query-ablation-metrics/catalog":
             payload = json.dumps(
@@ -1297,6 +1320,19 @@ class MetricsHandler(viewer.Handler):
             )
             if asset is None or not asset.is_file():
                 raise FileNotFoundError("Head-Scope trajectory overlay is not ready")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/head-scope-survival-overlay":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_physiciq67_head_scope_survival_overlay(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("variant_id", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("Head-Scope survival overlay is not ready")
             viewer.send_file_with_range(self, asset, "video/mp4")
             return
         if path == "/api/wan22-ti2v-legacy-physiciq67-samples/raft-flow-video":
@@ -2911,6 +2947,26 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         trajectory_report = {}
         trajectory_records = {}
+    survival_report_path = trajectory_report_path.parent / "object_survival_report.json"
+    survival_report = {}
+    survival_records = {}
+    try:
+        survival_report = json.loads(
+            survival_report_path.read_text(encoding="utf-8")
+        )
+        if (
+            survival_report.get("case") != case
+            or int(survival_report.get("seed", -1)) != seed
+        ):
+            raise ValueError("head-scope survival report identity mismatch")
+        survival_records = {
+            str(row["variant_id"]): row
+            for row in survival_report.get("records", [])
+            if isinstance(row, dict) and row.get("variant_id")
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        survival_report = {}
+        survival_records = {}
     records = []
     for head_scope in head_scopes:
         expected_entries = scope_entries[head_scope]
@@ -2976,6 +3032,7 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
                         "error": error,
                         "baseline_metrics": metric_records.get(str(variant)),
                         "trajectory_metrics": trajectory_records.get(str(variant)),
+                        "object_survival_metrics": survival_records.get(str(variant)),
                         "temporal_directional": mask_mode
                         in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS,
                     }
@@ -3021,6 +3078,53 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
             str(row.get("variant_id") or ""),
         ),
     )
+    track_loss_ranking = sorted(
+        [
+            row
+            for variant, row in trajectory_records.items()
+            if variant in visible_variants
+            and row.get("metrics", {}).get(
+                "target_worst_track_loss_score_0_100"
+            )
+            is not None
+        ],
+        key=lambda row: (
+            -float(row["metrics"]["target_worst_track_loss_score_0_100"]),
+            str(row.get("variant_id") or ""),
+        ),
+    )
+    disappearance_ranking = sorted(
+        [
+            row
+            for variant, row in survival_records.items()
+            if variant in visible_variants
+            and row.get("metrics", {}).get(
+                "target_worst_disappearance_score_0_100"
+            )
+            is not None
+        ],
+        key=lambda row: (
+            -float(
+                row["metrics"]["target_worst_disappearance_score_0_100"]
+            ),
+            str(row.get("variant_id") or ""),
+        ),
+    )
+    mask_absence_ranking = sorted(
+        [
+            row
+            for variant, row in survival_records.items()
+            if variant in visible_variants
+            and row.get("metrics", {}).get(
+                "target_worst_mask_absence_score_0_100"
+            )
+            is not None
+        ],
+        key=lambda row: (
+            -float(row["metrics"]["target_worst_mask_absence_score_0_100"]),
+            str(row.get("variant_id") or ""),
+        ),
+    )
     return {
         "ready": True,
         "ranking_step": int(ranking.get("ranking_step", 39)),
@@ -3044,6 +3148,22 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
             "expected": int(trajectory_report.get("expected_ablation_count", 0)),
         },
         "trajectory_ranking": trajectory_ranking,
+        "track_loss_definition": trajectory_report.get(
+            "track_loss_definition", {}
+        ),
+        "track_loss_ranking": track_loss_ranking,
+        "object_survival_report_ready": bool(survival_records),
+        "object_survival_report_path": str(survival_report_path),
+        "object_survival_definition": survival_report.get(
+            "object_survival_definition", {}
+        ),
+        "object_survival_progress": {
+            "measured": int(survival_report.get("measured_ablation_count", 0)),
+            "ranked": int(survival_report.get("ranked_ablation_count", 0)),
+            "expected": int(survival_report.get("expected_ablation_count", 0)),
+        },
+        "disappearance_ranking": disappearance_ranking,
+        "mask_absence_ranking": mask_absence_ranking,
         "category_definitions": category_definitions,
         "category_rankings": {
             category_id: sorted(
@@ -3180,6 +3300,157 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
             "ready": sum(int(record["ready"]) for record in ablation_records),
             "failed": sum(int(record["error"]) for record in ablation_records),
             "expected": len(ablation_records),
+        },
+    }
+
+
+def wan22_ti2v_legacy_m123_temporal_batch_catalog(
+    selected_case: str | None = None,
+    selected_seed: int | None = None,
+):
+    """Small catalog for the M1/M2/M3 Same/Future/Past video gallery.
+
+    The full PhysicIQ67 catalog embeds every metric report for every sample and
+    is intentionally not reused here.  This endpoint scans completion markers
+    for the batch, then loads strict records and metrics for only the selected
+    case/seed.
+    """
+    manifest = wan22_ti2v_legacy_physiciq67_visual_manifest()
+    if manifest.get("ready") is False:
+        return manifest
+    samples = [
+        dict(row)
+        for row in manifest.get("samples", [])
+        if row.get("m123_head_ranking_path")
+        or (
+            str(row.get("case"))
+            == WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE
+            and int(row.get("seed", -1)) == 47326
+        )
+    ]
+    samples.sort(
+        key=lambda row: (
+            0
+            if (
+                str(row.get("case"))
+                == WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE
+                and int(row.get("seed", -1)) == 47326
+            )
+            else 1,
+            str(row.get("case")),
+            int(row.get("seed", -1)),
+        )
+    )
+    if not samples:
+        return {"ready": False, "reason": "M1/M2/M3 batch is empty", "samples": []}
+
+    selected_key = (str(selected_case or ""), int(selected_seed or -1))
+    available_keys = {
+        (str(row["case"]), int(row["seed"])) for row in samples
+    }
+    if selected_key not in available_keys:
+        selected_key = (str(samples[0]["case"]), int(samples[0]["seed"]))
+
+    summaries = []
+    total_ready = total_expected = total_errors = 0
+    for sample in samples:
+        case, seed = str(sample["case"]), int(sample["seed"])
+        ranking_tag = str(sample.get("m123_head_ranking_tag") or "")
+        head_scopes = tuple(
+            str(value)
+            for value in sample.get(
+                "m123_head_scopes", WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPES
+            )
+        )
+        regions = [
+            str(row["region_name"])
+            for row in sample.get("regions", [])
+            if row.get("region_type") == "object"
+        ]
+        targets = [("single_object", region) for region in regions]
+        targets.append(("all_objects", ""))
+        ready = errors = 0
+        for head_scope in head_scopes:
+            for target_scope, region in targets:
+                for mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS:
+                    variant = _wan22_ti2v_legacy_physiciq67_head_scope_variant(
+                        target_scope, region, mask_mode, head_scope, ranking_tag
+                    )
+                    root = (
+                        WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT
+                        / case
+                        / f"seed_{seed:05d}"
+                        / variant
+                    )
+                    ready += int(
+                        all(
+                            (root / name).is_file()
+                            for name in ("complete.json", "manifest.json", "generated.mp4")
+                        )
+                    )
+                    errors += int((root / "error.txt").is_file())
+        expected = len(head_scopes) * len(targets) * len(
+            WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
+        )
+        total_ready += ready
+        total_expected += expected
+        total_errors += errors
+        summaries.append(
+            {
+                "case": case,
+                "seed": seed,
+                "category": sample.get("category", ""),
+                "regions": regions,
+                "head_scopes": list(head_scopes),
+                "ready": ready,
+                "expected": expected,
+                "errors": errors,
+                "complete": bool(expected and ready == expected),
+            }
+        )
+
+    selected_sample = next(
+        row
+        for row in samples
+        if (str(row["case"]), int(row["seed"])) == selected_key
+    )
+    selected_payload = _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(
+        selected_sample
+    )
+    selected_payload["records"] = [
+        row
+        for row in selected_payload.get("records", [])
+        if row.get("mask_mode")
+        in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
+    ]
+    selected_payload.update(
+        {
+            "case": selected_key[0],
+            "seed": selected_key[1],
+            "category": selected_sample.get("category", ""),
+            "regions": [
+                str(row["region_name"])
+                for row in selected_sample.get("regions", [])
+                if row.get("region_type") == "object"
+            ],
+            "baseline_ready": bool(
+                wan22_ti2v_legacy_physiciq67_visual_video(
+                    selected_key[0], str(selected_key[1])
+                )
+            ),
+        }
+    )
+    return {
+        "ready": True,
+        "samples": summaries,
+        "selected": selected_payload,
+        "progress": {
+            "ready": total_ready,
+            "expected": total_expected,
+            "errors": total_errors,
+            "complete_samples": sum(int(row["complete"]) for row in summaries),
+            "sample_count": len(summaries),
+            "case_count": len({row["case"] for row in summaries}),
         },
     }
 
@@ -3350,6 +3621,36 @@ def wan22_ti2v_legacy_physiciq67_head_scope_trajectory_overlay(
     if variant_id not in allowed:
         return None
     return root / "overlays" / f"{variant_id}.mp4"
+
+
+def wan22_ti2v_legacy_physiciq67_head_scope_survival_overlay(
+    case: str, seed: str, variant_id: str
+):
+    sample = _wan22_ti2v_legacy_physiciq67_sample(case, seed)
+    if sample is None or Path(variant_id).name != variant_id or not variant_id:
+        return None
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    root = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPE_TRAJECTORY_ROOT
+        / case
+        / f"seed_{seed_value:05d}"
+    )
+    report_path = root / "object_survival_report.json"
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        allowed = {
+            str(row["variant_id"])
+            for row in report.get("records", [])
+            if isinstance(row, dict) and row.get("variant_id")
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if variant_id not in allowed:
+        return None
+    return root / "object_survival" / "overlays" / f"{variant_id}.mp4"
 
 
 def wan22_ti2v_legacy_physiciq67_raft_flow_video(
@@ -3878,18 +4179,26 @@ categoryOrder=['global_appearance','target_local','temporal_appearance','outside
 categoryDefs=payload.category_definitions||{},
 categoryName=id=>categoryDefs[id]?.name||id,
 metricDetails=r=>{const row=r.baseline_metrics;if(!row)return `<details class="m123-metrics pending"><summary>vs Baseline 指标待计算</summary><p>视频已生成，但增量 bench 尚未写入该 variant。刷新后会自动出现。</p></details>`;const m=row.metrics,g=m.global,t=m.target_roi,o=m.outside_objects,c=m.category_scores_0_100||{},cr=row.category_ranks_within_case_seed||{},rank=row.impact_rank_within_case_seed,categoryRows=categoryOrder.map(id=>`<tr class="m123-category-score"><th>${e(categoryName(id))} ↑</th><td>${num(c[id])} · #${num(cr[id],0)}</td></tr>`).join('');return `<details class="m123-metrics"><summary>vs Baseline · 四类影响与排名 · 综合 ${num(m.impact_score_0_100)} (#${num(rank,0)})</summary><div class="m123-metric-body"><table><tbody><tr><th>综合影响分 ↑</th><td>${num(m.impact_score_0_100)} · #${num(rank,0)}</td></tr>${categoryRows}<tr class="m123-raw-start"><th>Global SSIM ↓</th><td>${num(g.ssim_mean)}</td></tr><tr><th>Global MAE ↑</th><td>${num(g.mae_0_1)}</td></tr><tr><th>Global Δ-MAE ↑</th><td>${num(g.temporal_delta_mae_0_1)}</td></tr><tr><th>${e(row.target_roi_key)} ROI MAE ↑</th><td>${num(t.mae_0_1)}</td></tr><tr><th>${e(row.target_roi_key)} ROI Δ-MAE ↑</th><td>${num(t.temporal_delta_mae_0_1)}</td></tr><tr><th>Outside-object MAE ↑</th><td>${num(o.mae_0_1)}</td></tr><tr><th>Outside-object Δ-MAE ↑</th><td>${num(o.temporal_delta_mae_0_1)}</td></tr></tbody></table><p>四类分数均只衡量相对同 seed Baseline 的可见干预强度，越大表示该类影响越强，不代表生成质量或物理正确性。“时序外观”依然是像素变化指标，不用于判断轨迹差异。</p></div></details>`},
-trajectoryDetails=r=>{const row=r.trajectory_metrics;if(!row)return `<details class="m123-trajectory pending"><summary>真实轨迹指标待 CoTracker</summary><p>尚未对该视频跟踪；不使用 Δ-MAE 代替。</p></details>`;const m=row.metrics||{},objects=m.objects||{},rank=row.trajectory_rank_within_case_seed,objectRows=Object.entries(objects).map(([name,o])=>`<tr><th>${e(name)} Center-ADE / FDE</th><td>${num(o.center_ade_norm)} / ${num(o.center_fde_norm)}</td></tr><tr><th>${e(name)} Velocity vector error</th><td>${num(o.velocity_vector_error_norm_per_frame)}</td></tr><tr><th>${e(name)} PCK@5/10/20%</th><td>${num(o.pck_normalized?.['0.05'])} / ${num(o.pck_normalized?.['0.1'])} / ${num(o.pck_normalized?.['0.2'])}</td></tr><tr><th>${e(name)} common coverage</th><td>${num(o.common_center_coverage)} (${o.common_center_valid_frames}/${o.baseline_center_valid_frames}) ${o.quality_pass?'✓':'N/A'}</td></tr>`).join(''),score=m.trajectory_impact_percent_d0,overlay=`${api}/head-scope-trajectory-overlay?${base}&variant_id=${encodeURIComponent(r.variant_id)}`;return `<details class="m123-trajectory"><summary>真实轨迹 vs Baseline · ${score==null?'N/A':`${num(score)}% D0 (#${num(rank,0)})`}</summary><div class="m123-trajectory-body"><table><tbody><tr><th>轨迹影响（% D0）↑</th><td>${num(score)}</td></tr><tr><th>Target Center-ADE norm ↑</th><td>${num(m.target_center_ade_norm)}</td></tr>${objectRows}</tbody></table><video controls muted playsinline preload="metadata" src="${overlay}"></video><p>排名只用 <code>100 × target Center-ADE norm</code>，100 表示平均偏移等于一个 D0，允许超过 100。洋红线是 Baseline 中心轨迹；橙/青点、线与中心是实际进入计算的 CoTracker 量。覆盖质量门未通过时记 N/A 且不排名。</p></div></details>`},
-card=(target,scope,scopeLabel,scopeDetail,op,time)=>{const suffix=time[0]==='only'?'only':time[0],mode=`${op.base}_${suffix}`,r=find(target,scope,mode);if(!r?.ready)return '';const src=`${api}/temporal-tube-ablation-video?${base}&target_scope=${encodeURIComponent(target.target_scope)}&mask_mode=${encodeURIComponent(mode)}&top_n=${r.head_count}&head_scope=${encodeURIComponent(scope)}${target.region?`&region=${encodeURIComponent(target.region)}`:''}`;return `<figure><video controls muted playsinline preload="metadata" src="${src}"></video><figcaption><strong>${e(op.id)}-${e(time[1])} · ${e(scopeLabel)}</strong><span class="caption-protocol">${e(scopeDetail)} · ${r.head_count} layer-heads</span><span class="caption-flow"><b>切断：</b>${e(op.flow)} · ${e(time[2])}</span><span class="caption-exact"><b>精确计算：</b>${e(formula(op,time[2]))}</span><span class="caption-exact"><b>理论诊断：</b>${e(op.theory)}</span></figcaption>${trajectoryDetails(r)}${metricDetails(r)}</figure>`},
+trajectoryDetails=r=>{const row=r.trajectory_metrics;if(!row)return `<details class="m123-trajectory pending"><summary>真实轨迹指标待 CoTracker</summary><p>尚未对该视频跟踪；不使用 Δ-MAE 代替。</p></details>`;const m=row.metrics||{},objects=m.objects||{},rank=row.trajectory_rank_within_case_seed,trackRank=row.track_loss_rank_within_case_seed,objectRows=Object.entries(objects).map(([name,o])=>`<tr><th>${e(name)} Center-ADE / FDE</th><td>${num(o.center_ade_norm)} / ${num(o.center_fde_norm)}</td></tr><tr><th>${e(name)} Velocity vector error</th><td>${num(o.velocity_vector_error_norm_per_frame)}</td></tr><tr><th>${e(name)} PCK@5/10/20%</th><td>${num(o.pck_normalized?.['0.05'])} / ${num(o.pck_normalized?.['0.1'])} / ${num(o.pck_normalized?.['0.2'])}</td></tr><tr><th>${e(name)} common coverage / Track Loss</th><td>${num(o.common_center_coverage)} (${o.common_center_valid_frames}/${o.baseline_center_valid_frames}) / ${num(o.track_loss_score_0_100)} ${o.quality_pass?'✓':'ADE N/A'}</td></tr>`).join(''),score=m.trajectory_impact_percent_d0,trackLoss=m.target_worst_track_loss_score_0_100,overlay=`${api}/head-scope-trajectory-overlay?${base}&variant_id=${encodeURIComponent(r.variant_id)}`;return `<details class="m123-trajectory"><summary>轨迹/可跟踪性 vs Baseline · ADE ${score==null?'N/A':`${num(score)}% D0 (#${num(rank,0)})`} · Track Loss ${num(trackLoss)} (#${num(trackRank,0)})</summary><div class="m123-trajectory-body"><table><tbody><tr><th>Worst Track Loss /100 ↑</th><td>${num(trackLoss)} · #${num(trackRank,0)}</td></tr><tr><th>Mean Track Loss /100 ↑</th><td>${num(m.target_mean_track_loss_score_0_100)}</td></tr><tr><th>轨迹影响（% D0）↑</th><td>${num(score)}</td></tr><tr><th>Target Center-ADE norm ↑</th><td>${num(m.target_center_ade_norm)}</td></tr>${objectRows}</tbody></table><video controls muted playsinline preload="metadata" src="${overlay}"></video><p>Track Loss = 100 × (1−共同中心覆盖率)，全部视频都可比较，但只表示 CoTracker 可观测性损失。ADE 覆盖质量门未通过时仍保持 N/A，绝不以 Track Loss 填充。</p></div></details>`},
+survivalDetails=r=>{const row=r.object_survival_metrics;if(!row)return `<details class="m123-survival pending"><summary>对象存活指标待 SAM2+DINOv2</summary><p>模型指标正在增量计算；Track Loss 不能替代对象存活判断。</p></details>`;const m=row.metrics||{},objects=m.objects||{},rank=row.disappearance_rank_within_case_seed,maskRank=row.mask_absence_rank_within_case_seed,objectRows=Object.entries(objects).map(([name,o])=>`<tr><th>${e(name)} Retention / Failure (/100)</th><td>${num(o.retention_score_0_100)} / ${num(o.disappearance_score_0_100)}</td></tr><tr><th>${e(name)} DINO cosine / identity-fail / area-fail</th><td>${num(o.identity_similarity_mean)} / ${num(o.identity_failure_rate)} / ${num(o.area_failure_rate)}</td></tr><tr><th>${e(name)} empty-mask / terminal-missing rate</th><td>${num(o.empty_mask_rate)} / ${num(o.terminal_missing_rate)}</td></tr><tr><th>${e(name)} first 3-frame sustained loss</th><td>${o.first_sustained_loss_frame==null?'—':`F${o.first_sustained_loss_frame}`}</td></tr>`).join(''),score=m.target_worst_disappearance_score_0_100,maskAbsence=m.target_worst_mask_absence_score_0_100,overlay=`${api}/head-scope-survival-overlay?${base}&variant_id=${encodeURIComponent(r.variant_id)}`;return `<details class="m123-survival"><summary>对象保留 vs Baseline · Retention Failure ${num(score)} (#${num(rank,0)}) · Mask Absence ${num(maskAbsence)} (#${num(maskRank,0)})</summary><div class="m123-survival-body"><table><tbody><tr><th>Worst retention failure /100 ↑</th><td>${num(score)} · #${num(rank,0)}</td></tr><tr><th>Worst SAM2 mask absence /100 ↑</th><td>${num(maskAbsence)} · #${num(maskRank,0)}</td></tr><tr><th>Mean target retention failure /100 ↑</th><td>${num(m.target_mean_disappearance_score_0_100)}</td></tr><tr><th>Mean target mask absence /100 ↑</th><td>${num(m.target_mean_mask_absence_score_0_100)}</td></tr>${objectRows}</tbody></table><video controls muted playsinline preload="metadata" src="${overlay}"></video><p>Retention Failure 是 mask、DINO identity、面积条件的 composite；Mask Absence = 100 × empty-mask rate，更接近纯消失，但仍可能包含 SAM2 跟踪失败。failure rate 为 0–1；绿色=保留，红色=至少一个条件失败。三种失败原因保留为独立字段，必须结合 overlay 审计。</p></div></details>`},
+card=(target,scope,scopeLabel,scopeDetail,op,time)=>{const suffix=time[0]==='only'?'only':time[0],mode=`${op.base}_${suffix}`,r=find(target,scope,mode);if(!r?.ready)return '';const src=`${api}/temporal-tube-ablation-video?${base}&target_scope=${encodeURIComponent(target.target_scope)}&mask_mode=${encodeURIComponent(mode)}&top_n=${r.head_count}&head_scope=${encodeURIComponent(scope)}${target.region?`&region=${encodeURIComponent(target.region)}`:''}`;return `<figure><video controls muted playsinline preload="metadata" src="${src}"></video><figcaption><strong>${e(op.id)}-${e(time[1])} · ${e(scopeLabel)}</strong><span class="caption-protocol">${e(scopeDetail)} · ${r.head_count} layer-heads</span><span class="caption-flow"><b>切断：</b>${e(op.flow)} · ${e(time[2])}</span><span class="caption-exact"><b>精确计算：</b>${e(formula(op,time[2]))}</span><span class="caption-exact"><b>理论诊断：</b>${e(op.theory)}</span></figcaption>${trajectoryDetails(r)}${survivalDetails(r)}${metricDetails(r)}</figure>`},
 targetSections=targets.map(target=>{const opSections=ops.map(op=>{const scopeRows=scopes.map(([scope,scopeLabel,scopeDetail])=>{const cards=times.map(time=>card(target,scope,scopeLabel,scopeDetail,op,time)).filter(Boolean);if(!cards.length)return '';return `<div class="m123-scope-row"><div class="m123-scope-heading"><strong>${e(scopeLabel)}</strong><span>${e(scopeDetail)} · ${cards.length}/4 已生成</span></div><div class="m123-video-grid">${cards.join('')}</div></div>`}).join('');return scopeRows?`<section class="m123-op"><h4>${e(op.id)} · ${e(op.flow)}</h4>${scopeRows}</section>`:''}).join('');return opSections?`<section class="m123-target"><h3>${e(target.label)}</h3>${opSections}</section>`:''}).join(''),
 ranking=(payload.impact_ranking||[]).filter(r=>Number.isFinite(Number(r.impact_score_0_100))),
 trajectoryRanking=(payload.trajectory_ranking||[]).filter(r=>Number.isFinite(Number(r.metrics?.trajectory_impact_percent_d0))),
+trackLossRanking=(payload.track_loss_ranking||[]).filter(r=>Number.isFinite(Number(r.metrics?.target_worst_track_loss_score_0_100))),
+disappearanceRanking=(payload.disappearance_ranking||[]).filter(r=>Number.isFinite(Number(r.metrics?.target_worst_disappearance_score_0_100))),
+maskAbsenceRanking=(payload.mask_absence_ranking||[]).filter(r=>Number.isFinite(Number(r.metrics?.target_worst_mask_absence_score_0_100))),
 trajectoryProgress=payload.trajectory_progress||{},
+survivalProgress=payload.object_survival_progress||{},
 trajectoryRankingPanel=`<section class="m123-trajectory-ranking"><h3>真实对象轨迹影响排名 · CoTracker Center-ADE</h3><p>已跟踪 ${trajectoryProgress.tracked||0}/${trajectoryProgress.expected||records.length}，通过覆盖质量门并参与排名 ${trajectoryProgress.ranked||0}。数值 = 100 × 选中对象相对 Baseline 的 bbox-diagonal-normalized Center-ADE；100 表示平均偏移等于一个 D0，允许超过 100。</p>${trajectoryRanking.length?`<ol>${trajectoryRanking.slice(0,15).map((r,index)=>`<li><b>#${index+1} · ${e(r.target_scope==='single_object'?(r.region||'object'):'all_objects')} · ${e(modeLabel(r.mask_mode))} · ${e(r.head_scope)}</b><span>轨迹影响 ${num(r.metrics.trajectory_impact_percent_d0)}% D0 · Center-ADE ${num(r.metrics.target_center_ade_norm)}</span></li>`).join('')}</ol>`:'<div class="pending">等待首个通过质量门的 CoTracker 结果；不会用像素 MAE 补位。</div>'}</section>`,
+trackLossRankingPanel=`<section class="m123-loss-ranking track-loss"><h3>CoTracker Track Loss 排名 · 108 条均可比较</h3><p><code>100 × (1−common center coverage)</code>；越大越不可跟踪，但不单独证明对象真的消失。</p><ol>${trackLossRanking.slice(0,15).map((r,index)=>`<li><b>#${index+1} · ${e(r.target_scope==='single_object'?(r.region||'object'):'all_objects')} · ${e(modeLabel(r.mask_mode))} · ${e(r.head_scope)}</b><span>Worst Track Loss ${num(r.metrics.target_worst_track_loss_score_0_100)} /100 · ADE ${num(r.metrics.trajectory_impact_percent_d0)}</span></li>`).join('')}</ol></section>`,
+disappearanceRankingPanel=`<section class="m123-loss-ranking disappearance"><h3>对象保留失败排名 · SAM2+DINOv2 composite</h3><p>已计算 ${survivalProgress.measured||0}/${survivalProgress.expected||records.length}；每帧同时要求 mask、identity、area 三重条件，越大表示对象保留越差。</p>${disappearanceRanking.length?`<ol>${disappearanceRanking.slice(0,15).map((r,index)=>`<li><b>#${index+1} · ${e(r.target_scope==='single_object'?(r.region||'object'):'all_objects')} · ${e(modeLabel(r.mask_mode))} · ${e(r.head_scope)}</b><span>Worst Retention Failure ${num(r.metrics.target_worst_disappearance_score_0_100)} /100</span></li>`).join('')}</ol>`:'<div class="pending">等待 SAM2+DINOv2 首个结果。</div>'}</section>`,
+maskAbsenceRankingPanel=`<section class="m123-loss-ranking mask-absence"><h3>SAM2 Mask Absence 排名 · 纯消失代理</h3><p><code>100 × selected-object empty-mask rate</code>；越大表示无对象 mask 的帧越多。它比 composite 更接近纯消失，但仍需用 overlay 排除 SAM2 跟踪失败。</p>${maskAbsenceRanking.length?`<ol>${maskAbsenceRanking.slice(0,15).map((r,index)=>`<li><b>#${index+1} · ${e(r.target_scope==='single_object'?(r.region||'object'):'all_objects')} · ${e(modeLabel(r.mask_mode))} · ${e(r.head_scope)}</b><span>Worst Mask Absence ${num(r.metrics.target_worst_mask_absence_score_0_100)} /100</span></li>`).join('')}</ol>`:'<div class="pending">等待 SAM2 mask-absence 结果。</div>'}</section>`,
 categoryPanels=categoryOrder.map(id=>{const rows=(payload.category_rankings?.[id]||[]).filter(r=>Number.isFinite(Number(r.category_scores_0_100?.[id]))),def=categoryDefs[id]||{};if(!rows.length)return '';return `<section class="m123-category-ranking ${e(id)}"><h3>${e(categoryName(id))} ↑</h3><p>${e(def.direction||'越大表示该类影响越强')}</p><code>${e(def.formula||'')}</code><ol>${rows.slice(0,12).map((r,index)=>`<li><b>#${index+1} · ${e(r.target_scope==='single_object'?(r.region||'object'):'all_objects')} · ${e(modeLabel(r.mask_mode))} · ${e(r.head_scope)}</b><span>${e(categoryName(id))} ${num(r.category_scores_0_100[id])}</span></li>`).join('')}</ol></section>`}).join(''),
 categoryRankingPanel=categoryPanels?`<div class="m123-category-rankings"><div class="m123-ranking-intro"><h3>vs Baseline · 分类影响独立排序</h3><p>同一 case / seed 中按每类分数单独降序；未计算视频不参与排名。</p></div><div class="m123-category-ranking-grid">${categoryPanels}</div></div>`:`<section class="m123-impact-ranking pending"><h3>vs Baseline 分类排名待计算</h3><p>增量 bench 会在视频生成后自动写入。</p></section>`,
 overallRankingPanel=ranking.length?`<details class="m123-overall-ranking"><summary>展开查看旧版综合影响排序 · ${ranking.length} 个视频</summary><ol>${ranking.slice(0,15).map(r=>`<li><b>${e(r.target_scope==='single_object'?(r.region||'object'):'all_objects')} · ${e(modeLabel(r.mask_mode))} · ${e(r.head_scope)}</b><span>综合影响 ${num(r.impact_score_0_100)}</span></li>`).join('')}</ol></details>`:'',
 done=records.filter(r=>r.ready).length,expected=records.length,scopeText=scopes.map(x=>x[1]).join(' / '),baseline=s.video_ready?`<figure class="m123-baseline"><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline · seed=${s.seed} · No intervention</strong></figcaption></figure>`:'';
-panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果对照</h2><p>当前比较 ${e(scopeText)}；ranking=${e(payload.ranking_tag||'frozen134')}。每个集合均比较 All-time / Same / Future / Past；干预覆盖 40 个去噪步和 conditional/unconditional 两个 CFG 分支。只展示已生成视频，当前 ${done}/${expected}。</p></div>${trajectoryRankingPanel}${categoryRankingPanel}${overallRankingPanel}${baseline}${targetSections}`
+panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果对照</h2><p>当前比较 ${e(scopeText)}；ranking=${e(payload.ranking_tag||'frozen134')}。每个集合均比较 All-time / Same / Future / Past；干预覆盖 40 个去噪步和 conditional/unconditional 两个 CFG 分支。只展示已生成视频，当前 ${done}/${expected}。</p></div>${trackLossRankingPanel}${disappearanceRankingPanel}${maskAbsenceRankingPanel}${trajectoryRankingPanel}${categoryRankingPanel}${overallRankingPanel}${baseline}${targetSections}`
 }
 '''
     renderer_anchor = "function renderAblations(s,base){"
@@ -3937,24 +4246,29 @@ panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果�
         ".m123-trajectory{margin:0 8px 9px;border:1px solid #315f9a;background:#f2f6fb}.m123-trajectory summary{cursor:pointer;padding:8px 9px;font:800 11px/1.4 ui-monospace,monospace;color:#244d80}.m123-trajectory-body{padding:7px}.m123-trajectory-body table{width:100%;font:11px/1.35 ui-monospace,monospace}.m123-trajectory-body th{text-align:left}.m123-trajectory-body td{text-align:right;font-weight:800}.m123-trajectory-body video{width:100%;margin-top:8px}.m123-trajectory-body p{font-size:11px;line-height:1.45}.m123-trajectory-ranking{margin:13px 0;padding:12px;border-left:8px solid #315f9a;background:#fff}.m123-trajectory-ranking h3{margin:0 0 6px}.m123-trajectory-ranking ol{margin:10px 0 0;padding-left:27px;columns:2;column-gap:28px}.m123-trajectory-ranking li{break-inside:avoid;margin:0 0 7px;padding:5px 7px;background:#edf3fa}.m123-trajectory-ranking li b,.m123-trajectory-ranking li span{display:block}.m123-trajectory-ranking li span{font:11px ui-monospace,monospace;color:#49627e}@media(max-width:900px){.m123-trajectory-ranking ol{columns:1}}</style>",
         1,
     )
+    page = page.replace(
+        "</style>",
+        ".m123-survival{margin:0 8px 9px;border:1px solid #a64c35;background:#fff6f1}.m123-survival summary{cursor:pointer;padding:8px 9px;font:800 11px/1.4 ui-monospace,monospace;color:#8c3625}.m123-survival-body{padding:7px}.m123-survival-body table{width:100%;font:11px/1.35 ui-monospace,monospace}.m123-survival-body th{text-align:left}.m123-survival-body td{text-align:right;font-weight:800}.m123-survival-body video{width:100%;margin-top:8px;aspect-ratio:1280/400}.m123-survival-body p{font-size:11px;line-height:1.45}.m123-loss-ranking{margin:13px 0;padding:12px;border-left:8px solid #8052a5;background:#fff}.m123-loss-ranking.disappearance{border-left-color:#a64c35}.m123-loss-ranking h3{margin:0 0 6px}.m123-loss-ranking ol{margin:10px 0 0;padding-left:27px;columns:2;column-gap:28px}.m123-loss-ranking li{break-inside:avoid;margin:0 0 7px;padding:5px 7px;background:#f4eff8}.m123-loss-ranking.disappearance li{background:#fff1eb}.m123-loss-ranking li b,.m123-loss-ranking li span{display:block}.m123-loss-ranking li span{font:11px ui-monospace,monospace;color:#695578}@media(max-width:900px){.m123-loss-ranking ol{columns:1}}</style>",
+        1,
+    )
 
     progress_start = page.index("const temporalProgress=catalog=>")
     progress_end = page.index(";async function pollDirectionalCompletion", progress_start)
-    head_scope_progress = r'''const temporalProgress=catalog=>{const samples=(catalog.samples||[]).filter(x=>x.case==='0613pybullet_sample_001460_w002'&&Array.isArray(x.temporal_tube_attention_matrix_ablations)),directional=samples.flatMap(x=>x.temporal_tube_attention_matrix_ablations.filter(r=>r.temporal_directional)),headSamples=(catalog.samples||[]).filter(x=>Array.isArray(x.m123_head_scope_ablations?.records)),headRowsBySample=headSamples.map(x=>{const rows=x.m123_head_scope_ablations.records,isPilot=x.case==='0613pybullet_sample_001460_w002'&&Number(x.seed)===47326;return {rows:isPilot?rows.filter(r=>r.head_scope!=='top100'):rows,complete:false}}),headRows=headRowsBySample.flatMap(x=>x.rows),trajectoryProgress=headSamples.map(x=>x.m123_head_scope_ablations.trajectory_progress||{}).filter(x=>Number(x.expected)>0),trajectoryTracked=trajectoryProgress.reduce((n,x)=>n+Number(x.tracked||0),0),trajectoryExpected=trajectoryProgress.reduce((n,x)=>n+Number(x.expected||0),0),ready=directional.filter(r=>r.ready).length+headRows.filter(r=>r.ready).length,measured=headRows.filter(r=>r.ready&&r.baseline_metrics).length,expected=directional.length+headRows.length,completeSeeds=headRowsBySample.filter(x=>x.rows.length>0&&x.rows.every(r=>r.ready)).length;return {ready,measured,expected,trajectoryTracked,trajectoryExpected,completeSeeds,seedCount:headRowsBySample.length}}'''
+    head_scope_progress = r'''const temporalProgress=catalog=>{const samples=(catalog.samples||[]).filter(x=>x.case==='0613pybullet_sample_001460_w002'&&Array.isArray(x.temporal_tube_attention_matrix_ablations)),directional=samples.flatMap(x=>x.temporal_tube_attention_matrix_ablations.filter(r=>r.temporal_directional)),headSamples=(catalog.samples||[]).filter(x=>Array.isArray(x.m123_head_scope_ablations?.records)),headRowsBySample=headSamples.map(x=>{const rows=x.m123_head_scope_ablations.records,isPilot=x.case==='0613pybullet_sample_001460_w002'&&Number(x.seed)===47326;return {rows:isPilot?rows.filter(r=>r.head_scope!=='top100'):rows,complete:false}}),headRows=headRowsBySample.flatMap(x=>x.rows),trajectoryProgress=headSamples.map(x=>x.m123_head_scope_ablations.trajectory_progress||{}).filter(x=>Number(x.expected)>0),trajectoryTracked=trajectoryProgress.reduce((n,x)=>n+Number(x.tracked||0),0),trajectoryExpected=trajectoryProgress.reduce((n,x)=>n+Number(x.expected||0),0),survivalProgress=headSamples.map(x=>x.m123_head_scope_ablations.object_survival_progress||{}).filter(x=>Number(x.expected)>0),survivalMeasured=survivalProgress.reduce((n,x)=>n+Number(x.measured||0),0),survivalExpected=survivalProgress.reduce((n,x)=>n+Number(x.expected||0),0),ready=directional.filter(r=>r.ready).length+headRows.filter(r=>r.ready).length,measured=headRows.filter(r=>r.ready&&r.baseline_metrics).length,expected=directional.length+headRows.length,completeSeeds=headRowsBySample.filter(x=>x.rows.length>0&&x.rows.every(r=>r.ready)).length;return {ready,measured,expected,trajectoryTracked,trajectoryExpected,survivalMeasured,survivalExpected,completeSeeds,seedCount:headRowsBySample.length}}'''
     page = page[:progress_start] + head_scope_progress + page[progress_end:]
     page = page.replace(
         "if(old.expected&&old.ready===old.expected){if(directionalPoll)clearInterval(directionalPoll);return}",
-        "if(old.expected&&old.ready===old.expected&&old.measured>=old.ready&&(!old.trajectoryExpected||old.trajectoryTracked>=old.trajectoryExpected)){if(directionalPoll)clearInterval(directionalPoll);return}",
+        "if(old.expected&&old.ready===old.expected&&old.measured>=old.ready&&(!old.trajectoryExpected||old.trajectoryTracked>=old.trajectoryExpected)&&(!old.survivalExpected||old.survivalMeasured>=old.survivalExpected)){if(directionalPoll)clearInterval(directionalPoll);return}",
         1,
     )
     page = page.replace(
         "Temporal M1/M2/M3 Same/Future/Past ${next.ready}/${next.expected} · seeds ${next.completeSeeds}/${next.seedCount} · 完成后自动刷新",
-        "Temporal/Head Scope ${next.ready}/${next.expected} · vs Baseline 指标 ${next.measured}/${next.ready} · CoTracker ${next.trajectoryTracked}/${next.trajectoryExpected||0} · seeds ${next.completeSeeds}/${next.seedCount} · 自动刷新",
+        "Temporal/Head Scope ${next.ready}/${next.expected} · vs Baseline ${next.measured}/${next.ready} · CoTracker ${next.trajectoryTracked}/${next.trajectoryExpected||0} · Object Survival ${next.survivalMeasured}/${next.survivalExpected||0} · seeds ${next.completeSeeds}/${next.seedCount} · 自动刷新",
         1,
     )
     page = page.replace(
         "if(next.completeSeeds>old.completeSeeds||next.ready===next.expected){if(next.ready===next.expected&&directionalPoll)clearInterval(directionalPoll);await load();",
-        "if(next.completeSeeds>old.completeSeeds||next.measured>old.measured||next.trajectoryTracked>old.trajectoryTracked||next.ready===next.expected){if(next.ready===next.expected&&next.measured>=next.ready&&(!next.trajectoryExpected||next.trajectoryTracked>=next.trajectoryExpected)&&directionalPoll)clearInterval(directionalPoll);await load();",
+        "if(next.completeSeeds>old.completeSeeds||next.measured>old.measured||next.trajectoryTracked>old.trajectoryTracked||next.survivalMeasured>old.survivalMeasured||next.ready===next.expected){if(next.ready===next.expected&&next.measured>=next.ready&&(!next.trajectoryExpected||next.trajectoryTracked>=next.trajectoryExpected)&&(!next.survivalExpected||next.survivalMeasured>=next.survivalExpected)&&directionalPoll)clearInterval(directionalPoll);await load();",
         1,
     )
     global_replay_button = '<button id="replay">重新播放</button>'
@@ -3975,6 +4289,30 @@ panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果�
     section_replay_script = r'''const replaySectionSelectors=['.media','.ablation-baseline','.tube-baseline','.requested-top100','.object-protocol-row','.control-row','.m123-baseline','.m123-scope-row'];function decorateReplaySections(root=document){root.querySelectorAll(replaySectionSelectors.join(',')).forEach(section=>{if(section.dataset.replaySection||!section.querySelector('video'))return;section.dataset.replaySection='1';const button=document.createElement('button');button.type='button';button.className='section-replay';button.textContent='重播本板块';button.setAttribute('aria-label','从头播放本板块全部视频');let heading=null;if(section.matches('.object-protocol-row'))heading=section.querySelector(':scope > .object-protocol-heading');else if(section.matches('.control-row'))heading=section.querySelector(':scope > .object-ablation-heading');else if(section.matches('.m123-scope-row'))heading=section.querySelector(':scope > .m123-scope-heading');if(heading)heading.append(button);else{const toolbar=document.createElement('div');toolbar.className='section-replay-toolbar';toolbar.append(button);section.prepend(toolbar)}})}function replaySection(button){const section=button.closest('[data-replay-section]');if(!section)return;const videos=[...section.querySelectorAll('video')];videos.forEach(video=>{const play=()=>{video.currentTime=0;video.play().catch(()=>{})};video.pause();if(video.readyState>=1)play();else video.addEventListener('loadedmetadata',play,{once:true})});const label=button.textContent;button.textContent=`已重播 ${videos.length} 个视频`;setTimeout(()=>{button.textContent=label},1200)}document.addEventListener('click',event=>{const button=event.target.closest('.section-replay');if(button)replaySection(button)});const replayObserver=new MutationObserver(()=>decorateReplaySections());replayObserver.observe(document.querySelector('main'),{childList:true,subtree:true});decorateReplaySections();'''
     page = page.replace(global_replay_listener, section_replay_script, 1)
     return page
+
+
+def wan22_ti2v_legacy_m123_temporal_batch_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>M1 M2 M3 Temporal Batch</title><link rel="icon" href="data:"><style>
+:root{--paper:#ece4d5;--ink:#17261f;--deep:#17443a;--line:#baad98;--card:#fffaf0;--gold:#d29c35;--blue:#315f9a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 0 0,#d65f3c3b,transparent 34rem),radial-gradient(circle at 100% 0,#27897938,transparent 40rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:14px 22px;background:#ece4d5f4;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:5px 0;font-size:clamp(29px,4vw,54px);line-height:1}.lead{max-width:1500px;margin:6px 0;line-height:1.5}.tools{display:flex;align-items:end;gap:9px;flex-wrap:wrap}label{display:grid;gap:4px;font:700 11px ui-monospace,monospace}select,button{max-width:min(72vw,700px);padding:8px 10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:800}button{cursor:pointer}.status{font:12px ui-monospace,monospace}main{width:min(100% - 18px,2200px);margin:auto;padding:18px 0 70px}.note,.baseline,.operator{margin:14px 0;padding:13px;border:1px solid var(--line);background:#fffaf0e8;box-shadow:0 12px 30px #58442b16}.note{border-left:7px solid var(--gold);line-height:1.55}.baseline{width:min(560px,100%)}.baseline video,.card video{display:block;width:100%;aspect-ratio:1280/704;background:#111}.operator{border-radius:14px}.operator>h2{margin:-13px -13px 12px;padding:11px 13px;background:var(--deep);color:#fff}.scope{margin:14px 0;border:1px solid #9fbdb4;background:#f7fbf9}.scope-head{display:flex;justify-content:space-between;gap:12px;padding:9px 11px;background:#dcece6}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;padding:9px}.card{min-width:0;margin:0;padding:8px;border:1px solid #d4c8b5;background:#fff}.card figcaption{padding:8px 2px 2px;line-height:1.45}.card figcaption strong,.card figcaption span{display:block}.formula{margin-top:5px;font:11px/1.45 ui-monospace,monospace;color:#4f5e58}.metric{margin-top:7px;border:1px solid #b9cec7;background:#f5faf8}.metric summary{cursor:pointer;padding:7px;font:700 11px ui-monospace,monospace}.metric div{padding:0 7px 7px;font:11px/1.5 ui-monospace,monospace}.empty{padding:24px;text-align:center;color:#776e60;background:#f0eadf}.lazy-note{color:#315f9a;font-weight:800}@media(max-width:1050px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:680px){header{position:static}.grid{grid-template-columns:1fr}.scope-head{align-items:flex-start;flex-direction:column}}
+</style></head><body><header><a href="/">返回总览</a> · <a href="/wan22-ti2v-legacy-physiciq67-samples?v=20">返回完整页面</a><h1>M1 / M2 / M3<br>Same · Future · Past</h1><p class="lead">当前多 case、多 seed 批次的独立入口。只显示已生成视频；每次仅渲染选中的 target，视频滚动到视口附近时才加载。</p><div class="tools"><label>Case / Seed<select id="sample"></select></label><label>Target<select id="target"></select></label><button id="refresh" type="button">刷新</button><span id="status" class="status">读取中</span></div></header><main><section class="note"><b>共同设置：</b>R 为 Baseline 冻结轨迹在 latent t=0…12 的 object token tube；干预覆盖 S000–S039 全部 40 个去噪步和 conditional/unconditional 两个 CFG 分支。<br><b>时间方向：</b>Same 删除 tk=tq；Future 删除 tk&lt;tq（历史 K/V → 未来 Query）；Past 删除 tk&gt;tq（未来 K/V → 过去 Query）。三者互斥，合并后等于对应 M1/M2/M3 的 All-time 块。<br><span class="lazy-note">页面不会在首屏同时请求全部 MP4。</span></section><div id="content"><div class="empty">读取批次记录…</div></div></main><script>
+const api='/api/object-query-m123-temporal-batch/catalog',videoApi='/api/wan22-ti2v-legacy-physiciq67-samples',q=new URL(location.href).searchParams,$=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data=null;
+const ops=[{id:'M1',base:'self',target:'R',source:'R',flow:'R_tk K/V ──X──> R_tq Query',meaning:'对象 tube 内部状态对对象 Query 的自支持与时序传播。'},{id:'M2',base:'incoming',target:'R',source:'C',flow:'C_tk K/V ──X──> R_tq Query',meaning:'环境、背景和其他对象向对象 Query 输入上下文。'},{id:'M3',base:'outgoing',target:'C',source:'R',flow:'R_tk K/V ──X──> C_tq Query',meaning:'对象状态向环境和其他对象 Query 广播。'}],times=[{key:'same',label:'Same',predicate:'tk=tq'},{key:'future',label:'Future',predicate:'tk<tq'},{key:'past',label:'Past',predicate:'tk>tq'}],scopeLabel={top100:'Top100 PCK Heads',bottom100:'Bottom100 PCK Heads',all720:'All Heads · 720 layer-heads'},scopeOrder={top100:0,bottom100:1,all720:2};
+const sampleKey=x=>`${x.case}::${x.seed}`,targetKey=r=>r.target_scope==='single_object'?`single_object::${r.region}`:'all_objects::',targetLabel=k=>k.startsWith('single_object::')?`Selected object · ${k.split('::')[1]}`:'All objects union',num=(v,d=3)=>Number.isFinite(Number(v))?Number(v).toFixed(d):'—';
+function catalogUrl(caseName,seed){const u=new URL(api,location.origin);if(caseName){u.searchParams.set('case',caseName);u.searchParams.set('seed',seed)}u.searchParams.set('v',Date.now());return u}
+function videoTag(src){return `<video controls muted playsinline preload="none" data-src="${esc(src)}"></video>`}
+function ensureVideo(video){if(video.dataset.src){video.src=video.dataset.src;delete video.dataset.src;video.load()}}
+const lazyObserver='IntersectionObserver'in window?new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){ensureVideo(entry.target);lazyObserver.unobserve(entry.target)}}),{rootMargin:'360px 0px'}):null;
+function armVideos(root=document){root.querySelectorAll('video[data-src]').forEach(video=>lazyObserver?lazyObserver.observe(video):ensureVideo(video))}
+function metricDetails(r){const b=r.baseline_metrics?.metrics,t=r.trajectory_metrics?.metrics,s=r.object_survival_metrics?.metrics;if(!b&&!t&&!s)return '';return `<details class="metric"><summary>展开指标</summary><div>${b?`vs Baseline 综合影响：${num(b.impact_score_0_100)}<br>`:''}${t?`轨迹影响：${num(t.trajectory_impact_percent_d0)}% D0 · Track Loss：${num(t.target_worst_track_loss_score_0_100)}/100<br>`:''}${s?`Worst Disappearance：${num(s.target_worst_disappearance_score_0_100)}/100`:''}</div></details>`}
+function videoUrl(r){const s=data.selected,u=new URL(`${videoApi}/temporal-tube-ablation-video`,location.origin);u.searchParams.set('case',s.case);u.searchParams.set('seed',s.seed);u.searchParams.set('target_scope',r.target_scope);u.searchParams.set('mask_mode',r.mask_mode);u.searchParams.set('top_n',r.head_count);u.searchParams.set('head_scope',r.head_scope);if(r.region)u.searchParams.set('region',r.region);return u}
+function card(r,op,time){const formula=`Y′_${op.target}(tq)=Y_${op.target}(tq)−Σ_{${time.predicate}} A[${op.target}_tq,${op.source}_tk]V_${op.source}(tk)`;return `<figure class="card">${videoTag(videoUrl(r))}<figcaption><strong>${esc(op.id)}-${esc(time.label)} · ${esc(scopeLabel[r.head_scope]||r.head_scope)}</strong><span>${r.head_count} layer-heads · ${esc(time.predicate)}</span><span class="formula"><b>切断：</b>${esc(op.flow)}<br><b>精确计算：</b>${esc(formula)}<br><b>诊断：</b>${esc(op.meaning)}</span></figcaption>${metricDetails(r)}</figure>`}
+function render(){const s=data.selected,records=s.records||[],target=$('target').value,filtered=records.filter(r=>targetKey(r)===target),scopes=[...new Set(filtered.map(r=>r.head_scope))].sort((a,b)=>(scopeOrder[a]??99)-(scopeOrder[b]??99)),base=new URL(`${videoApi}/video`,location.origin);base.searchParams.set('case',s.case);base.searchParams.set('seed',s.seed);const operators=ops.map(op=>{const scopeRows=scopes.map(scope=>{const cards=times.map(time=>{const r=filtered.find(x=>x.head_scope===scope&&x.mask_mode===`${op.base}_${time.key}`);return r?.ready?card(r,op,time):''}).filter(Boolean);return cards.length?`<section class="scope"><div class="scope-head"><b>${esc(scopeLabel[scope]||scope)}</b><span>${cards.length}/3 已生成</span></div><div class="grid">${cards.join('')}</div></section>`:''}).join('');return scopeRows?`<section class="operator"><h2>${esc(op.id)} · ${esc(op.flow)}</h2>${scopeRows}</section>`:''}).join('');const baseline=s.baseline_ready?`<figure class="baseline">${videoTag(base)}<figcaption><b>Baseline · ${esc(s.case)} · seed ${s.seed} · No intervention</b></figcaption></figure>`:'';$('content').innerHTML=`${baseline}${operators||'<div class="empty">当前 target 暂无已生成的 Same/Future/Past 视频</div>'}`;armVideos($('content'));syncUrl()}
+function fillTargets(){const records=data.selected.records||[],keys=[...new Set(records.map(targetKey))];$('target').innerHTML=keys.map(k=>`<option value="${esc(k)}">${esc(targetLabel(k))}</option>`).join('');const wanted=q.get('target');if(keys.includes(wanted))$('target').value=wanted}
+function syncUrl(){const s=data.selected,u=new URL(location.href);u.searchParams.set('case',s.case);u.searchParams.set('seed',s.seed);u.searchParams.set('target',$('target').value);history.replaceState(null,'',u)}
+async function load(caseName,seed){$('status').textContent='读取批次…';const d=await fetch(catalogUrl(caseName,seed),{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json()});if(!d.ready)throw new Error(d.reason||'catalog unavailable');data=d;$('sample').innerHTML=d.samples.map(x=>`<option value="${esc(sampleKey(x))}">${esc(x.case)} · seed ${x.seed} · ${x.ready}/${x.expected}</option>`).join('');$('sample').value=sampleKey(d.selected);fillTargets();render();const p=d.progress,selectedReady=(d.selected.records||[]).filter(r=>r.ready).length;$('status').textContent=`全批次 ${p.ready}/${p.expected} · 完整 case-seed ${p.complete_samples}/${p.sample_count} · 当前 ${selectedReady}/${(d.selected.records||[]).length} · errors ${p.errors}`}
+$('sample').addEventListener('change',()=>{const value=$('sample').value,index=value.lastIndexOf('::');load(value.slice(0,index),value.slice(index+2)).catch(showError)});$('target').addEventListener('change',render);$('refresh').addEventListener('click',()=>load(data?.selected.case,data?.selected.seed).catch(showError));function showError(error){$('status').textContent=`加载失败：${error.message}`}
+const initialCase=q.get('case')||'',initialSeed=q.get('seed')||'';load(initialCase,initialSeed).catch(showError);
+</script></body></html>'''
 
 
 def wan22_ti2v_legacy_m1_temporal_gallery_page():

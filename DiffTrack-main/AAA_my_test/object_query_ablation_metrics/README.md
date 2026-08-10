@@ -120,6 +120,49 @@ ranked.  Every record includes a Baseline/Ablation point-and-trajectory overlay.
 Artifacts are written under
 `/data/gaoya/agent-data/outputs/object_query_ablation_metrics/head_scope_trajectory`.
 
+The same report also contains a quality-gate-independent tracking-loss
+measurement for every generated ablation:
+
+`Track Loss = 100 * (1 - common_center_coverage)`.
+
+It is ranked for all 108 videos. A larger value means that fewer Baseline-valid
+object-center frames remain jointly observable by CoTracker. This closes the
+coverage gap left by Center-ADE, but it is a tracker observability score: track
+loss can be caused by disappearance, identity/appearance corruption, severe
+deformation or tracker failure, so it must not be labeled true disappearance.
+
+### Head-Scope object retention / disappearance
+
+Use the model-backed survival mode to distinguish object-retention failure from
+ordinary trajectory displacement:
+
+```bash
+cd /home/gaoya/Code_Video/DiffTrack-main
+GPU=0 bash AAA_my_test/object_query_ablation_metrics/bench.sh \
+  /data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1/0613pybullet_sample_001460_w002/seed_47326 \
+  --head-scope-object-survival
+```
+
+For object `o` and frame `t`, `alive(o,t)=1` exactly when all three conditions
+hold: the SAM2 mask is nonempty; the mask-pooled DINOv2 cosine to the same-frame
+Baseline object is above its per-object calibrated identity threshold; and the
+candidate/Baseline mask-area ratio lies in `[0.25, 4.0]`. Then:
+
+`Object Disappearance = 100 * (1 - mean_t alive(o,t))`.
+
+Single-object experiments rank that selected object. For `all_objects`, the
+primary rank uses the worse of A/B; the report also preserves their mean. A
+larger score means weaker object retention and is therefore an explicit
+generation-failure indicator when the requested object should persist. It
+includes true disappearance, identity replacement and extreme size corruption;
+the per-frame overlay shows which frames fail. SAM2 F00 prompt IoU must be at
+least `0.50`, the first sustained loss means three consecutive failed frames,
+and terminal loss is measured over the final eight frames.
+
+The survival report, bit-packed SAM2 masks, DINOv2 features and audit overlays
+are written next to the trajectory report. Cached video signatures make the
+mode incremental and safe to rerun.
+
 Build a complete Markdown report from any generated trajectory `report.json`
 without rerunning CoTracker:
 

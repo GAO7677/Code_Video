@@ -276,22 +276,95 @@ query frame
 
 cache root 下还可能存在轻量 worker 完成标记；方案 A 的“三个文件”约束指每个 case 目录。
 
-## 8. 代码结构
+## 8. 代码结构与调用关系
 
-| 文件 | 作用 |
+### 8.1 项目边界
+
+这里的“PCK Head 统计核心”只包括：构造 object query、捕获 self-attention Q/K、用 CoTracker 形成参考轨迹、计算每个 `(Step, Block, Head)` 的 PCK@32、聚合和排名。后续 attention-zero、temporal tube、VBench 和轨迹/感知指标只消费已经选出的 Head，不会反向写入 PCK 统计。
+
+核心数据流：
+
+```text
+PhysicIQ67 case JSON + 50 seeds
+  -> legacy_ti2v_firstlatent_physiciq67_common.py
+  -> precompute_legacy_ti2v_firstlatent_physiciq67_regions.py
+       -> 67-case GroundingDINO/SAM2 region cache
+  -> prepare_legacy_ti2v_firstlatent_physiciq67_tasks.py
+       -> physiciq67_cases.json + missing_tasks.jsonl
+  -> launch_legacy_ti2v_firstlatent_physiciq67_gpu_worker.sh
+       -> run_legacy_ti2v_firstlatent_physiciq67_pck_task_worker.py
+       -> run_legacy_ti2v_firstlatent_physiciq67_pck_worker.py
+       -> runs/<case>/seed_<seed>/{generated.mp4,metrics.npz,manifest.json,complete.json}
+  -> aggregate_legacy_ti2v_firstlatent_physiciq67_pck50.py
+       -> aggregate/{combined_counts.npz,ranking.json,summary.json,final_top10.json}
+  -> export_pck_head_rankings.py
+       -> 五系列 S039 / all_steps_mean 排名、Top-K 重合和相关性
+  -> serve_latent_block_head_viewer_with_metrics.py
+       -> 8092 页面与 API
+```
+
+### 8.2 PhysicIQ67 核心统计脚本
+
+| 文件 | 阶段 | 功能与主要产物 |
+|---|---|---|
+| `legacy_ti2v_firstlatent_physiciq67_common.py` | 配置 | 67 case、50 seeds、Wan 权重、输入、region cache、run 输出和任务路径的单一配置源；同时提供 `all_tasks()`、`run_dir()` 和 case manifest 写入。 |
+| `sam2_region_query_utils.py` | 区域公共库 | GroundingDINO/SAM2 region cache 的读写、mask 侵蚀、互斥 object mask、farthest-point query 采样、region 元数据和可选可视化。旧 6-case 与新 67-case 共用。 |
+| `precompute_legacy_ti2v_firstlatent_physiciq67_regions.py` | 区域预计算 | 从 caption 抽取物理名词短语，执行 GroundingDINO 首帧检测和 SAM2 视频传播，写每个 case 的 `regions.json`、`regions.npz`、`complete.json`。支持多 worker 分片。 |
+| `prepare_legacy_ti2v_firstlatent_physiciq67_tasks.py` | 任务准备 | 扫描 `runs/**/complete.json`，写 `physiciq67_cases.json`、`task_summary.json` 和显式 `missing_tasks.jsonl`；后者是双 worker 稳定分片的依据。 |
+| `launch_legacy_ti2v_firstlatent_physiciq67_gpu_worker.sh` | 启动编排 | 绑定物理 GPU 6/7；先跑 region 预计算，等待 67/67 barrier，再启动对应 PCK task worker。进程内 `cuda:0` 由 `CUDA_VISIBLE_DEVICES` 映射到物理卡。 |
+| `run_legacy_ti2v_firstlatent_physiciq67_pck_task_worker.py` | 任务分片 | 读取固定 JSONL，按行号 `index % num_workers` 做稳定分片；跳过已有 `complete.json`，复用一次加载的 Wan 与 CoTracker 逐任务执行，失败时写 `error.txt` 并 fail-fast。 |
+| `run_legacy_ti2v_firstlatent_physiciq67_pck_worker.py` | 单 run 核心 | 加载 region cache，生成 49 帧视频，安装 attention hook，运行 CoTracker，对 40×30×24 组合计算 `correct32`、`comparisons`、`error_sum` 及 per-object 数组，原子写 `metrics.npz`，最后写 `complete.json`。 |
+| `run_legacy_ti2v_firstlatent_pck_worker.py` | 共享计算内核 | 原始 6-case worker，同时向 67-case worker提供 `CompactFirstLatentCapture`、Wan pipeline 构建、CoTracker、`object_queries()` 和 PCK 公共逻辑；attention 捕获位置为 post RMSNorm、post 3D RoPE、pre flash-attention。 |
+| `aggregate_legacy_ti2v_firstlatent_physiciq67_pck50.py` | 增量聚合 | 只读取同时有 `complete.json` 与 `metrics.npz` 的 run；micro 累加 count，写 `combined_counts.npz`、全 28,800 个 S/B/H 的 `ranking.json` 和实时 `summary.json`；仅 3350/3350 时写 `final_top10.json`。支持 `--watch --interval 300`。 |
+
+### 8.3 旧 6-case Legacy 基线脚本
+
+旧 6-case 结果是当前稳定页面中的 Legacy 系列，也是新 67-case 的实现基线。两套输出 root 独立，不能直接把 count 相加。
+
+| 文件 | 功能 |
 |---|---|
-| `legacy_ti2v_firstlatent_physiciq67_common.py` | 67 case、seed、模型、输入、输出和任务路径的单一配置源 |
-| `prepare_legacy_ti2v_firstlatent_physiciq67_tasks.py` | 写 case manifest、实时扫描完成标记、生成 missing task JSONL |
-| `precompute_legacy_ti2v_firstlatent_physiciq67_regions.py` | caption -> GDINO -> SAM2 -> 方案 A cache |
-| `run_legacy_ti2v_firstlatent_physiciq67_pck_worker.py` | Wan 推理、attention hook、CoTracker、PCK 计算和单 run 写盘 |
-| `run_legacy_ti2v_firstlatent_physiciq67_pck_task_worker.py` | 读取显式 JSONL，并按 worker id 做稳定分片 |
-| `aggregate_legacy_ti2v_firstlatent_physiciq67_pck50.py` | 增量 micro 聚合、S/B/H 排名和跨 step 的 B/H 排名 |
-| `launch_legacy_ti2v_firstlatent_physiciq67_gpu_worker.sh` | 单个物理 GPU 的区域阶段、67/67 barrier 和 PCK 串联启动 |
-| `sam2_region_query_utils.py` | 共享 region cache、mask 侵蚀、点采样、读写与可选可视化 |
-| `export_pck_head_rankings.py` | 五系列 S039/平均时间步导出、Top-K 重叠与相关性 |
-| `serve_latent_block_head_viewer_with_metrics.py` | 8092 总览、Legacy 页面、API、下载和五系列比较 UI |
+| `legacy_ti2v_firstlatent_common.py` | 定义旧 6 cases、50 seeds、人工 object phrase、输入、cache 和输出路径。 |
+| `precompute_legacy_ti2v_firstlatent_regions.py` | 为旧 6 cases 构建首帧 GroundingDINO + SAM2 query cache。 |
+| `run_legacy_ti2v_firstlatent_pck_worker.py` | 旧 6-case 的生成、attention 捕获、CoTracker 和 PCK 单 run 实现；也是新 67-case 的共享内核。 |
+| `run_legacy_ti2v_firstlatent_pck_task_worker.py` | 旧实验的显式 JSONL runner；用于按固定任务清单恢复或重新分片。 |
+| `aggregate_legacy_ti2v_firstlatent_pck50.py` | 汇总旧 300 runs，产物结构与 67-case aggregate 对齐。 |
+| `run_legacy_ti2v_firstlatent_top10_heatmaps_worker.py` | 等待旧 aggregate 的最终 Top10，确定性重跑各 seed 并生成 object-query attention 热力图；不参与 PCK 数值聚合。 |
+| `launch_legacy_ti2v_firstlatent_pck50_gpu0123.sh` | 旧实验的 region、四卡 PCK、aggregate 和最终 Top10 heatmap tmux 编排入口。 |
 
-核心实现复用了旧 6-case worker 的 `CompactFirstLatentCapture`、CoTracker 和 PCK 逻辑。新实验没有修改旧 6-case 输出。
+### 8.4 三模型参考系列与五系列导出
+
+| 文件 | 功能 |
+|---|---|
+| `aggregate_allblocks_allsteps_headwise_50case.py` | 验证并聚合 GT teacher-forced、LoRA、Wan2.2 Baseline 各 50 cases 的全 40 steps、30 blocks、24 heads Q@K 结果，输出 `block_step_head_summary.csv` 等文件。 |
+| `aggregate_three_model_combined_rankings.py` | 对 GT、LoRA、Baseline 的同一 S/B/H 做等模型权重平均，生成 `three_model_combined_summary.csv`。Three-model combined 不包含 Legacy。 |
+| `export_pck_head_rankings.py` | 读取 Legacy `combined_counts.npz`、三模型 summary 和 combined summary，生成两个 view（`s039`、`all_steps_mean`）的五系列720 Head排名、Top10/30/50/100交集、Jaccard、Pearson/Spearman及 Markdown/JSON。当前 `LEGACY_ROOT` 仍指向旧 6-case，切换到 67-case 前必须先完成第13节验收并按第14节更新。 |
+
+必须区分两个跨 step 定义：aggregate 的 `block_head_across_all_steps` 是先合并 count 的 micro PCK；页面的 `all_steps_mean` 是40个 per-step PCK的算术平均。五系列正式导出采用后者。
+
+### 8.5 可视化脚本
+
+| 文件 | 功能 |
+|---|---|
+| `build_legacy_ti2v_firstlatent_physiciq67_visual_samples.py` | 从已完成 runs 固定抽样，保存单 run 的 S039/all-steps-mean 30×24矩阵、region 图和当时的 provisional S039 Top100 快照到 `visual_samples/samples.json`。已有100个 entries 时默认保留旧快照，不会自动追随 aggregate。 |
+| `run_legacy_ti2v_firstlatent_physiciq67_visual_sample_heatmaps.py` | 对 manifest 中的样本重跑并捕获 provisional S039 Top100 attention heatmap，仅用于定性检查。 |
+| `serve_latent_block_head_viewer.py` | 最底层三模型 per-head Q@K 轨迹/矩阵查看器。 |
+| `serve_latent_block_head_viewer_alltoken.py` | 在基础查看器上增加全 token、Top/Bottom Head、消融和 overlay 数据。 |
+| `serve_latent_block_head_viewer_with_metrics.py` | 当前 8092 服务入口；加载前两层 viewer，并增加旧 6-case PCK 页面、五系列比较 API、PhysicIQ67 样例、消融视频和指标页面。它只读取结果，不计算或修改 PCK。 |
+
+### 8.6 排名下游脚本，不属于 PCK 统计核心
+
+下列脚本使用 PCK 排名选择 Top/Bottom Head，但输出是干预视频或视频质量/轨迹指标。它们不能作为 PCK 排名的数据源：
+
+| 文件 | 功能 |
+|---|---|
+| `build_legacy_attention_zero_seed47326_manifest.py` | 为固定 seed=47326 样例建立消融 manifest，继承当时冻结的 S039 Top100。 |
+| `build_legacy_object_ablation_other10_6seed_manifest.py` | 建立10-case×6-seed复现实验 manifest；默认继承旧快照，`--latest-ranking` 可从当前 67-case aggregate 生成新 S039 Top100 快照。 |
+| `build_frozen_s039_head_scope_ranking.py` | 在冻结 Top100 的语义下重建完整720 Head顺序，供 Top100、Bottom100、All720 head-scope 对照使用。 |
+| `run_legacy_ti2v_firstlatent_physiciq67_attention_zero_ablations.py` | 对 Top30/50/100执行固定 F00 object-query attention matrix block 消融并审计实际修改事件。 |
+| `run_legacy_ti2v_temporal_object_tube_ablations.py` | 将 object query扩展为冻结的全 latent 时间 tube，执行 M1/M2/M3及不同 head scope 干预。 |
+| `object_query_ablation_metrics/*.py` | 计算消融视频相对 GT/Baseline 的轨迹、形状、RAFT、DINOv2、LPIPS、VBench 和像素指标；这些是干预效果评估，不是 Attention Q→K PCK。 |
+
+因此，排查“某个 Head 为什么进入排名”时，应依次检查 PCK worker 的 `metrics.npz`、aggregate 的 `combined_counts.npz/ranking.json` 和 export 的 `pck_head_rankings.json`，不要从消融 manifest 或25项视频指标报告反推 PCK 排名。
 
 ## 9. 产物结构
 

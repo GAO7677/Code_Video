@@ -20,6 +20,7 @@ RUN_VBENCH=1
 RUN_AGGREGATE=1
 RUN_HEAD_SCOPE_BASELINE=0
 RUN_HEAD_SCOPE_TRAJECTORY=0
+RUN_HEAD_SCOPE_OBJECT_SURVIVAL=0
 HEAD_SCOPE_WATCH_SECONDS=0
 HEAD_SCOPE_WORKERS=4
 
@@ -46,6 +47,9 @@ Options:
   --head-scope-trajectory
                     Incrementally run CoTracker and compute true trajectory
                     metrics/overlays for one Head-Scope case/seed directory
+  --head-scope-object-survival
+                    Run SAM2+DINOv2 object-retention metrics/overlays for one
+                    Head-Scope case/seed directory
   --watch-seconds N With --head-scope-baseline, poll for new videos every N sec
   --workers N       CPU decode/metric workers for head-scope mode (default: 4)
   --dry-run         Validate and print every command without running model inference
@@ -56,6 +60,7 @@ Examples:
   GPU=5 bash bench.sh /path/to/CASE
   bash bench.sh /path/to/temporal_tube_root --head-scope-baseline --watch-seconds 60
   GPU=2 bash bench.sh /path/to/CASE/seed_47326 --head-scope-trajectory
+  GPU=5 bash bench.sh /path/to/CASE/seed_47326 --head-scope-object-survival
 EOF
 }
 
@@ -116,6 +121,10 @@ while [[ $# -gt 0 ]]; do
       RUN_HEAD_SCOPE_TRAJECTORY=1
       shift
       ;;
+    --head-scope-object-survival)
+      RUN_HEAD_SCOPE_OBJECT_SURVIVAL=1
+      shift
+      ;;
     --watch-seconds)
       [[ $# -ge 2 ]] || die "--watch-seconds requires a non-negative integer"
       HEAD_SCOPE_WATCH_SECONDS="$2"
@@ -140,8 +149,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if (( RUN_HEAD_SCOPE_BASELINE == 1 && RUN_HEAD_SCOPE_TRAJECTORY == 1 )); then
-  die "choose only one of --head-scope-baseline and --head-scope-trajectory"
+if (( RUN_HEAD_SCOPE_BASELINE + RUN_HEAD_SCOPE_TRAJECTORY + RUN_HEAD_SCOPE_OBJECT_SURVIVAL > 1 )); then
+  die "choose only one Head-Scope metric mode"
 fi
 
 if (( RUN_HEAD_SCOPE_BASELINE == 1 )); then
@@ -169,6 +178,42 @@ if (( RUN_HEAD_SCOPE_BASELINE == 1 )); then
   quote_command "${head_scope_command[@]}"
   if (( DRY_RUN == 0 )); then
     exec "${head_scope_command[@]}"
+  fi
+  exit 0
+fi
+
+if (( RUN_HEAD_SCOPE_OBJECT_SURVIVAL == 1 )); then
+  [[ "${GPU}" =~ ^[0-9]+$ ]] || die "GPU must be one physical GPU index"
+  [[ "${GPU}" != "4" ]] || die "GPU 4 is forbidden by /home/gaoya/AGENTS.md"
+  command -v nvidia-smi >/dev/null || die "nvidia-smi is unavailable"
+  nvidia-smi -i "${GPU}" --query-gpu=index --format=csv,noheader \
+    >/dev/null 2>&1 || die "GPU ${GPU} does not exist"
+  [[ -x "${SAM_PYTHON}" ]] || die "missing Python executable: ${SAM_PYTHON}"
+  RESULT_INPUT="$(realpath -e -- "${RESULT_INPUT}")"
+  [[ -d "${RESULT_INPUT}" ]] || die "RESULT_DIR is not a directory: ${RESULT_INPUT}"
+  HEAD_SCOPE_SURVIVAL_OUTPUT_BASE="${METRICS_HEAD_SCOPE_TRAJECTORY_OUTPUT_BASE:-${OUTPUT_BASE}/head_scope_trajectory}"
+  case "${HEAD_SCOPE_SURVIVAL_OUTPUT_BASE}" in
+    /home/gaoya|/home/gaoya/*)
+      die "large survival artifacts may not be stored under /home/gaoya"
+      ;;
+  esac
+  declare -a survival_command=(
+    env
+    "CUDA_VISIBLE_DEVICES=${GPU}"
+    "PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526${PYTHONPATH:+:${PYTHONPATH}}"
+    "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+    "${SAM_PYTHON}"
+    "${SCRIPT_DIR}/compute_head_scope_object_survival_metrics.py"
+    "${RESULT_INPUT}"
+    --output-base "${HEAD_SCOPE_SURVIVAL_OUTPUT_BASE}"
+    --device cuda:0
+  )
+  if (( OVERWRITE == 1 )); then
+    survival_command+=(--overwrite)
+  fi
+  quote_command "${survival_command[@]}"
+  if (( DRY_RUN == 0 )); then
+    exec "${survival_command[@]}"
   fi
   exit 0
 fi

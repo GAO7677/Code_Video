@@ -78,6 +78,19 @@ TRAJECTORY_DEFINITION = {
         "does not mean lower generation quality or greater simulator-GT error"
     ),
 }
+TRACK_LOSS_DEFINITION = {
+    "name": "CoTracker target track loss",
+    "reference": "same-seed no-intervention Baseline",
+    "object_score": "100 * (1 - common_center_coverage)",
+    "target_mean_score": "mean_selected_objects(object_track_loss_score_0_100)",
+    "target_worst_score": "max_selected_objects(object_track_loss_score_0_100)",
+    "ranking_score": "target_worst_track_loss_score_0_100",
+    "direction": "larger means more selected-object center frames are not jointly trackable",
+    "interpretation": (
+        "tracker-specific observability loss; it is available even when trajectory "
+        "ADE is N/A, but it does not by itself prove that the rendered object disappeared"
+    ),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -206,6 +219,7 @@ def object_trajectory_metrics(
     common_count = int(common_center.sum())
     coverage = common_count / max(baseline_valid_count, 1)
     quality_pass = common_count >= min_valid_frames and coverage >= min_coverage
+    track_loss_score = 100.0 * (1.0 - min(max(coverage, 0.0), 1.0))
 
     center_distance = np.linalg.norm(candidate_center - baseline_center, axis=-1)
     center_values = center_distance[common_center]
@@ -239,6 +253,8 @@ def object_trajectory_metrics(
         "baseline_center_valid_frames": baseline_valid_count,
         "common_center_valid_frames": common_count,
         "common_center_coverage": rounded(coverage),
+        "track_retention_score_0_100": rounded(100.0 - track_loss_score),
+        "track_loss_score_0_100": rounded(track_loss_score),
         "last_common_visible_frame": last_frame,
         "center_ade_px": rounded(float(center_values.mean()) if center_values.size else None),
         "center_ade_norm": rounded(
@@ -401,8 +417,18 @@ def rank_records(records: list[dict[str, Any]]) -> None:
     )
     for row in records:
         row["trajectory_rank_within_case_seed"] = None
+        row["track_loss_rank_within_case_seed"] = None
     for rank, row in enumerate(valid, start=1):
         row["trajectory_rank_within_case_seed"] = rank
+    track_loss_rows = sorted(
+        records,
+        key=lambda row: (
+            -float(row["metrics"]["target_worst_track_loss_score_0_100"]),
+            row["variant_id"],
+        ),
+    )
+    for rank, row in enumerate(track_loss_rows, start=1):
+        row["track_loss_rank_within_case_seed"] = rank
 
 
 def report_payload(
@@ -423,12 +449,13 @@ def report_payload(
         )
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "case": case,
         "seed": seed,
         "reference": "same-seed no-intervention Baseline",
         "trajectory_definition": TRAJECTORY_DEFINITION,
+        "track_loss_definition": TRACK_LOSS_DEFINITION,
         "quality_gate": {
             "min_valid_frames": args.min_valid_frames,
             "min_coverage": args.min_coverage,
@@ -439,6 +466,9 @@ def report_payload(
         "tracked_ablation_count": len(records),
         "ranked_ablation_count": sum(
             row["trajectory_rank_within_case_seed"] is not None for row in records
+        ),
+        "track_loss_ranked_ablation_count": sum(
+            row["track_loss_rank_within_case_seed"] is not None for row in records
         ),
         "records": records,
     }
@@ -565,11 +595,21 @@ def main() -> None:
             trajectory_score = (
                 100.0 * target_center_ade if target_center_ade is not None else None
             )
+            selected_track_loss = [
+                float(object_metrics[name]["track_loss_score_0_100"])
+                for name in selected_objects
+            ]
             metrics = {
                 "selected_objects": selected_objects,
                 "quality_pass": quality_pass,
                 "target_center_ade_norm": rounded(target_center_ade),
                 "trajectory_impact_percent_d0": rounded(trajectory_score),
+                "target_mean_track_loss_score_0_100": rounded(
+                    fmean(selected_track_loss)
+                ),
+                "target_worst_track_loss_score_0_100": rounded(
+                    max(selected_track_loss)
+                ),
                 "objects": object_metrics,
             }
             if args.overwrite or not overlay_path.is_file():
