@@ -267,6 +267,14 @@ def assign_ranks(records: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
                 for record in valid
             }
             continue
+        if key == "mask_absence":
+            ranks[key] = {
+                record["variant_id"]: int(
+                    record["_survival"]["mask_absence_rank_within_case_seed"]
+                )
+                for record in valid
+            }
+            continue
         metric_ranks = {}
         previous_value = None
         previous_rank = None
@@ -396,9 +404,9 @@ def build_markdown(report: dict[str, Any], report_path: Path, output: Path) -> s
         "Trajectory impact (%D0) = 100 * mean_selected_objects(Center-ADE_norm)",
         "```",
         "",
-        "`D0` 是 F00 对象 mask bbox 对角线。单对象轨迹实验只统计被消融对象；`all_objects` 的轨迹指标对 A/B 做对象级宏平均。`%D0` 不是 0–100 分数，100 表示平均中心位移等于一个 F00 对象对角线，数值可以超过 100。ADE/FDE/Velocity/PCK 只表示相对 Baseline 的轨迹效应，不直接表示生成质量；Object Disappearance 不同，它专门表示目标对象保留失败。",
+        "`D0` 是 F00 对象 mask bbox 对角线。单对象轨迹实验只统计被消融对象；`all_objects` 的轨迹指标对 A/B 做对象级宏平均。`%D0` 不是 0–100 分数，100 表示平均中心位移等于一个 F00 对象对角线，数值可以超过 100。ADE/FDE/Velocity/PCK 只表示相对 Baseline 的轨迹效应，不直接表示生成质量；Object Retention Failure 与 SAM2 Mask Absence 不同，它们专门表示目标对象保留失败。",
         "",
-        "Center-ADE/FDE/Velocity/PCK 的质量门控要求每个被选对象至少有 4 个共同中心有效帧，且 `common_valid / baseline_valid >= 80%`。任一被选对象失败时这些轨迹差异记为 `N/A`；`N/A` 不能解释为没有影响。Track Loss 仍对全部 108 条排名，SAM2+DINOv2 Object Disappearance 也独立于该轨迹门控。",
+        "Center-ADE/FDE/Velocity/PCK 的质量门控要求每个被选对象至少有 4 个共同中心有效帧，且 `common_valid / baseline_valid >= 80%`。任一被选对象失败时这些轨迹差异记为 `N/A`；`N/A` 不能解释为没有影响。Track Loss 仍对全部 108 条排名，SAM2+DINOv2 Object Retention Failure / Mask Absence 也独立于该轨迹门控。",
         "",
         "## 2. 指标定义与排序方向",
         "",
@@ -426,11 +434,11 @@ def build_markdown(report: dict[str, Any], report_path: Path, output: Path) -> s
         "| Point-ADE | 所有共同可见 CoTracker 点的 `mean ||p_abl-p_base|| / D0` | `%D0` | 越大影响越强 | 保留表面点级差异，但滚动、形变和点身份漂移会使其变大 |",
         "| PCK@5/10/20% | `mean 1[||p_abl-p_base|| < alpha*D0]` | `%` | **越小影响越强** | 与 Baseline 点轨迹仍落在阈值内的比例；这里不是 attention PCK head 的排名分数 |",
         "",
-        "Object Disappearance 还保留四个不混合的诊断量：`empty_mask_rate`（SAM2 mask 为空）、`identity_failure_rate`（DINO cosine 低于阈值）、`area_failure_rate`（面积比越界）和 `terminal_missing_rate`（最后 8 帧失败比例）。`first_sustained_loss_frame` 是首次连续 3 帧失败的起始帧。这样可以区分纯消失、身份替换和尺寸崩坏。",
+        "Object Retention Failure 还保留四个不混合的诊断量：`empty_mask_rate`（SAM2 mask 为空）、`identity_failure_rate`（DINO cosine 低于阈值）、`area_failure_rate`（面积比越界）和 `terminal_missing_rate`（最后 8 帧失败比例）。`first_sustained_loss_frame` 是首次连续 3 帧失败的起始帧。这样可以区分纯消失、身份替换和尺寸崩坏。",
         "",
         f"本 case 的 identity 标定：{calibration_summary}。阈值仅由未消融 Baseline 内部的同对象时序正样本和跨对象负样本确定，不读取任何消融结果。",
         "",
-        "所有 `all_objects` 轨迹辅助指标都先在每个对象内计算，再对 A/B 做等权宏平均；不是把大小不同的对象点直接混池。Object Disappearance 同时报告 A/B 均值，并以较差对象（maximum）作为主排名，避免一个对象存活掩盖另一个对象消失。不同指标不合成为一个未经验证的综合分数。",
+        "所有 `all_objects` 轨迹辅助指标都先在每个对象内计算，再对 A/B 做等权宏平均；不是把大小不同的对象点直接混池。Object Retention Failure 与 Mask Absence 同时报告 A/B 均值，并以较差对象（maximum）作为主排名，避免一个对象存活掩盖另一个对象消失。不同指标不合成为一个未经验证的综合分数。",
         "",
         "## 3. 消融 ID 与信息流",
         "",
@@ -481,8 +489,8 @@ def build_markdown(report: dict[str, Any], report_path: Path, output: Path) -> s
             [
                 "对象保留失败分布（越大越差；每个 target 各 36 条）：",
                 "",
-                "| Target | Mean /100 | Median /100 | Max /100 | Zero-loss videos |",
-                "|---|---:|---:|---:|---:|",
+                "| Target | Retention mean | Retention median | Retention max | Retention zero | Mask-absence mean | Mask-absence max | Mask-absence zero |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|",
             ]
         )
         for target in ("Object A", "Object B", "All objects"):
@@ -491,10 +499,24 @@ def build_markdown(report: dict[str, Any], report_path: Path, output: Path) -> s
                 for record in disappearance_records
                 if target_label(record) == target
             ]
+            mask_values = [
+                100.0 * record["_derived"]["mask_absence"]
+                for record in disappearance_records
+                if target_label(record) == target
+                and record["_derived"]["mask_absence"] is not None
+            ]
             if values:
+                mask_mean = f"{fmean(mask_values):.2f}" if mask_values else "N/A"
+                mask_max = f"{max(mask_values):.2f}" if mask_values else "N/A"
+                mask_zero = (
+                    f"{sum(value == 0.0 for value in mask_values)}/{len(mask_values)}"
+                    if mask_values
+                    else "N/A"
+                )
                 lines.append(
                     f"| {target} | {fmean(values):.2f} | {median(values):.2f} | "
-                    f"{max(values):.2f} | {sum(value == 0.0 for value in values)}/{len(values)} |"
+                    f"{max(values):.2f} | {sum(value == 0.0 for value in values)}/{len(values)} | "
+                    f"{mask_mean} | {mask_max} | {mask_zero} |"
                 )
         lines.extend(["", "对象保留失败最高的三条：", ""])
         disappearance_records.sort(

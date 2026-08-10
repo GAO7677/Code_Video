@@ -15,6 +15,7 @@ from AAA_my_test.object_query_ablation_metrics.compute_head_scope_trajectory_met
 from AAA_my_test.object_query_ablation_metrics.compute_head_scope_object_survival_metrics import (
     object_survival_metrics,
     pack_masks,
+    rank_records as rank_survival_records,
     unpack_masks,
 )
 
@@ -178,6 +179,27 @@ class HeadScopeObjectSurvivalMetricTest(unittest.TestCase):
         self.assertEqual(metrics["alive_frame_count"], 10)
         self.assertEqual(metrics["first_sustained_loss_frame"], 10)
         self.assertAlmostEqual(metrics["disappearance_score_0_100"], 100 * 39 / 49)
+
+    def test_retention_and_mask_absence_receive_independent_ranks(self) -> None:
+        records = [
+            {
+                "variant_id": "identity_only",
+                "metrics": {
+                    "target_worst_disappearance_score_0_100": 90.0,
+                    "target_worst_mask_absence_score_0_100": 0.0,
+                },
+            },
+            {
+                "variant_id": "mask_absent",
+                "metrics": {
+                    "target_worst_disappearance_score_0_100": 70.0,
+                    "target_worst_mask_absence_score_0_100": 70.0,
+                },
+            },
+        ]
+        rank_survival_records(records)
+        self.assertEqual(records[0]["disappearance_rank_within_case_seed"], 1)
+        self.assertEqual(records[1]["mask_absence_rank_within_case_seed"], 1)
 
 
 if __name__ == "__main__":

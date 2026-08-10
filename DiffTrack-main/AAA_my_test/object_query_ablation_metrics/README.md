@@ -148,7 +148,13 @@ hold: the SAM2 mask is nonempty; the mask-pooled DINOv2 cosine to the same-frame
 Baseline object is above its per-object calibrated identity threshold; and the
 candidate/Baseline mask-area ratio lies in `[0.25, 4.0]`. Then:
 
-`Object Disappearance = 100 * (1 - mean_t alive(o,t))`.
+`Object Retention Failure = 100 * (1 - mean_t alive(o,t))`.
+
+The stricter disappearance proxy is reported separately as
+`SAM2 Mask Absence = 100 * mean_t 1[mask area = 0]`. It does not count an
+identity replacement or size corruption as literal absence, although SAM2
+tracking failure can still create a false positive and therefore requires the
+overlay audit.
 
 Single-object experiments rank that selected object. For `all_objects`, the
 primary rank uses the worse of A/B; the report also preserves their mean. A
