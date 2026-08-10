@@ -1266,6 +1266,7 @@ class MetricsHandler(viewer.Handler):
                 params.get("mask_mode", [""])[0],
                 params.get("top_n", [""])[0],
                 params.get("region", [""])[0],
+                params.get("head_scope", ["top100"])[0],
             )
             if asset is None or not asset.is_file():
                 raise FileNotFoundError("PhysicIQ67 temporal-tube ablation video is not ready")
@@ -1623,6 +1624,14 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_MANIFEST = (
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_MULTISEED_MANIFEST = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT / "cases_001460_5seeds.json"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_LATEST_OTHER10_MANIFEST = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT
+    / "cases_other10_6seeds_latest.json"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_LATEST_OTHER10_HEAD_RANKING = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT
+    / "pck_head_scopes_s039_latest2735.json"
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT
@@ -2341,6 +2350,34 @@ def wan22_ti2v_legacy_physiciq67_visual_manifest():
                 for row in requested.get("samples", [])
                 if (str(row.get("case")), int(row.get("seed", -1))) not in seen
             )
+        if WAN22_TI2V_LEGACY_PHYSICIQ67_LATEST_OTHER10_MANIFEST.is_file():
+            latest = json.loads(
+                WAN22_TI2V_LEGACY_PHYSICIQ67_LATEST_OTHER10_MANIFEST.read_text(
+                    encoding="utf-8"
+                )
+            )
+            sample_by_key = {
+                (str(row.get("case")), int(row.get("seed", -1))): row
+                for row in payload.get("samples", [])
+            }
+            for latest_row in latest.get("samples", []):
+                key = (
+                    str(latest_row.get("case")),
+                    int(latest_row.get("seed", -1)),
+                )
+                experiment = {
+                    "m123_head_ranking_path": str(
+                        WAN22_TI2V_LEGACY_PHYSICIQ67_LATEST_OTHER10_HEAD_RANKING
+                    ),
+                    "m123_head_ranking_tag": "s039r2735",
+                    "m123_head_scopes": ["top100", "bottom100"],
+                }
+                if key in sample_by_key:
+                    sample_by_key[key].update(experiment)
+                else:
+                    appended = {**latest_row, **experiment}
+                    payload["samples"].append(appended)
+                    sample_by_key[key] = appended
         return payload
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         return {"ready": False, "reason": str(exc), "samples": [], "entries": []}
@@ -2376,6 +2413,25 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS = (
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_PROTOCOL = (
     "attention_matrix_ablation_temporal_direction_v1"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_RANKING = (
+    WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT
+    / "pck_head_scopes_s039_frozen134.json"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPES = ("top100", "bottom100", "all720")
+WAN22_TI2V_LEGACY_PHYSICIQ67_M123_MASKS = (
+    "self_only",
+    "self_same",
+    "self_future",
+    "self_past",
+    "incoming_only",
+    "incoming_same",
+    "incoming_future",
+    "incoming_past",
+    "outgoing_only",
+    "outgoing_same",
+    "outgoing_future",
+    "outgoing_past",
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE = "0613pybullet_sample_001460_w002"
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_SEEDS = frozenset(
@@ -2705,6 +2761,153 @@ def _wan22_ti2v_legacy_physiciq67_temporal_tube_records(
     return records
 
 
+def _wan22_ti2v_legacy_physiciq67_head_scope_variant(
+    target_scope: str,
+    region: str,
+    mask_mode: str,
+    head_scope: str,
+    ranking_tag: str = "",
+) -> str | None:
+    if head_scope not in WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPES:
+        return None
+    if mask_mode not in WAN22_TI2V_LEGACY_PHYSICIQ67_M123_MASKS:
+        return None
+    if target_scope == "single_object":
+        if not region:
+            return None
+        target = region
+    elif target_scope == "all_objects":
+        target = "all_objects"
+    else:
+        return None
+    suffix = head_scope if not ranking_tag else f"{head_scope}_{ranking_tag}"
+    return f"{target_scope}__{target}__{mask_mode}__{suffix}"
+
+
+def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
+    case, seed = str(sample["case"]), int(sample["seed"])
+    ranking_path = Path(
+        str(sample.get("m123_head_ranking_path") or WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_RANKING)
+    )
+    ranking_tag = str(sample.get("m123_head_ranking_tag") or "")
+    head_scopes = tuple(
+        str(value)
+        for value in sample.get(
+            "m123_head_scopes", WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPES
+        )
+    )
+    if not head_scopes or any(
+        value not in WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPES
+        for value in head_scopes
+    ):
+        return {"ready": False, "reason": "invalid head scope configuration", "records": []}
+    try:
+        ranking = json.loads(
+            ranking_path.read_text(encoding="utf-8")
+        )
+        all_entries = list(ranking["entries"])
+        if len(all_entries) != 720:
+            raise ValueError("frozen head ranking does not contain 720 entries")
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return {"ready": False, "reason": str(exc), "records": []}
+
+    scope_entries = {
+        "top100": all_entries[:100],
+        "bottom100": all_entries[-100:],
+        "all720": all_entries,
+    }
+    rank_ranges = {
+        "top100": [1, 100],
+        "bottom100": [621, 720],
+        "all720": [1, 720],
+    }
+    regions = [
+        str(row["region_name"])
+        for row in sample.get("regions", [])
+        if row.get("region_type") == "object"
+    ]
+    targets = [("single_object", region) for region in regions]
+    targets.append(("all_objects", ""))
+    records = []
+    for head_scope in head_scopes:
+        expected_entries = scope_entries[head_scope]
+        for target_scope, region in targets:
+            for mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_M123_MASKS:
+                variant = _wan22_ti2v_legacy_physiciq67_head_scope_variant(
+                    target_scope, region, mask_mode, head_scope, ranking_tag
+                )
+                root = (
+                    WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT
+                    / case
+                    / f"seed_{seed:05d}"
+                    / str(variant)
+                )
+                ready = all(
+                    (root / name).is_file()
+                    for name in ("complete.json", "manifest.json", "generated.mp4")
+                )
+                error = (root / "error.txt").is_file()
+                if ready:
+                    try:
+                        metadata = json.loads(
+                            (root / "manifest.json").read_text(encoding="utf-8")
+                        )
+                        expected_protocol = (
+                            WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_PROTOCOL
+                            if mask_mode
+                            in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
+                            else WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_PROTOCOL
+                        )
+                        ready = (
+                            metadata.get("case") == case
+                            and int(metadata.get("seed", -1)) == seed
+                            and metadata.get("target_scope") == target_scope
+                            and str(metadata.get("region") or "") == region
+                            and metadata.get("mask_mode") == mask_mode
+                            and metadata.get("selected_entries") == expected_entries
+                            and metadata.get("protocol") == expected_protocol
+                            and (
+                                metadata.get("head_scope", "top100") == head_scope
+                            )
+                            and str(metadata.get("ranking_tag") or "") == ranking_tag
+                            and int(
+                                metadata.get(
+                                    "selected_head_count", len(expected_entries)
+                                )
+                            )
+                            == len(expected_entries)
+                        )
+                    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                        ready = False
+                records.append(
+                    {
+                        "target_scope": target_scope,
+                        "region": region or None,
+                        "mask_mode": mask_mode,
+                        "head_scope": head_scope,
+                        "head_count": len(expected_entries),
+                        "rank_start": rank_ranges[head_scope][0],
+                        "rank_end": rank_ranges[head_scope][1],
+                        "variant_id": variant,
+                        "ready": ready,
+                        "error": error,
+                        "temporal_directional": mask_mode
+                        in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS,
+                    }
+                )
+    return {
+        "ready": True,
+        "ranking_step": int(ranking.get("ranking_step", 39)),
+        "completed_runs_at_selection": int(
+            ranking.get("completed_runs_at_selection", 0)
+        ),
+        "ranking_tag": ranking_tag,
+        "head_scopes": list(head_scopes),
+        "head_ranking_path": str(ranking_path),
+        "records": records,
+    }
+
+
 def wan22_ti2v_legacy_physiciq67_visual_catalog():
     payload = wan22_ti2v_legacy_physiciq67_visual_manifest()
     if payload.get("ready") is False:
@@ -2788,6 +2991,13 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
             )
             sample["ablation_raft_motion"] = (
                 _wan22_ti2v_legacy_physiciq67_raft_motion(case, seed)
+            )
+        if (
+            (case == WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE and seed == 47326)
+            or sample.get("m123_head_ranking_path")
+        ):
+            sample["m123_head_scope_ablations"] = (
+                _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample)
             )
         samples.append(sample)
     ablation_records = [
@@ -2892,17 +3102,34 @@ def wan22_ti2v_legacy_physiciq67_temporal_tube_video(
     mask_mode: str,
     top_n: str,
     region: str,
+    head_scope: str = "top100",
 ):
     sample = _wan22_ti2v_legacy_physiciq67_sample(case, seed)
-    if sample is None or case != WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE:
+    if sample is None:
         return None
     try:
         seed_value, count = int(seed), int(top_n)
     except ValueError:
         return None
+    configured_scopes = tuple(
+        str(value) for value in sample.get("m123_head_scopes", ())
+    )
+    ranking_tag = str(sample.get("m123_head_ranking_tag") or "")
+    is_pilot = (
+        case == WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_CASE
+        and seed_value in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_SEEDS
+    )
+    allowed_scopes = configured_scopes or (("top100",) if is_pilot else ())
+    if is_pilot and seed_value == 47326:
+        allowed_scopes = WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPES
+    expected_count = (
+        {"top100": 100, "bottom100": 100, "all720": 720}.get(head_scope)
+        if head_scope in allowed_scopes
+        else None
+    )
     if (
-        seed_value not in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_SEEDS
-        or count != 100
+        expected_count is None
+        or count != expected_count
     ):
         return None
     object_regions = {
@@ -2914,9 +3141,14 @@ def wan22_ti2v_legacy_physiciq67_temporal_tube_video(
         return None
     if target_scope != "single_object":
         region = ""
-    variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(
-        target_scope, mask_mode, count, region
-    )
+    if is_pilot and head_scope == "top100" and not ranking_tag:
+        variant = _wan22_ti2v_legacy_physiciq67_ablation_variant(
+            target_scope, mask_mode, count, region
+        )
+    else:
+        variant = _wan22_ti2v_legacy_physiciq67_head_scope_variant(
+            target_scope, region, mask_mode, head_scope, ranking_tag
+        )
     if variant is None or mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_ALL_TOKEN_CONTROLS:
         return None
     return (
@@ -3425,6 +3657,58 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
     if page.count(auto_refresh_anchor) != 1:
         raise RuntimeError("PhysicIQ67 directional auto-refresh anchor changed")
     page = page.replace(auto_refresh_anchor, auto_refresh_insert, 1)
+
+    head_scope_section_anchor = '<div id="ablation"></div></section>'
+    if page.count(head_scope_section_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 ablation section anchor changed")
+    page = page.replace(
+        head_scope_section_anchor,
+        '<div id="m123HeadScopePanel" class="m123-head-panel" hidden></div><div id="ablation"></div></section>',
+        1,
+    )
+
+    head_scope_renderer = r'''function renderM123HeadScopes(s,base){const panel=$('m123HeadScopePanel'),payload=s.m123_head_scope_ablations;if(!payload?.ready||!Array.isArray(payload.records)){panel.hidden=true;panel.innerHTML='';return}panel.hidden=false;const records=payload.records,scopeCatalog=[['top100','Top100 PCK Heads','S039 frozen ranks 1–100'],['bottom100','Bottom100 PCK Heads','S039 frozen ranks 621–720'],['all720','All Heads · 720 layer-heads','30 layers × 24 heads']],availableScopes=new Set(records.map(r=>r.head_scope)),scopes=scopeCatalog.filter(([scope])=>availableScopes.has(scope)),ops=[{id:'M1',base:'self',flow:'R_tk K/V ──X──> R_tq Query',target:'R',source:'R',theory:'诊断对象 tube 内部 Value 对对象 Query 的自支持与跨时传播。'},{id:'M2',base:'incoming',flow:'C_tk K/V ──X──> R_tq Query',target:'R',source:'C',theory:'诊断环境、背景和其他对象 Value 向对象 Query 输入上下文。'},{id:'M3',base:'outgoing',flow:'R_tk K/V ──X──> C_tq Query',target:'C',source:'R',theory:'诊断对象 Value 向环境和其他对象 Query 的广播。'}],times=[['only','All-time','所有 tk'],['same','Same','tk=tq'],['future','Future','tk<tq'],['past','Past','tk>tq']],targets=[...new Set(records.map(r=>r.target_scope==='single_object'?`single_object::${r.region}`:'all_objects::'))].map(key=>{const [target_scope,region='']=key.split('::');return {target_scope,region,label:target_scope==='single_object'?`Selected object · ${region}`:'All objects union'}}),find=(target,scope,mode)=>records.find(r=>r.target_scope===target.target_scope&&String(r.region||'')===target.region&&r.head_scope===scope&&r.mask_mode===mode),formula=(op,predicate)=>`Y′_${op.target}(tq)=Y_${op.target}(tq)−Σ_{${predicate}} A[${op.target}_tq,${op.source}_tk]V_${op.source}(tk)`,card=(target,scope,scopeLabel,scopeDetail,op,time)=>{const suffix=time[0]==='only'?'only':time[0],mode=`${op.base}_${suffix}`,r=find(target,scope,mode);if(!r?.ready)return '';const src=`${api}/temporal-tube-ablation-video?${base}&target_scope=${encodeURIComponent(target.target_scope)}&mask_mode=${encodeURIComponent(mode)}&top_n=${r.head_count}&head_scope=${encodeURIComponent(scope)}${target.region?`&region=${encodeURIComponent(target.region)}`:''}`;return `<figure><video controls muted playsinline preload="metadata" src="${src}"></video><figcaption><strong>${e(op.id)}-${e(time[1])} · ${e(scopeLabel)}</strong><span class="caption-protocol">${e(scopeDetail)} · ${r.head_count} layer-heads</span><span class="caption-flow"><b>切断：</b>${e(op.flow)} · ${e(time[2])}</span><span class="caption-exact"><b>精确计算：</b>${e(formula(op,time[2]))}</span><span class="caption-exact"><b>理论诊断：</b>${e(op.theory)}</span></figcaption></figure>`},targetSections=targets.map(target=>{const opSections=ops.map(op=>{const scopeRows=scopes.map(([scope,scopeLabel,scopeDetail])=>{const cards=times.map(time=>card(target,scope,scopeLabel,scopeDetail,op,time)).filter(Boolean);if(!cards.length)return '';return `<div class="m123-scope-row"><div class="m123-scope-heading"><strong>${e(scopeLabel)}</strong><span>${e(scopeDetail)} · ${cards.length}/4 已生成</span></div><div class="m123-video-grid">${cards.join('')}</div></div>`}).join('');return scopeRows?`<section class="m123-op"><h4>${e(op.id)} · ${e(op.flow)}</h4>${scopeRows}</section>`:''}).join('');return opSections?`<section class="m123-target"><h3>${e(target.label)}</h3>${opSections}</section>`:''}).join(''),done=records.filter(r=>r.ready).length,expected=records.length,scopeText=scopes.map(x=>x[1]).join(' / '),baseline=s.video_ready?`<figure class="m123-baseline"><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline · seed=${s.seed} · No intervention</strong></figcaption></figure>`:'';panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果对照</h2><p>当前比较 ${e(scopeText)}；ranking=${e(payload.ranking_tag||'frozen134')}。每个集合均比较 All-time / Same / Future / Past；干预覆盖 40 个去噪步和 conditional/unconditional 两个 CFG 分支。只展示已生成视频，当前 ${done}/${expected}。</p></div>${baseline}${targetSections}`}
+'''
+    renderer_anchor = "function renderAblations(s,base){"
+    if page.count(renderer_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 ablation renderer anchor changed")
+    page = page.replace(renderer_anchor, head_scope_renderer + renderer_anchor, 1)
+    render_hook = "renderAblations(s,base);renderMatrix();"
+    if page.count(render_hook) != 1:
+        raise RuntimeError("PhysicIQ67 render hook changed")
+    page = page.replace(
+        render_hook,
+        "renderM123HeadScopes(s,base);renderAblations(s,base);renderMatrix();",
+        1,
+    )
+
+    main_group = (
+        "group=specs.filter(x=>x.target_scope===targetScope&&x.region===targetRegion),"
+        "tubeGroup="
+    )
+    if page.count(main_group) != 1:
+        raise RuntimeError("PhysicIQ67 object group anchor changed")
+    page = page.replace(
+        main_group,
+        "group=specs.filter(x=>x.target_scope===targetScope&&x.region===targetRegion&&!['self_only','incoming_only','outgoing_only'].includes(x.mask_mode)),tubeGroup=",
+        1,
+    )
+    page = page.replace(
+        "kind==='fixed'?'M1→C1':'M1/Base→Same→Future→Past · M2/Base→Same→Future→Past · M3/Base→Same→Future→Past · M4→C1'",
+        "kind==='fixed'?'M4→C1':'M4→C1 · M1/M2/M3 见独立 Head Scope 板块'",
+        1,
+    )
+
+    page = page.replace(
+        "</style>",
+        ".m123-head-panel{margin:18px 0 32px;padding:14px;border:2px solid #176654;border-radius:16px;background:#eaf5f1}.m123-title{padding:12px;border-left:7px solid #176654;background:#fff}.m123-title h2{margin:0 0 7px}.m123-baseline{width:min(520px,100%);margin:14px 0}.m123-target{margin:22px 0;padding:10px;background:#fff}.m123-target>h3{margin:0 -10px 12px;padding:9px 12px;background:#17443a;color:#fff}.m123-op{margin:14px 0 24px;border:1px solid #9fbdb4}.m123-op>h4{margin:0;padding:9px 11px;background:#d9ebe5}.m123-scope-row{padding:9px;border-top:1px solid #c9ddd6}.m123-scope-heading{display:flex;justify-content:space-between;gap:12px;align-items:baseline;padding:4px 2px 8px}.m123-scope-heading span{font:11px ui-monospace,monospace}.m123-video-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.m123-video-grid figure{min-width:0}.m123-video-grid figcaption{line-height:1.4}@media(max-width:1400px){.m123-video-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.m123-video-grid{grid-template-columns:1fr}.m123-scope-heading{align-items:flex-start;flex-direction:column}}</style>",
+        1,
+    )
+
+    progress_start = page.index("const temporalProgress=catalog=>")
+    progress_end = page.index(";async function pollDirectionalCompletion", progress_start)
+    head_scope_progress = r'''const temporalProgress=catalog=>{const samples=(catalog.samples||[]).filter(x=>x.case==='0613pybullet_sample_001460_w002'&&Array.isArray(x.temporal_tube_attention_matrix_ablations)),directional=samples.flatMap(x=>x.temporal_tube_attention_matrix_ablations.filter(r=>r.temporal_directional)),headSamples=(catalog.samples||[]).filter(x=>Array.isArray(x.m123_head_scope_ablations?.records)),headRowsBySample=headSamples.map(x=>{const rows=x.m123_head_scope_ablations.records,isPilot=x.case==='0613pybullet_sample_001460_w002'&&Number(x.seed)===47326;return {rows:isPilot?rows.filter(r=>r.head_scope!=='top100'):rows,complete:false}}),headRows=headRowsBySample.flatMap(x=>x.rows),ready=directional.filter(r=>r.ready).length+headRows.filter(r=>r.ready).length,expected=directional.length+headRows.length,completeSeeds=headRowsBySample.filter(x=>x.rows.length>0&&x.rows.every(r=>r.ready)).length;return {ready,expected,completeSeeds,seedCount:headRowsBySample.length}}'''
+    page = page[:progress_start] + head_scope_progress + page[progress_end:]
     return page
 
 

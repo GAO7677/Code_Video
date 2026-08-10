@@ -2,12 +2,12 @@
 
 ## 1. 本文回答什么
 
-本文统一说明两组使用同一批 Top PCK heads 的因果干预：
+本文统一说明固定/Tube 两类 token 集合，以及 Top100、Bottom100、All720 三类 head scope 的因果干预：
 
 1. **固定 Q00 消融**：只把 F00 上的稀疏 object-query points 映射为 latent `t=0` token 集合。
 2. **全时序 Object Query Tube 消融**：在同 seed、无干预 baseline 视频上冻结 CoTracker 轨迹，把同一批 object points 在 13 个 latent 时刻的位置合成一个时空 token 集合。
 
-两组实验使用相同的模型、seed、Top100 heads、40 个去噪步、两个 CFG 分支以及 M1–M7/C1 算子。左右对照中改变的是被干预集合 `R`，不是消融公式。
+固定/Tube 对照使用相同的模型、seed、head scope、40 个去噪步、两个 CFG 分支以及 M1–M7/C1 算子。左右对照中改变的是被干预集合 `R`，不是消融公式；Head Scope 对照则保持 `R_tube` 和算子不变，只改变被干预的物理 layer-head 集合。
 
 > 重要限制：`R_tube` 通常远大于 `R_fixed`，因此左右差异同时包含“时间覆盖范围扩大”和“被消融 token 数增加”两部分。更强变化不能直接解释为 PCK head 对所有 query 帧都同样有效。
 
@@ -153,7 +153,25 @@ M1–M7 是 post-softmax `A@V` 分块置零且不重新归一化。它们只在�
 | M2-past | `incoming_past` | `Σ_{t_k>t_q} A[R_tq,C_tk]V_Ctk` | M2-future 的未来→过去反向控制 |
 | M3-past | `outgoing_past` | `Σ_{t_k>t_q} A[C_tq,R_tk]V_Rtk` | M3-future 的未来→过去反向控制 |
 
-九项都先用原始 `Q/K` 和完整 K 序列保持 baseline softmax 分母，再从对应 Query 输出中减去指定时间块的 `A@V` contribution；不修改 Q/K 投影、不重新归一化。它们同样作用于 Top100 heads、全部 40 个去噪步和两个 CFG 分支。对每个基础块都有 `base = same ∪ future ∪ past` 的互斥完备时间分解；因此 Same、Future、Past 必须联合比较，避免把被删除连接数量或同帧局部交互误判成特定的过去→未来因果方向。
+九项都先用原始 `Q/K` 和完整 K 序列保持 baseline softmax 分母，再从对应 Query 输出中减去指定时间块的 `A@V` contribution；不修改 Q/K 投影、不重新归一化。它们作用于当前选定的 Head Scope、全部 40 个去噪步和两个 CFG 分支。对每个基础块都有 `base = same ∪ future ∪ past` 的互斥完备时间分解；因此 Same、Future、Past 必须联合比较，避免把被删除连接数量或同帧局部交互误判成特定的过去→未来因果方向。
+
+### 5.2 M1–M3 的 Head Scope 对照
+
+Head Scope 只改变被 hook 的物理 `(layer, head)` 集合，不改变 `R_tube`、时间条件、seed 或消融公式：
+
+| Head Scope | 精确定义 | 诊断作用 |
+|---|---|---|
+| `top100` | 冻结 S039 PCK 排名第 1–100 名 | 检查高 PCK heads 上 M1/M2/M3 的干预效应 |
+| `bottom100` | **同一冻结排名**第 621–720 名 | 作为等数量低 PCK head 对照；不能从另一次更新后的排名截取 |
+| `all720` | 30 layers × 24 heads 的全部 720 个物理 self-attention heads | 检查 M1/M2/M3 通路在删除全部 heads 后的上限效应；这不是 720 个独立视频，而是一次同时干预 720 heads |
+
+每个 head scope 对 `object_A`、`object_B`、`all_objects` 分别执行 M1/M2/M3 的 All-time、Same、Future、Past：
+
+\[
+3\ \text{targets}\times3\ \text{operators}\times4\ \text{temporal scopes}=36\ \text{videos/head scope}.
+\]
+
+`0613pybullet_sample_001460_w002 / seed=47326` 的 Top100/Bottom100/All720 必须使用同一个 134-run S039 冻结快照；其中 Bottom100 的 PCK 范围为 `23.7883% → 0.0932%`。`cases_other10_6seeds_latest.json` 使用另一份 2735-run 快照，因此输出 ID 带 `s039r2735`，其 Bottom100 范围为 `28.4571% → 0.0641%`。两份快照不能混用或相互复用完成标记。
 
 ## 6. C1–C3：不要与矩阵分块混用
 
@@ -199,6 +217,8 @@ C2、C3 不依赖 `R`，因此固定 Q00 与 Tube 对照不重复生成；页面
 | C2/C3 | 与 R 无关，复用固定实验，不重新生成 |
 | CoTracker anchor visibility | object_A、object_B 均为 `99.04%`；仅审计，不作为 token 删除条件 |
 
+M1/M2/M3 的 Head Scope 扩展另含 `3 scopes × 36 = 108` 个对照视频；原 Top100 36 个已存在，本轮新增 Bottom100 36 个和 All720 36 个。
+
 已完成样例审计显示：
 
 | Target | `|R_fixed|` | `|R_tube|` |
@@ -209,7 +229,11 @@ C2、C3 不依赖 `R`，因此固定 Q00 与 Tube 对照不重复生成；页面
 
 object_A 的 13 个 latent 时刻分别为 `[6,7,6,8,6,7,6,5,6,6,5,6,5]`。这说明左右干预剂量并不相等；`all_objects` 的 179 小于 79+104，是因为两个对象轨迹映射后存在 token 重合并被联合去重。
 
-### 7.3 五个新 seed 的重复实验
+### 7.3 latest 10-case × 6-seed Head Scope 扩展
+
+`cases_other10_6seeds_latest.json` 含 10 个 case、6 个 seed，共 60 个 case-seed 样本；对象数为 1–4。对每个样本执行 Top100 与 Bottom100 上的 M1/M2/M3 All-time/Same/Future/Past，共 `2448 + 2448 = 4896` 个视频。Top100 输出后缀为 `top100_s039r2735`，Bottom100 为 `bottom100_s039r2735`，避免与旧 134-run 排名产生目录冲突。
+
+### 7.4 五个新 seed 的重复实验
 
 为区分算子效应与单次扩散随机性的偶然结果，`0613pybullet_sample_001460_w002` 追加五个独立 seed：`90094`、`68613`、`35075`、`32466`、`13248`。
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -134,6 +135,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--manifest-path", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--head-ranking-path", type=Path, default=DEFAULT_HEAD_RANKING)
+    parser.add_argument(
+        "--ranking-tag",
+        default="",
+        help="optional output-ID suffix for a different frozen ranking snapshot",
+    )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--worker-id", type=int, default=0)
@@ -154,7 +160,12 @@ def parse_args() -> argparse.Namespace:
 def temporal_variant_id(task: dict) -> str:
     mask_mode = str(task["mask_mode"])
     head_scope = str(task.get("head_scope", "top100"))
-    if head_scope == "top100" and mask_mode not in TEMPORAL_DIRECTIONAL_MODES:
+    ranking_tag = str(task.get("ranking_tag") or "")
+    if (
+        head_scope == "top100"
+        and not ranking_tag
+        and mask_mode not in TEMPORAL_DIRECTIONAL_MODES
+    ):
         return variant_id(
             str(task["target_scope"]),
             mask_mode,
@@ -166,11 +177,15 @@ def temporal_variant_id(task: dict) -> str:
         if str(task["target_scope"]) == "single_object"
         else "all_objects"
     )
-    suffix = "top100" if head_scope == "top100" else head_scope
+    suffix = head_scope if not ranking_tag else f"{head_scope}_{ranking_tag}"
     return f"{task['target_scope']}__{target}__{mask_mode}__{suffix}"
 
 
-def build_tasks(sample: dict, head_scopes: list[str] | tuple[str, ...] = ("top100",)) -> list[dict]:
+def build_tasks(
+    sample: dict,
+    head_scopes: list[str] | tuple[str, ...] = ("top100",),
+    ranking_tag: str = "",
+) -> list[dict]:
     regions = [
         str(row["region_name"])
         for row in sample["regions"]
@@ -187,6 +202,7 @@ def build_tasks(sample: dict, head_scopes: list[str] | tuple[str, ...] = ("top10
             "region": region,
             "top_n": HEAD_SCOPE_COUNTS[head_scope],
             "head_scope": head_scope,
+            "ranking_tag": ranking_tag,
         }
         for head_scope in head_scopes
         for target_scope, region in targets
@@ -647,6 +663,8 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.worker_id < args.num_workers:
         raise ValueError("worker-id must be in [0, num-workers)")
+    if args.ranking_tag and not re.fullmatch(r"[a-z0-9_]+", args.ranking_tag):
+        raise ValueError("ranking-tag must contain only lowercase letters, digits, underscores")
     manifest = json.loads(args.manifest_path.read_text(encoding="utf-8"))
     if len(manifest.get("entries", [])) < TOP_N:
         raise RuntimeError("manifest does not contain the frozen Top100 ranking")
@@ -670,7 +688,7 @@ def main() -> None:
     selected_modes = set(args.mask_modes) if args.mask_modes is not None else None
     sample_tasks: list[tuple[dict, list[dict]]] = []
     for sample in samples:
-        tasks = build_tasks(sample, args.head_scopes)
+        tasks = build_tasks(sample, args.head_scopes, args.ranking_tag)
         if selected_modes is not None:
             tasks = [task for task in tasks if str(task["mask_mode"]) in selected_modes]
         if tasks:
