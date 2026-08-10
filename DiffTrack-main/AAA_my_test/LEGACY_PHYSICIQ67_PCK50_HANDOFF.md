@@ -815,7 +815,7 @@ tmux attach -t m123_s039_top100_mean_capture
 独立 Overlay 页面：
 
 ```text
-http://localhost:8092/object-query-m123-s039-top100-mean-overlays?v=4
+http://localhost:8092/object-query-m123-s039-top100-mean-overlays?v=5
 ```
 
 页面按 Target、Head Scope、M1/M2/M3 和 All-time/Same/Future/Past 筛选，每 20 秒检查一次新产物并增量刷新。三行 comparison 的含义固定为：
@@ -825,3 +825,66 @@ http://localhost:8092/object-query-m123-s039-top100-mean-overlays?v=4
 3. `Removed=max(Before-Effective After,0)`：当前算子在 observation Top100 中直接删除的 coefficient mass；不是相对 Baseline 的 attention 差，也不是视频运动差。
 
 总入口 `http://localhost:8092/` 的 `M1/M2/M3 Head-Scope Overlay` 卡片直接链接该独立页面。
+
+## 20. 001460 / seed 47326：108 项 Query-side Receiver Overlay
+
+这一组图补充第 19 节的固定 Object Query、Key-side 图。它不再问“固定 Object Query 读取了哪些 Key”，而是把 Query 位置 `q` 遍历到整个时空 token 网格，回答“被选中 Object 的 K/V 信息由谁读取”。实验清单仍是同一组 108 项，Target、Head Scope、M1/M2/M3 和 All-time/Same/Future/Past 必须与对应消融视频一一匹配。
+
+对每个实验的真实干预 Head Scope、真实 source 集合 `K_sel(q)`，在 denoising `S039` 计算两种 Query-side 量：
+
+```text
+Coefficient mass:
+S(q) = sum_{k in K_sel(q)} A(q,k)
+
+Value contribution norm:
+E(q) = mean_h || sum_{k in K_sel(q)} A_h(q,k) V_h(k) ||_2
+```
+
+精确含义：
+
+- `S(q)` 是该 Query 在当前算子下被删除的 attention coefficient mass；理论范围为 `[0,1]`。它只表示“读了多少”，不考虑 Value 的大小、方向和抵消。
+- `E(q)` 是该 Query 因删除相应 K/V 信息而失去的实际 head 输出向量范数；非负。实现先在每个 head 内完成向量求和与 L2 norm，再跨 Head/CFG 平均，避免不同 head 的向量坐标系被错误相加。
+- 两行都画回完整 Query 时空网格，横向列为 `Q00/F00, Q01/F04, ..., Q12/F48`。青色轮廓标出当前 Object tube 在每个 Query 时刻的位置。
+- 每个实验的两行分别使用该实验自身跨时刻 `P99.5` 固定色标；同一行内部可以比较时间，但不同实验之间不能只凭颜色深浅比较绝对值，跨实验比较必须读取 manifest 中的数值统计。
+- 这里只在 `S039` 做观测，但生成时的 M1/M2/M3 干预仍作用于原消融配置指定的全部 denoising steps；不要把 observation step 和 intervention step 混为一谈。
+
+M1/M2/M3 的 Query-side receiver 集合分别是：
+
+| Operator | 被保留用于求和的 source `k` | 输出 Query `q` 的诊断含义 |
+|---|---|---|
+| M1 | `k in R_target`，且 `q in R_target` | Object tube 内部哪些 Query 正在读取该 Object 自身的 K/V |
+| M2 | `k in C`，且 `q in R_target` | Object Query 从背景/其他对象 K/V 接收了多少信息 |
+| M3 | `k in R_target`，且 `q in C` | 背景/其他对象 Query 从目标 Object K/V 接收了多少信息，即目标信息的广播接收者 |
+
+`Same/Future/Past` 继续对每个 Query 时刻逐点施加 `t_k=t_q`、`t_k<t_q`、`t_k>t_q` 条件，而不是先把某个固定帧整体切走。因此 M3 的图尤其适合区分 Object B、背景或其他时刻的 token 是否在读取目标 Object。
+
+相关代码：
+
+```text
+AAA_my_test/run_legacy_m123_s039_query_receiver.py
+AAA_my_test/render_m123_s039_query_receiver_overlay.py
+AAA_my_test/run_legacy_m123_s039_query_receiver_gpu.sh
+AAA_my_test/launch_legacy_m123_s039_query_receiver_tmux.sh
+AAA_my_test/test_m123_s039_query_receiver.py
+```
+
+输出目录：
+
+```text
+/data/gaoya/agent-data/outputs/object_query_attention_overlays/
+  m123_head_scope_s039_query_receiver_v1/
+```
+
+每个完成实验包含原始 `receiver.npz`、`S(q)` 单行图、`E(q)` 单行图、两行 comparison、`overlay_manifest.json`、`manifest.json` 和 `complete.json`。页面在第 19 节同一个实验卡片中显示 receiver 产物；未生成时只显示等待状态，不伪造空图。
+
+当前 tmux 队列：
+
+```bash
+tmux attach -t m123_s039_query_receiver_capture
+```
+
+GPU2 先运行 `single_object / Object A / M3 All-time / Top100` pilot；pilot 写出 `complete.json` 后 GPU2/3 才自动展开余下实验。GPU 4 明确禁用。页面每 20 秒轮询 receiver 进度并自动刷新：
+
+```text
+http://localhost:8092/object-query-m123-s039-top100-mean-overlays?v=5
+```

@@ -406,7 +406,7 @@ UNLISTED_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-all720-ablation-gallery?v=1"><div><span>37 / ALL720 ABLATION GALLERY</span><h2>All720 全部时序消融</h2><p>汇总现有全部 All720 视频：M1/M2/M3 × All-time/Same/Future/Past × Object A/Object B/all_objects。</p></div><span class="go">打开 All720 消融页</span></a>
 <a class="card new" href="/object-query-m123-temporal-batch?v=1"><div><span>38 / M1–M3 TEMPORAL BATCH</span><h2>M1/M2/M3 · All-time/Same/Future/Past</h2><p>当前多 case、多 seed 的 Top100/Bottom100 批次独立入口；按 case、seed、target 查看已生成视频。</p></div><span class="go">打开 M1–M3 批次</span></a>
 <a class="card new" href="/object-query-m123-temporal-batch?single=1&amp;case=0613pybullet_sample_001460_w002&amp;seed=47326&amp;target=single_object%3A%3Aobject_A&amp;v=4"><div><span>39 / 001460 · SEED 47326 METRICS</span><h2>M1/M2/M3 · 完整指标轻量页</h2><p>0613pybullet_sample_001460_w002 / seed 47326；All-time/Same/Future/Past × Top100/Bottom100/All720，顶部含指标定义表，每个视频下方可展开完整指标。</p></div><span class="go">打开 Seed 47326 完整指标页</span></a>
-<a class="card new" href="/object-query-m123-s039-top100-mean-overlays?v=4"><div><span>40 / S039 TOP100 MEAN · 108</span><h2>M1/M2/M3 Head-Scope Overlay</h2><p>001460 / seed 47326 的独立 Overlay 入口；同一 M/Time 下按 Object A target、Object B target 成对排列，Baseline 与对应消融视频并列位于 Overlay 上方。</p></div><span class="go">打开独立 Overlay 页面</span></a>
+<a class="card new" href="/object-query-m123-s039-top100-mean-overlays?v=5"><div><span>40 / S039 KEY + QUERY · 108</span><h2>M1/M2/M3 Head-Scope Overlay</h2><p>001460 / seed 47326 的独立 Overlay 入口；同一 M/Time 下 Object A/B 成对排列，同时展示固定 Query 的 Key-side 三行图，以及完整 Query 空间的 S(q)/E(q) receiver 图。</p></div><span class="go">打开独立 Overlay 页面</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + "</section>", 1
@@ -1347,6 +1347,19 @@ class MetricsHandler(viewer.Handler):
                 raise FileNotFoundError("S039 Top100 mean overlay is not ready")
             viewer.send_file_with_range(self, asset, "image/jpeg")
             return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/head-scope-s039-query-receiver-overlay":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_physiciq67_m123_s039_query_receiver_overlay(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("variant_id", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("S039 query-side receiver overlay is not ready")
+            viewer.send_file_with_range(self, asset, "image/jpeg")
+            return
         if path == "/api/wan22-ti2v-legacy-physiciq67-samples/head-scope-survival-overlay":
             from urllib.parse import parse_qs
 
@@ -1736,6 +1749,10 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPE_TRAJECTORY_ROOT = Path(
 WAN22_TI2V_LEGACY_PHYSICIQ67_M123_S039_TOP100_MEAN_ROOT = Path(
     "/data/gaoya/agent-data/outputs/object_query_attention_overlays/"
     "m123_head_scope_s039_top100_mean_v1"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_M123_S039_QUERY_RECEIVER_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/object_query_attention_overlays/"
+    "m123_head_scope_s039_query_receiver_v1"
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_VBENCH_METRICS = (
     ("vbench_subject_consistency", "Subject"),
@@ -2960,6 +2977,61 @@ def _wan22_ti2v_legacy_physiciq67_m123_s039_top100_mean_record(
     }
 
 
+def _wan22_ti2v_legacy_physiciq67_m123_s039_query_receiver_record(
+    case: str, seed: int, variant_id: str
+):
+    if not variant_id or Path(variant_id).name != variant_id:
+        return {"ready": False}
+    root = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_M123_S039_QUERY_RECEIVER_ROOT
+        / case
+        / f"seed_{seed:05d}"
+        / variant_id
+    )
+    required = (
+        "complete.json",
+        "manifest.json",
+        "overlay_manifest.json",
+        "receiver.npz",
+        "receiver__s039_query_side_comparison.jpg",
+    )
+    if not all((root / name).is_file() for name in required):
+        return {"ready": False}
+    try:
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        overlay = json.loads(
+            (root / "overlay_manifest.json").read_text(encoding="utf-8")
+        )
+        image = str(overlay.get("images", {}).get("comparison") or "")
+        if (
+            manifest.get("case") != case
+            or int(manifest.get("seed", -1)) != seed
+            or manifest.get("variant_id") != variant_id
+            or int(manifest.get("capture_step", -1)) != 39
+            or image != "receiver__s039_query_side_comparison.jpg"
+            or not (root / image).is_file()
+        ):
+            raise ValueError("invalid S039 query receiver manifest")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {"ready": False}
+    return {
+        "ready": True,
+        "step": 39,
+        "head_scope": manifest.get("head_scope"),
+        "head_count": manifest.get("top_n"),
+        "operator_id": overlay.get("operator_id"),
+        "temporal_scope": overlay.get("temporal_scope"),
+        "target_partition": overlay.get("target_partition"),
+        "source_partition": overlay.get("source_partition"),
+        "time_predicate": overlay.get("time_predicate"),
+        "coefficient_definition": overlay.get("coefficient_definition"),
+        "value_definition": overlay.get("value_definition"),
+        "scale_mode": overlay.get("scale_mode"),
+        "global_vmax": overlay.get("global_vmax", {}),
+        "image": image,
+    }
+
+
 def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
     case, seed = str(sample["case"]), int(sample["seed"])
     ranking_path = Path(
@@ -3142,6 +3214,11 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
                                 case, seed, str(variant)
                             )
                         ),
+                        "s039_query_receiver": (
+                            _wan22_ti2v_legacy_physiciq67_m123_s039_query_receiver_record(
+                                case, seed, str(variant)
+                            )
+                        ),
                         "temporal_directional": mask_mode
                         in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS,
                     }
@@ -3274,6 +3351,13 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
         "s039_top100_mean_progress": {
             "ready": sum(
                 int(bool(row.get("s039_top100_mean", {}).get("ready")))
+                for row in records
+            ),
+            "expected": len(records),
+        },
+        "s039_query_receiver_progress": {
+            "ready": sum(
+                int(bool(row.get("s039_query_receiver", {}).get("ready")))
                 for row in records
             ),
             "expected": len(records),
@@ -4341,6 +4425,27 @@ def wan22_ti2v_legacy_physiciq67_m123_s039_top100_mean_overlay(
     )
 
 
+def wan22_ti2v_legacy_physiciq67_m123_s039_query_receiver_overlay(
+    case: str, seed: str, variant_id: str
+):
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    record = _wan22_ti2v_legacy_physiciq67_m123_s039_query_receiver_record(
+        case, seed_value, variant_id
+    )
+    if not record.get("ready"):
+        return None
+    return (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_M123_S039_QUERY_RECEIVER_ROOT
+        / case
+        / f"seed_{seed_value:05d}"
+        / variant_id
+        / str(record["image"])
+    )
+
+
 def wan22_ti2v_legacy_physiciq67_head_scope_survival_overlay(
     case: str, seed: str, variant_id: str
 ):
@@ -5089,6 +5194,50 @@ for(const id of ['target','scope','operator','time'])$(id).addEventListener('cha
     page = page.replace(
         "target=r.target_scope==='single_object'?r.region:'all_objects'",
         "target=r.target_scope==='single_object'?(r.region==='object_A'?'Object A target':'Object B target'):'All objects union'",
+        1,
+    )
+    receiver_css = r'''.receiver{margin-top:10px;padding:10px;border:1px solid #8eb9ad;background:#eef8f4}.receiver h4{margin:0 0 5px}.receiver p{margin:4px 0;font-size:11px;line-height:1.5}.receiver a{display:block;overflow:auto;margin-top:7px}.receiver img{display:block;width:100%;height:auto;background:#222}.receiver.pending{border-style:dashed;color:#6e685d;background:#f4f0e8}.receiver-definition{margin-top:12px;border-left:7px solid #287d6c}.receiver-definition .row-defs{grid-template-columns:repeat(2,minmax(0,1fr))}.receiver-definition .coefficient{border-color:#287d6c}.receiver-definition .value{border-color:#7b4fa0}@media(max-width:900px){.receiver-definition .row-defs{grid-template-columns:1fr}}'''
+    if page.count("</style>") != 1:
+        raise RuntimeError("S039 standalone style boundary changed")
+    page = page.replace("</style>", receiver_css + "</style>", 1)
+    page = page.replace(
+        "<h1>S039 Fixed-F04<br>Top100 Mean Overlays</h1>",
+        "<h1>S039 Key-side + Query-side<br>Attention Overlays</h1>",
+        1,
+    )
+    receiver_definition = r'''<section class="definition receiver-definition"><h2>Query-side Receiver Overlay · 精确含义</h2><p>与上面的 Key-side 固定 F04 图不同，这两行覆盖全部 13 个 Query 时刻和完整 Query 空间，并只在本实验实际干预的 Top100、Bottom100 或 All720 heads 上平均。青色轮廓标出 sender/target 的 R tube。</p><div class="math">S(q) = mean_head,CFG Σ_{k∈source,time predicate} A[q,k]<br>E(q) = mean_head,CFG ‖Σ_{k∈source,time predicate} A[q,k]V[k]‖₂</div><div class="row-defs"><article class="row-def coefficient"><h3>第 1 行 · Coefficient Receiver S(q)</h3><p>每个 Query 从被切断 source partition 读取的 softmax coefficient mass。M3 中非零位置位于 C Query 空间，因此可观察 target R 向其他对象和背景的广播接收方。</p></article><article class="row-def value"><h3>第 2 行 · Value Contribution E(q)</h3><p>在每个 physical head 内先计算被删除的 A@V 向量 L2，再跨 head/CFG 平均；不会因不同 head 的向量方向相反而相互抵消。</p></article></div><div class="note"><b>横向坐标：</b>Q00/F00…Q12/F48 是 Query 时间，不是 Key 时间。<br><b>颜色刻度：</b>每一行、每个实验使用一个全 13 帧共享的 P99.5 色标，保留该实验内部的时间强弱；跨实验比较绝对值应读取 raw NPZ/标注的 vmax，而不能只看颜色。</div></section>'''
+    results_anchor = '<div class="results-head"><h2>已生成实验</h2>'
+    if page.count(results_anchor) != 1:
+        raise RuntimeError("S039 standalone results anchor changed")
+    page = page.replace(results_anchor, receiver_definition + results_anchor, 1)
+    page = page.replace(
+        "function baselineUrl(){",
+        "function receiverUrl(r){const p=new URLSearchParams({case:caseName,seed:String(seed),variant_id:r.variant_id,v:'1'});return `${api}/head-scope-s039-query-receiver-overlay?${p}`}\nfunction baselineUrl(){",
+        1,
+    )
+    page = page.replace(
+        ",bottom=r.head_scope==='bottom100'?",
+        ",receiver=r.s039_query_receiver?.ready?`<section class=\"receiver\"><h4>Query-side Receiver · S(q) coefficient mass + E(q) value contribution</h4><p>Q=${esc(r.s039_query_receiver.target_partition)}；source K/V=${esc(r.s039_query_receiver.source_partition)}；${esc(r.s039_query_receiver.time_predicate)}；使用本实验实际 ${esc(r.head_scope)} heads。青色轮廓为 target R tube。</p><a href=\"${receiverUrl(r)}\" target=\"_blank\" rel=\"noopener\"><img loading=\"lazy\" src=\"${receiverUrl(r)}\" alt=\"${esc(r.variant_id)} query receiver overlay\"></a></section>`:`<section class=\"receiver pending\"><h4>Query-side Receiver 待提取</h4><p>S(q) / E(q) 完成后自动出现在这里。</p></section>`,bottom=r.head_scope==='bottom100'?",
+        1,
+    )
+    page = page.replace(
+        '<div class="objects">${objects}</div></article>',
+        '<div class="objects">${objects}</div>${receiver}</article>',
+        1,
+    )
+    page = page.replace(
+        "$('status').textContent=`Overlay ${ready}/${expected} · 每 20 秒自动刷新`",
+        "const receiverProgress=sample?.m123_head_scope_ablations?.s039_query_receiver_progress||{};$('status').textContent=`Key-side ${ready}/${expected} · Query-side ${Number(receiverProgress.ready||0)}/${Number(receiverProgress.expected||108)} · 每 20 秒自动刷新`",
+        1,
+    )
+    page = page.replace(
+        "lastReady=Number(sample.m123_head_scope_ablations?.s039_top100_mean_progress?.ready||0)",
+        "lastReady=Number(sample.m123_head_scope_ablations?.s039_top100_mean_progress?.ready||0)+Number(sample.m123_head_scope_ablations?.s039_query_receiver_progress?.ready||0)",
+        1,
+    )
+    page = page.replace(
+        "ready=Number(next?.m123_head_scope_ablations?.s039_top100_mean_progress?.ready||0);if(ready>Number(lastReady||0)){sample=next;lastReady=ready;render()}if(ready>=108)clearInterval(timer)",
+        "ready=Number(next?.m123_head_scope_ablations?.s039_top100_mean_progress?.ready||0),receiverReady=Number(next?.m123_head_scope_ablations?.s039_query_receiver_progress?.ready||0),combinedReady=ready+receiverReady;if(combinedReady>Number(lastReady||0)){sample=next;lastReady=combinedReady;render()}if(ready>=108&&receiverReady>=108)clearInterval(timer)",
         1,
     )
     return page

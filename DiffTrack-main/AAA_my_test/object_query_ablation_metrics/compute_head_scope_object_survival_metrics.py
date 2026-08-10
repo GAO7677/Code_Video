@@ -537,7 +537,6 @@ def main() -> None:
     seed = int(all_candidates[0]["seed"])
     if any(row["case"] != case or int(row["seed"]) != seed for row in all_candidates):
         raise RuntimeError("object-survival mode accepts exactly one case/seed")
-    candidates = all_candidates[: args.limit] if args.limit > 0 else all_candidates
     baseline_path = locate_baseline(case, seed)
     baseline_signature = file_signature(baseline_path)
 
@@ -565,6 +564,25 @@ def main() -> None:
     output_root = args.output_base.expanduser().resolve() / case / f"seed_{seed:05d}"
     if str(output_root).startswith("/home/gaoya/"):
         raise RuntimeError("large survival artifacts may not be stored under /home/gaoya")
+    requested_candidates = (
+        all_candidates[: args.limit] if args.limit > 0 else all_candidates
+    )
+    candidates = [
+        candidate
+        for candidate in requested_candidates
+        if (output_root / "tracks" / f"{candidate['variant_id']}.npz").is_file()
+    ]
+    deferred = len(requested_candidates) - len(candidates)
+    if deferred:
+        print(
+            f"[defer] {deferred} candidates have no trajectory cache yet; "
+            "a later incremental run will measure them",
+            flush=True,
+        )
+    if not candidates:
+        raise RuntimeError(
+            f"no candidates have trajectory caches yet: {output_root / 'tracks'}"
+        )
     survival_root = output_root / "object_survival"
     mask_root = survival_root / "masks"
     feature_root = survival_root / "features"

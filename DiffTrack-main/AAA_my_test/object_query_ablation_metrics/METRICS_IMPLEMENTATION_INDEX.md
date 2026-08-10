@@ -2,6 +2,8 @@
 
 本文档以当前代码和已生成的 `report.json` 为准，区分四套不同用途的评价。它们不应经过任意权重合成一个“总质量分”。
 
+待验证的实验结论单独登记在 [`HYPOTHESES_TO_VALIDATE.md`](HYPOTHESES_TO_VALIDATE.md)，避免把单 case 观察误写成已确认机制。
+
 ## 1. 评价流水线总览
 
 | 流水线 | 主要回答 | Reference | 主报告 | 入口与核心实现 |
