@@ -18,6 +18,9 @@ DRY_RUN=0
 OVERWRITE=0
 RUN_VBENCH=1
 RUN_AGGREGATE=1
+RUN_HEAD_SCOPE_BASELINE=0
+HEAD_SCOPE_WATCH_SECONDS=0
+HEAD_SCOPE_WORKERS=4
 
 usage() {
   cat <<'EOF'
@@ -34,12 +37,18 @@ Options:
   --overwrite       Recompute cached tracks, masks, RAFT, perceptual data and overlays
   --skip-vbench     Do not run/complete the seven official VBench dimensions
   --no-aggregate    Do not rebuild the strict common-seed aggregate report
+  --head-scope-baseline
+                    Incrementally compute CPU baseline-effect metrics for the
+                    generated M1/M2/M3 Top100/Bottom100/All-Heads videos
+  --watch-seconds N With --head-scope-baseline, poll for new videos every N sec
+  --workers N       CPU decode/metric workers for head-scope mode (default: 4)
   --dry-run         Validate and print every command without running model inference
   -h, --help        Show this help
 
 Examples:
   bash bench.sh /path/to/CASE/seed_47326
   GPU=5 bash bench.sh /path/to/CASE
+  bash bench.sh /path/to/temporal_tube_root --head-scope-baseline --watch-seconds 60
 EOF
 }
 
@@ -92,6 +101,20 @@ while [[ $# -gt 0 ]]; do
       RUN_AGGREGATE=0
       shift
       ;;
+    --head-scope-baseline)
+      RUN_HEAD_SCOPE_BASELINE=1
+      shift
+      ;;
+    --watch-seconds)
+      [[ $# -ge 2 ]] || die "--watch-seconds requires a non-negative integer"
+      HEAD_SCOPE_WATCH_SECONDS="$2"
+      shift 2
+      ;;
+    --workers)
+      [[ $# -ge 2 ]] || die "--workers requires a positive integer"
+      HEAD_SCOPE_WORKERS="$2"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -105,6 +128,35 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if (( RUN_HEAD_SCOPE_BASELINE == 1 )); then
+  [[ "${HEAD_SCOPE_WATCH_SECONDS}" =~ ^[0-9]+$ ]] || die \
+    "--watch-seconds must be a non-negative integer"
+  [[ "${HEAD_SCOPE_WORKERS}" =~ ^[1-9][0-9]*$ ]] || die \
+    "--workers must be a positive integer"
+  [[ -x "${WAN_PYTHON}" ]] || die "missing Python executable: ${WAN_PYTHON}"
+  RESULT_INPUT="$(realpath -e -- "${RESULT_INPUT}")"
+  [[ -d "${RESULT_INPUT}" ]] || die "RESULT_DIR is not a directory: ${RESULT_INPUT}"
+  HEAD_SCOPE_OUTPUT_BASE="${METRICS_HEAD_SCOPE_OUTPUT_BASE:-${OUTPUT_BASE}/head_scope_baseline_fast}"
+  case "${HEAD_SCOPE_OUTPUT_BASE}" in
+    /home/gaoya|/home/gaoya/*)
+      die "large metric artifacts may not be stored under /home/gaoya"
+      ;;
+  esac
+  declare -a head_scope_command=(
+    "${WAN_PYTHON}"
+    "${SCRIPT_DIR}/compute_head_scope_baseline_metrics.py"
+    "${RESULT_INPUT}"
+    --output-base "${HEAD_SCOPE_OUTPUT_BASE}"
+    --workers "${HEAD_SCOPE_WORKERS}"
+    --watch-seconds "${HEAD_SCOPE_WATCH_SECONDS}"
+  )
+  quote_command "${head_scope_command[@]}"
+  if (( DRY_RUN == 0 )); then
+    exec "${head_scope_command[@]}"
+  fi
+  exit 0
+fi
 
 [[ "${GPU}" =~ ^[0-9]+$ ]] || die "GPU must be one physical GPU index"
 [[ "${GPU}" != "4" ]] || die "GPU 4 is forbidden by /home/gaoya/AGENTS.md"

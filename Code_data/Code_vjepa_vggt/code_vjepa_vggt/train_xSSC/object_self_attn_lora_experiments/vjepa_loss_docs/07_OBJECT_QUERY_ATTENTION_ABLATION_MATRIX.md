@@ -546,7 +546,32 @@ GPU=5 bash AAA_my_test/object_query_ablation_metrics/bench.sh \
 
 正式运行前可用 `--dry-run` 完成输入、Baseline、source render、`states.npz`、region cache 与 frozen tracks 校验，并打印将执行的全部命令。GPU 参数是物理编号，禁止使用 GPU 4。默认报告写入 `/data/gaoya/agent-data/outputs/object_query_ablation_metrics/<case>/seed_<seed>/`，汇总写入同一 case 下的 `aggregate/`。
 
-### 12.2 生成与单阶段重跑
+### 12.2 Head Scope 视频的增量 vs Baseline 指标
+
+M1/M2/M3 的 Top100、Bottom100、All-Heads 视频使用一个独立的 CPU 增量阶段。它读取每个 seed 已冻结的 Baseline CoTracker tube，只把 tube 当作**固定空间 ROI**，计算全帧、target ROI、全部对象 ROI 外的像素和时间差分变化。每个视频卡片下方默认折叠显示明细；页面顶部按影响分降序显示当前已经计算的结果，未生成或未计算项不按 `0` 排名。
+
+| 量 | 精确定义 | 读法 |
+|---|---|---|
+| Global SSIM | `mean_t SSIM(I_abl(t), I_base(t))` | 越小表示全画面变化越大 |
+| Global MAE | `mean abs(I_abl-I_base)/255` | 越大表示全画面像素影响越强 |
+| Global Δ-MAE | `mean abs(ΔI_abl-ΔI_base)/255` | 越大表示逐帧变化模式差异越强 |
+| Target ROI MAE | Baseline 冻结对象 tube 凸包 ROI 内的 MAE | 越大表示目标对象所在区域的位置/外观变化越强 |
+| Target ROI Δ-MAE | 相邻两帧冻结 ROI 并集内的 Δ-MAE | 越大表示目标区域动态变化越强 |
+| Outside-object MAE / Δ-MAE | 排除全部冻结对象 ROI 后的对应误差 | 越大表示背景或其他区域 spillover 越强 |
+| 绝对影响分 | `100×[0.20×(1−SSIM)+0.15×Global MAE+0.15×Global Δ-MAE+0.30×Target ROI MAE+0.20×Target ROI Δ-MAE]` | 越大只表示相对同 seed Baseline 的可见干预越强；不是质量、物理正确性或 GT 误差 |
+
+这个快速阶段不包含候选视频 CoTracker 轨迹、SAM2 形状、RAFT、DINOv2、LPIPS、VBench 或 simulator GT，不能用快速影响分替代 #1–#25 完整报告。它的作用是让数千个正在生成的 Head Scope 视频先得到口径一致、可增量更新的 Baseline-effect 排序。
+
+```bash
+cd /home/gaoya/Code_Video/DiffTrack-main
+bash AAA_my_test/object_query_ablation_metrics/bench.sh \
+  /data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1 \
+  --head-scope-baseline --workers 6 --watch-seconds 60
+```
+
+单 seed 报告位于 `/data/gaoya/agent-data/outputs/object_query_ablation_metrics/head_scope_baseline_fast/<case>/seed_<seed>/report.json`，跨 case/seed 明细与按实验聚合的排序位于 `head_scope_baseline_fast/ranking.json`。
+
+### 12.3 生成与单阶段重跑
 
 ```bash
 cd /home/gaoya/Code_Video/DiffTrack-main

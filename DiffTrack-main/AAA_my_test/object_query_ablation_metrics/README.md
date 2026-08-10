@@ -18,6 +18,11 @@ The evaluation has two references:
 The web page is exposed by the existing 8092 viewer at
 `/object-query-ablation-metrics` after all stages have generated `report.json`.
 
+The M1/M2/M3 Head-Scope grid also has an incremental, CPU-only Baseline-effect
+stage.  It is deliberately separate from the 25-metric model-backed report: it
+measures full-frame, frozen target-ROI and outside-object image/temporal change,
+then writes the values into a collapsed panel below each generated video.
+
 ## One-command evaluation
 
 Use `bench.sh` with either one `seed_XXXXX` result directory or its parent case
@@ -52,6 +57,29 @@ Use `--overwrite` only when cached model outputs must be regenerated.
 `--skip-vbench` and `--no-aggregate` are debugging controls and therefore do
 not represent the default complete evaluation. Run `bench.sh --help` for the
 full interface.
+
+## Incremental M1/M2/M3 Head-Scope metrics
+
+This mode accepts one `seed_*` directory, a case directory, or the complete
+temporal-tube experiment root.  It discovers completed Top100, Bottom100 and
+All-Heads M1/M2/M3 variants from their manifests and skips unchanged videos by
+file signature.
+
+```bash
+cd /home/gaoya/Code_Video/DiffTrack-main
+bash AAA_my_test/object_query_ablation_metrics/bench.sh \
+  /data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1 \
+  --head-scope-baseline --workers 6 --watch-seconds 60
+```
+
+Reports are written to
+`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/head_scope_baseline_fast/<case>/seed_<seed>/report.json`;
+the cross-case/seed ranking is `head_scope_baseline_fast/ranking.json`.
+`impact_score_0_100` is an absolute visual intervention-strength score versus
+the same-seed Baseline.  Larger means more visible change, not better/worse
+generation and not greater physical error.  This fast report must not be called
+CoTracker trajectory, SAM2 shape, RAFT, DINOv2, LPIPS, VBench or simulator-GT
+evaluation; those remain in the complete pipeline above.
 
 ## Manual stages (advanced)
 

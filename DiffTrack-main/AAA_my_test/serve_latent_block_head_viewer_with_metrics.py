@@ -1637,6 +1637,10 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_TUBE_ROOT = (
     WAN22_TI2V_LEGACY_PHYSICIQ67_REQUESTED_ROOT
     / "attention_matrix_ablations_temporal_tube_v1"
 )
+WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPE_METRICS_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/object_query_ablation_metrics/"
+    "head_scope_baseline_fast"
+)
 WAN22_TI2V_LEGACY_PHYSICIQ67_VBENCH_METRICS = (
     ("vbench_subject_consistency", "Subject"),
     ("vbench_background_consistency", "Background"),
@@ -2828,6 +2832,29 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
     ]
     targets = [("single_object", region) for region in regions]
     targets.append(("all_objects", ""))
+    metric_report_path = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPE_METRICS_ROOT
+        / case
+        / f"seed_{seed:05d}"
+        / "report.json"
+    )
+    metric_report = {}
+    metric_records = {}
+    try:
+        metric_report = json.loads(metric_report_path.read_text(encoding="utf-8"))
+        if (
+            metric_report.get("case") != case
+            or int(metric_report.get("seed", -1)) != seed
+        ):
+            raise ValueError("head-scope metric report identity mismatch")
+        metric_records = {
+            str(row["variant_id"]): row
+            for row in metric_report.get("records", [])
+            if isinstance(row, dict) and row.get("variant_id")
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        metric_report = {}
+        metric_records = {}
     records = []
     for head_scope in head_scopes:
         expected_entries = scope_entries[head_scope]
@@ -2891,6 +2918,7 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
                         "variant_id": variant,
                         "ready": ready,
                         "error": error,
+                        "baseline_metrics": metric_records.get(str(variant)),
                         "temporal_directional": mask_mode
                         in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS,
                     }
@@ -2904,6 +2932,36 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
         "ranking_tag": ranking_tag,
         "head_scopes": list(head_scopes),
         "head_ranking_path": str(ranking_path),
+        "metric_report_ready": bool(metric_records),
+        "metric_report_path": str(metric_report_path),
+        "metric_definitions": metric_report.get("metric_definitions", {}),
+        "impact_ranking": sorted(
+            (
+                {
+                    "variant_id": row["variant_id"],
+                    "target_scope": row.get("target_scope"),
+                    "region": row.get("region"),
+                    "mask_mode": row.get("mask_mode"),
+                    "head_scope": row.get("head_scope"),
+                    "impact_rank_within_case_seed": row.get(
+                        "impact_rank_within_case_seed"
+                    ),
+                    "impact_score_0_100": row.get("metrics", {}).get(
+                        "impact_score_0_100"
+                    ),
+                    "spillover_score_0_100": row.get("metrics", {}).get(
+                        "spillover_score_0_100"
+                    ),
+                }
+                for row in metric_records.values()
+                if row.get("variant_id")
+                in {str(record["variant_id"]) for record in records}
+            ),
+            key=lambda row: (
+                -float(row.get("impact_score_0_100") or -1),
+                str(row.get("variant_id") or ""),
+            ),
+        ),
         "records": records,
     }
 
@@ -3667,7 +3725,29 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         1,
     )
 
-    head_scope_renderer = r'''function renderM123HeadScopes(s,base){const panel=$('m123HeadScopePanel'),payload=s.m123_head_scope_ablations;if(!payload?.ready||!Array.isArray(payload.records)){panel.hidden=true;panel.innerHTML='';return}panel.hidden=false;const records=payload.records,scopeCatalog=[['top100','Top100 PCK Heads','S039 frozen ranks 1–100'],['bottom100','Bottom100 PCK Heads','S039 frozen ranks 621–720'],['all720','All Heads · 720 layer-heads','30 layers × 24 heads']],availableScopes=new Set(records.map(r=>r.head_scope)),scopes=scopeCatalog.filter(([scope])=>availableScopes.has(scope)),ops=[{id:'M1',base:'self',flow:'R_tk K/V ──X──> R_tq Query',target:'R',source:'R',theory:'诊断对象 tube 内部 Value 对对象 Query 的自支持与跨时传播。'},{id:'M2',base:'incoming',flow:'C_tk K/V ──X──> R_tq Query',target:'R',source:'C',theory:'诊断环境、背景和其他对象 Value 向对象 Query 输入上下文。'},{id:'M3',base:'outgoing',flow:'R_tk K/V ──X──> C_tq Query',target:'C',source:'R',theory:'诊断对象 Value 向环境和其他对象 Query 的广播。'}],times=[['only','All-time','所有 tk'],['same','Same','tk=tq'],['future','Future','tk<tq'],['past','Past','tk>tq']],targets=[...new Set(records.map(r=>r.target_scope==='single_object'?`single_object::${r.region}`:'all_objects::'))].map(key=>{const [target_scope,region='']=key.split('::');return {target_scope,region,label:target_scope==='single_object'?`Selected object · ${region}`:'All objects union'}}),find=(target,scope,mode)=>records.find(r=>r.target_scope===target.target_scope&&String(r.region||'')===target.region&&r.head_scope===scope&&r.mask_mode===mode),formula=(op,predicate)=>`Y′_${op.target}(tq)=Y_${op.target}(tq)−Σ_{${predicate}} A[${op.target}_tq,${op.source}_tk]V_${op.source}(tk)`,card=(target,scope,scopeLabel,scopeDetail,op,time)=>{const suffix=time[0]==='only'?'only':time[0],mode=`${op.base}_${suffix}`,r=find(target,scope,mode);if(!r?.ready)return '';const src=`${api}/temporal-tube-ablation-video?${base}&target_scope=${encodeURIComponent(target.target_scope)}&mask_mode=${encodeURIComponent(mode)}&top_n=${r.head_count}&head_scope=${encodeURIComponent(scope)}${target.region?`&region=${encodeURIComponent(target.region)}`:''}`;return `<figure><video controls muted playsinline preload="metadata" src="${src}"></video><figcaption><strong>${e(op.id)}-${e(time[1])} · ${e(scopeLabel)}</strong><span class="caption-protocol">${e(scopeDetail)} · ${r.head_count} layer-heads</span><span class="caption-flow"><b>切断：</b>${e(op.flow)} · ${e(time[2])}</span><span class="caption-exact"><b>精确计算：</b>${e(formula(op,time[2]))}</span><span class="caption-exact"><b>理论诊断：</b>${e(op.theory)}</span></figcaption></figure>`},targetSections=targets.map(target=>{const opSections=ops.map(op=>{const scopeRows=scopes.map(([scope,scopeLabel,scopeDetail])=>{const cards=times.map(time=>card(target,scope,scopeLabel,scopeDetail,op,time)).filter(Boolean);if(!cards.length)return '';return `<div class="m123-scope-row"><div class="m123-scope-heading"><strong>${e(scopeLabel)}</strong><span>${e(scopeDetail)} · ${cards.length}/4 已生成</span></div><div class="m123-video-grid">${cards.join('')}</div></div>`}).join('');return scopeRows?`<section class="m123-op"><h4>${e(op.id)} · ${e(op.flow)}</h4>${scopeRows}</section>`:''}).join('');return opSections?`<section class="m123-target"><h3>${e(target.label)}</h3>${opSections}</section>`:''}).join(''),done=records.filter(r=>r.ready).length,expected=records.length,scopeText=scopes.map(x=>x[1]).join(' / '),baseline=s.video_ready?`<figure class="m123-baseline"><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline · seed=${s.seed} · No intervention</strong></figcaption></figure>`:'';panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果对照</h2><p>当前比较 ${e(scopeText)}；ranking=${e(payload.ranking_tag||'frozen134')}。每个集合均比较 All-time / Same / Future / Past；干预覆盖 40 个去噪步和 conditional/unconditional 两个 CFG 分支。只展示已生成视频，当前 ${done}/${expected}。</p></div>${baseline}${targetSections}`}
+    head_scope_renderer = r'''function renderM123HeadScopes(s,base){
+const panel=$('m123HeadScopePanel'),payload=s.m123_head_scope_ablations;
+if(!payload?.ready||!Array.isArray(payload.records)){panel.hidden=true;panel.innerHTML='';return}
+panel.hidden=false;
+const records=payload.records,
+scopeCatalog=[['top100','Top100 PCK Heads','S039 frozen ranks 1–100'],['bottom100','Bottom100 PCK Heads','S039 frozen ranks 621–720'],['all720','All Heads · 720 layer-heads','30 layers × 24 heads']],
+availableScopes=new Set(records.map(r=>r.head_scope)),
+scopes=scopeCatalog.filter(([scope])=>availableScopes.has(scope)),
+ops=[{id:'M1',base:'self',flow:'R_tk K/V ──X──> R_tq Query',target:'R',source:'R',theory:'诊断对象 tube 内部 Value 对对象 Query 的自支持与跨时传播。'},{id:'M2',base:'incoming',flow:'C_tk K/V ──X──> R_tq Query',target:'R',source:'C',theory:'诊断环境、背景和其他对象 Value 向对象 Query 输入上下文。'},{id:'M3',base:'outgoing',flow:'R_tk K/V ──X──> C_tq Query',target:'C',source:'R',theory:'诊断对象 Value 向环境和其他对象 Query 的广播。'}],
+times=[['only','All-time','所有 tk'],['same','Same','tk=tq'],['future','Future','tk<tq'],['past','Past','tk>tq']],
+targets=[...new Set(records.map(r=>r.target_scope==='single_object'?`single_object::${r.region}`:'all_objects::'))].map(key=>{const [target_scope,region='']=key.split('::');return {target_scope,region,label:target_scope==='single_object'?`Selected object · ${region}`:'All objects union'}}),
+find=(target,scope,mode)=>records.find(r=>r.target_scope===target.target_scope&&String(r.region||'')===target.region&&r.head_scope===scope&&r.mask_mode===mode),
+formula=(op,predicate)=>`Y′_${op.target}(tq)=Y_${op.target}(tq)−Σ_{${predicate}} A[${op.target}_tq,${op.source}_tk]V_${op.source}(tk)`,
+num=(value,digits=4)=>Number.isFinite(Number(value))?Number(value).toFixed(digits):'—',
+modeLabel=mode=>{const op=mode.startsWith('self_')?'M1':mode.startsWith('incoming_')?'M2':'M3',time=mode.endsWith('_only')?'All-time':mode.endsWith('_same')?'Same':mode.endsWith('_future')?'Future':'Past';return `${op}-${time}`},
+metricDetails=r=>{const row=r.baseline_metrics;if(!row)return `<details class="m123-metrics pending"><summary>vs Baseline 指标待计算</summary><p>视频已生成，但增量 bench 尚未写入该 variant。刷新后会自动出现。</p></details>`;const m=row.metrics,g=m.global,t=m.target_roi,o=m.outside_objects,rank=row.impact_rank_within_case_seed;return `<details class="m123-metrics"><summary>vs Baseline · 影响分 ${num(m.impact_score_0_100)} · case 内 #${num(rank,0)}</summary><div class="m123-metric-body"><table><tbody><tr><th>绝对影响分 ↑</th><td>${num(m.impact_score_0_100)}</td></tr><tr><th>Global SSIM ↓</th><td>${num(g.ssim_mean)}</td></tr><tr><th>Global MAE ↑</th><td>${num(g.mae_0_1)}</td></tr><tr><th>Global Δ-MAE ↑</th><td>${num(g.temporal_delta_mae_0_1)}</td></tr><tr><th>${e(row.target_roi_key)} ROI MAE ↑</th><td>${num(t.mae_0_1)}</td></tr><tr><th>${e(row.target_roi_key)} ROI Δ-MAE ↑</th><td>${num(t.temporal_delta_mae_0_1)}</td></tr><tr><th>Outside-object MAE ↑</th><td>${num(o.mae_0_1)}</td></tr><tr><th>Outside-object Δ-MAE ↑</th><td>${num(o.temporal_delta_mae_0_1)}</td></tr><tr><th>Spillover 分 ↑</th><td>${num(m.spillover_score_0_100)}</td></tr></tbody></table><p><b>影响分：</b>100×[0.20×(1−SSIM)+0.15×Global MAE+0.15×Global Δ-MAE+0.30×Target ROI MAE+0.20×Target ROI Δ-MAE]。它只衡量相对 Baseline 的可见干预强度，不代表质量或物理正确性；ROI 来自同 seed Baseline 冻结 CoTracker tube。</p></div></details>`},
+card=(target,scope,scopeLabel,scopeDetail,op,time)=>{const suffix=time[0]==='only'?'only':time[0],mode=`${op.base}_${suffix}`,r=find(target,scope,mode);if(!r?.ready)return '';const src=`${api}/temporal-tube-ablation-video?${base}&target_scope=${encodeURIComponent(target.target_scope)}&mask_mode=${encodeURIComponent(mode)}&top_n=${r.head_count}&head_scope=${encodeURIComponent(scope)}${target.region?`&region=${encodeURIComponent(target.region)}`:''}`;return `<figure><video controls muted playsinline preload="metadata" src="${src}"></video><figcaption><strong>${e(op.id)}-${e(time[1])} · ${e(scopeLabel)}</strong><span class="caption-protocol">${e(scopeDetail)} · ${r.head_count} layer-heads</span><span class="caption-flow"><b>切断：</b>${e(op.flow)} · ${e(time[2])}</span><span class="caption-exact"><b>精确计算：</b>${e(formula(op,time[2]))}</span><span class="caption-exact"><b>理论诊断：</b>${e(op.theory)}</span></figcaption>${metricDetails(r)}</figure>`},
+targetSections=targets.map(target=>{const opSections=ops.map(op=>{const scopeRows=scopes.map(([scope,scopeLabel,scopeDetail])=>{const cards=times.map(time=>card(target,scope,scopeLabel,scopeDetail,op,time)).filter(Boolean);if(!cards.length)return '';return `<div class="m123-scope-row"><div class="m123-scope-heading"><strong>${e(scopeLabel)}</strong><span>${e(scopeDetail)} · ${cards.length}/4 已生成</span></div><div class="m123-video-grid">${cards.join('')}</div></div>`}).join('');return scopeRows?`<section class="m123-op"><h4>${e(op.id)} · ${e(op.flow)}</h4>${scopeRows}</section>`:''}).join('');return opSections?`<section class="m123-target"><h3>${e(target.label)}</h3>${opSections}</section>`:''}).join(''),
+ranking=(payload.impact_ranking||[]).filter(r=>Number.isFinite(Number(r.impact_score_0_100))),
+rankingPanel=ranking.length?`<section class="m123-impact-ranking"><h3>vs Baseline 影响排序 · 当前已测 ${ranking.length} 个视频</h3><p>按绝对影响分降序；同一公式用于 object_A/B、all_objects 与各 head scope。分数越大只表示视频相对 Baseline 改变越明显。</p><ol>${ranking.slice(0,15).map(r=>`<li><b>${e(r.target_scope==='single_object'?(r.region||'object'):'all_objects')} · ${e(modeLabel(r.mask_mode))} · ${e(r.head_scope)}</b><span>影响 ${num(r.impact_score_0_100)} · spillover ${num(r.spillover_score_0_100)}</span></li>`).join('')}</ol></section>`:`<section class="m123-impact-ranking pending"><h3>vs Baseline 影响排序待计算</h3><p>增量 bench 会在视频生成后自动写入；未计算项不会按 0 排名。</p></section>`,
+done=records.filter(r=>r.ready).length,expected=records.length,scopeText=scopes.map(x=>x[1]).join(' / '),baseline=s.video_ready?`<figure class="m123-baseline"><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline · seed=${s.seed} · No intervention</strong></figcaption></figure>`:'';
+panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果对照</h2><p>当前比较 ${e(scopeText)}；ranking=${e(payload.ranking_tag||'frozen134')}。每个集合均比较 All-time / Same / Future / Past；干预覆盖 40 个去噪步和 conditional/unconditional 两个 CFG 分支。只展示已生成视频，当前 ${done}/${expected}。</p></div>${rankingPanel}${baseline}${targetSections}`
+}
 '''
     renderer_anchor = "function renderAblations(s,base){"
     if page.count(renderer_anchor) != 1:
@@ -3704,11 +3784,48 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
         ".m123-head-panel{margin:18px 0 32px;padding:14px;border:2px solid #176654;border-radius:16px;background:#eaf5f1}.m123-title{padding:12px;border-left:7px solid #176654;background:#fff}.m123-title h2{margin:0 0 7px}.m123-baseline{width:min(520px,100%);margin:14px 0}.m123-target{margin:22px 0;padding:10px;background:#fff}.m123-target>h3{margin:0 -10px 12px;padding:9px 12px;background:#17443a;color:#fff}.m123-op{margin:14px 0 24px;border:1px solid #9fbdb4}.m123-op>h4{margin:0;padding:9px 11px;background:#d9ebe5}.m123-scope-row{padding:9px;border-top:1px solid #c9ddd6}.m123-scope-heading{display:flex;justify-content:space-between;gap:12px;align-items:baseline;padding:4px 2px 8px}.m123-scope-heading span{font:11px ui-monospace,monospace}.m123-video-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.m123-video-grid figure{min-width:0}.m123-video-grid figcaption{line-height:1.4}@media(max-width:1400px){.m123-video-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.m123-video-grid{grid-template-columns:1fr}.m123-scope-heading{align-items:flex-start;flex-direction:column}}</style>",
         1,
     )
+    page = page.replace(
+        "</style>",
+        ".m123-metrics{margin:0 8px 9px;border:1px solid #8caaa1;background:#f6fbf9}.m123-metrics summary{cursor:pointer;padding:8px 9px;font:700 11px/1.4 ui-monospace,monospace;color:#17443a}.m123-metrics[open] summary{border-bottom:1px solid #b9cec7}.m123-metric-body{padding:7px}.m123-metric-body table{width:100%;font:11px/1.35 ui-monospace,monospace}.m123-metric-body th{text-align:left}.m123-metric-body td{text-align:right;font-weight:800}.m123-metric-body p{margin:8px 2px 2px;font-size:11px;line-height:1.45}.m123-impact-ranking{margin:13px 0;padding:12px;border-left:7px solid #b95031;background:#fff}.m123-impact-ranking h3{margin:0 0 6px}.m123-impact-ranking ol{margin:10px 0 0;padding-left:27px;columns:2;column-gap:28px}.m123-impact-ranking li{break-inside:avoid;margin:0 0 7px;padding:5px 7px;background:#f7f3e9}.m123-impact-ranking li b,.m123-impact-ranking li span{display:block}.m123-impact-ranking li span{font:11px ui-monospace,monospace;color:#695948}@media(max-width:900px){.m123-impact-ranking ol{columns:1}}</style>",
+        1,
+    )
 
     progress_start = page.index("const temporalProgress=catalog=>")
     progress_end = page.index(";async function pollDirectionalCompletion", progress_start)
-    head_scope_progress = r'''const temporalProgress=catalog=>{const samples=(catalog.samples||[]).filter(x=>x.case==='0613pybullet_sample_001460_w002'&&Array.isArray(x.temporal_tube_attention_matrix_ablations)),directional=samples.flatMap(x=>x.temporal_tube_attention_matrix_ablations.filter(r=>r.temporal_directional)),headSamples=(catalog.samples||[]).filter(x=>Array.isArray(x.m123_head_scope_ablations?.records)),headRowsBySample=headSamples.map(x=>{const rows=x.m123_head_scope_ablations.records,isPilot=x.case==='0613pybullet_sample_001460_w002'&&Number(x.seed)===47326;return {rows:isPilot?rows.filter(r=>r.head_scope!=='top100'):rows,complete:false}}),headRows=headRowsBySample.flatMap(x=>x.rows),ready=directional.filter(r=>r.ready).length+headRows.filter(r=>r.ready).length,expected=directional.length+headRows.length,completeSeeds=headRowsBySample.filter(x=>x.rows.length>0&&x.rows.every(r=>r.ready)).length;return {ready,expected,completeSeeds,seedCount:headRowsBySample.length}}'''
+    head_scope_progress = r'''const temporalProgress=catalog=>{const samples=(catalog.samples||[]).filter(x=>x.case==='0613pybullet_sample_001460_w002'&&Array.isArray(x.temporal_tube_attention_matrix_ablations)),directional=samples.flatMap(x=>x.temporal_tube_attention_matrix_ablations.filter(r=>r.temporal_directional)),headSamples=(catalog.samples||[]).filter(x=>Array.isArray(x.m123_head_scope_ablations?.records)),headRowsBySample=headSamples.map(x=>{const rows=x.m123_head_scope_ablations.records,isPilot=x.case==='0613pybullet_sample_001460_w002'&&Number(x.seed)===47326;return {rows:isPilot?rows.filter(r=>r.head_scope!=='top100'):rows,complete:false}}),headRows=headRowsBySample.flatMap(x=>x.rows),ready=directional.filter(r=>r.ready).length+headRows.filter(r=>r.ready).length,measured=headRows.filter(r=>r.ready&&r.baseline_metrics).length,expected=directional.length+headRows.length,completeSeeds=headRowsBySample.filter(x=>x.rows.length>0&&x.rows.every(r=>r.ready)).length;return {ready,measured,expected,completeSeeds,seedCount:headRowsBySample.length}}'''
     page = page[:progress_start] + head_scope_progress + page[progress_end:]
+    page = page.replace(
+        "if(old.expected&&old.ready===old.expected){if(directionalPoll)clearInterval(directionalPoll);return}",
+        "if(old.expected&&old.ready===old.expected&&old.measured>=old.ready){if(directionalPoll)clearInterval(directionalPoll);return}",
+        1,
+    )
+    page = page.replace(
+        "Temporal M1/M2/M3 Same/Future/Past ${next.ready}/${next.expected} · seeds ${next.completeSeeds}/${next.seedCount} · 完成后自动刷新",
+        "Temporal/Head Scope ${next.ready}/${next.expected} · vs Baseline 指标 ${next.measured}/${next.ready} · seeds ${next.completeSeeds}/${next.seedCount} · 自动刷新",
+        1,
+    )
+    page = page.replace(
+        "if(next.completeSeeds>old.completeSeeds||next.ready===next.expected){if(next.ready===next.expected&&directionalPoll)clearInterval(directionalPoll);await load();",
+        "if(next.completeSeeds>old.completeSeeds||next.measured>old.measured||next.ready===next.expected){if(next.ready===next.expected&&next.measured>=next.ready&&directionalPoll)clearInterval(directionalPoll);await load();",
+        1,
+    )
+    global_replay_button = '<button id="replay">重新播放</button>'
+    if page.count(global_replay_button) != 1:
+        raise RuntimeError("PhysicIQ67 global replay button changed")
+    page = page.replace(global_replay_button, "", 1)
+
+    section_replay_css = r'''
+.section-replay-toolbar{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin:0 0 8px}.section-replay{flex:0 0 auto;padding:6px 10px;border:1px solid #8c7b63;border-radius:7px;background:#fffaf0;color:#17443a;cursor:pointer;font:800 12px/1.2 ui-monospace,monospace}.section-replay:hover{background:#17443a;color:#fff}.section-replay:focus-visible{outline:3px solid #d29c35;outline-offset:2px}.object-protocol-heading .section-replay,.object-ablation-heading .section-replay,.m123-scope-heading .section-replay{margin-left:auto}.object-ablation-heading .section-replay{color:#17443a}.requested-top100>.section-replay-toolbar{grid-column:1/-1}.tube-baseline>.section-replay-toolbar,.m123-baseline>.section-replay-toolbar{margin:0 0 7px}
+'''
+    if page.count("</style>") != 1:
+        raise RuntimeError("PhysicIQ67 style boundary changed")
+    page = page.replace("</style>", section_replay_css + "</style>", 1)
+
+    global_replay_listener = "$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));"
+    if page.count(global_replay_listener) != 1:
+        raise RuntimeError("PhysicIQ67 global replay listener changed")
+    section_replay_script = r'''const replaySectionSelectors=['.media','.ablation-baseline','.tube-baseline','.requested-top100','.object-protocol-row','.control-row','.m123-baseline','.m123-scope-row'];function decorateReplaySections(root=document){root.querySelectorAll(replaySectionSelectors.join(',')).forEach(section=>{if(section.dataset.replaySection||!section.querySelector('video'))return;section.dataset.replaySection='1';const button=document.createElement('button');button.type='button';button.className='section-replay';button.textContent='重播本板块';button.setAttribute('aria-label','从头播放本板块全部视频');let heading=null;if(section.matches('.object-protocol-row'))heading=section.querySelector(':scope > .object-protocol-heading');else if(section.matches('.control-row'))heading=section.querySelector(':scope > .object-ablation-heading');else if(section.matches('.m123-scope-row'))heading=section.querySelector(':scope > .m123-scope-heading');if(heading)heading.append(button);else{const toolbar=document.createElement('div');toolbar.className='section-replay-toolbar';toolbar.append(button);section.prepend(toolbar)}})}function replaySection(button){const section=button.closest('[data-replay-section]');if(!section)return;const videos=[...section.querySelectorAll('video')];videos.forEach(video=>{const play=()=>{video.currentTime=0;video.play().catch(()=>{})};video.pause();if(video.readyState>=1)play();else video.addEventListener('loadedmetadata',play,{once:true})});const label=button.textContent;button.textContent=`已重播 ${videos.length} 个视频`;setTimeout(()=>{button.textContent=label},1200)}document.addEventListener('click',event=>{const button=event.target.closest('.section-replay');if(button)replaySection(button)});const replayObserver=new MutationObserver(()=>decorateReplaySections());replayObserver.observe(document.querySelector('main'),{childList:true,subtree:true});decorateReplaySections();'''
+    page = page.replace(global_replay_listener, section_replay_script, 1)
     return page
 
 
