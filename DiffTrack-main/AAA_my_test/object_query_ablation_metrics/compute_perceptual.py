@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ from AAA_my_test.object_query_ablation_metrics.common import (  # noqa: E402
     load_inventory,
     load_video_frames,
     safe_id,
+    sha256_file,
 )
 
 
@@ -256,6 +258,52 @@ def main() -> None:
     montage_root = output / "montages"
     feature_root.mkdir(parents=True, exist_ok=True)
     montage_root.mkdir(parents=True, exist_ok=True)
+    report_path = output / "perceptual_metrics.json"
+    existing_payload: dict[str, Any] = {}
+    if report_path.is_file() and not args.overwrite:
+        try:
+            candidate_payload = json.loads(report_path.read_text(encoding="utf-8"))
+            if isinstance(candidate_payload, dict):
+                existing_payload = candidate_payload
+        except (OSError, ValueError, json.JSONDecodeError):
+            existing_payload = {}
+
+    def record_complete(record: dict[str, Any], candidate: dict[str, Any]) -> bool:
+        if str(record.get("id") or "") != str(candidate["id"]):
+            return False
+        digest = record.get("video_sha256")
+        if digest and digest != sha256_file(Path(candidate["path"])):
+            return False
+        try:
+            for object_name in OBJECTS:
+                for reference_id in ("baseline", "source_gt_video"):
+                    metrics = record["objects"][object_name][reference_id]
+                    float(metrics["dino_cosine_mean"])
+                    float(metrics["lpips_mean"])
+                    montage_path = OUTPUT_ROOT / str(metrics["montage"])
+                    if not montage_path.is_file() or montage_path.stat().st_size == 0:
+                        return False
+            for reference_id in ("baseline", "source_gt_video"):
+                float(record["references"][reference_id]["outside_object_lpips_mean"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return True
+
+    existing = {
+        str(record.get("id")): record
+        for record in existing_payload.get("records", [])
+        if isinstance(record, dict)
+    }
+    pending = [
+        candidate
+        for candidate in candidates
+        if args.overwrite
+        or not record_complete(existing.get(str(candidate["id"]), {}), candidate)
+    ]
+    if not pending:
+        print(f"[perceptual:reuse] {len(candidates)} complete records", flush=True)
+        return
+
     ids = [row["id"] for row in videos]
     sides = crop_sides(ids)
 
@@ -297,10 +345,15 @@ def main() -> None:
             feature_cache[key] = dino_tokens(dino, image[ANCHORS], mask[ANCHORS], device, args.batch_size)
         return feature_cache[key]
 
-    records: list[dict[str, Any]] = []
-    for index, candidate in enumerate(candidates, start=1):
+    updates: dict[str, dict[str, Any]] = {}
+    for index, candidate in enumerate(pending, start=1):
         candidate_id = str(candidate["id"])
-        record: dict[str, Any] = {"id": candidate_id, "objects": {}, "references": {}}
+        record: dict[str, Any] = {
+            "id": candidate_id,
+            "video_sha256": sha256_file(Path(candidate["path"])),
+            "objects": {},
+            "references": {},
+        }
         for object_index, object_name in enumerate(OBJECTS):
             candidate_crops, _candidate_crop_masks = crops(candidate_id, object_index)
             candidate_pooled, candidate_tokens = features(candidate_id, object_index)
@@ -338,8 +391,8 @@ def main() -> None:
                     round(float(value), 8) for value in outside_lpips.mean(axis=(1, 2))
                 ],
             }
-        records.append(record)
-        print(f"[{index:02d}/{len(candidates):02d}] perceptual {candidate_id}", flush=True)
+        updates[candidate_id] = record
+        print(f"[{index:02d}/{len(pending):02d}] perceptual {candidate_id}", flush=True)
         if len(frame_cache) > 6:
             for key in list(frame_cache):
                 if key not in {candidate_id, "baseline", "source_gt_video"}:
@@ -353,8 +406,13 @@ def main() -> None:
         gc.collect()
         torch.cuda.empty_cache()
 
+    records = [
+        updates.get(str(candidate["id"]))
+        or existing[str(candidate["id"])]
+        for candidate in candidates
+    ]
     atomic_json(
-        output / "perceptual_metrics.json",
+        report_path,
         {
             "schema_version": 1,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),

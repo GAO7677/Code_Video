@@ -88,15 +88,16 @@ def sha256_file(path: Path) -> str:
 
 def load_inventory(include_source: bool = False) -> list[dict[str, Any]]:
     payload = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
-    if (
-        payload.get("case") != CASE
-        or int(payload.get("seed", -1)) != SEED
-        or int(payload.get("video_count", -1)) != 49
-    ):
+    if payload.get("case") != CASE or int(payload.get("seed", -1)) != SEED:
         raise RuntimeError(f"inventory does not match {CASE} seed={SEED}")
     videos = [dict(row) for row in payload["videos"]]
-    if len(videos) != 49 or videos[0]["id"] != "baseline":
-        raise RuntimeError("expected baseline plus 48 ablation videos")
+    if int(payload.get("video_count", -1)) != len(videos):
+        raise RuntimeError("inventory video_count does not match videos")
+    if len(videos) < 2 or videos[0].get("id") != "baseline":
+        raise RuntimeError("expected baseline plus at least one ablation video")
+    ids = [str(row.get("id") or "") for row in videos]
+    if any(not identifier for identifier in ids) or len(ids) != len(set(ids)):
+        raise RuntimeError("inventory video IDs must be nonempty and unique")
     for row in videos:
         path = Path(row["path"])
         if not path.is_file():

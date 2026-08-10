@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
 from AAA_my_test.object_query_ablation_metrics.compute_head_scope_baseline_metrics import (  # noqa: E402
     DEFAULT_BASELINE_ROOT,
     HEAD_SCOPES,
+    MULTICASE_BASELINE_ROOT,
     PHYSICIQ67_BASELINE_ROOT,
     atomic_json,
     collect_candidates,
@@ -147,6 +148,7 @@ def locate_baseline(case: str, seed: int) -> Path:
     candidates = (
         DEFAULT_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",
         PHYSICIQ67_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",
+        MULTICASE_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",
     )
     baseline = next((path for path in candidates if path.is_file()), None)
     if baseline is None:
@@ -158,7 +160,7 @@ def locate_baseline(case: str, seed: int) -> Path:
 
 
 def load_track_cache(
-    path: Path, signature: dict[str, int]
+    path: Path, signature: dict[str, int], point_count: int
 ) -> tuple[np.ndarray, np.ndarray] | None:
     if not path.is_file():
         return None
@@ -168,8 +170,8 @@ def load_track_cache(
             visibility = arrays["visibility"].astype(bool)
             cached_signature = str(arrays["video_signature"].item())
         if (
-            tracks.shape != (FRAME_COUNT, 16, 2)
-            or visibility.shape != (FRAME_COUNT, 16)
+            tracks.shape != (FRAME_COUNT, point_count, 2)
+            or visibility.shape != (FRAME_COUNT, point_count)
             or cached_signature != signature_text(signature)
             or not np.isfinite(tracks).all()
         ):
@@ -177,6 +179,54 @@ def load_track_cache(
         return tracks, visibility
     except (OSError, KeyError, ValueError):
         return None
+
+
+def validate_frozen_baseline_inputs(seed_dir: Path) -> tuple[bool, str]:
+    """Validate the variable-object frozen query/track bundle used downstream."""
+    frozen_path = seed_dir / "frozen_baseline_tracks" / "tracks.npz"
+    manifest_path = seed_dir / "frozen_baseline_tracks" / "manifest.json"
+    if not frozen_path.is_file() or not manifest_path.is_file():
+        return False, "missing frozen Baseline tracks or manifest"
+    try:
+        with np.load(frozen_path, allow_pickle=False) as arrays:
+            tracks = arrays["tracks"]
+            visibility = arrays["visibility"]
+            query_points = arrays["query_points"]
+            region_names = [str(value) for value in arrays["region_names"].tolist()]
+            starts = arrays["point_starts"].astype(int).tolist()
+            ends = arrays["point_ends"].astype(int).tolist()
+        point_count = len(query_points)
+        if point_count <= 0 or query_points.shape != (point_count, 2):
+            return False, f"invalid query_points shape: {query_points.shape}"
+        if tracks.shape != (FRAME_COUNT, point_count, 2):
+            return False, f"invalid tracks shape: {tracks.shape}"
+        if visibility.shape != (FRAME_COUNT, point_count):
+            return False, f"invalid visibility shape: {visibility.shape}"
+        if not np.isfinite(tracks).all() or not np.isfinite(query_points).all():
+            return False, "tracks/query_points contain non-finite values"
+        if not region_names or not (
+            len(region_names) == len(starts) == len(ends)
+        ):
+            return False, "invalid region slice metadata"
+        if starts[0] != 0 or ends[-1] != point_count:
+            return False, "region slices do not span all query points"
+        for index, (start, end) in enumerate(zip(starts, ends, strict=True)):
+            if start < 0 or end <= start or end > point_count:
+                return False, f"invalid region slice {index}: [{start}, {end})"
+            if index and start != ends[index - 1]:
+                return False, f"non-contiguous region slice {index}: starts at {start}"
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        region_cache = Path(str(manifest["query_cache_dir"])) / "regions.npz"
+        with np.load(region_cache, allow_pickle=False) as arrays:
+            masks = arrays["masks_rhw"]
+        if masks.ndim != 3 or masks.shape[0] < len(region_names):
+            return False, f"invalid region mask shape: {masks.shape}"
+        if any(not np.asarray(mask).any() for mask in masks[: len(region_names)]):
+            return False, "one or more F00 region masks are empty"
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return False, f"invalid frozen Baseline inputs: {exc}"
+    return True, f"eligible ({len(region_names)} objects, {point_count} query points)"
 
 
 def object_centers(
@@ -318,7 +368,14 @@ def draw_track_panel(
     reference_valid: dict[str, np.ndarray] | None = None,
 ) -> np.ndarray:
     canvas = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-    colors = ((36, 170, 245), (232, 188, 42))
+    colors = (
+        (36, 170, 245),
+        (232, 188, 42),
+        (88, 205, 102),
+        (205, 95, 210),
+        (72, 205, 225),
+        (225, 120, 72),
+    )
     for object_index, (name, part) in enumerate(object_slices.items()):
         color = colors[object_index % len(colors)]
         for point_index in range(part.start or 0, part.stop or 0):
@@ -398,7 +455,7 @@ def render_overlay(
             body = np.concatenate((left, right), axis=1)
             header = np.full((48, body.shape[1], 3), (30, 62, 55), dtype=np.uint8)
             score = "N/A" if target_score is None else f"{target_score:.4f}"
-            cv2.putText(header, f"{variant_id} | trajectory impact={score} | orange=A, cyan=B", (12, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.56, (245, 245, 245), 1, cv2.LINE_AA)
+            cv2.putText(header, f"{variant_id} | trajectory impact={score} | colors=tracked objects", (12, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.56, (245, 245, 245), 1, cv2.LINE_AA)
             writer.append_data(cv2.cvtColor(np.concatenate((header, body), axis=0), cv2.COLOR_BGR2RGB))
     temporary.replace(path)
 
@@ -494,6 +551,9 @@ def main() -> None:
     baseline_path = locate_baseline(case, seed)
     baseline_signature = file_signature(baseline_path)
     frozen_path = seed_dir / "frozen_baseline_tracks" / "tracks.npz"
+    frozen_valid, frozen_reason = validate_frozen_baseline_inputs(seed_dir)
+    if not frozen_valid:
+        raise RuntimeError(f"invalid frozen baseline inputs: {frozen_reason}")
     with np.load(frozen_path, allow_pickle=False) as arrays:
         baseline_tracks = arrays["tracks"].astype(np.float32)
         baseline_visibility = arrays["visibility"].astype(bool)
@@ -501,7 +561,13 @@ def main() -> None:
         region_names = [str(value) for value in arrays["region_names"].tolist()]
         starts = arrays["point_starts"].astype(int).tolist()
         ends = arrays["point_ends"].astype(int).tolist()
-    if baseline_tracks.shape != (FRAME_COUNT, 16, 2) or len(query_points) != 16:
+    point_count = len(query_points)
+    if (
+        point_count < 1
+        or baseline_tracks.shape != (FRAME_COUNT, point_count, 2)
+        or baseline_visibility.shape != (FRAME_COUNT, point_count)
+        or not np.isfinite(query_points).all()
+    ):
         raise RuntimeError(f"invalid frozen baseline tracks: {frozen_path}")
     object_slices = {
         name: slice(start, end)
@@ -536,7 +602,11 @@ def main() -> None:
             signature = candidate["video_signature"]
             track_path = output_root / "tracks" / f"{variant}.npz"
             overlay_path = output_root / "overlays" / f"{variant}.mp4"
-            cached_tracks = None if args.overwrite else load_track_cache(track_path, signature)
+            cached_tracks = (
+                None
+                if args.overwrite
+                else load_track_cache(track_path, signature, point_count)
+            )
             candidate_frames = None
             if cached_tracks is None:
                 if model is None:

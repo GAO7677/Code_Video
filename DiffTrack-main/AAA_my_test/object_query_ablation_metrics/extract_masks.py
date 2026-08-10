@@ -85,8 +85,22 @@ def track_masks(
     points: np.ndarray,
     prompt_masks: np.ndarray,
     temporary_root: Path,
+    point_slices: list[slice] | None = None,
 ) -> np.ndarray:
-    masks = np.zeros((FRAME_COUNT, 2, HEIGHT, WIDTH), dtype=np.uint8)
+    object_count = len(prompt_masks)
+    if object_count < 1:
+        raise ValueError("at least one object prompt is required")
+    if point_slices is None:
+        if len(points) % object_count:
+            raise ValueError("query points cannot be divided across object prompts")
+        points_per_object = len(points) // object_count
+        point_slices = [
+            slice(index * points_per_object, (index + 1) * points_per_object)
+            for index in range(object_count)
+        ]
+    if len(point_slices) != object_count:
+        raise ValueError("point slice count does not match object prompt count")
+    masks = np.zeros((FRAME_COUNT, object_count, HEIGHT, WIDTH), dtype=np.uint8)
     with tempfile.TemporaryDirectory(prefix="sam2_001460_", dir=temporary_root) as tmp:
         frame_dir = Path(tmp)
         save_jpegs(frames, frame_dir)
@@ -97,14 +111,16 @@ def track_masks(
             async_loading_frames=False,
         )
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-            for object_index in range(2):
-                part = slice(object_index * 8, (object_index + 1) * 8)
+            for object_index, part in enumerate(point_slices):
+                object_points = points[part]
+                if not len(object_points):
+                    raise ValueError(f"object {object_index} has no query points")
                 predictor.add_new_points_or_box(
                     inference_state=state,
                     frame_idx=0,
                     obj_id=object_index + 1,
-                    points=points[part],
-                    labels=np.ones(8, dtype=np.int32),
+                    points=object_points,
+                    labels=np.ones(len(object_points), dtype=np.int32),
                     box=bbox_from_mask(prompt_masks[object_index]),
                 )
             for frame_index, object_ids, logits in predictor.propagate_in_video(
@@ -130,14 +146,9 @@ def main() -> None:
     temporary_root = OUTPUT_ROOT / "tmp"
     output.mkdir(parents=True, exist_ok=True)
     temporary_root.mkdir(parents=True, exist_ok=True)
-    points, _slices, prompt_masks = load_query_data()
+    points, point_slices, prompt_masks = load_query_data()
 
-    from sam2.build_sam import build_sam2_video_predictor
-
-    predictor = build_sam2_video_predictor(
-        SAM2_CONFIG, str(SAM2_CHECKPOINT), device=args.device
-    )
-    predictor.fill_hole_area = 0
+    predictor = None
     records = []
     try:
         for index, video in enumerate(videos, start=1):
@@ -148,9 +159,21 @@ def main() -> None:
             if cache_valid(mask_path, digest) and not args.overwrite:
                 print(f"[{index:02d}/{len(videos):02d}] reuse {video_id}", flush=True)
             else:
+                if predictor is None:
+                    from sam2.build_sam import build_sam2_video_predictor
+
+                    predictor = build_sam2_video_predictor(
+                        SAM2_CONFIG, str(SAM2_CHECKPOINT), device=args.device
+                    )
+                    predictor.fill_hole_area = 0
                 frames, _fps = load_video_frames(video_path)
                 masks = track_masks(
-                    predictor, frames, points, prompt_masks, temporary_root
+                    predictor,
+                    frames,
+                    points,
+                    prompt_masks,
+                    temporary_root,
+                    list(point_slices.values()),
                 )
                 atomic_npz(
                     mask_path,
@@ -187,9 +210,10 @@ def main() -> None:
                 }
             )
     finally:
-        del predictor
-        gc.collect()
-        torch.cuda.empty_cache()
+        if predictor is not None:
+            del predictor
+            gc.collect()
+            torch.cuda.empty_cache()
     atomic_json(
         output / "manifest.json",
         {

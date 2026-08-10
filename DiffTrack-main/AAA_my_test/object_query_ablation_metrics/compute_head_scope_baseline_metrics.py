@@ -31,6 +31,11 @@ PHYSICIQ67_BASELINE_ROOT = Path(
     "/data/gaoya/agent-data/outputs/"
     "wan22_ti2v_legacy_firstlatent_physiciq67_pck50/runs"
 )
+MULTICASE_BASELINE_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/"
+    "attention_zero_seed47326/multicase_multiseed_baselines"
+)
 DEFAULT_OUTPUT_BASE = Path(
     "/data/gaoya/agent-data/outputs/object_query_ablation_metrics/"
     "head_scope_baseline_fast"
@@ -483,6 +488,7 @@ def compute_seed(
     baseline_candidates = [
         args.baseline_root / case / f"seed_{seed:05d}" / "generated.mp4",
         PHYSICIQ67_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",
+        MULTICASE_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",
     ]
     baseline_path = next((path for path in baseline_candidates if path.is_file()), None)
     if baseline_path is None:

@@ -783,6 +783,7 @@ nvidia-smi --id=6,7 --query-gpu=index,memory.used,utilization.gpu --format=csv,n
 - 干预 Head Scope 是各视频实际消融的 `Top100`、`Bottom100` 或 `All720`。
 - 观察 Head 永远是冻结 S039 PCK ranking 的 Top100，用于跨实验统一比较。
 - Query 永远是 F04 的固定 Object A/B SAM2 queries，每个对象 8 点，latent `tq=1`。
+- 本 case 的实际生成分辨率是 `704×1280`，因此运行时 latent attention grid 为 `13×22×40=11440` tokens；F04 cache 的 `512×896` query 坐标按归一化位置映射到该 `22×40` 网格，不能沿用旧 `13×16×28` 常量。
 - 只抓 denoising `S039`；两个 CFG 调用平均。
 - `Before` 是该消融重放运行中进入当前算子前的 `softmax(QK^T/sqrt(d))`。
 - `Effective After` 只把该 M1/M2/M3 算子实际删除的 entries 设为 0，不重新归一化。
@@ -801,18 +802,26 @@ AAA_my_test/launch_legacy_m123_s039_top100_mean_tmux.sh
 AAA_my_test/test_m123_s039_top100_mean_capture.py
 ```
 
-当前队列：
+当前队列（按用户优先级改为 GPU 2/3 双 worker）：
 
 ```bash
 tmux attach -t m123_s039_top100_mean_capture
 ```
 
-该 session 的 GPU 0–3 worker 会等待各卡显存完全释放后再启动，每卡 27 项；不会使用 GPU 4，也不会覆盖已有 108 个 `generated.mp4`。
+该 session 当前只有 GPU 2/3 两个 worker，每卡 54 项；worker 已进入实际推理，不使用 GPU 4，也不会覆盖已有 108 个 `generated.mp4`。为腾出 GPU 2/3，本轮仅停止了旧 session `m123_priority_001460_then_latest` 中对应的 `:2`、`:3` 两个窗口；GPU 0/1/5/6/7 上的任务未改动。
 
-页面：
+首轮已验收 4 项并继续增量生成；每个完成目录包含 2 个 NPZ、Object A/B 各 3 张单行图和 1 张三行 comparison、`overlay_manifest.json`、`manifest.json`、`complete.json`。审计要求严格为 100 个物理 observation heads、每 head 两个 CFG 调用，即每对象 200 head instances。
+
+独立 Overlay 页面：
 
 ```text
-http://localhost:8092/wan22-ti2v-legacy-physiciq67-samples?v=15
+http://localhost:8092/object-query-m123-s039-top100-mean-overlays?v=4
 ```
 
-每个 M1/M2/M3 视频卡下方有 `S039 Fixed F04 Query · Top100 Mean` 折叠栏；页面每 20 秒检查一次新产物并增量刷新。
+页面按 Target、Head Scope、M1/M2/M3 和 All-time/Same/Future/Past 筛选，每 20 秒检查一次新产物并增量刷新。三行 comparison 的含义固定为：
+
+1. `Pre-mask / Before`：当前消融重放在 S039、进入当前算子前的实时 softmax，已包含上游干预效应，不是未消融 Baseline。
+2. `Effective After`：只将当前算子精确删除的 coefficient entries 设为 0；不重新 softmax、不重归一化、不改 Q/K/V。
+3. `Removed=max(Before-Effective After,0)`：当前算子在 observation Top100 中直接删除的 coefficient mass；不是相对 Baseline 的 attention 差，也不是视频运动差。
+
+总入口 `http://localhost:8092/` 的 `M1/M2/M3 Head-Scope Overlay` 卡片直接链接该独立页面。

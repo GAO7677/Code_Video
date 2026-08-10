@@ -174,7 +174,9 @@
 
 | 功能 | 代码路径 | 主要产物 |
 |---|---|---|
-| 一键调度 | `AAA_my_test/object_query_ablation_metrics/bench.sh` | 串行调度 VBench、CoTracker、SAM2、RAFT、DINO/LPIPS、统计、overlay、验证与聚合 |
+| 单 cohort 调度 | `AAA_my_test/object_query_ablation_metrics/bench.sh` | 串行调度 VBench、CoTracker、SAM2、RAFT、DINO/LPIPS、统计、overlay、验证与聚合；支持动态数量 inventory |
+| 一键增量补缺 | `AAA_my_test/object_query_ablation_metrics/bench_missing.sh` | 输入结果目录，自动发现 case/seed，只运行视频签名或必需资产不完整的流水线 |
+| 缺口规划与审计 | `AAA_my_test/object_query_ablation_metrics/fill_missing_metrics.py` | `--plan-only` 输出逐 case/seed 缺口；运行记录写入 `fill_missing_runs/*.json` |
 | 25 指标族展示元数据 | `AAA_my_test/object_query_ablation_metrics/metric_definitions.py` | `METRIC_DEFINITIONS` |
 | CoTracker 轨迹提取 | `AAA_my_test/object_query_ablation_metrics/extract_tracks.py` | `tracks/*.npz` |
 | SAM2 mask 提取 | `AAA_my_test/object_query_ablation_metrics/extract_masks.py` | `masks/*.npz` |
@@ -192,7 +194,44 @@
 | Head-Scope 排名 Markdown | `AAA_my_test/object_query_ablation_metrics/build_head_scope_trajectory_ranking_md.py` | `TRAJECTORY_METRICS_COMPLETE_RANKING.md` |
 | 8092 页面 | `AAA_my_test/serve_latent_block_head_viewer_with_metrics.py` | `/object-query-ablation-metrics` 与 M1/M2/M3 视频隐藏指标栏 |
 
-## 7. 解读约束
+## 7. 一键补全未运行指标
+
+```bash
+cd /home/gaoya/Code_Video/DiffTrack-main
+bash AAA_my_test/object_query_ablation_metrics/bench_missing.sh \
+  /absolute/path/to/result_directory \
+  --gpu 0
+```
+
+该入口自动识别两种输入：已有 `video_similarity_top100.json` 的 legacy
+cohort，以及包含 `case/seed/variant/{manifest.json,complete.json,generated.mp4}`
+的动态 M1/M2/M3 目录。默认依次审计并补算 `fast`、`trajectory`、
+`survival`、动态 `complete25` 和 legacy `legacy25`；用 `--stages` 可选择子集，
+例如 `--stages fast,trajectory,survival`。
+
+多 GPU 时使用 `--num-shards N --shard-index I`。case-seed 是不可拆分写入单元，
+按已生成视频数贪心均衡；只有 shard 0 执行全局 fast 和 legacy25，避免并发写同一
+报告。
+
+“缺失”的判定不是只看报告文件是否存在：还要求 record 的视频
+`size+mtime` 签名匹配，并检查 track、mask、feature、overlay、VBench 等必需
+资产。轨迹质量门失败导致的合法 `N/A` 不会被误判成未运行。未变化且资产完整
+的记录直接跳过；未指定 `--overwrite` 时不会强制重算缓存。
+
+动态 Complete-25 写入
+`head_scope_complete25/<case>/seed_<seed>/`，不会覆盖原来的 48-ablation
+legacy 报告。当前 simulator-GT 接触实现严格限定为 `states.npz` 中按
+`[sphere, box]` 排列的两对象协议；不满足时标记 `complete25_ineligible`，仍会
+计算 Head-Scope 三套指标，不会用错误 GT 或零值填充。
+
+只检查、不运行：
+
+```bash
+bash AAA_my_test/object_query_ablation_metrics/bench_missing.sh \
+  /absolute/path/to/result_directory --plan-only
+```
+
+## 8. 解读约束
 
 1. `vs Baseline` 衡量“消融产生多大效果”，不自动等于“生成变差”。
 2. `vs source/simulator GT` 才能用于讨论物理忠实度；source render 也不等于点对应 GT。

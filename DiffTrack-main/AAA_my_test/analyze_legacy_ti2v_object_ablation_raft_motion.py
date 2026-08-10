@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--flows-only",
         action="store_true",
-        help="extract/cache all 49 RAFT fields, then stop before standalone pair analysis",
+        help="extract/cache every inventory RAFT field, then stop before standalone pair analysis",
     )
     return parser.parse_args()
 
@@ -78,8 +78,13 @@ def load_inventory(path: Path, case: str, seed: int) -> list[dict[str, Any]]:
     if payload.get("case") != case or int(payload.get("seed", -1)) != seed:
         raise RuntimeError("pixel-similarity inventory does not match case/seed")
     videos = payload.get("videos")
-    if not isinstance(videos, list) or len(videos) != 49:
-        raise RuntimeError(f"expected 49 inventory videos, got {len(videos or [])}")
+    if not isinstance(videos, list) or len(videos) < 2:
+        raise RuntimeError(
+            f"expected baseline plus at least one inventory video, got {len(videos or [])}"
+        )
+    ids = [str(row.get("id") or "") for row in videos]
+    if ids[0] != "baseline" or any(not value for value in ids) or len(ids) != len(set(ids)):
+        raise RuntimeError("inventory must start with baseline and contain unique IDs")
     for row in videos:
         video_path = Path(str(row.get("path") or ""))
         if not video_path.is_file():
@@ -490,7 +495,8 @@ def main() -> None:
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     torch.use_deterministic_algorithms(True, warn_only=True)
-    model, transforms = load_model(args.weights, device)
+    model = None
+    transforms = None
 
     flow_paths: dict[str, Path] = {}
     extraction_records = []
@@ -507,6 +513,8 @@ def main() -> None:
             print(f"[{index:02d}/{len(videos):02d}] cached {record['id']}", flush=True)
         else:
             print(f"[{index:02d}/{len(videos):02d}] RAFT {record['id']}", flush=True)
+            if model is None or transforms is None:
+                model, transforms = load_model(args.weights, device)
             frames = decode_video(Path(record["path"]), args.width, args.height)
             flow = extract_flow(
                 frames,
@@ -534,7 +542,8 @@ def main() -> None:
             }
         )
 
-    del model
+    if model is not None:
+        del model
     if device.type == "cuda":
         torch.cuda.empty_cache()
 

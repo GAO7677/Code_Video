@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--require-vbench",
         action="store_true",
-        help="require finite official VBench scores for baseline and all 48 ablations",
+        help="require finite official VBench scores for baseline and every ablation",
     )
     return parser.parse_args()
 
@@ -61,8 +61,9 @@ def main() -> None:
     report_path = OUTPUT_ROOT / "report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     records = report["records"]
-    assert report["video_count"] == 49
-    assert report["ablation_count"] == 48 == len(records)
+    assert report["video_count"] == len(records) + 1
+    assert report["ablation_count"] == len(records)
+    assert len(records) >= 1
     assert [row["rank"] for row in METRIC_DEFINITIONS] == list(range(1, 26))
     assert len({row["id"] for row in METRIC_DEFINITIONS}) == 25
 

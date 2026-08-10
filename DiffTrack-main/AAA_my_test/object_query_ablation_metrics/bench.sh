@@ -32,6 +32,8 @@ Usage:
 RESULT_DIR may be either:
   1. seed_XXXXX/ containing video_similarity_top100.json; or
   2. its case directory containing one or more seed_XXXXX/ directories.
+It may also be an exact inventory JSON containing Baseline plus one or more
+ablations. Dynamic inventories should be run with --no-aggregate.
 For --head-scope-trajectory it is one seed_XXXXX/ directory containing the
 completed M1/M2/M3 Head-Scope variant subdirectories.
 
@@ -262,7 +264,6 @@ done
 [[ -f "${VBENCH_DRIVER}" ]] || die "missing VBench driver: ${VBENCH_DRIVER}"
 
 RESULT_INPUT="$(realpath -e -- "${RESULT_INPUT}")"
-[[ -d "${RESULT_INPUT}" ]] || die "RESULT_DIR is not a directory: ${RESULT_INPUT}"
 OUTPUT_BASE="$(realpath -m -- "${OUTPUT_BASE}")"
 case "${OUTPUT_BASE}" in
   /home/gaoya|/home/gaoya/*)
@@ -271,7 +272,9 @@ case "${OUTPUT_BASE}" in
 esac
 
 declare -a INVENTORIES=()
-if [[ -f "${RESULT_INPUT}/video_similarity_top100.json" ]]; then
+if [[ -f "${RESULT_INPUT}" ]]; then
+  INVENTORIES+=("${RESULT_INPUT}")
+elif [[ -f "${RESULT_INPUT}/video_similarity_top100.json" ]]; then
   INVENTORIES+=("${RESULT_INPUT}/video_similarity_top100.json")
 else
   while IFS= read -r inventory; do
@@ -308,12 +311,14 @@ seed = int(payload.get("seed", -1))
 videos = payload.get("videos")
 if not case or seed < 0:
     raise RuntimeError(f"invalid case/seed identity: {inventory_path}")
-if not isinstance(videos, list) or len(videos) != 49:
-    raise RuntimeError(f"expected baseline + 48 ablations, got {len(videos or [])}")
+if not isinstance(videos, list) or len(videos) < 2:
+    raise RuntimeError(
+        f"expected baseline plus at least one ablation, got {len(videos or [])}"
+    )
 if videos[0].get("id") != "baseline":
     raise RuntimeError("first inventory record must be baseline")
 ids = [str(row.get("id")) for row in videos]
-if len(set(ids)) != 49:
+if any(not identifier for identifier in ids) or len(set(ids)) != len(ids):
     raise RuntimeError("inventory video IDs are not unique")
 for row in videos:
     path = Path(str(row.get("path") or "")).expanduser().resolve()
@@ -335,14 +340,16 @@ print(seed)
 print(source_root)
 print(input_json)
 print(baseline)
+print(len(videos))
 PY
   )
-  [[ ${#identity[@]} -eq 5 ]] || die "failed to resolve inventory identity: ${inventory}"
+  [[ ${#identity[@]} -eq 6 ]] || die "failed to resolve inventory identity: ${inventory}"
   local case_name="${identity[0]}"
   local seed="${identity[1]}"
   local source_root="${METRICS_SOURCE_ROOT:-${identity[2]}}"
   local input_json="${identity[3]}"
   local baseline_video="${identity[4]}"
+  local video_count="${identity[5]}"
   local region_cache="${METRICS_REGION_CACHE:-${REGION_CACHE_BASE}/${case_name}}"
   local output_root="${OUTPUT_BASE}/${case_name}/$(printf 'seed_%05d' "${seed}")"
   local case_output_root="${OUTPUT_BASE}/${case_name}"
@@ -359,7 +366,7 @@ PY
     "missing simulator states: ${source_root}/states.npz"
 
   echo
-  echo "[bench:case] case=${case_name} seed=${seed} videos=49 gpu=${GPU}"
+  echo "[bench:case] case=${case_name} seed=${seed} videos=${video_count} gpu=${GPU}"
   echo "[bench:input] ${result_dir}"
   echo "[bench:baseline] ${baseline_video}"
   echo "[bench:source-json] ${input_json}"
@@ -375,7 +382,7 @@ PY
 
   if (( RUN_VBENCH == 1 )); then
     run "${WAN_PYTHON}" "${SCRIPT_DIR}/prepare_multiseed_vbench.py" \
-      --result-dir "${result_dir}" --output-root "${vbench_root}"
+      --inventory "${inventory}" --output-root "${vbench_root}"
     local metric
     local -a vbench_metrics=(
       vbench_subject_consistency

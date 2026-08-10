@@ -983,7 +983,7 @@ def main() -> None:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "case": CASE,
         "seed": SEED,
-        "video_count": 49,
+        "video_count": len(videos) - 1,
         "ablation_count": len(records),
         "references": {
             "baseline": str(video_map["baseline"]["path"]),

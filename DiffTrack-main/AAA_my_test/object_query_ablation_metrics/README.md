@@ -186,6 +186,34 @@ semantics, all quality-passing scalar values, independent ranks for every
 metric, target-specific Center-ADE rankings, and a separate audit table for
 quality-gated `N/A` records.
 
+## One-command incremental backfill
+
+Give the result root once; the command discovers completed case/seed/variant
+directories and fills only missing or stale metric stages:
+
+```bash
+cd /home/gaoya/Code_Video/DiffTrack-main
+bash AAA_my_test/object_query_ablation_metrics/bench_missing.sh \
+  /data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1 \
+  --gpu 0
+```
+
+The default stages are `fast,trajectory,survival,complete25,legacy25`. Use
+`--plan-only` for a read-only JSON plan, or select a subset with, for example,
+`--stages fast,trajectory,survival`. A cached record is reused only when its
+video signature and required track/mask/feature/overlay assets are complete.
+Quality-gated trajectory `N/A` values count as evaluated rather than missing.
+For multi-GPU backfill, launch one process per GPU with the same
+`--num-shards N` and distinct `--shard-index I`; case-seed units are greedily
+balanced by generated video count, and only shard 0 writes global fast/legacy
+outputs.
+
+Dynamic M1/M2/M3 Complete-25 outputs are isolated under
+`head_scope_complete25/<case>/seed_<seed>` and do not overwrite the original
+legacy 48-ablation reports. Exact simulator-GT/contact metrics currently require
+the documented two-object `[sphere, box]` simulator protocol. Other cases are
+reported as `complete25_ineligible`; their Head-Scope metrics are still backfilled.
+
 ## Manual stages (advanced)
 
 Set `OBJECT_QUERY_ABLATION_SEED` for every single-seed stage. For example:

@@ -12,7 +12,10 @@ import numpy as np
 
 from AAA_my_test.render_object_query_top100_mean_overlay import (
     FRAMES,
-    render,
+    LABEL_W,
+    TILE_H,
+    TILE_W,
+    query_tile,
     video_frames,
 )
 
@@ -22,6 +25,50 @@ KINDS = (
     ("effective_after", "Effective post-mask Top100 mean (no renorm)"),
     ("removed", "Removed Top100 coefficient mass"),
 )
+HEADER_H = 68
+
+
+def _render_strip(payload, frames, values, vmax, title, label):
+    """Render a two-line header so long experiment IDs never cover Fxx labels."""
+    canvas = np.full(
+        (HEADER_H + TILE_H, LABEL_W + FRAMES * TILE_W, 3), 244, np.uint8
+    )
+    cv2.putText(
+        canvas, title, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (27, 38, 33), 1
+    )
+    cv2.line(canvas, (0, 35), (canvas.shape[1] - 1, 35), (218, 222, 219), 1)
+    canvas[HEADER_H:, :LABEL_W] = query_tile(payload, label)
+    for frame_index in range(FRAMES):
+        x = LABEL_W + frame_index * TILE_W
+        cv2.putText(
+            canvas,
+            f"K{frame_index:02d}/F{frame_index * 4:02d}",
+            (x + 48, 57),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.39,
+            (27, 38, 33),
+            1,
+        )
+        base = cv2.resize(
+            frames[frame_index], (TILE_W, TILE_H), interpolation=cv2.INTER_AREA
+        )
+        heat = cv2.resize(values[frame_index].astype(np.float32), (TILE_W, TILE_H))
+        frame_vmax = float(vmax[frame_index]) if np.ndim(vmax) else float(vmax)
+        norm = np.clip(heat / max(frame_vmax, 1e-12), 0, 1)
+        color = cv2.applyColorMap(np.uint8(norm * 255), cv2.COLORMAP_TURBO)
+        alpha = (0.12 + 0.72 * norm)[..., None]
+        canvas[HEADER_H:, x : x + TILE_W] = np.uint8(
+            np.clip(base * (1 - alpha) + color * alpha, 0, 255)
+        )
+    anchor_x = LABEL_W + TILE_W
+    cv2.rectangle(
+        canvas,
+        (anchor_x, HEADER_H),
+        (anchor_x + TILE_W - 1, HEADER_H + TILE_H - 1),
+        (40, 210, 245),
+        2,
+    )
+    return canvas
 
 
 def _scalar(payload: np.lib.npyio.NpzFile, key: str):
@@ -58,9 +105,10 @@ def render_variant(capture_dir: Path, video_path: Path) -> dict:
             before = np.asarray(payload["before"], dtype=np.float32)
             after = np.asarray(payload["effective_after"], dtype=np.float32)
             removed = np.asarray(payload["removed"], dtype=np.float32)
-            if before.shape != (FRAMES, 16, 28) or after.shape != before.shape:
+            if before.ndim != 3 or before.shape[0] != FRAMES or after.shape != before.shape:
                 raise RuntimeError(
-                    f"{npz_path}: expected {(FRAMES, 16, 28)}, got {before.shape}/{after.shape}"
+                    f"{npz_path}: expected matching [13,H,W] maps, got "
+                    f"{before.shape}/{after.shape}"
                 )
             query_payload = {
                 key: np.asarray(payload[key]).copy()
@@ -88,13 +136,13 @@ def render_variant(capture_dir: Path, video_path: Path) -> dict:
                 f"{experiment_id} | seed {seed} | S{step:03d} | {region} | "
                 f"{title_kind} | Fixed F04 Q | {head_scope} intervention"
             )
-            image = render(
+            image = _render_strip(
                 query_payload,
                 frames,
                 values,
                 vmax,
                 title,
-                "FIXED F04 · SUM 8Q / MEAN 100H",
+                "FIXED F04 | SUM 8Q / MEAN 100H",
             )
             if not cv2.imwrite(
                 str(capture_dir / filename), image, [cv2.IMWRITE_JPEG_QUALITY, 94]

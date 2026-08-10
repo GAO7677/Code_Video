@@ -33,6 +33,12 @@ def main() -> None:
             "repeat to index more than one directory"
         ),
     )
+    parser.add_argument(
+        "--inventory",
+        type=Path,
+        action="append",
+        help="exact inventory JSON; repeat to index more than one inventory",
+    )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
 
@@ -40,7 +46,9 @@ def main() -> None:
     index = output_root / "index"
     index.mkdir(parents=True, exist_ok=True)
     records = []
-    if args.result_dir:
+    if args.inventory:
+        inventory_paths = [path.expanduser().resolve() for path in args.inventory]
+    elif args.result_dir:
         inventory_paths = [
             path.expanduser().resolve() / "video_similarity_top100.json"
             for path in args.result_dir
@@ -60,10 +68,13 @@ def main() -> None:
             raise RuntimeError(f"invalid case/seed identity: {inventory_path}")
         identities.append((case, seed))
         videos = payload.get("videos", [])
-        if len(videos) != 49:
+        if len(videos) < 2 or videos[0].get("id") != "baseline":
             raise RuntimeError(
-                f"{case} seed {seed}: expected 49 videos, found {len(videos)}"
+                f"{case} seed {seed}: expected baseline plus ablations, found {len(videos)}"
             )
+        ids = [str(row.get("id") or "") for row in videos]
+        if any(not value for value in ids) or len(ids) != len(set(ids)):
+            raise RuntimeError(f"{case} seed {seed}: inventory IDs are not unique")
         for video in videos:
             run_dir = Path(video["path"]).parent.resolve()
             manifest = run_dir / "manifest.json"

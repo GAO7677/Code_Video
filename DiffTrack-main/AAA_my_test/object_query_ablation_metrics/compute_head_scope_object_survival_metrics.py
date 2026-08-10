@@ -261,11 +261,9 @@ def load_feature_cache(
 
 def calibrate_identity_thresholds(
     baseline_features: np.ndarray, object_names: list[str]
-) -> dict[str, dict[str, float]]:
-    if len(object_names) != 2:
-        raise RuntimeError("identity calibration currently requires two objects")
-    cross = np.sum(baseline_features[:, 0] * baseline_features[:, 1], axis=-1)
-    negative_q95 = float(np.quantile(cross, 0.95))
+) -> dict[str, dict[str, Any]]:
+    if not object_names:
+        raise RuntimeError("identity calibration requires at least one object")
     result = {}
     for object_index, name in enumerate(object_names):
         values = []
@@ -273,7 +271,21 @@ def calibrate_identity_thresholds(
         for lag in range(1, 5):
             values.extend(np.sum(features[:-lag] * features[lag:], axis=-1).tolist())
         positive_q05 = float(np.quantile(values, 0.05))
-        separated = positive_q05 > negative_q95
+        negative_values = []
+        for other_index in range(len(object_names)):
+            if other_index == object_index:
+                continue
+            negative_values.extend(
+                np.sum(
+                    features * baseline_features[:, other_index], axis=-1
+                ).tolist()
+            )
+        negative_q95 = (
+            float(np.quantile(negative_values, 0.95))
+            if negative_values
+            else None
+        )
+        separated = negative_q95 is not None and positive_q05 > negative_q95
         threshold = (
             0.5 * (positive_q05 + negative_q95) if separated else positive_q05
         )
@@ -282,6 +294,11 @@ def calibrate_identity_thresholds(
             "baseline_temporal_positive_q05": rounded(positive_q05),
             "baseline_cross_object_negative_q95": rounded(negative_q95),
             "positive_negative_separated": bool(separated),
+            "calibration_mode": (
+                "temporal_positive_and_cross_object_negative"
+                if negative_q95 is not None
+                else "temporal_positive_only_single_object"
+            ),
         }
     return result
 
@@ -345,10 +362,21 @@ def draw_mask_panel(
     title: str,
 ) -> np.ndarray:
     canvas = cv2.cvtColor(frames[frame_index], cv2.COLOR_RGB2BGR)
-    base_colors = ((36, 170, 245), (232, 188, 42))
+    base_colors = (
+        (36, 170, 245),
+        (232, 188, 42),
+        (88, 205, 102),
+        (205, 95, 210),
+        (72, 205, 225),
+        (225, 120, 72),
+    )
     for object_index, name in enumerate(object_names):
         alive = True if metrics is None else bool(metrics[name]["series"]["alive"][frame_index])
-        color = base_colors[object_index] if metrics is None else ((55, 190, 85) if alive else (45, 45, 230))
+        color = (
+            base_colors[object_index % len(base_colors)]
+            if metrics is None
+            else ((55, 190, 85) if alive else (45, 45, 230))
+        )
         contours, _ = cv2.findContours(
             masks[frame_index, object_index].astype(np.uint8),
             cv2.RETR_EXTERNAL,
@@ -578,6 +606,7 @@ def main() -> None:
                     query_points,
                     prompt_masks,
                     temporary_root,
+                    list(object_slices.values()),
                 ).astype(bool)
                 save_mask_cache(mask_path, masks, signature, path)
                 state = "segmented"
@@ -609,7 +638,7 @@ def main() -> None:
     }
 
     device = torch.device(args.device)
-    dino = load_dino(device)
+    dino = None
 
     def pooled_features(
         variant: str,
@@ -619,12 +648,15 @@ def main() -> None:
         masks: np.ndarray,
         centers: dict[str, np.ndarray],
     ) -> np.ndarray:
+        nonlocal dino
         feature_path = feature_root / f"{variant}.npz"
         cached = None if args.overwrite else load_feature_cache(
             feature_path, signature, len(object_names)
         )
         if cached is not None:
             return cached
+        if dino is None:
+            dino = load_dino(device)
         features = []
         for object_index, name in enumerate(object_names):
             crops, local_masks = object_crops(
@@ -684,6 +716,34 @@ def main() -> None:
             variant = str(candidate["variant_id"])
             video_path = Path(str(candidate["path"]))
             signature = candidate["video_signature"]
+            previous = existing_records.get(variant)
+            previous_metrics = previous.get("metrics", {}) if previous else {}
+            previous_complete = bool(
+                previous
+                and previous.get("video_signature") == signature
+                and isinstance(previous_metrics.get("objects"), dict)
+                and "quality_pass" in previous_metrics
+                and Path(str(previous.get("mask_path") or "")).is_file()
+                and Path(str(previous.get("feature_path") or "")).is_file()
+                and (
+                    args.skip_overlays
+                    or Path(str(previous.get("overlay_path") or "")).is_file()
+                )
+                and load_mask_cache(
+                    Path(str(previous.get("mask_path"))), signature, len(object_names)
+                )
+                is not None
+                and load_feature_cache(
+                    Path(str(previous.get("feature_path"))), signature, len(object_names)
+                )
+                is not None
+            )
+            if previous_complete and not args.overwrite:
+                print(
+                    f"[metric {index:03d}/{len(candidates):03d}] reuse {variant}",
+                    flush=True,
+                )
+                continue
             masks = load_mask_cache(
                 mask_root / f"{variant}.npz", signature, len(object_names)
             )
@@ -796,9 +856,10 @@ def main() -> None:
             gc.collect()
             torch.cuda.empty_cache()
     finally:
-        del dino
-        gc.collect()
-        torch.cuda.empty_cache()
+        if dino is not None:
+            del dino
+            gc.collect()
+            torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
