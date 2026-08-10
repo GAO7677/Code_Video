@@ -1,0 +1,21 @@
+{
+  "extends": "full_sa_no_object_xssc_loss_dinov3_movic_step50000.json",
+  "experiment": {
+    "name": "full_sa_no_object_xssc_loss_official_dinov2",
+    "description": "Wan2.2 + merged OpenVid LoRA; no object branch; Full-SA rank-32 LoRA; frozen official DINOv2 xSSC future-slot cosine loss"
+  },
+  "paths": {
+    "xssc_root": "/home/gaoya/Code_Video/xSSC-main",
+    "xssc_config": "/home/gaoya/Code_Video/xSSC-main/config-randsfq/rsfq2_r-ytvis.py",
+    "xssc_checkpoint": "/data/gaoya/ckpt/xSSC/rsfq2_r-ytvis/42-0130.pth"
+  },
+  "model": {
+    "xssc_backend": "official_dinov2"
+  },
+  "xssc_loss": {
+    "backend": "official_dinov2"
+  },
+  "logging": {
+    "wandb_name": "full_sa_no_object_xssc_loss_official_dinov2"
+  }
+}

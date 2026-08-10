@@ -407,6 +407,7 @@ UNLISTED_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-m123-temporal-batch?v=1"><div><span>38 / M1–M3 TEMPORAL BATCH</span><h2>M1/M2/M3 · All-time/Same/Future/Past</h2><p>当前多 case、多 seed 的 Top100/Bottom100 批次独立入口；按 case、seed、target 查看已生成视频。</p></div><span class="go">打开 M1–M3 批次</span></a>
 <a class="card new" href="/object-query-m123-temporal-batch?single=1&amp;case=0613pybullet_sample_001460_w002&amp;seed=47326&amp;target=single_object%3A%3Aobject_A&amp;v=4"><div><span>39 / 001460 · SEED 47326 METRICS</span><h2>M1/M2/M3 · 完整指标轻量页</h2><p>0613pybullet_sample_001460_w002 / seed 47326；All-time/Same/Future/Past × Top100/Bottom100/All720，顶部含指标定义表，每个视频下方可展开完整指标。</p></div><span class="go">打开 Seed 47326 完整指标页</span></a>
 <a class="card new" href="/object-query-m123-s039-top100-mean-overlays?v=5"><div><span>40 / S039 KEY + QUERY · 108</span><h2>M1/M2/M3 Head-Scope Overlay</h2><p>001460 / seed 47326 的独立 Overlay 入口；同一 M/Time 下 Object A/B 成对排列，同时展示固定 Query 的 Key-side 三行图，以及完整 Query 空间的 S(q)/E(q) receiver 图。</p></div><span class="go">打开独立 Overlay 页面</span></a>
+<a class="card new" href="/object-query-head-scope-comparison?v=1"><div><span>41 / HEAD-SCOPE STRICT PAIRS</span><h2>Top100 / Bottom100 / All720 严格对比</h2><p>按 case×seed×Object×M/时间严格配对三种 Head scope；逐指标给出影响排序，并用三列代表视频对比生成、轨迹与对象存活结果。</p></div><span class="go">打开 Head-Scope 对比</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + "</section>", 1
@@ -415,6 +416,7 @@ viewer.PORTAL = viewer.PORTAL.replace(
 
 from AAA_my_test import serve_attention_noise_metrics as combined_metrics
 from AAA_my_test.object_query_ablation_metrics import dashboard as object_query_metrics_dashboard
+from AAA_my_test.object_query_ablation_metrics import head_scope_comparison
 
 
 class MetricsHandler(viewer.Handler):
@@ -444,6 +446,12 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/object-query-head-scope-comparison":
+            self.send_payload(
+                head_scope_comparison.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
         if path == "/object-query-all720-ablation-gallery":
             self.send_payload(
                 wan22_ti2v_legacy_all720_ablation_gallery_page().encode("utf-8"),
@@ -468,6 +476,32 @@ class MetricsHandler(viewer.Handler):
                 ensure_ascii=False,
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/object-query-head-scope-comparison/catalog":
+            payload = json.dumps(
+                head_scope_comparison.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/object-query-head-scope-comparison/video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            try:
+                seed = int(params.get("seed", [""])[0])
+            except ValueError:
+                seed = -1
+            asset = head_scope_comparison.asset(
+                params.get("case", [""])[0],
+                seed,
+                params.get("variant_id", [""])[0],
+                params.get("view", ["generated"])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("Head-Scope comparison video is not ready")
+            viewer.send_file_with_range(self, asset, "video/mp4")
             return
         if path == "/api/object-query-ablation-metrics/catalog":
             payload = json.dumps(

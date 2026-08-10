@@ -1,0 +1,22 @@
+{
+  "extends": "../../configs/formal_full_sa_no_object_gpu27.json",
+  "experiment": {
+    "name": "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
+    "description": "Wan2.2 + merged OpenVid LoRA; no object branch; Full-SA rank-32 LoRA; frozen DINOv3 MOVi-C xSSC step-050000 future-slot cosine loss"
+  },
+  "paths": {
+    "xssc_checkpoint": "/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/dinov3_xSSC/restart_save1000_20260720T140029Z/movi_c_transfer15000_b64_acc3_20260721T134713Z/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42/step-050000.pth",
+    "output_root": "/data/gaoya/agent-data/checkpoints/xssc_feature_loss"
+  },
+  "xssc_loss": {
+    "enabled": true,
+    "backend": "dinov3_movic",
+    "weight": 0.1,
+    "future_start_frame": 8,
+    "backbone_chunk_size": 2,
+    "gradient_diagnostics_every_n_forwards": 400
+  },
+  "logging": {
+    "wandb_name": "full_sa_no_object_xssc_loss_dinov3_movic_step50000"
+  }
+}

@@ -20,6 +20,9 @@ PHYSRVG_DIT_TRAIN_SCRIPT = ROOT / "train_xssc_object_self_attn_lora_physrvg_dit.
 VJEPA_LOSS_TRAIN_SCRIPT = (
     ROOT / "vjepa_loss_project/train_xssc_object_self_attn_lora_vjepa_loss.py"
 )
+XSSC_LOSS_TRAIN_SCRIPT = (
+    ROOT / "xssc_loss_project/train_xssc_object_self_attn_lora_xssc_loss.py"
+)
 OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT = ROOT / "train_official_xssc_object_only.py"
 VALID_MODES = {"object_only", "full_sa", "s_head", "t_head"}
 HEAD_SELECTIVE_MODES = {"s_head", "t_head"}
@@ -97,12 +100,15 @@ def validate_config(config: dict, config_dir: Path) -> dict:
         raise ValueError(
             f"model.xssc_backend must be one of {sorted(VALID_XSSC_BACKENDS)}"
         )
-    if xssc_backend == "official_dinov2" and (
-        mode != "object_only" or not enable_object_branch
+    xssc_loss = config.get("xssc_loss", {})
+    xssc_loss_enabled = bool(xssc_loss.get("enabled", False))
+    if xssc_backend == "official_dinov2" and not (
+        (mode == "object_only" and enable_object_branch)
+        or (xssc_loss_enabled and mode == "full_sa" and not enable_object_branch)
     ):
         raise ValueError(
-            "official_dinov2 currently supports only object_only with the object "
-            "branch enabled"
+            "official_dinov2 supports either object_only with the object branch "
+            "enabled, or Full-SA no-object with xssc_loss enabled"
         )
     expected_role_by_mode = {"s_head": "S", "t_head": "T"}
     if mode in HEAD_SELECTIVE_MODES:
@@ -171,6 +177,8 @@ def validate_config(config: dict, config_dir: Path) -> dict:
 
     vjepa_loss = config.get("vjepa_loss", {})
     vjepa_loss_enabled = bool(vjepa_loss.get("enabled", False))
+    if vjepa_loss_enabled and xssc_loss_enabled:
+        raise ValueError("vjepa_loss and xssc_loss cannot be enabled together")
     if vjepa_loss_enabled:
         if xssc_backend != "dinov3_movic":
             raise ValueError(
@@ -228,6 +236,33 @@ def validate_config(config: dict, config_dir: Path) -> dict:
                 "vjepa_loss.gradient_diagnostics_every_n_forwards must be positive"
             )
 
+    if xssc_loss_enabled:
+        if mode != "full_sa" or enable_object_branch:
+            raise ValueError(
+                "xssc_loss requires adaptation.mode=full_sa and the object branch disabled"
+            )
+        backend = str(require(config, "xssc_loss.backend"))
+        if backend != xssc_backend:
+            raise ValueError(
+                "xssc_loss.backend must equal model.xssc_backend: "
+                f"{backend!r} vs {xssc_backend!r}"
+            )
+        if float(require(config, "xssc_loss.weight")) <= 0.0:
+            raise ValueError("xssc_loss.weight must be positive")
+        future_start = int(require(config, "xssc_loss.future_start_frame"))
+        if future_start != int(require(config, "model.fixed_num_context_frames")):
+            raise ValueError(
+                "xssc_loss.future_start_frame must equal the 8-frame context length"
+            )
+        if int(require(config, "xssc_loss.backbone_chunk_size")) <= 0:
+            raise ValueError("xssc_loss.backbone_chunk_size must be positive")
+        if int(
+            require(config, "xssc_loss.gradient_diagnostics_every_n_forwards")
+        ) <= 0:
+            raise ValueError(
+                "xssc_loss.gradient_diagnostics_every_n_forwards must be positive"
+            )
+
     path_keys = [
         "paths.project_root",
         "paths.diffsynth_root",
@@ -240,7 +275,7 @@ def validate_config(config: dict, config_dir: Path) -> dict:
         path_keys.append("paths.pretrained_lora_checkpoint")
     else:
         path_keys.append("paths.physrvg_dit_checkpoint")
-    if enable_object_branch:
+    if enable_object_branch or xssc_loss_enabled:
         path_keys.extend(
             [
                 "paths.xssc_root",
@@ -367,12 +402,16 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
     logging = config["logging"]
     vjepa_loss = config.get("vjepa_loss", {})
     vjepa_loss_enabled = bool(vjepa_loss.get("enabled", False))
+    xssc_loss = config.get("xssc_loss", {})
+    xssc_loss_enabled = bool(xssc_loss.get("enabled", False))
 
     xssc_backend = str(model["xssc_backend"])
     initialization_type = str(
         config.get("initialization", {}).get("type", "openvid_lora")
     )
-    if vjepa_loss_enabled:
+    if xssc_loss_enabled:
+        train_script = XSSC_LOSS_TRAIN_SCRIPT
+    elif vjepa_loss_enabled:
         train_script = VJEPA_LOSS_TRAIN_SCRIPT
     elif initialization_type == "physrvg_dit":
         train_script = PHYSRVG_DIT_TRAIN_SCRIPT
@@ -460,7 +499,7 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         options["--lora_checkpoint"] = paths["pretrained_lora_checkpoint"]
     else:
         options["--physrvg_dit_checkpoint"] = paths["physrvg_dit_checkpoint"]
-    if xssc_backend == "dinov3_movic":
+    if xssc_backend == "dinov3_movic" or xssc_loss_enabled:
         options.update(
             {
                 "--self_attn_adaptation_mode": adaptation["mode"],
@@ -509,6 +548,37 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
                 ],
             }
         )
+    if xssc_loss_enabled:
+        options.update(
+            {
+                "--xssc_loss_backend": xssc_loss["backend"],
+                "--xssc_loss_weight": xssc_loss["weight"],
+                "--xssc_loss_future_start_frame": xssc_loss[
+                    "future_start_frame"
+                ],
+                "--xssc_loss_backbone_chunk_size": xssc_loss[
+                    "backbone_chunk_size"
+                ],
+                "--xssc_loss_gradient_diagnostics_every_n_forwards": xssc_loss[
+                    "gradient_diagnostics_every_n_forwards"
+                ],
+                "--xssc_root": paths["xssc_root"],
+                "--xssc_config": paths["xssc_config"],
+                "--xssc_checkpoint": paths["xssc_checkpoint"],
+                "--xssc_input_size": model["xssc_input_size"],
+                "--xssc_max_time_steps": model["xssc_max_time_steps"],
+            }
+        )
+        if xssc_backend == "dinov3_movic":
+            options.update(
+                {
+                    "--dinov3_root": paths["dinov3_root"],
+                    "--dinov3_checkpoint": paths["dinov3_checkpoint"],
+                    "--xssc_sam2_config": paths["sam2_config"],
+                    "--xssc_sam2_checkpoint": paths["sam2_checkpoint"],
+                    "--xssc_box_cache_dir": paths["xssc_box_cache_dir"],
+                }
+            )
     if not adaptation["enable_object_branch"]:
         options["--disable_object_branch"] = None
     else:
@@ -578,7 +648,9 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "duplicate_iou": "--xssc_amg_duplicate_iou",
         "duplicate_containment": "--xssc_amg_duplicate_containment",
     }
-    if adaptation["enable_object_branch"] and xssc_backend == "dinov3_movic":
+    if (
+        adaptation["enable_object_branch"] or xssc_loss_enabled
+    ) and xssc_backend == "dinov3_movic":
         amg_filters = conditioning["amg_filters"]
         missing_amg = sorted(set(amg_option_names) - set(amg_filters))
         if missing_amg:
@@ -653,6 +725,9 @@ def main() -> None:
         "vjepa_loss_enabled": bool(
             config.get("vjepa_loss", {}).get("enabled", False)
         ),
+        "xssc_loss_enabled": bool(
+            config.get("xssc_loss", {}).get("enabled", False)
+        ),
         "config_sources": sources,
         "gpu_set": config["launch"]["gpu_set"],
         "effective_batch": effective_batch,
@@ -670,7 +745,10 @@ def main() -> None:
         "XDG_CACHE_HOME": cache_root / "xdg",
     }
     required_cache_dirs = list(cache_dirs.values())
-    if config["adaptation"]["enable_object_branch"]:
+    if (
+        config["adaptation"]["enable_object_branch"]
+        or bool(config.get("xssc_loss", {}).get("enabled", False))
+    ):
         required_cache_dirs.append(Path(config["paths"]["xssc_box_cache_dir"]))
     for path in required_cache_dirs:
         path.mkdir(parents=True, exist_ok=True)
