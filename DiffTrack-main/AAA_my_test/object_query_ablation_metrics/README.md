@@ -120,6 +120,20 @@ ranked.  Every record includes a Baseline/Ablation point-and-trajectory overlay.
 Artifacts are written under
 `/data/gaoya/agent-data/outputs/object_query_ablation_metrics/head_scope_trajectory`.
 
+Build a complete Markdown report from any generated trajectory `report.json`
+without rerunning CoTracker:
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python \
+  AAA_my_test/object_query_ablation_metrics/build_head_scope_trajectory_ranking_md.py \
+  /data/gaoya/agent-data/outputs/object_query_ablation_metrics/head_scope_trajectory/0613pybullet_sample_001460_w002/seed_47326/report.json
+```
+
+The Markdown contains the exact metric definitions, M1/M2/M3 information-flow
+semantics, all quality-passing scalar values, independent ranks for every
+metric, target-specific Center-ADE rankings, and a separate audit table for
+quality-gated `N/A` records.
+
 ## Manual stages (advanced)
 
 Set `OBJECT_QUERY_ABLATION_SEED` for every single-seed stage. For example:
