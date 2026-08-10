@@ -108,6 +108,13 @@ METHOD_SPECS = {
         "object": "完全跳过SAM2、DINO、xSSC和object cross-attn",
         "data": "30/30/40",
     },
+    "full_sa_no_object_xssc_loss_dinov3_movic_step50000": {
+        "label": "Full-SA + No-Object + xSSC Loss (DINOv3 MOVi-C 50k)",
+        "trainable": 23_592_960,
+        "modules": "30层Self-Attn Q/K/V/O LoRA；训练时增加冻结DINOv3/xSSC未来slot cosine辅助损失",
+        "object": "xSSC-50k + DINOv3 + SAM2仅服务辅助损失；不启用object cross-attn",
+        "data": "30/30/40",
+    },
     "full_sa_no_object_pybullet100": {
         "label": "Full-SA + No-Object (PyBullet 100%)",
         "trainable": 23_592_960,

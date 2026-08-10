@@ -67,7 +67,12 @@ class _Accelerator:
         print(*args, **kwargs)
 
 
-def _parse_trainer_args(config_path: Path, width: int, height: int):
+def _parse_trainer_args(
+    config_path: Path,
+    width: int,
+    height: int,
+    noise_endpoint: str,
+):
     raw, _ = launcher.load_config(config_path)
     config = launcher.validate_config(raw, config_path.resolve().parent)
     command = launcher.build_command(config, DEFAULT_OUTPUT / "unused")
@@ -81,6 +86,14 @@ def _parse_trainer_args(config_path: Path, width: int, height: int):
     args.mixture_kubric_ratio = 0.0
     args.mixture_openvid_ratio = 0.0
     args.xssc_loss_gradient_diagnostics_every_n_forwards = 1_000_000
+    if noise_endpoint == "highest":
+        args.min_timestep_boundary = 0.0
+        args.max_timestep_boundary = 0.001
+    elif noise_endpoint == "lowest":
+        args.min_timestep_boundary = 0.999
+        args.max_timestep_boundary = 1.0
+    else:
+        raise ValueError(f"Unsupported noise endpoint: {noise_endpoint!r}")
     return core.tvn.prepare_args(args), config
 
 
@@ -146,11 +159,14 @@ def _jsonable_sample_metadata(sample: dict) -> dict:
 
 def _render_dashboard(output_root: Path) -> Path:
     records = []
-    for metadata_path in sorted(output_root.glob("*/metadata.json")):
-        records.append(json.loads(metadata_path.read_text(encoding="utf-8")))
+    for metadata_path in sorted(output_root.glob("*/*/metadata.json")):
+        record = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if record.get("noise_endpoint") in {"lowest", "highest"}:
+            records.append(record)
     cards = []
     for record in records:
         backend = html.escape(record["backend"])
+        endpoint = html.escape(record["noise_endpoint"])
         folder = html.escape(record["folder"])
         metrics = record["metrics"]
         metric_rows = "".join(
@@ -172,7 +188,7 @@ def _render_dashboard(output_root: Path) -> Path:
         cards.append(
             f"""
             <section class="backend-card">
-              <div class="heading"><div><h2>{backend}</h2>
+              <div class="heading"><div><h2>{backend} · {endpoint} noise</h2>
               <p>{html.escape(record['checkpoint'])}</p></div>
               <span>{record['slot_count']} slots × {record['slot_dim']} dims</span></div>
               <div class="video-grid">{''.join(videos)}</div>
@@ -196,7 +212,7 @@ details{{margin-top:16px}} summary{{cursor:pointer;color:var(--accent)}} table{{
 #replay{{position:fixed;right:26px;bottom:24px;border:0;border-radius:999px;background:var(--accent);color:#06221f;font-weight:750;padding:13px 20px;box-shadow:0 7px 24px #0008;cursor:pointer}}
 @media(max-width:850px){{.video-grid{{grid-template-columns:1fr}}.heading{{display:block}}}}
 </style></head><body><main><h1>Full-SA + No-Object: frozen xSSC loss diagnostics</h1>
-<p class="intro">Same Wan2.2 + merged OpenVid LoRA prediction path. Loss/overlays use future frames 8–48; colored regions are xSSC encoder slot-attention assignments.</p>
+<p class="intro">Same Wan2.2 + merged OpenVid LoRA prediction path and the same case/seed. Lowest is the minimum training-sampled sigma; highest is the maximum. Loss/overlays use future frames 8–48.</p>
 {''.join(cards)}</main><button id="replay">Replay all</button><script>
 document.getElementById('replay').onclick=()=>{{document.querySelectorAll('video').forEach(v=>{{v.currentTime=0;v.play().catch(()=>{{}})}})}};
 </script></body></html>"""
@@ -215,6 +231,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=448)
     parser.add_argument("--fps", type=int, default=15)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--noise-endpoint",
+        choices=("lowest", "highest"),
+        required=True,
+    )
     return parser.parse_args()
 
 
@@ -227,7 +248,12 @@ def main() -> None:
     torch.manual_seed(cli.seed)
     torch.cuda.manual_seed_all(cli.seed)
 
-    train_args, config = _parse_trainer_args(cli.config, cli.width, cli.height)
+    train_args, config = _parse_trainer_args(
+        cli.config,
+        cli.width,
+        cli.height,
+        cli.noise_endpoint,
+    )
     dataset = dataset_module.build_dataset(train_args)
     sample = dataset[int(cli.sample_index) % len(dataset)]
     accelerator = _Accelerator(torch.device("cuda:0"))
@@ -261,7 +287,7 @@ def main() -> None:
         raise RuntimeError("Diagnostic forward did not capture xSSC visuals")
 
     backend = train_args.xssc_loss_backend
-    output_dir = cli.output_root.resolve() / backend
+    output_dir = cli.output_root.resolve() / backend / cli.noise_endpoint
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_mp4(output_dir / "gt.mp4", _to_uint8_video(visuals["target_video"]), cli.fps)
     _write_mp4(output_dir / "pred_x0.mp4", _to_uint8_video(visuals["pred_video"]), cli.fps)
@@ -284,6 +310,10 @@ def main() -> None:
         cli.fps,
     )
     metrics = dict(model.last_train_metrics)
+    sigma_value = float(metrics["train/xssc_sigma"])
+    scheduler_index = int(
+        torch.argmin((model.pipe.scheduler.sigmas.float() - sigma_value).abs()).item()
+    )
     metrics.update(
         {
             "diagnostic_loss_tensor": float(loss.detach().item()),
@@ -292,12 +322,21 @@ def main() -> None:
             "fps": cli.fps,
             "sample_index": cli.sample_index,
             "sample": _jsonable_sample_metadata(sample),
+            "noise_endpoint": cli.noise_endpoint,
+            "scheduler_index": scheduler_index,
+            "scheduler_timestep": float(
+                model.pipe.scheduler.timesteps[scheduler_index].item()
+            ),
+            "scheduler_sigma": float(
+                model.pipe.scheduler.sigmas[scheduler_index].item()
+            ),
             "note": "visual-only no_grad forward; training configs remain 512x896",
         }
     )
     metadata = {
         "backend": backend,
-        "folder": backend,
+        "noise_endpoint": cli.noise_endpoint,
+        "folder": str(output_dir.relative_to(cli.output_root.resolve())),
         "checkpoint": config["paths"]["xssc_checkpoint"],
         "slot_count": model.xssc_loss_num_slots,
         "slot_dim": model.xssc_loss_slot_dim,

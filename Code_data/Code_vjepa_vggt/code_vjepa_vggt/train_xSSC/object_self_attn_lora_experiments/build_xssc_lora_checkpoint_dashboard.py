@@ -33,6 +33,10 @@ METHOD_PLOT_STYLES = {
         "marker": "d",
         "linestyle": (0, (3, 1, 1, 1)),
     },
+    "full_sa_no_object_xssc_loss_dinov3_movic_step50000": {
+        "marker": "D",
+        "linestyle": (0, (5, 1, 1, 1)),
+    },
     "full_sa_no_object_pybullet100": {"marker": "p", "linestyle": (0, (4, 1))},
     "full_sa_no_object_kubric100": {"marker": "*", "linestyle": (0, (2, 1))},
     "s_head59": {"marker": "s", "linestyle": "--"},
@@ -1327,6 +1331,11 @@ MERGED_METHODS = [
         "label": "Full-SA + No-Object + V-JEPA Loss",
         "color": "#009E73",
     },
+    {
+        "key": "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
+        "label": "Full-SA + No-Object + xSSC Loss (DINOv3 MOVi-C 50k)",
+        "color": "#6F4EAD",
+    },
     {"key": "s_head59", "label": "S-head59 + Object", "color": "#2CA02C"},
     {"key": "t_head70", "label": "T-head70 + Object", "color": "#9467BD"},
     {
@@ -1771,7 +1780,7 @@ def build_status(
 def build_weight_provenance_section() -> str:
     return """
     <section class="panel provenance"><div class="panel-head"><h2>训练方案、权重与数据</h2>
-      <span class="state">14 种方案 · 3 个数据集</span></div>
+      <span class="state">15 种方案 · 3 个数据集</span></div>
       <p class="weights-note">所有方案共享同一 Wan + OpenVid LoRA 起点；“from scratch”仅表示不续接本轮实验 checkpoint，并非随机初始化。下列样本数与参数均按当前正式配置和数据索引核对。</p>
       <h3>基础模型与统一训练参数</h3>
       <div class="table-wrap"><table><thead><tr><th>项目</th><th>配置 / 规模</th><th>说明</th></tr></thead><tbody>
@@ -1794,7 +1803,8 @@ def build_weight_provenance_section() -> str:
         <tr><td class="category-cell">基线</td><td>Object-only</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>仅 Object 分支 LoRA</td><td class="num">25,458,688</td></tr>
         <tr><td class="category-cell" rowspan="2">Full Self-Attention</td><td>Full-SA + Object</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>全 Self-Attention LoRA + Object 分支</td><td class="num">49,051,648</td></tr>
         <tr><td>Full-SA + No-Object</td><td>标准混合 30/30/40</td><td>不加载</td><td>全 Self-Attention LoRA</td><td class="num">23,592,960</td></tr>
-        <tr><td class="category-cell">辅助损失</td><td>Full-SA + No-Object + V-JEPA Loss</td><td>标准混合 30/30/40</td><td>不加载</td><td>全 Self-Attention LoRA；冻结 V-JEPA2.1 ViT-L/ViT-G 与 Tiny-VAE <code>taew2_2</code>，辅助损失权重 0.01</td><td class="num">23,592,960</td></tr>
+        <tr><td class="category-cell" rowspan="2">辅助损失</td><td>Full-SA + No-Object + V-JEPA Loss</td><td>标准混合 30/30/40</td><td>不加载</td><td>全 Self-Attention LoRA；冻结 V-JEPA2.1 ViT-L/ViT-G 与 Tiny-VAE <code>taew2_2</code>，辅助损失权重 0.01</td><td class="num">23,592,960</td></tr>
+        <tr><td>Full-SA + No-Object + xSSC Loss (DINOv3 MOVi-C 50k)</td><td>标准混合 30/30/40</td><td>xSSC step-050000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L（均冻结）</td><td>全 Self-Attention LoRA；未来帧 slot cosine loss，权重 0.1，并按 scheduler timestep 权重归一化</td><td class="num">23,592,960</td></tr>
         <tr><td class="category-cell" rowspan="4">Head 选择</td><td>S-head59 + Object</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>59 个 S-head LoRA + Object 分支</td><td class="num">34,682,880</td></tr>
         <tr><td>T-head70 + Object</td><td>标准混合 30/30/40</td><td>xSSC step-026000 + DINOv3 ViT-L/16 + SAM2.1 Hiera-L</td><td>70 个 T-head LoRA + Object 分支</td><td class="num">34,863,104</td></tr>
         <tr><td>T-head70 + No-Object</td><td>标准混合 30/30/40</td><td>不加载</td><td>70 个 T-head LoRA</td><td class="num">9,404,416</td></tr>

@@ -6,7 +6,13 @@
   },
   "paths": {
     "xssc_checkpoint": "/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/dinov3_xSSC/restart_save1000_20260720T140029Z/movi_c_transfer15000_b64_acc3_20260721T134713Z/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42/step-050000.pth",
-    "output_root": "/data/gaoya/agent-data/checkpoints/xssc_feature_loss"
+    "output_root": "/data/gaoya/agent-data/checkpoints/xssc_feature_loss",
+    "head_selection_config": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/configs/same_frame_mass_heads_full59.json"
+  },
+  "launch": {
+    "gpu_set": "0,1",
+    "num_processes": 2,
+    "main_process_port": 29533
   },
   "xssc_loss": {
     "enabled": true,

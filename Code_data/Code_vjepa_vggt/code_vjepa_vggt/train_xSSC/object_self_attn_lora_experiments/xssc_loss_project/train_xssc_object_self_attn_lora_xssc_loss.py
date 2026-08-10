@@ -8,11 +8,14 @@ training path intact.  The only additional objective is computed as follows:
 
 The xSSC parameters and Wan VAE parameters stay frozen, but the prediction
 branch deliberately retains gradients with respect to the reconstructed x0.
+The auxiliary term follows the same normalized scheduler-timestep weighting
+used by the existing V-JEPA loss experiment.
 """
 
 from __future__ import annotations
 
 import argparse
+import gc
 from pathlib import Path
 import sys
 
@@ -180,7 +183,10 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             enabled=autocast_enabled,
         ):
             def decode_once(current_latents: torch.Tensor) -> torch.Tensor:
-                output = vae_model.decode(current_latents, self.pipe.vae.scale)
+                output = vae_model.decode(
+                    current_latents,
+                    self.pipe.vae.scale,
+                )
                 # Wan's causal decoder keeps temporal feature caches as module
                 # attributes. They are unnecessary after one complete decode
                 # and would otherwise retain a large autograd graph.
@@ -335,6 +341,13 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         *,
         return_visuals: bool = False,
     ) -> tuple[torch.Tensor, dict[str, float], dict[str, torch.Tensor] | None]:
+        encoder = self._xssc_loss_encoder
+        encoder_device = next(encoder.parameters()).device
+        target_device = pred_x0_latents.device
+        if encoder_device != target_device:
+            encoder.to(device=target_device)
+        encoder.eval()
+
         with torch.no_grad():
             target_raw = self._decode_wan_vae_raw(target_x0_latents)
             target_video = target_raw.clamp(-1.0, 1.0)
@@ -348,10 +361,21 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             target_slots = target_slots.detach()
 
         pred_raw = self._decode_wan_vae_raw(pred_x0_latents)
-        pred_clipped = pred_raw.clamp(-1.0, 1.0)
+        # The frozen xSSC graph is differentiated immediately with respect to
+        # decoded pixels, then released before the much larger Wan-VAE/DiT
+        # backward. The surrogate below applies the exact first-order chain
+        # rule gradient to pred_raw without retaining xSSC activations.
+        pred_raw_xssc = (
+            pred_raw.detach().requires_grad_(True)
+            if pred_raw.requires_grad
+            else pred_raw
+        )
+        pred_clipped = pred_raw_xssc.clamp(-1.0, 1.0)
         # Straight-through clipping keeps the frozen encoder in its trained
         # range without silently zeroing all out-of-range prediction gradients.
-        pred_video = pred_raw + (pred_clipped - pred_raw).detach()
+        pred_video = pred_raw_xssc + (
+            pred_clipped - pred_raw_xssc
+        ).detach()
         pred_input = self._preprocess_xssc_loss(pred_video)
         pred_slots, pred_attention = self._extract_xssc_loss_slots(
             pred_input,
@@ -371,16 +395,36 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         future_valid = valid_slots[:, None, :].expand_as(cosine_distance)
         valid_count = int(future_valid.sum().item())
         if valid_count:
-            feature_loss = cosine_distance[future_valid].mean()
+            feature_loss_value = cosine_distance[future_valid].mean()
         else:
             # Preserve graph connectivity while safely skipping an AMG sample
             # for which no usable first-frame boxes were detected.
-            feature_loss = cosine_distance.sum() * 0.0
+            feature_loss_value = cosine_distance.sum() * 0.0
+
+        if pred_raw.requires_grad:
+            pred_raw_grad = torch.autograd.grad(
+                feature_loss_value,
+                pred_raw_xssc,
+                retain_graph=False,
+                create_graph=False,
+            )[0]
+            surrogate = (pred_raw * pred_raw_grad.detach()).sum()
+            feature_loss = (
+                feature_loss_value.detach()
+                + surrogate
+                - surrogate.detach()
+            )
+            # The encoder is unregistered and frozen, so moving it after its
+            # exact input gradient has been materialized is safe. This frees
+            # enough CUDA memory for full 512x896x49 Wan-VAE backward.
+            encoder.to(device="cpu")
+        else:
+            feature_loss = feature_loss_value
 
         metrics = {
-            "train/loss_xssc": float(feature_loss.detach().item()),
+            "train/loss_xssc": float(feature_loss_value.detach().item()),
             "train/xssc_cosine_similarity": float(
-                (1.0 - feature_loss.detach()).item()
+                (1.0 - feature_loss_value.detach()).item()
             ),
             "train/xssc_valid_slot_fraction": float(valid_slots.float().mean().item()),
             "train/xssc_future_frames": float(pred_future.shape[1]),
@@ -388,7 +432,10 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 (pred_raw.detach() < -1.0).float().mean().item()
             ),
             "train/xssc_pred_above_one_fraction": float(
-                (pred_raw.detach() > 1.0).float().mean().item()
+                (pred_raw_xssc.detach() > 1.0).float().mean().item()
+            ),
+            "train/xssc_encoder_offloaded_for_backward": float(
+                pred_raw.requires_grad
             ),
         }
         visuals = None
@@ -403,6 +450,22 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 "valid_slots": valid_slots.detach(),
             }
         return feature_loss, metrics, visuals
+
+    @staticmethod
+    def _normalized_xssc_timestep_weight(
+        pipe,
+        timestep: torch.Tensor,
+    ) -> tuple[torch.Tensor, float, float]:
+        """Return scheduler training weight normalized to unit global mean."""
+        raw_weight = pipe.scheduler.training_weight(timestep).detach().float()
+        all_weights = pipe.scheduler.linear_timesteps_weights.detach().float()
+        normalizer = all_weights.mean()
+        normalized = raw_weight / normalizer.clamp_min(1e-12)
+        return (
+            normalized.to(device=pipe.device, dtype=torch.float32),
+            float(raw_weight.item()),
+            float(normalizer.item()),
+        )
 
     @staticmethod
     def _output_gradient_diagnostics(
@@ -511,7 +574,24 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             pred_x0,
             target_x0,
         )
-        weighted_aux = self.xssc_loss_weight * loss_xssc
+        # Clear only after _xssc_feature_loss has returned, so its temporary
+        # decoded videos and xSSC inputs are no longer live Python locals.
+        if pred_x0.requires_grad and pred_x0.device.type == "cuda":
+            gc.collect()
+            torch.cuda.empty_cache()
+        (
+            timestep_weight,
+            raw_timestep_weight,
+            timestep_weight_normalizer,
+        ) = self._normalized_xssc_timestep_weight(
+            pipe,
+            record["timestep"],
+        )
+        weighted_aux = (
+            self.xssc_loss_weight
+            * timestep_weight.to(device=loss_xssc.device)
+            * loss_xssc
+        )
 
         self._xssc_loss_forward_count += 1
         metrics["train/xssc_grad_diag_applied"] = 0.0
@@ -530,6 +610,13 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         total = total + weighted_aux
         metrics.update(xssc_metrics)
         metrics["train/xssc_loss_weight"] = self.xssc_loss_weight
+        metrics["train/xssc_timestep_weight_raw"] = raw_timestep_weight
+        metrics["train/xssc_timestep_weight_normalizer"] = (
+            timestep_weight_normalizer
+        )
+        metrics["train/xssc_timestep_weight"] = float(
+            timestep_weight.detach().item()
+        )
         metrics["train/xssc_weighted_contribution"] = float(
             weighted_aux.detach().item()
         )
@@ -595,6 +682,7 @@ def log_stage_summary(accelerator, model, args: argparse.Namespace) -> None:
             f"{args.num_frames - 1}], slots={model.xssc_loss_num_slots}, "
             f"slot_dim={model.xssc_loss_slot_dim}, "
             f"backbone_chunk={args.xssc_loss_backbone_chunk_size}, "
+            "scheduler_timestep_weight=normalized_global_mean, "
             "Wan-VAE differentiable decode=True, object branch=False"
         )
 

@@ -288,6 +288,15 @@ def _round(value: float | None) -> float | None:
     return None if value is None else round(float(value), 8)
 
 
+def _fold_ratio(numerator: float | None, denominator: float | None) -> float | str | None:
+    """Return a display-safe fold ratio without hiding a zero denominator."""
+    if numerator is None or denominator is None:
+        return None
+    if abs(denominator) <= 1e-12:
+        return None if abs(numerator) <= 1e-12 else "∞"
+    return _round(numerator / denominator)
+
+
 def _region_phrases() -> dict[tuple[str, str], str]:
     phrases: dict[tuple[str, str], str] = {}
     for path in sorted(REQUEST_ROOT.glob("cases*.json")):
@@ -380,6 +389,21 @@ def _metric_analysis(
                 "units": len(rows),
             }
         )
+    summary_means = {
+        row["head_scope"]: row["case_balanced_mean"] for row in scope_summary
+    }
+    valid_summary_means = [
+        value for value in summary_means.values() if value is not None
+    ]
+    weakest_summary_mean = min(valid_summary_means) if valid_summary_means else None
+    strongest_summary_mean = max(valid_summary_means) if valid_summary_means else None
+    for row in scope_summary:
+        value = row["case_balanced_mean"]
+        row["fold_vs_top100"] = _fold_ratio(value, summary_means.get("top100"))
+        row["fold_vs_weakest"] = _fold_ratio(value, weakest_summary_mean)
+        row["max_min_fold"] = _fold_ratio(
+            strongest_summary_mean, weakest_summary_mean
+        )
 
     ranking_groups: dict[
         tuple[str, str, str], list[tuple[str, int, float]]
@@ -406,6 +430,21 @@ def _metric_analysis(
                 "case_seeds": len({(case, seed) for case, seed, _value in rows}),
             }
         )
+    ranking_triplets: dict[tuple[str, str], dict[str, dict[str, Any]]] = defaultdict(dict)
+    for row in rankings:
+        ranking_triplets[(row["mask_mode"], row["target"])][row["head_scope"]] = row
+    for scope_rows in ranking_triplets.values():
+        means = {
+            scope: row["case_balanced_mean"] for scope, row in scope_rows.items()
+        }
+        valid_means = [value for value in means.values() if value is not None]
+        weakest_mean = min(valid_means) if valid_means else None
+        strongest_mean = max(valid_means) if valid_means else None
+        for row in scope_rows.values():
+            value = row["case_balanced_mean"]
+            row["fold_vs_top100"] = _fold_ratio(value, means.get("top100"))
+            row["fold_vs_weakest"] = _fold_ratio(value, weakest_mean)
+            row["max_min_fold"] = _fold_ratio(strongest_mean, weakest_mean)
     rankings.sort(
         key=lambda row: (
             -(
@@ -423,6 +462,9 @@ def _metric_analysis(
 
     representatives = []
     for (case, seed, region, mode, tag), values, records in complete:
+        maximum = max(values.values())
+        minimum = min(values.values())
+        top100_value = values.get("top100")
         scope_rows = []
         all_generated = True
         for scope in SCOPES:
@@ -450,6 +492,8 @@ def _metric_analysis(
                     "label": SCOPE_LABELS[scope],
                     "head_count": SCOPE_COUNTS[scope],
                     "value": _round(values[scope]),
+                    "fold_vs_top100": _fold_ratio(values[scope], top100_value),
+                    "fold_vs_weakest": _fold_ratio(values[scope], minimum),
                     "variant_id": variant_id,
                     "views": {
                         "generated": generated is not None,
@@ -461,8 +505,6 @@ def _metric_analysis(
             )
         if not all_generated:
             continue
-        maximum = max(values.values())
-        minimum = min(values.values())
         metadata = _mode_metadata(mode)
         representatives.append(
             {
@@ -474,6 +516,7 @@ def _metric_analysis(
                 **metadata,
                 "ranking_tag": tag,
                 "spread": _round(maximum - minimum),
+                "max_min_fold": _fold_ratio(maximum, minimum),
                 "max_scope": max(values, key=values.get),
                 "min_scope": min(values, key=values.get),
                 "scopes": scope_rows,
@@ -634,20 +677,21 @@ PAGE = r'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Top100 / Bottom100 / All720 Head-Scope 对比</title><style>
 :root{--paper:#ebe5d7;--ink:#17241f;--deep:#173f36;--rust:#a44630;--gold:#d29b36;--line:#b9ad98;--card:#fffaf0;--muted:#706a60;--top:#22776a;--bottom:#aa4d38;--all:#6c54ad}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 0 0,#d65f3c36,transparent 34rem),radial-gradient(circle at 100% 0,#27897935,transparent 38rem),var(--paper);font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif}header{position:sticky;top:0;z-index:10;padding:14px 20px;background:#ebe5d7f3;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}a{color:var(--deep);font-weight:800}h1,h2,h3{font-family:Georgia,"Noto Serif CJK SC",serif}h1{font-size:clamp(31px,4.5vw,62px);line-height:.96;margin:5px 0}.lead{max-width:1300px;margin:7px 0;line-height:1.45}.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:end}.tools label{font-size:12px;font-weight:900}.tools select,.tools button{display:block;margin-top:3px;padding:8px 10px;border:1px solid var(--line);background:var(--card);font-weight:800}.status{font:12px ui-monospace,monospace;padding:8px}main{width:min(100% - 18px,2200px);margin:auto;padding:18px 0 70px}.note,.section{margin:14px 0;padding:14px;border:1px solid var(--line);border-radius:16px;background:#fffaf0e9;box-shadow:0 12px 32px #5b493018}.note{border-left:7px solid var(--gold);line-height:1.55}.coverage{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.coverage article{padding:10px;border:1px solid var(--line);background:#fff}.coverage b,.coverage span{display:block}.coverage b{font:900 25px ui-monospace,monospace;color:var(--deep)}.scope-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.scope{padding:13px;border:1px solid var(--line);background:#fff}.scope[data-scope=top100]{border-top:6px solid var(--top)}.scope[data-scope=bottom100]{border-top:6px solid var(--bottom)}.scope[data-scope=all720]{border-top:6px solid var(--all)}.scope strong{font-size:19px}.scope .value{font:900 31px ui-monospace,monospace;margin:8px 0}.scope dl{display:grid;grid-template-columns:1fr auto;margin:0;font-size:12px}.scope dt,.scope dd{margin:0;padding:3px}.scope dd{font-family:ui-monospace,monospace}.table-scroll{overflow:auto;border:1px solid var(--line);background:#fff;max-height:62vh}table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:12px}th,td{padding:8px 10px;border-bottom:1px solid #ddd2c0;text-align:center;white-space:nowrap}thead th{position:sticky;top:0;background:var(--deep);color:#fff;z-index:1}tbody tr:first-child{background:#fff1cf}tbody tr:hover{background:#edf5ef}.low-support{color:#8d4c38}.gallery{display:grid;gap:15px}.rep{padding:13px;border:1px solid var(--line);background:#fff}.rep-head{display:flex;gap:12px;justify-content:space-between;align-items:start;flex-wrap:wrap}.rep-head h3{margin:0}.rep-meta{color:var(--muted);font:12px ui-monospace,monospace}.video-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:10px}figure{margin:0;border:1px solid #d3c7b3;background:#fffaf2;padding:7px;min-width:0}video{display:block;width:100%;aspect-ratio:1280/704;background:#111}figcaption{padding:7px 2px 1px}.scope-name{display:flex;justify-content:space-between;gap:8px;font-weight:900}.metric-strip{display:grid;grid-template-columns:1fr auto;gap:3px 8px;margin-top:6px;font:11px ui-monospace,monospace}.metric-strip span:nth-child(2n){text-align:right}.definition-table td:nth-child(3){text-align:left;white-space:normal;min-width:420px}.empty{padding:35px;text-align:center;color:var(--muted)}.pill{display:inline-block;padding:3px 7px;border-radius:99px;background:#eee5d4;font:11px ui-monospace,monospace}.winner{background:#dcefe5;color:#175b49}.warn{color:#8d4c38;font-weight:900}@media(max-width:1050px){header{position:static}.coverage{grid-template-columns:repeat(2,1fr)}.scope-grid,.video-grid{grid-template-columns:1fr}}@media(max-width:600px){.coverage{grid-template-columns:1fr}}
-</style></head><body><header><a href="/">返回总入口</a> · <a href="/object-query-m123-temporal-batch?v=1">返回 M1/M2/M3 批次页</a><h1>Top100 / Bottom100 / All720<br>严格配对影响排序</h1><p class="lead">同一 case、seed、Object、M/时间变体和 Head 排名快照内，只比较三种 scope 都有指标的单元。所有值越大都表示相对同 seed Baseline 的干预效应更强，不等于物理质量更差。</p><div class="tools"><label>Head 排名 cohort<select id="cohort"></select></label><label>指标<select id="metric"></select></label><label>消融<select id="operator"><option value="all">M1 + M2 + M3</option><option value="M1">M1</option><option value="M2">M2</option><option value="M3">M3</option></select></label><label>Object<select id="target"><option value="all">全部 Object</option></select></label><label>视频层<select id="view"><option value="generated">生成视频</option><option value="trajectory">轨迹 Overlay</option><option value="survival">对象存活 Overlay</option></select></label><button id="refresh">刷新数据</button><button id="replay">同步重播当前视频</button><span id="status" class="status">读取中</span></div></header><main><section class="note" id="method"></section><section class="section"><h2>当前指标样本量与 Head-Scope 总体对比</h2><div id="coverage" class="coverage"></div><div id="scopeSummary" class="scope-grid"></div></section><section class="section"><h2>完整影响排序</h2><p id="rankingNote"></p><div class="table-scroll"><table><thead><tr><th>#</th><th>Head scope</th><th>消融</th><th>信息流</th><th>Object</th><th>Case-balanced mean</th><th>Median</th><th>N</th><th>Cases / Case-seeds</th></tr></thead><tbody id="ranking"></tbody></table></div></section><section class="section"><h2>代表性三列视频</h2><p>按当前指标的 <code>max(scope)−min(scope)</code> 从大到小选取；每个板块固定同一 case/seed/object/消融，只改变 Head scope。视频进入视口附近时才加载。</p><div id="gallery" class="gallery"></div></section><section class="section"><h2>指标定义</h2><div class="table-scroll"><table class="definition-table"><thead><tr><th>类别</th><th>指标</th><th>严格计算含义</th><th>单位</th><th>方向</th></tr></thead><tbody id="definitions"></tbody></table></div></section></main><script>
+</style></head><body><header><a href="/">返回总入口</a> · <a href="/object-query-m123-temporal-batch?v=1">返回 M1/M2/M3 批次页</a><h1>Top100 / Bottom100 / All720<br>严格配对影响排序</h1><p class="lead">同一 case、seed、Object、M/时间变体和 Head 排名快照内，只比较三种 scope 都有指标的单元。所有值越大都表示相对同 seed Baseline 的干预效应更强，不等于物理质量更差。</p><div class="tools"><label>Head 排名 cohort<select id="cohort"></select></label><label>指标<select id="metric"></select></label><label>消融<select id="operator"><option value="all">M1 + M2 + M3</option><option value="M1">M1</option><option value="M2">M2</option><option value="M3">M3</option></select></label><label>Object<select id="target"><option value="all">全部 Object</option></select></label><label>视频层<select id="view"><option value="generated">生成视频</option><option value="trajectory">轨迹 Overlay</option><option value="survival">对象存活 Overlay</option></select></label><button id="refresh">刷新数据</button><button id="replay">同步重播当前视频</button><span id="status" class="status">读取中</span></div></header><main><section class="note" id="method"></section><section class="section"><h2>当前指标样本量与 Head-Scope 总体对比</h2><div id="coverage" class="coverage"></div><div id="scopeSummary" class="scope-grid"></div></section><section class="section"><h2>完整影响排序</h2><p id="rankingNote"></p><div class="table-scroll"><table><thead><tr><th>#</th><th>Head scope</th><th>消融</th><th>信息流</th><th>Object</th><th>Case-balanced mean</th><th>vs Top100</th><th>vs 最弱组</th><th>三组 Max/Min</th><th>Median</th><th>N</th><th>Cases / Case-seeds</th></tr></thead><tbody id="ranking"></tbody></table></div></section><section class="section"><h2>代表性三列视频</h2><p>按当前指标的 <code>max(scope)−min(scope)</code> 从大到小选取；每个板块固定同一 case/seed/object/消融，只改变 Head scope。视频进入视口附近时才加载。</p><div id="gallery" class="gallery"></div></section><section class="section"><h2>指标定义</h2><div class="table-scroll"><table class="definition-table"><thead><tr><th>类别</th><th>指标</th><th>严格计算含义</th><th>单位</th><th>方向</th></tr></thead><tbody id="definitions"></tbody></table></div></section></main><script>
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data=null,observer=null;const scopeOrder={top100:0,bottom100:1,all720:2};
 function num(v,d=4){return Number.isFinite(Number(v))?Number(v).toFixed(d).replace(/0+$/,'').replace(/\.$/,''):'—'}
+function fold(v){if(v===null||v===undefined||v==='')return '—';if(v==='∞')return '∞';return Number.isFinite(Number(v))?`×${num(v,2)}`:'—'}
 function cohort(){return data.cohorts.find(x=>x.id===$('cohort').value)||data.cohorts[0]}function metricDef(){return data.metrics.find(x=>x.id===$('metric').value)||data.metrics[0]}function analysis(){return cohort().metrics[metricDef().id]}
 function fillSelect(node,rows,value,label){const old=node.value;node.innerHTML=rows.map(x=>`<option value="${esc(value(x))}">${esc(label(x))}</option>`).join('');if([...node.options].some(x=>x.value===old))node.value=old}
 function renderDefinitions(){$('definitions').innerHTML=data.metrics.map(m=>`<tr><td>${esc(m.category)}</td><td><b>${esc(m.label)}</b><br><code>${esc(m.id)}</code></td><td>${esc(m.definition)}</td><td>${esc(m.unit)}</td><td>越大＝相对 Baseline 影响越强</td></tr>`).join('')}
 function filtered(rows){const op=$('operator').value,target=$('target').value;return rows.filter(r=>(op==='all'||r.operator===op)&&(target==='all'||r.target===target))}
 function targets(){const values=[...new Set(Object.values(cohort().metrics).flatMap(x=>x.rankings.map(r=>r.target)))].sort();const old=$('target').value;$('target').innerHTML='<option value="all">全部 Object</option>'+values.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');if(values.includes(old))$('target').value=old}
-function renderSummary(){const a=analysis(),m=metricDef(),c=a.coverage,inventory=data.report_inventory;$('method').innerHTML=`<b>统计口径：</b>${esc(data.method)}<br><b>当前 cohort：</b>${esc(cohort().label)}。<b>${esc(m.label)}</b> 的三-scope 完整单元为 <b>${c.complete_triplets}</b>，覆盖 ${c.cases} cases / ${c.case_seeds} case-seeds；质量门失败会使轨迹距离指标的单元整体退出，但 Track Loss/消失指标仍保留。<br><span class="warn">当前指标回填仍在进行，刷新后样本量和排序可能增加；不要把低支持度行解释为跨 case 稳定结论。</span>`;$('coverage').innerHTML=[['完整三-Scope单元',c.complete_triplets],['Cases',c.cases],['Case-seeds',c.case_seeds],['Target slots',c.targets],['并列最大',c.ties]].map(x=>`<article><b>${x[1]}</b><span>${x[0]}</span></article>`).join('');const best=Math.max(...a.scope_summary.map(x=>Number(x.case_balanced_mean)));$('scopeSummary').innerHTML=a.scope_summary.map(x=>`<article class="scope" data-scope="${x.head_scope}"><strong>${esc(x.label)}</strong><div class="value">${num(x.case_balanced_mean)}</div><dl><dt>Case-balanced mean</dt><dd>${num(x.case_balanced_mean)}</dd><dt>Raw median</dt><dd>${num(x.median)}</dd><dt>逐单元最大</dt><dd>${x.wins}/${x.units} · ${num(100*x.win_rate,1)}%</dd></dl>${Math.abs(Number(x.case_balanced_mean)-best)<1e-12?'<span class="pill winner">当前总体最大</span>':''}</article>`).join('');$('status').textContent=`${m.label} · ${c.complete_triplets} triplets · reports ${inventory.fast_reports}/${inventory.trajectory_reports}/${inventory.survival_reports}`}
-function renderRanking(){const m=metricDef(),rows=filtered(analysis().rankings);$('rankingNote').textContent=`${m.label}（${m.unit}）：同一配置先在 seed 内汇总，再对 case 等权；N=三种 scope 均有效的严格配对单元。`; $('ranking').innerHTML=rows.length?rows.map((r,i)=>`<tr class="${r.cases<2?'low-support':''}"><td>${i+1}</td><td><b>${esc(r.head_scope_label)}</b></td><td>${esc(r.label)}<br><code>${esc(r.mask_mode)}</code></td><td>${esc(r.flow)}</td><td>${esc(r.target)}</td><td><b>${num(r.case_balanced_mean)}</b></td><td>${num(r.median)}</td><td>${r.units}</td><td>${r.cases} / ${r.case_seeds}${r.cases<2?' · 单 case':''}</td></tr>`).join(''):'<tr><td colspan="9">当前筛选无完整记录</td></tr>'}
+function renderSummary(){const a=analysis(),m=metricDef(),c=a.coverage,inventory=data.report_inventory;$('method').innerHTML=`<b>统计口径：</b>${esc(data.method)}<br><b>倍数定义：</b>同一消融配置和 Object 下，当前 Head group 的 case-balanced mean ÷ Top100 或三组最小 mean；三组差距为 Max/Min。分母≤1e-12 时，非零/零记为 ∞，零/零记为 —；分母接近零时倍数对微小数值非常敏感，应与绝对值共同解读。<br><b>当前 cohort：</b>${esc(cohort().label)}。<b>${esc(m.label)}</b> 的三-scope 完整单元为 <b>${c.complete_triplets}</b>，覆盖 ${c.cases} cases / ${c.case_seeds} case-seeds；质量门失败会使轨迹距离指标的单元整体退出，但 Track Loss/消失指标仍保留。<br><span class="warn">当前指标回填仍在进行，刷新后样本量和排序可能增加；不要把低支持度行解释为跨 case 稳定结论。</span>`;$('coverage').innerHTML=[['完整三-Scope单元',c.complete_triplets],['Cases',c.cases],['Case-seeds',c.case_seeds],['Target slots',c.targets],['并列最大',c.ties]].map(x=>`<article><b>${x[1]}</b><span>${x[0]}</span></article>`).join('');const best=Math.max(...a.scope_summary.map(x=>Number(x.case_balanced_mean)));$('scopeSummary').innerHTML=a.scope_summary.map(x=>`<article class="scope" data-scope="${x.head_scope}"><strong>${esc(x.label)}</strong><div class="value">${num(x.case_balanced_mean)}</div><dl><dt>Case-balanced mean</dt><dd>${num(x.case_balanced_mean)}</dd><dt>vs Top100</dt><dd>${fold(x.fold_vs_top100)}</dd><dt>vs 最弱组</dt><dd>${fold(x.fold_vs_weakest)}</dd><dt>三组 Max/Min</dt><dd>${fold(x.max_min_fold)}</dd><dt>Raw median</dt><dd>${num(x.median)}</dd><dt>逐单元最大</dt><dd>${x.wins}/${x.units} · ${num(100*x.win_rate,1)}%</dd></dl>${Math.abs(Number(x.case_balanced_mean)-best)<1e-12?'<span class="pill winner">当前总体最大</span>':''}</article>`).join('');$('status').textContent=`${m.label} · ${c.complete_triplets} triplets · reports ${inventory.fast_reports}/${inventory.trajectory_reports}/${inventory.survival_reports}`}
+function renderRanking(){const m=metricDef(),rows=filtered(analysis().rankings);$('rankingNote').textContent=`${m.label}（${m.unit}）：同一配置先在 seed 内汇总，再对 case 等权；倍数只在完全相同的 M/时间 × Object 内比较 Head group；N=三种 scope 均有效的严格配对单元。`; $('ranking').innerHTML=rows.length?rows.map((r,i)=>`<tr class="${r.cases<2?'low-support':''}"><td>${i+1}</td><td><b>${esc(r.head_scope_label)}</b></td><td>${esc(r.label)}<br><code>${esc(r.mask_mode)}</code></td><td>${esc(r.flow)}</td><td>${esc(r.target)}</td><td><b>${num(r.case_balanced_mean)}</b></td><td><b>${fold(r.fold_vs_top100)}</b></td><td>${fold(r.fold_vs_weakest)}</td><td>${fold(r.max_min_fold)}</td><td>${num(r.median)}</td><td>${r.units}</td><td>${r.cases} / ${r.case_seeds}${r.cases<2?' · 单 case':''}</td></tr>`).join(''):'<tr><td colspan="12">当前筛选无完整记录</td></tr>'}
 function assetUrl(rep,row){const u=new URL('/api/object-query-head-scope-comparison/video',location.origin);u.searchParams.set('case',rep.case);u.searchParams.set('seed',rep.seed);u.searchParams.set('variant_id',row.variant_id);u.searchParams.set('view',$('view').value);return u}
 function video(rep,row){const view=$('view').value;if(!row.views[view])return '<div class="empty">该视图尚未生成</div>';return `<video controls muted playsinline preload="none" data-src="${esc(assetUrl(rep,row))}"></video>`}
 function arm(){if(observer)observer.disconnect();observer=new IntersectionObserver(entries=>entries.forEach(e=>{if(!e.isIntersecting)return;const v=e.target;if(!v.src){v.src=v.dataset.src;v.load()}observer.unobserve(v)}),{rootMargin:'700px'});document.querySelectorAll('video[data-src]').forEach(v=>observer.observe(v))}
-function renderGallery(){const m=metricDef(),rows=filtered(analysis().representatives).slice(0,6);$('gallery').innerHTML=rows.length?rows.map((r,i)=>`<article class="rep"><div class="rep-head"><h3>#${i+1} · ${esc(r.case)} · seed ${r.seed}<br>${esc(r.label)} · ${esc(r.target)}${r.target_phrase?' / '+esc(r.target_phrase):''}</h3><div class="rep-meta">spread ${num(r.spread)} ${esc(m.unit)}<br>MAX ${esc(r.max_scope)} · MIN ${esc(r.min_scope)}</div></div><div class="video-grid">${[...r.scopes].sort((a,b)=>scopeOrder[a.head_scope]-scopeOrder[b.head_scope]).map(s=>`<figure>${video(r,s)}<figcaption><div class="scope-name"><span>${esc(s.label)}</span><span>${num(s.value)} ${esc(m.unit)}</span></div><div class="metric-strip"><span>Center-ADE/D0</span><span>${num(s.metrics.target_center_ade)}</span><span>Track Loss</span><span>${num(s.metrics.target_track_loss)}</span><span>Target-local</span><span>${num(s.metrics.target_local)}</span><span>Disappearance</span><span>${num(s.metrics.target_disappearance)}</span><span>Outside spillover</span><span>${num(s.metrics.outside_spillover)}</span></div></figcaption></figure>`).join('')}</div></article>`).join(''):'<div class="empty">当前筛选没有三种视频和指标都齐全的代表单元</div>';arm()}
+function renderGallery(){const m=metricDef(),rows=filtered(analysis().representatives).slice(0,6);$('gallery').innerHTML=rows.length?rows.map((r,i)=>`<article class="rep"><div class="rep-head"><h3>#${i+1} · ${esc(r.case)} · seed ${r.seed}<br>${esc(r.label)} · ${esc(r.target)}${r.target_phrase?' / '+esc(r.target_phrase):''}</h3><div class="rep-meta">spread ${num(r.spread)} ${esc(m.unit)} · Max/Min ${fold(r.max_min_fold)}<br>MAX ${esc(r.max_scope)} · MIN ${esc(r.min_scope)}</div></div><div class="video-grid">${[...r.scopes].sort((a,b)=>scopeOrder[a.head_scope]-scopeOrder[b.head_scope]).map(s=>`<figure>${video(r,s)}<figcaption><div class="scope-name"><span>${esc(s.label)}</span><span>${num(s.value)} ${esc(m.unit)}</span></div><div class="metric-strip"><span>当前指标 vs Top100</span><span>${fold(s.fold_vs_top100)}</span><span>当前指标 vs 最弱组</span><span>${fold(s.fold_vs_weakest)}</span><span>Center-ADE/D0</span><span>${num(s.metrics.target_center_ade)}</span><span>Track Loss</span><span>${num(s.metrics.target_track_loss)}</span><span>Target-local</span><span>${num(s.metrics.target_local)}</span><span>Disappearance</span><span>${num(s.metrics.target_disappearance)}</span><span>Outside spillover</span><span>${num(s.metrics.outside_spillover)}</span></div></figcaption></figure>`).join('')}</div></article>`).join(''):'<div class="empty">当前筛选没有三种视频和指标都齐全的代表单元</div>';arm()}
 function render(){targets();renderSummary();renderRanking();renderGallery();const u=new URL(location.href);u.searchParams.set('cohort',$('cohort').value);u.searchParams.set('metric',$('metric').value);history.replaceState(null,'',u)}
 async function load(){const q=new URL(location.href).searchParams;$('status').textContent='读取严格配对指标…';data=await fetch('/api/object-query-head-scope-comparison/catalog',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json()});if(!data.ready)throw new Error('暂无完整三-Scope配对');fillSelect($('cohort'),data.cohorts,x=>x.id,x=>x.label);fillSelect($('metric'),data.metrics,x=>x.id,x=>`${x.category} · ${x.label}`);if(q.get('cohort')&&data.cohorts.some(x=>x.id===q.get('cohort')))$('cohort').value=q.get('cohort');if(q.get('metric')&&data.metrics.some(x=>x.id===q.get('metric')))$('metric').value=q.get('metric');renderDefinitions();render()}
 $('cohort').addEventListener('change',render);$('metric').addEventListener('change',render);$('operator').addEventListener('change',()=>{renderRanking();renderGallery()});$('target').addEventListener('change',()=>{renderRanking();renderGallery()});$('view').addEventListener('change',renderGallery);$('refresh').addEventListener('click',()=>load().catch(showError));$('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{if(!v.src){v.src=v.dataset.src;v.load()}const play=()=>{v.currentTime=0;v.play().catch(()=>{})};v.readyState?play():v.addEventListener('loadedmetadata',play,{once:true})}));function showError(e){$('status').textContent=`加载失败：${e.message}`}$('status').textContent='初始化…';load().catch(showError);

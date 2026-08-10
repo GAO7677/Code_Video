@@ -42,6 +42,8 @@ from .obj_discov_recogn import ObjDiscovRecogn
 from .dias import ARRandTransformerDecoder
 from .randsfq import RandSFQ, RSFQTransit
 from .randsfq2 import RandSFQ2, MarkovRarDecoder
+from .randsfq2_vjepa_video import RandSFQ2VJEPAVideo
+from .vjepa2_1_video_backbone import VJEPA21VideoViT
 from .smoothsa import (
     SmoothSA,
     NormalSharedPreheated,
