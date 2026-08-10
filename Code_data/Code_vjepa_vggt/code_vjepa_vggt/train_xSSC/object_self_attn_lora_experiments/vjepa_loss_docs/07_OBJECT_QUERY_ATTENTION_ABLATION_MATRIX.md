@@ -548,7 +548,7 @@ GPU=5 bash AAA_my_test/object_query_ablation_metrics/bench.sh \
 
 ### 12.2 Head Scope 视频的增量 vs Baseline 指标
 
-M1/M2/M3 的 Top100、Bottom100、All-Heads 视频使用一个独立的 CPU 增量阶段。它读取每个 seed 已冻结的 Baseline CoTracker tube，只把 tube 当作**固定空间 ROI**，计算全帧、target ROI、全部对象 ROI 外的像素和时间差分变化。每个视频卡片下方默认折叠显示明细；页面顶部按影响分降序显示当前已经计算的结果，未生成或未计算项不按 `0` 排名。
+M1/M2/M3 的 Top100、Bottom100、All-Heads 视频使用一个独立的 CPU 增量阶段。它读取每个 seed 已冻结的 Baseline CoTracker tube，只把 tube 当作**固定空间 ROI**，计算全帧、target ROI、全部对象 ROI 外的像素和时间差分变化。每个视频卡片下方默认折叠显示明细；页面顶部把四类影响**分开排名**，未生成或未计算项不按 `0` 排名。旧版综合影响榜仅作折叠参考。
 
 | 量 | 精确定义 | 读法 |
 |---|---|---|
@@ -559,6 +559,36 @@ M1/M2/M3 的 Top100、Bottom100、All-Heads 视频使用一个独立的 CPU 增�
 | Target ROI Δ-MAE | 相邻两帧冻结 ROI 并集内的 Δ-MAE | 越大表示目标区域动态变化越强 |
 | Outside-object MAE / Δ-MAE | 排除全部冻结对象 ROI 后的对应误差 | 越大表示背景或其他区域 spillover 越强 |
 | 绝对影响分 | `100×[0.20×(1−SSIM)+0.15×Global MAE+0.15×Global Δ-MAE+0.30×Target ROI MAE+0.20×Target ROI Δ-MAE]` | 越大只表示相对同 seed Baseline 的可见干预越强；不是质量、物理正确性或 GT 误差 |
+
+为避免综合分把不同现象混在一起，快速指标另分为四类，每类在同一 `case/seed` 的已测视频中独立降序：
+
+| 类别 | 精确分数（0–100） | 影响含义 | 不能解读为 |
+|---|---|---|---|
+| 全局外观影响 | `100×[0.50×(1−Global SSIM)+0.50×Global MAE]` | 整幅画面的结构与像素外观变化 | 对象轨迹或物理误差 |
+| 目标对象局部影响 | `100×Target ROI MAE` | Baseline 冻结 object tube 内的位置/外观联合变化 | 纯形状或纯位置误差 |
+| 时序外观变化 | `100×[0.40×Global Δ-MAE+0.60×Target ROI Δ-MAE]` | 逐帧像素变化模式，会同时受运动、外观、形变和闪烁影响 | 对象轨迹、速度或 RAFT EPE；该项不参与轨迹影响排名 |
+| 对象外传播影响 | `100×mean(Outside MAE, Outside Δ-MAE)` | 排除所有冻结 object tube 后的静态+动态 spillover | M3 因果传播的充分证明 |
+
+四个分数均是“影响强度”，所以数值越大只表示该类差异越明显，不表示生成质量越差或物理错误越大。同一实验可以在“目标局部”排名很高、在“对象外传播”排名很低，这正是分类排名需要保留的诊断区别。
+
+#### 真实轨迹/运动排名（不使用 MAE）
+
+`Δ-MAE` 只保留在“时序外观变化”类。真实对象轨迹另外对每个消融视频运行 CoTracker，以同 seed 未消融 Baseline 为 reference：
+
+\[
+\operatorname{CenterADE}_o=
+\frac{1}{|T_o|}\sum_{t\in T_o}
+\frac{\|c^{abl}_{o,t}-c^{base}_{o,t}\|_2}{D_{o,0}}.
+\]
+
+`c` 是该帧至少 4 个可见 CoTracker 点的坐标中位数，`D0` 是 Baseline F00 对象 mask bbox 对角线。页面轨迹影响分定义为：
+
+\[
+S_{traj}=100\times \operatorname{mean}_{o\in\text{selected objects}}
+\operatorname{CenterADE}_o.
+\]
+
+排名只使用 `S_traj`，不把 FDE、速度误差或 PCK 任意加权合并。每个视频同时显示 Center-FDE、4-frame velocity-vector error、PCK@5/10/20% 和 common-visible coverage，并生成 Baseline/消融左右点与轨迹 overlay。若 common center 少于 4 帧，或相对 Baseline-valid 帧的覆盖率低于 80%，则记为 `N/A` 并退出排名，不用像素误差填补。
 
 这个快速阶段不包含候选视频 CoTracker 轨迹、SAM2 形状、RAFT、DINOv2、LPIPS、VBench 或 simulator GT，不能用快速影响分替代 #1–#25 完整报告。它的作用是让数千个正在生成的 Head Scope 视频先得到口径一致、可增量更新的 Baseline-effect 排序。
 

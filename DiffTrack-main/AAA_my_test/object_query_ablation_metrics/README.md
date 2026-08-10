@@ -81,6 +81,45 @@ generation and not greater physical error.  This fast report must not be called
 CoTracker trajectory, SAM2 shape, RAFT, DINOv2, LPIPS, VBench or simulator-GT
 evaluation; those remain in the complete pipeline above.
 
+The page and JSON report also separate the quick measurements into four
+independently ranked effect categories.  All scores use a `0–100` scale and
+larger means a stronger change versus the same-seed Baseline:
+
+| Category | Exact quick score | What it ranks |
+|---|---|---|
+| Global appearance | `100 * [0.50 * (1 - global_SSIM) + 0.50 * global_MAE]` | Whole-frame structural and pixel change |
+| Target-local | `100 * target_ROI_MAE` | Change inside the frozen Baseline object tube |
+| Temporal appearance | `100 * [0.40 * global_delta_MAE + 0.60 * target_ROI_delta_MAE]` | Frame-to-frame pixel-change patterns, mixing motion, appearance, deformation and flicker; never rank trajectory with this score |
+| Outside-object spillover | `100 * mean(outside_object_MAE, outside_object_delta_MAE)` | Static and temporal change outside all frozen object tubes |
+
+Each video record contains `category_scores_0_100` and
+`category_ranks_within_case_seed`.  `ranking.json` additionally stores the
+corresponding cross-seed means.  Categories are ranked separately; a variant
+can therefore lead the target-local list without leading the spillover list.
+
+### True Head-Scope trajectory ranking
+
+Temporal Delta-MAE is a temporal-appearance measurement, not a trajectory
+measurement.  Use the separate CoTracker mode for real object-motion ranking:
+
+```bash
+cd /home/gaoya/Code_Video/DiffTrack-main
+GPU=2 bash AAA_my_test/object_query_ablation_metrics/bench.sh \
+  /data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_temporal_tube_v1/0613pybullet_sample_001460_w002/seed_47326 \
+  --head-scope-trajectory
+```
+
+The primary score is
+`100 * mean_selected_objects(center_ADE_norm)`, where the center is the median
+of at least four visible CoTracker points and the normalizer is the F00 object
+bbox diagonal.  Center-FDE, four-frame velocity-vector error, PCK@5/10/20% and
+common-visible coverage are reported alongside it.  A selected object must
+have at least four common center frames and at least 80% coverage relative to
+the Baseline-valid center frames; otherwise its score is `N/A` and it is not
+ranked.  Every record includes a Baseline/Ablation point-and-trajectory overlay.
+Artifacts are written under
+`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/head_scope_trajectory`.
+
 ## Manual stages (advanced)
 
 Set `OBJECT_QUERY_ABLATION_SEED` for every single-seed stage. For example:

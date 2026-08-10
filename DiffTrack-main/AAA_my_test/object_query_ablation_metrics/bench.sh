@@ -19,6 +19,7 @@ OVERWRITE=0
 RUN_VBENCH=1
 RUN_AGGREGATE=1
 RUN_HEAD_SCOPE_BASELINE=0
+RUN_HEAD_SCOPE_TRAJECTORY=0
 HEAD_SCOPE_WATCH_SECONDS=0
 HEAD_SCOPE_WORKERS=4
 
@@ -30,6 +31,8 @@ Usage:
 RESULT_DIR may be either:
   1. seed_XXXXX/ containing video_similarity_top100.json; or
   2. its case directory containing one or more seed_XXXXX/ directories.
+For --head-scope-trajectory it is one seed_XXXXX/ directory containing the
+completed M1/M2/M3 Head-Scope variant subdirectories.
 
 Options:
   --gpu ID          Physical GPU index (default: $GPU or 0; GPU 4 is forbidden)
@@ -40,6 +43,9 @@ Options:
   --head-scope-baseline
                     Incrementally compute CPU baseline-effect metrics for the
                     generated M1/M2/M3 Top100/Bottom100/All-Heads videos
+  --head-scope-trajectory
+                    Incrementally run CoTracker and compute true trajectory
+                    metrics/overlays for one Head-Scope case/seed directory
   --watch-seconds N With --head-scope-baseline, poll for new videos every N sec
   --workers N       CPU decode/metric workers for head-scope mode (default: 4)
   --dry-run         Validate and print every command without running model inference
@@ -49,6 +55,7 @@ Examples:
   bash bench.sh /path/to/CASE/seed_47326
   GPU=5 bash bench.sh /path/to/CASE
   bash bench.sh /path/to/temporal_tube_root --head-scope-baseline --watch-seconds 60
+  GPU=2 bash bench.sh /path/to/CASE/seed_47326 --head-scope-trajectory
 EOF
 }
 
@@ -105,6 +112,10 @@ while [[ $# -gt 0 ]]; do
       RUN_HEAD_SCOPE_BASELINE=1
       shift
       ;;
+    --head-scope-trajectory)
+      RUN_HEAD_SCOPE_TRAJECTORY=1
+      shift
+      ;;
     --watch-seconds)
       [[ $# -ge 2 ]] || die "--watch-seconds requires a non-negative integer"
       HEAD_SCOPE_WATCH_SECONDS="$2"
@@ -128,6 +139,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if (( RUN_HEAD_SCOPE_BASELINE == 1 && RUN_HEAD_SCOPE_TRAJECTORY == 1 )); then
+  die "choose only one of --head-scope-baseline and --head-scope-trajectory"
+fi
 
 if (( RUN_HEAD_SCOPE_BASELINE == 1 )); then
   [[ "${HEAD_SCOPE_WATCH_SECONDS}" =~ ^[0-9]+$ ]] || die \
@@ -154,6 +169,39 @@ if (( RUN_HEAD_SCOPE_BASELINE == 1 )); then
   quote_command "${head_scope_command[@]}"
   if (( DRY_RUN == 0 )); then
     exec "${head_scope_command[@]}"
+  fi
+  exit 0
+fi
+
+if (( RUN_HEAD_SCOPE_TRAJECTORY == 1 )); then
+  [[ "${GPU}" =~ ^[0-9]+$ ]] || die "GPU must be one physical GPU index"
+  [[ "${GPU}" != "4" ]] || die "GPU 4 is forbidden by /home/gaoya/AGENTS.md"
+  command -v nvidia-smi >/dev/null || die "nvidia-smi is unavailable"
+  nvidia-smi -i "${GPU}" --query-gpu=index --format=csv,noheader \
+    >/dev/null 2>&1 || die "GPU ${GPU} does not exist"
+  [[ -x "${WAN_PYTHON}" ]] || die "missing Python executable: ${WAN_PYTHON}"
+  RESULT_INPUT="$(realpath -e -- "${RESULT_INPUT}")"
+  [[ -d "${RESULT_INPUT}" ]] || die "RESULT_DIR is not a directory: ${RESULT_INPUT}"
+  HEAD_SCOPE_TRAJECTORY_OUTPUT_BASE="${METRICS_HEAD_SCOPE_TRAJECTORY_OUTPUT_BASE:-${OUTPUT_BASE}/head_scope_trajectory}"
+  case "${HEAD_SCOPE_TRAJECTORY_OUTPUT_BASE}" in
+    /home/gaoya|/home/gaoya/*)
+      die "large trajectory artifacts may not be stored under /home/gaoya"
+      ;;
+  esac
+  declare -a trajectory_command=(
+    env "CUDA_VISIBLE_DEVICES=${GPU}"
+    "${WAN_PYTHON}"
+    "${SCRIPT_DIR}/compute_head_scope_trajectory_metrics.py"
+    "${RESULT_INPUT}"
+    --output-base "${HEAD_SCOPE_TRAJECTORY_OUTPUT_BASE}"
+    --device cuda:0
+  )
+  if (( OVERWRITE == 1 )); then
+    trajectory_command+=(--overwrite)
+  fi
+  quote_command "${trajectory_command[@]}"
+  if (( DRY_RUN == 0 )); then
+    exec "${trajectory_command[@]}"
   fi
   exit 0
 fi

@@ -50,6 +50,32 @@ M123_MODES = (
     "outgoing_past",
 )
 HEAD_SCOPES = ("top100", "bottom100", "all720")
+CATEGORY_DEFINITIONS = {
+    "global_appearance": {
+        "name": "全局外观影响",
+        "metrics": ["1 - Global SSIM", "Global MAE"],
+        "formula": "100 * [0.50*(1-global_SSIM) + 0.50*global_MAE]",
+        "direction": "越大表示全画面的结构/像素外观变化越强",
+    },
+    "target_local": {
+        "name": "目标对象局部影响",
+        "metrics": ["Target ROI MAE"],
+        "formula": "100 * target_ROI_MAE",
+        "direction": "越大表示目标对象所在冻结 ROI 的位置/外观变化越强",
+    },
+    "temporal_appearance": {
+        "name": "时序外观变化",
+        "metrics": ["Global Delta-MAE", "Target ROI Delta-MAE"],
+        "formula": "100 * [0.40*global_delta_MAE + 0.60*target_ROI_delta_MAE]",
+        "direction": "越大表示逐帧像素变化模式差异越强；混合运动、外观、形变与闪烁，不用于轨迹排名",
+    },
+    "outside_spillover": {
+        "name": "对象外传播影响",
+        "metrics": ["Outside-object MAE", "Outside-object Delta-MAE"],
+        "formula": "100 * mean(outside_object_MAE, outside_object_delta_MAE)",
+        "direction": "越大表示背景/其他区域的静态及动态 spillover 越强",
+    },
+}
 METRIC_DEFINITIONS = {
     "impact_score_0_100": {
         "definition": "相对 Baseline 的绝对视觉干预强度；不是质量或物理正确性分数。",
@@ -369,6 +395,42 @@ def average_ranks(values: np.ndarray) -> np.ndarray:
 def assign_ranks(records: list[dict[str, Any]]) -> None:
     if not records:
         return
+    for row in records:
+        metrics = row["metrics"]
+        global_metrics = metrics["global"]
+        target_metrics = metrics["target_roi"]
+        outside_metrics = metrics["outside_objects"]
+        outside_values = [
+            float(value)
+            for value in (
+                outside_metrics.get("mae_0_1"),
+                outside_metrics.get("temporal_delta_mae_0_1"),
+            )
+            if value is not None
+        ]
+        metrics["category_scores_0_100"] = {
+            "global_appearance": round(
+                100.0
+                * (
+                    0.50 * (1.0 - float(global_metrics["ssim_mean"]))
+                    + 0.50 * float(global_metrics["mae_0_1"])
+                ),
+                8,
+            ),
+            "target_local": round(100.0 * float(target_metrics["mae_0_1"]), 8),
+            "temporal_appearance": round(
+                100.0
+                * (
+                    0.40 * float(global_metrics["temporal_delta_mae_0_1"])
+                    + 0.60
+                    * float(target_metrics["temporal_delta_mae_0_1"])
+                ),
+                8,
+            ),
+            "outside_spillover": round(
+                100.0 * (fmean(outside_values) if outside_values else 0.0), 8
+            ),
+        }
     scores = np.asarray([row["metrics"]["impact_score_0_100"] for row in records])
     descending = len(records) + 1.0 - average_ranks(scores)
     for row, rank in zip(records, descending, strict=True):
@@ -376,6 +438,24 @@ def assign_ranks(records: list[dict[str, Any]]) -> None:
         row["impact_percentile_within_case_seed"] = round(
             float(100.0 * (len(records) - rank) / max(len(records) - 1, 1)), 3
         )
+        row["category_ranks_within_case_seed"] = {}
+        row["category_percentiles_within_case_seed"] = {}
+    for category_id in CATEGORY_DEFINITIONS:
+        category_scores = np.asarray(
+            [
+                row["metrics"]["category_scores_0_100"][category_id]
+                for row in records
+            ]
+        )
+        category_ranks = len(records) + 1.0 - average_ranks(category_scores)
+        for row, rank in zip(records, category_ranks, strict=True):
+            row["category_ranks_within_case_seed"][category_id] = round(
+                float(rank), 3
+            )
+            row["category_percentiles_within_case_seed"][category_id] = round(
+                float(100.0 * (len(records) - rank) / max(len(records) - 1, 1)),
+                3,
+            )
 
 
 def compute_seed(
@@ -420,7 +500,11 @@ def compute_seed(
         or previous_map[row["variant_id"]].get("video_signature")
         != row["video_signature"]
     ]
-    if not pending and len(previous_map) == len(candidates):
+    if (
+        not pending
+        and len(previous_map) == len(candidates)
+        and int(previous.get("schema_version", 0)) >= 3
+    ):
         return output, 0
 
     track_path = seed_dir / "frozen_baseline_tracks" / "tracks.npz"
@@ -471,7 +555,7 @@ def compute_seed(
         )
     )
     report = {
-        "schema_version": 1,
+        "schema_version": 3,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "case": case,
         "seed": seed,
@@ -488,6 +572,7 @@ def compute_seed(
         "baseline_signature": baseline_signature,
         "roi_audit": roi_audit,
         "metric_definitions": METRIC_DEFINITIONS,
+        "category_definitions": CATEGORY_DEFINITIONS,
         "records": records,
     }
     atomic_json(output, report)
@@ -515,6 +600,9 @@ def rebuild_global_ranking(output_base: Path) -> Path:
                     "ranking_tag": record.get("ranking_tag"),
                     "impact_score_0_100": record["metrics"]["impact_score_0_100"],
                     "spillover_score_0_100": record["metrics"]["spillover_score_0_100"],
+                    "category_scores_0_100": record["metrics"][
+                        "category_scores_0_100"
+                    ],
                     "report_path": str(report_path),
                 }
             )
@@ -552,6 +640,16 @@ def rebuild_global_ranking(output_base: Path) -> Path:
                 "mean_spillover_score_0_100": round(
                     fmean(float(row["spillover_score_0_100"]) for row in values), 8
                 ),
+                "mean_category_scores_0_100": {
+                    category_id: round(
+                        fmean(
+                            float(row["category_scores_0_100"][category_id])
+                            for row in values
+                        ),
+                        8,
+                    )
+                    for category_id in CATEGORY_DEFINITIONS
+                },
             }
         )
     aggregates.sort(
@@ -561,10 +659,11 @@ def rebuild_global_ranking(output_base: Path) -> Path:
     atomic_json(
         output,
         {
-            "schema_version": 1,
+            "schema_version": 3,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "reference": "same-seed no-intervention Baseline",
             "ranking_definition": METRIC_DEFINITIONS["impact_score_0_100"],
+            "category_definitions": CATEGORY_DEFINITIONS,
             "sample_record_count": len(rows),
             "experiment_group_count": len(aggregates),
             "records": rows,
