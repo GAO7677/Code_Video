@@ -6,7 +6,11 @@ are recomputed from the transformed masks, as in the official xSSC reader.
 """
 
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import fcntl
+import hashlib
 import json
+import os
 import re
 import struct
 import warnings
@@ -149,6 +153,7 @@ class MOViTFRecord(ptud.Dataset):
         transform=lambda **sample: sample,
         base_dir=None,
         require_complete=False,
+        index_cache_dir=None,
     ):
         if base_dir is not None:
             data_file = Path(base_dir) / data_file
@@ -183,7 +188,7 @@ class MOViTFRecord(ptud.Dataset):
                 f"{self.data_dir}"
             )
 
-        self.records = []
+        indexed_shards = []
         local_shards = set()
         for shard_path in shard_paths:
             match = _SHARD_PATTERN.search(shard_path.name)
@@ -193,13 +198,16 @@ class MOViTFRecord(ptud.Dataset):
             if shard_total != len(shard_lengths) or shard_index >= shard_total:
                 raise ValueError(f"Shard name conflicts with metadata: {shard_path}")
             local_shards.add(shard_index)
-            records = self._index_shard(shard_path)
-            expected = shard_lengths[shard_index]
-            if len(records) != expected:
-                raise ValueError(
-                    f"{shard_path.name} has {len(records)} records; expected {expected}"
-                )
-            self.records.extend(records)
+            indexed_shards.append(
+                (shard_path, shard_index, shard_lengths[shard_index])
+            )
+
+        if index_cache_dir is None:
+            self.records = self._build_records(indexed_shards)
+        else:
+            self.records = self._load_or_build_cached_records(
+                indexed_shards, Path(index_cache_dir)
+            )
 
         missing_shards = sorted(set(range(len(shard_lengths))) - local_shards)
         if missing_shards:
@@ -308,6 +316,108 @@ class MOViTFRecord(ptud.Dataset):
                 stream.seek(payload_size + 4, 1)
                 position = next_position
         return records
+
+    @classmethod
+    def _index_expected_shard(cls, indexed_shard):
+        shard_path, _, expected = indexed_shard
+        shard_records = cls._index_shard(shard_path)
+        if len(shard_records) != expected:
+            raise ValueError(
+                f"{shard_path.name} has {len(shard_records)} records; "
+                f"expected {expected}"
+            )
+        return shard_records
+
+    @classmethod
+    def _build_records(cls, indexed_shards):
+        worker_count = int(os.environ.get("MOVI_INDEX_WORKERS", "8"))
+        if worker_count <= 0:
+            raise ValueError("MOVI_INDEX_WORKERS must be positive")
+        worker_count = min(worker_count, len(indexed_shards))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            shard_record_groups = executor.map(
+                cls._index_expected_shard, indexed_shards
+            )
+            return [
+                record
+                for shard_records in shard_record_groups
+                for record in shard_records
+            ]
+
+    def _load_or_build_cached_records(self, indexed_shards, cache_dir):
+        """Build the large TFRecord offset table once across all DDP ranks."""
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        data_key = hashlib.sha256(str(self.data_dir.resolve()).encode()).hexdigest()[:16]
+        cache_file = cache_dir / f"movi_c-{self.split}-{data_key}.index.json"
+        lock_file = cache_file.with_suffix(f"{cache_file.suffix}.lock")
+        manifest = [
+            {
+                "name": path.name,
+                "size": path.stat().st_size,
+                "mtime_ns": path.stat().st_mtime_ns,
+                "shard_index": shard_index,
+                "expected_records": expected,
+            }
+            for path, shard_index, expected in indexed_shards
+        ]
+        paths_by_name = {path.name: str(path) for path, _, _ in indexed_shards}
+
+        with lock_file.open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            if cache_file.is_file():
+                cached = json.loads(cache_file.read_text())
+                if (
+                    cached.get("format") == "movi_tfrecord_index_v1"
+                    and cached.get("data_dir") == str(self.data_dir.resolve())
+                    and cached.get("split") == self.split
+                    and cached.get("shards") == manifest
+                ):
+                    print(
+                        f"[movi-index] cache hit split={self.split} "
+                        f"records={len(cached['records'])} file={cache_file}",
+                        flush=True,
+                    )
+                    return [
+                        (paths_by_name[name], offset, size)
+                        for name, offset, size in cached["records"]
+                    ]
+                warnings.warn(
+                    f"Ignoring stale MOVi index cache: {cache_file}",
+                    stacklevel=2,
+                )
+
+            print(
+                f"[movi-index] building split={self.split} "
+                f"shards={len(indexed_shards)} "
+                f"workers={os.environ.get('MOVI_INDEX_WORKERS', '8')} "
+                f"file={cache_file}",
+                flush=True,
+            )
+            records = self._build_records(indexed_shards)
+            payload = {
+                "format": "movi_tfrecord_index_v1",
+                "data_dir": str(self.data_dir.resolve()),
+                "split": self.split,
+                "shards": manifest,
+                "records": [
+                    [Path(path).name, offset, size]
+                    for path, offset, size in records
+                ],
+            }
+            temporary_file = cache_file.with_suffix(
+                f"{cache_file.suffix}.tmp-{os.getpid()}"
+            )
+            try:
+                temporary_file.write_text(json.dumps(payload, separators=(",", ":")))
+                os.replace(temporary_file, cache_file)
+            finally:
+                temporary_file.unlink(missing_ok=True)
+            print(
+                f"[movi-index] cache ready split={self.split} "
+                f"records={len(records)} file={cache_file}",
+                flush=True,
+            )
+            return records
 
     @staticmethod
     def _decode_rgb(encoded):

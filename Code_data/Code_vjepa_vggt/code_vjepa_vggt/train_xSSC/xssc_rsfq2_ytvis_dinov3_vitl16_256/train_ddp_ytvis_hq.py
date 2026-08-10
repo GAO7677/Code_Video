@@ -2,7 +2,6 @@
 from argparse import ArgumentParser
 from contextlib import nullcontext
 from datetime import timedelta
-from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -62,6 +61,21 @@ class WandbCallbackProxy:
             else:
                 payload[f"train/{key}_epoch"] = value
         self.run.log(payload)
+
+
+class ValidationSubset(Subset):
+    """Attach a validity bit to DDP-padding samples used only for collectives."""
+
+    def __init__(self, dataset, index_valid_pairs):
+        super().__init__(dataset, [index for index, _ in index_valid_pairs])
+        self.sample_valid = [valid for _, valid in index_valid_pairs]
+
+    def __getitem__(self, index):
+        sample = dict(super().__getitem__(index))
+        sample["_distributed_valid"] = torch.tensor(
+            self.sample_valid[index], dtype=torch.bool
+        )
+        return sample
 
 
 def parse_args():
@@ -133,6 +147,19 @@ def metric_means(metrics):
     return means
 
 
+def apply_sample_validity(metrics, sample_valid):
+    sample_valid = sample_valid.bool().flatten()
+    masked = {}
+    for key, (value, valid) in metrics.items():
+        if len(valid) != len(sample_valid):
+            raise RuntimeError(
+                f"metric {key} has {len(valid)} validity entries for "
+                f"{len(sample_valid)} validation samples"
+            )
+        masked[key] = (value, valid & sample_valid.to(valid.device))
+    return masked
+
+
 def checkpoint_path(save_path, step):
     return save_path / f"step-{step:06d}.pth"
 
@@ -186,6 +213,7 @@ def load_matching_checkpoint(
     exclude_patterns,
     allowed_missing_patterns=(),
     expected_source_variant=None,
+    expected_source_step=None,
 ):
     checkpoint_file = checkpoint_file.resolve()
     metadata = read_checkpoint_metadata(checkpoint_file)
@@ -194,6 +222,13 @@ def load_matching_checkpoint(
         raise RuntimeError(
             "Transfer checkpoint variant mismatch: "
             f"expected {expected_source_variant!r}, got {source_variant!r} from "
+            f"{checkpoint_file}"
+        )
+    source_step = metadata.get("optimizer_step")
+    if expected_source_step is not None and source_step != expected_source_step:
+        raise RuntimeError(
+            "Transfer checkpoint step mismatch: "
+            f"expected {expected_source_step}, got {source_step!r} from "
             f"{checkpoint_file}"
         )
     source = load_model_state(checkpoint_file)
@@ -230,6 +265,7 @@ def load_matching_checkpoint(
     report = {
         "checkpoint": str(checkpoint_file),
         "source_variant": source_variant,
+        "source_optimizer_step": source_step,
         "matched_key_count": len(matched),
         "matched_parameter_count": sum(value.numel() for value in matched.values()),
         "excluded_keys": sorted(excluded),
@@ -246,21 +282,39 @@ def load_matching_checkpoint(
     return report
 
 
+def checkpoint_load_summary(report):
+    """Keep console logs compact while preserving the full JSON audit report."""
+    return {
+        "checkpoint": report["checkpoint"],
+        "source_variant": report["source_variant"],
+        "source_optimizer_step": report["source_optimizer_step"],
+        "matched_key_count": report["matched_key_count"],
+        "matched_parameter_count": report["matched_parameter_count"],
+        "excluded_key_count": len(report["excluded_keys"]),
+        "unexpected_key_count": len(report["unexpected_keys"]),
+        "shape_mismatch_count": len(report["shape_mismatches"]),
+        "missing_key_count": len(report["missing_keys"]),
+        "disallowed_missing_key_count": len(report["disallowed_missing_keys"]),
+    }
+
+
 def capture_runtime_state(pack):
     numpy_state = np.random.get_state()
     return {
         "python_random": random.getstate(),
         "numpy_random": {
             "name": numpy_state[0],
-            "keys": torch.from_numpy(numpy_state[1].copy()),
+            "keys": numpy_state[1].tolist(),
             "position": numpy_state[2],
             "has_gauss": numpy_state[3],
             "cached_gaussian": numpy_state[4],
         },
-        "torch_cpu": torch.get_rng_state(),
-        "torch_cuda": torch.cuda.get_rng_state(pack.device),
+        # Keep object collectives tensor-free. This avoids torch-storage
+        # unpickling incompatibilities in the local PyTorch build.
+        "torch_cpu": bytes(torch.get_rng_state().tolist()),
+        "torch_cuda": bytes(torch.cuda.get_rng_state(pack.device).tolist()),
         "data_generators": {
-            key: generator.get_state()
+            key: bytes(generator.get_state().tolist())
             for key, generator in pack.data_generators.items()
         },
     }
@@ -272,16 +326,18 @@ def restore_runtime_state(runtime_state, generators, device):
     np.random.set_state(
         (
             numpy_state["name"],
-            numpy_state["keys"].cpu().numpy(),
+            np.asarray(numpy_state["keys"], dtype=np.uint32),
             numpy_state["position"],
             numpy_state["has_gauss"],
             numpy_state["cached_gaussian"],
         )
     )
-    torch.set_rng_state(runtime_state["torch_cpu"].cpu())
-    torch.cuda.set_rng_state(runtime_state["torch_cuda"].cpu(), device)
+    torch.set_rng_state(torch.tensor(list(runtime_state["torch_cpu"]), dtype=torch.uint8))
+    torch.cuda.set_rng_state(
+        torch.tensor(list(runtime_state["torch_cuda"]), dtype=torch.uint8), device
+    )
     for key, state in runtime_state["data_generators"].items():
-        generators[key].set_state(state.cpu())
+        generators[key].set_state(torch.tensor(list(state), dtype=torch.uint8))
 
 
 def save_checkpoint_bundle(pack, save_file=None):
@@ -314,8 +370,8 @@ def save_checkpoint_bundle(pack, save_file=None):
             metadata=metadata,
         )
         resume_state = {
-            "format": "xssc_training_state_v1",
             **metadata,
+            "format": "xssc_training_state_v1",
             "model_checkpoint": final_checkpoint.name,
             "optimizer": pack.optimiz.state_dict(),
             "scaler": pack.scaler.state_dict(),
@@ -437,26 +493,38 @@ def train_epoch(pack, sampler, epoch):
     start_time = time.time()
 
     data_iterator = iter(pack.dataset_t)
+    consumed_batches = 0
+    batches_per_epoch = len(pack.dataset_t)
     iterator = tqdm.tqdm(
-        total=len(pack.dataset_t), disable=pack.rank != 0
+        total=batches_per_epoch, disable=pack.rank != 0
     )
     while True:
         if pack.step_count >= pack.max_step:
             break
-        batches = list(islice(data_iterator, pack.gradient_accumulation_steps))
-        if not batches:
+        remaining_batches = batches_per_epoch - consumed_batches
+        if remaining_batches <= 0:
             break
+        accumulation_count = min(
+            pack.gradient_accumulation_steps, remaining_batches
+        )
         if (
-            len(batches) < pack.gradient_accumulation_steps
+            accumulation_count < pack.gradient_accumulation_steps
             and pack.drop_incomplete_accumulation
         ):
-            iterator.update(len(batches))
+            iterator.update(remaining_batches)
             break
-        accumulation_count = len(batches)
         pack.optimiz.zero_grad(set_to_none=True)
         loss_batches = []
         acc_batches = []
-        for accumulation_index, batch in enumerate(batches):
+        for accumulation_index in range(accumulation_count):
+            try:
+                batch = next(data_iterator)
+            except StopIteration as error:
+                raise RuntimeError(
+                    "DataLoader ended before its reported length: "
+                    f"consumed={consumed_batches}, expected={batches_per_epoch}"
+                ) from error
+            consumed_batches += 1
             pack.batch = batch
             [callback.before_step(**pack) for callback in pack.callback_t]
             synchronize = accumulation_index + 1 == accumulation_count
@@ -583,6 +651,10 @@ def val_epoch(pack):
             [callback.after_forward(**pack) for callback in pack.callback_v]
             local_loss = pack.loss_fn_v(**pack)
         local_acc = pack.acc_fn_v(**pack)
+        sample_valid = pack.batch.get("_distributed_valid")
+        if sample_valid is not None:
+            local_loss = apply_sample_validity(local_loss, sample_valid)
+            local_acc = apply_sample_validity(local_acc, sample_valid)
         pack.loss = gather_metrics(local_loss)
         pack.acc = gather_metrics(local_acc)
         [callback.after_step(**pack) for callback in pack.callback_v]
@@ -646,9 +718,33 @@ def main():
     set_seed(args.seed + rank)
     torch.backends.cudnn.benchmark = cfg.cudnn_benchmark
     torch.backends.cudnn.deterministic = cfg.cudnn_deterministic
-    torch.use_deterministic_algorithms(
-        cfg.use_deterministic_algorithms, warn_only=True
+    deterministic_warn_only = bool(
+        getattr(cfg, "deterministic_warn_only", True)
     )
+    torch.use_deterministic_algorithms(
+        cfg.use_deterministic_algorithms,
+        warn_only=deterministic_warn_only,
+    )
+    deterministic_sdp_math = bool(
+        getattr(cfg, "deterministic_sdp_math", False)
+    )
+    if deterministic_sdp_math:
+        if not cfg.use_deterministic_algorithms:
+            raise ValueError(
+                "deterministic_sdp_math requires use_deterministic_algorithms=True"
+            )
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_math_sdp(True)
+    if rank == 0:
+        print(
+            "[determinism] "
+            f"algorithms={cfg.use_deterministic_algorithms} "
+            f"warn_only={deterministic_warn_only} "
+            f"cudnn={cfg.cudnn_deterministic} "
+            f"sdp_math_only={deterministic_sdp_math}",
+            flush=True,
+        )
     cfg.dataset_t.base_dir = cfg.dataset_v.base_dir = args.data_dir
 
     dataset_t = build_from_config(cfg.dataset_t)
@@ -698,12 +794,16 @@ def main():
         )
     else:
         selected_val_indices = all_val_indices
+    if not selected_val_indices:
+        raise ValueError("validation subset must contain at least one sample")
+    validation_padding_count = (-len(selected_val_indices)) % world_size
     if rank == 0:
         (save_path / "val_subset.json").write_text(
             json.dumps(
                 {
                     "dataset_size": len(dataset_v),
                     "subset_size": len(selected_val_indices),
+                    "distributed_padding_count": validation_padding_count,
                     "seed": val_subset_seed,
                     "indices": selected_val_indices,
                 },
@@ -711,9 +811,17 @@ def main():
             )
             + "\n"
         )
-    val_indices = selected_val_indices[rank::world_size]
+    padded_val_indices = selected_val_indices + [
+        selected_val_indices[-1]
+    ] * validation_padding_count
+    padded_val_valid = [True] * len(selected_val_indices) + [
+        False
+    ] * validation_padding_count
+    val_index_valid_pairs = list(
+        zip(padded_val_indices, padded_val_valid)
+    )[rank::world_size]
     dataload_v = DataLoader(
-        Subset(dataset_v, val_indices),
+        ValidationSubset(dataset_v, val_index_valid_pairs),
         batch_size=cfg.batch_size_v,
         shuffle=False,
         num_workers=cfg.num_work,
@@ -755,6 +863,7 @@ def main():
                 transfer_load_exclude,
                 allowed_missing_patterns=cfg.transfer_allowed_missing,
                 expected_source_variant=cfg.transfer_expected_source_variant,
+                expected_source_step=cfg.transfer_expected_source_step,
             )
     else:
         load_report = None
@@ -762,7 +871,11 @@ def main():
         (save_path / "checkpoint_load_report.json").write_text(
             json.dumps(load_report, indent=2) + "\n"
         )
-        print(json.dumps(load_report, indent=2), flush=True)
+        print(
+            "[checkpoint-load] "
+            + json.dumps(checkpoint_load_summary(load_report), sort_keys=True),
+            flush=True,
+        )
     model.freez(cfg.freez, verbose=False)
     model = model.to(device)
     ddp_model = DistributedDataParallel(

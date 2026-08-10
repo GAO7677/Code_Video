@@ -27,17 +27,29 @@ train_clip_frames = raw_clip_frames
 transition_dt = xssc_steps
 
 start_step = 0
+total_step = 10000
+max_step = total_step
 gpu_ids = [5, 6]
 expected_world_size = len(gpu_ids)
-batch_size_t = 16
-gradient_accumulation_steps = 12
+batch_size_t = 64
+gradient_accumulation_steps = 3
 drop_incomplete_accumulation = True
 effective_global_batch_size = (
     batch_size_t * expected_world_size * gradient_accumulation_steps
 )
 checkpoint_key = r"^(?!m\.encode_backbone\.).*"
 checkpoint_allowed_missing = [r"^m\.encode_backbone\..*"]
-checkpoint_keep_steps = [15000, 50000]
+checkpoint_interval = 1000
+checkpoint_keep_steps = list(range(checkpoint_interval, total_step + 1, checkpoint_interval))
+val_interval = 500
+deterministic_warn_only = False
+deterministic_sdp_math = True
+
+# The inherited schedule was materialized for 50k steps during base-config
+# import. Rebuild its horizon for this 10k run while keeping the same warmup
+# fraction, peak LR, and final LR ratio.
+before_step[1]["nlin"] = int(total_step * warmup_fraction)
+before_step[1]["ntotal"] = total_step
 
 
 def _pad_encoded_clip(video, segment):
@@ -72,6 +84,9 @@ dataset_t["transform0"] = dict(
         ),
     ],
 )
+# All local YTVIS-HQ clips are at most 36 frames, so the inherited ts=30
+# branch scans every LMDB value but repeats each key exactly once.
+dataset_t["ts"] = None
 dataset_v["transform0"] = dict(
     type=Lambda,
     ikeys=[["video"], ["segment"]],

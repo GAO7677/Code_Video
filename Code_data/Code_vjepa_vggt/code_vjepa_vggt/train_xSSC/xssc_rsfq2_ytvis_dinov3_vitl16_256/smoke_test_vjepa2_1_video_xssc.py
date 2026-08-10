@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import time
 
 import torch
 
@@ -18,6 +19,14 @@ def parse_args():
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--backward", action="store_true")
+    parser.add_argument(
+        "--cfg-file",
+        type=Path,
+        default=Path(
+            "upstream/config-randsfq/"
+            "rsfq2_r-ytvis_hq-vjepa2_1_vitl16_256-video-slot512.py"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -26,11 +35,20 @@ def main():
     from object_centric_bench.model import ModelWrap
     from object_centric_bench.util import Config, build_from_config
 
-    config_path = ROOT / (
-        "upstream/config-randsfq/"
-        "rsfq2_r-ytvis_hq-vjepa2_1_vitl16_256-video-slot512.py"
-    )
+    config_path = args.cfg_file
+    if not config_path.is_absolute():
+        config_path = ROOT / config_path
     cfg = Config.fromfile(config_path)
+    torch.backends.cudnn.benchmark = cfg.cudnn_benchmark
+    torch.backends.cudnn.deterministic = cfg.cudnn_deterministic
+    torch.use_deterministic_algorithms(
+        cfg.use_deterministic_algorithms,
+        warn_only=bool(getattr(cfg, "deterministic_warn_only", True)),
+    )
+    if bool(getattr(cfg, "deterministic_sdp_math", False)):
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_math_sdp(True)
     model = ModelWrap(build_from_config(cfg.model), cfg.model_imap, cfg.model_omap)
     model.freez(cfg.freez, verbose=False)
 
@@ -50,6 +68,10 @@ def main():
         cfg.resolut0[1],
         device=device,
     )
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+        torch.cuda.synchronize(device)
+    started = time.perf_counter()
 
     context = torch.enable_grad() if args.backward else torch.inference_mode()
     with context, torch.autocast(
@@ -61,6 +83,9 @@ def main():
         loss = (outputs["recon"] - outputs["feature"].detach()).square().mean()
     if args.backward:
         loss.backward()
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elapsed_seconds = time.perf_counter() - started
 
     expected = {
         "feature": [args.batch_size, cfg.xssc_steps, 1024, 16, 16],
@@ -80,6 +105,7 @@ def main():
         "raw_frames": cfg.raw_clip_frames,
         "xssc_steps": cfg.xssc_steps,
         "label_frame_indices_zero_based": cfg.label_frame_indices,
+        "temporal_mode": cfg.temporal_mode,
         "loss": float(loss.detach().float().item()),
         "outputs": {
             key: {
@@ -89,6 +115,15 @@ def main():
             for key, value in outputs.items()
         },
         "backward": bool(args.backward),
+        "elapsed_seconds": elapsed_seconds,
+        "peak_reserved_gib": (
+            torch.cuda.max_memory_reserved(device) / 1024**3
+            if device.type == "cuda"
+            else None
+        ),
+        "deterministic_sdp_math": bool(
+            getattr(cfg, "deterministic_sdp_math", False)
+        ),
     }
     if args.backward:
         gradients = [

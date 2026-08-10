@@ -39,12 +39,15 @@ effective_global_batch_size = (
 )
 checkpoint_allowed_missing = [r"^m\.encode_backbone\..*"]
 checkpoint_keep_steps = [15000, 50000]
+deterministic_warn_only = False
+deterministic_sdp_math = True
 
 # YTVIS and MOVi-C both use three native tubelet steps. Only the dataset-specific
 # initializer changes, so the learned transition time embedding can transfer.
 transfer_load_exclude = [r"^m\.initializ\..*"]
 transfer_allowed_missing = [r"^m\.encode_backbone\..*", r"^m\.initializ\..*"]
 transfer_expected_source_variant = source_variant_name
+transfer_expected_source_step = 15000
 
 
 def _pad_encoded_even(video, segment):
@@ -53,6 +56,10 @@ def _pad_encoded_even(video, segment):
     return list(video) + [video[-1]], list(segment) + [segment[-1]]
 
 dataset_t["transform0"]["size"] = raw_clip_frames
+dataset_t["index_cache_dir"] = (
+    "/data/gaoya/agent-data/cache/movi_tfrecord_indices"
+)
+dataset_v["index_cache_dir"] = dataset_t["index_cache_dir"]
 dataset_v["transform0"] = dict(
     type=Lambda,
     ikeys=[["video"], ["segment"]],
