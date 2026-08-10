@@ -256,6 +256,13 @@ def validate_config(config: dict, config_dir: Path) -> dict:
             )
         if int(require(config, "xssc_loss.backbone_chunk_size")) <= 0:
             raise ValueError("xssc_loss.backbone_chunk_size must be positive")
+        if not isinstance(
+            require(config, "xssc_loss.gradient_checkpointing_offload"),
+            bool,
+        ):
+            raise TypeError(
+                "xssc_loss.gradient_checkpointing_offload must be a boolean"
+            )
         if int(
             require(config, "xssc_loss.gradient_diagnostics_every_n_forwards")
         ) <= 0:
@@ -579,6 +586,8 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
                     "--xssc_box_cache_dir": paths["xssc_box_cache_dir"],
                 }
             )
+        if xssc_loss["gradient_checkpointing_offload"]:
+            options["--use_gradient_checkpointing_offload"] = None
     if not adaptation["enable_object_branch"]:
         options["--disable_object_branch"] = None
     else:

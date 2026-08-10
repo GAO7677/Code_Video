@@ -20,6 +20,7 @@
     "weight": 0.1,
     "future_start_frame": 8,
     "backbone_chunk_size": 2,
+    "gradient_checkpointing_offload": true,
     "gradient_diagnostics_every_n_forwards": 400
   },
   "logging": {

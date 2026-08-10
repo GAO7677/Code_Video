@@ -41,6 +41,14 @@ VALID_XSSC_LOSS_BACKENDS = ("dinov3_movic", "official_dinov2")
 class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
     """Existing no-object Full-SA module plus differentiable frozen-xSSC loss."""
 
+    _DIT_FROZEN_PREPROCESSOR_NAMES = (
+        "patch_embedding",
+        "text_embedding",
+        "time_embedding",
+        "time_projection",
+        "img_emb",
+    )
+
     def __init__(
         self,
         *args,
@@ -139,6 +147,24 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             self.pipe.vae.model.eval()
         return self
 
+    def _move_frozen_dit_preprocessors(self, device: torch.device | str) -> None:
+        """Move DiT input-only frozen modules without changing the trainable graph.
+
+        Their outputs are computed from non-differentiable conditioning inputs,
+        so none of these weights participates in the LoRA backward pass.  Moving
+        them to CPU after DiT forward releases the small amount of memory needed
+        by the full-resolution differentiable VAE decode.
+        """
+        for name in self._DIT_FROZEN_PREPROCESSOR_NAMES:
+            module = getattr(self.pipe.dit, name, None)
+            if module is None:
+                continue
+            if any(parameter.requires_grad for parameter in module.parameters()):
+                raise RuntimeError(
+                    f"Refusing to offload trainable DiT preprocessor {name!r}"
+                )
+            module.to(device=device)
+
     @staticmethod
     def _restore_condition_latents(
         pred_x0: torch.Tensor,
@@ -173,8 +199,11 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
     def _decode_wan_vae_raw(self, latents: torch.Tensor) -> torch.Tensor:
         """Differentiable direct Wan VAE decode, returning [B,C,T,H,W]."""
         vae_model = self.pipe.vae.model
-        vae_device = next(vae_model.parameters()).device
-        vae_dtype = next(vae_model.parameters()).dtype
+        # Encoder weights may be CPU-offloaded at this point; decoder is the
+        # authoritative device/dtype for this path.
+        decoder_parameter = next(vae_model.decoder.parameters())
+        vae_device = decoder_parameter.device
+        vae_dtype = decoder_parameter.dtype
         latents = latents.to(device=vae_device, dtype=vae_dtype)
         autocast_enabled = vae_device.type == "cuda"
         with torch.autocast(
@@ -313,10 +342,19 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             target_xssc_video.shape[1]
         )
         if self.xssc_loss_backend == "dinov3_movic":
-            boxes = self._xssc_loss_box_builder(
+            box_builder = self._xssc_loss_box_builder
+            generator = box_builder._generator
+            if generator is not None:
+                generator.predictor.model.to(device=target_xssc_video.device)
+            boxes = box_builder(
                 target_xssc_video,
                 self.xssc_loss_num_slots,
             )
+            generator = box_builder._generator
+            if generator is not None:
+                generator.predictor.reset_predictor()
+                generator.predictor.model.to(device="cpu")
+                torch.cuda.empty_cache()
             query = self._xssc_loss_encoder.initializ(boxes[:, 0])
             valid_slots = boxes[:, 0].abs().sum(dim=-1) > 0
         else:
@@ -503,6 +541,16 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
     def forward(self, data, inputs=None):
         if isinstance(data, list):
             return super().forward(data, inputs=inputs)
+        vae_model = self.pipe.vae.model
+        vae_device = self.pipe.device
+        self._move_frozen_dit_preprocessors(vae_device)
+        # The input-processing units need the frozen VAE encoder. Move it back
+        # only for that phase; the auxiliary loss and its backward use solely
+        # conv2 + decoder.
+        vae_model.encoder.to(device=vae_device)
+        vae_model.conv1.to(device=vae_device)
+        if self.pipe.text_encoder is not None:
+            self.pipe.text_encoder.to(device=vae_device)
         if inputs is None:
             inputs = self.get_pipeline_inputs(data)
         inputs = self.transfer_data_to_device(
@@ -512,6 +560,12 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         )
         for unit in self.pipe.units:
             inputs = self.pipe.unit_runner(unit, self.pipe, *inputs)
+        vae_model.encoder.to(device="cpu")
+        vae_model.conv1.to(device="cpu")
+        if self.pipe.text_encoder is not None:
+            self.pipe.text_encoder.to(device="cpu")
+        gc.collect()
+        torch.cuda.empty_cache()
         loss, metrics = self._compute_object_losses(
             self.pipe,
             inputs[0],
@@ -545,6 +599,13 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             )
         finally:
             pipe.model_fn = original_model_fn
+
+        # DiT input embeddings are frozen and their outputs have no gradient
+        # path back to the conditioning inputs.  The block/head backward no
+        # longer needs these weights once the single DiT forward has finished.
+        self._move_frozen_dit_preprocessors("cpu")
+        gc.collect()
+        torch.cuda.empty_cache()
 
         if len(captured) != 1:
             raise RuntimeError(
@@ -683,7 +744,11 @@ def log_stage_summary(accelerator, model, args: argparse.Namespace) -> None:
             f"slot_dim={model.xssc_loss_slot_dim}, "
             f"backbone_chunk={args.xssc_loss_backbone_chunk_size}, "
             "scheduler_timestep_weight=normalized_global_mean, "
-            "Wan-VAE differentiable decode=True, object branch=False"
+            f"DiT-gradient-checkpointing-offload={args.use_gradient_checkpointing_offload}, "
+            "Wan-VAE differentiable decode=True, "
+            "Wan-VAE encoder CPU-offload during decoder backward=True, "
+            "UMT5 CPU-offload after prompt encoding=True, "
+            "object branch=False"
         )
 
 
