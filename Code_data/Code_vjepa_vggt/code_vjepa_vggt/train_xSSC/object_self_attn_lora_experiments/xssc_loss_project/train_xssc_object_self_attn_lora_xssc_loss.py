@@ -3,10 +3,10 @@
 This keeps the existing Wan2.2 + merged OpenVid LoRA, no-object, Full-SA
 training path intact.  The only additional objective is computed as follows:
 
-    DiT v prediction -> reconstructed latent x0 -> frozen Wan VAE ->
+    DiT v prediction -> reconstructed latent x0 -> frozen Tiny VAE ->
     frozen xSSC slots -> future-frame cosine distance to GT xSSC slots.
 
-The xSSC parameters and Wan VAE parameters stay frozen, but the prediction
+The xSSC parameters and Tiny VAE parameters stay frozen, but the prediction
 branch deliberately retains gradients with respect to the reconstructed x0.
 The auxiliary term follows the same normalized scheduler-timestep weighting
 used by the existing V-JEPA loss experiment.
@@ -15,7 +15,6 @@ used by the existing V-JEPA loss experiment.
 from __future__ import annotations
 
 import argparse
-import gc
 from pathlib import Path
 import sys
 
@@ -33,6 +32,9 @@ from torch.utils.checkpoint import checkpoint
 import code_vjepa_vggt.context_wan_v_newtrain as context_wan
 import train_xssc_context_slots as official_xssc
 import train_xssc_object_self_attn_lora as core
+from vjepa_loss_project.train_xssc_object_self_attn_lora_vjepa_loss import (
+    _load_tiny_vae,
+)
 
 
 VALID_XSSC_LOSS_BACKENDS = ("dinov3_movic", "official_dinov2")
@@ -40,14 +42,6 @@ VALID_XSSC_LOSS_BACKENDS = ("dinov3_movic", "official_dinov2")
 
 class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
     """Existing no-object Full-SA module plus differentiable frozen-xSSC loss."""
-
-    _DIT_FROZEN_PREPROCESSOR_NAMES = (
-        "patch_embedding",
-        "text_embedding",
-        "time_embedding",
-        "time_projection",
-        "img_emb",
-    )
 
     def __init__(
         self,
@@ -57,6 +51,9 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         xssc_loss_future_start_frame: int,
         xssc_loss_backbone_chunk_size: int,
         xssc_loss_gradient_diagnostics_every_n_forwards: int,
+        tiny_vae_root: str,
+        tiny_vae_checkpoint: str,
+        tiny_vae_parallel: bool,
         **kwargs,
     ) -> None:
         xssc_root = str(kwargs["xssc_root"])
@@ -82,6 +79,7 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         self.xssc_loss_gradient_diagnostics_every_n_forwards = int(
             xssc_loss_gradient_diagnostics_every_n_forwards
         )
+        self.tiny_vae_parallel = bool(tiny_vae_parallel)
         self._xssc_loss_forward_count = 0
         if self.xssc_loss_backend not in VALID_XSSC_LOSS_BACKENDS:
             raise ValueError(
@@ -135,35 +133,22 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         self.xssc_loss_slot_dim = int(slot_dim)
         self.xssc_loss_num_slots = int(num_slots)
 
-        vae_model = self.pipe.vae.model
-        vae_model.requires_grad_(False)
-        vae_model.eval()
+        tiny_vae, tiny_vae_apply = _load_tiny_vae(
+            tiny_vae_root,
+            tiny_vae_checkpoint,
+            model_device,
+            self.pipe.torch_dtype,
+        )
+        object.__setattr__(self, "_tiny_vae", tiny_vae)
+        object.__setattr__(self, "_tiny_vae_apply", tiny_vae_apply)
 
     def train(self, mode: bool = True):
         super().train(mode)
+        if hasattr(self, "_tiny_vae"):
+            self._tiny_vae.eval()
         if hasattr(self, "_xssc_loss_encoder"):
             self._xssc_loss_encoder.eval()
-        if getattr(self.pipe, "vae", None) is not None:
-            self.pipe.vae.model.eval()
         return self
-
-    def _move_frozen_dit_preprocessors(self, device: torch.device | str) -> None:
-        """Move DiT input-only frozen modules without changing the trainable graph.
-
-        Their outputs are computed from non-differentiable conditioning inputs,
-        so none of these weights participates in the LoRA backward pass.  Moving
-        them to CPU after DiT forward releases the small amount of memory needed
-        by the full-resolution differentiable VAE decode.
-        """
-        for name in self._DIT_FROZEN_PREPROCESSOR_NAMES:
-            module = getattr(self.pipe.dit, name, None)
-            if module is None:
-                continue
-            if any(parameter.requires_grad for parameter in module.parameters()):
-                raise RuntimeError(
-                    f"Refusing to offload trainable DiT preprocessor {name!r}"
-                )
-            module.to(device=device)
 
     @staticmethod
     def _restore_condition_latents(
@@ -196,43 +181,37 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             pred_x0[:, :, 0:1] = target_x0[:, :, 0:1]
         return pred_x0
 
-    def _decode_wan_vae_raw(self, latents: torch.Tensor) -> torch.Tensor:
-        """Differentiable direct Wan VAE decode, returning [B,C,T,H,W]."""
-        vae_model = self.pipe.vae.model
-        # Encoder weights may be CPU-offloaded at this point; decoder is the
-        # authoritative device/dtype for this path.
-        decoder_parameter = next(vae_model.decoder.parameters())
-        vae_device = decoder_parameter.device
-        vae_dtype = decoder_parameter.dtype
-        latents = latents.to(device=vae_device, dtype=vae_dtype)
-        autocast_enabled = vae_device.type == "cuda"
+    def _decode_tiny_vae_raw(self, latents: torch.Tensor) -> torch.Tensor:
+        """Differentiably decode Wan latents to Tiny-VAE [B,T,3,H,W] video."""
+        latent_ntchw = latents.permute(0, 2, 1, 3, 4).contiguous()
+        device_type = latent_ntchw.device.type
         with torch.autocast(
-            device_type=vae_device.type,
+            device_type=device_type,
             dtype=self.pipe.torch_dtype,
-            enabled=autocast_enabled,
+            enabled=device_type == "cuda",
         ):
-            def decode_once(current_latents: torch.Tensor) -> torch.Tensor:
-                output = vae_model.decode(
-                    current_latents,
-                    self.pipe.vae.scale,
-                )
-                # Wan's causal decoder keeps temporal feature caches as module
-                # attributes. They are unnecessary after one complete decode
-                # and would otherwise retain a large autograd graph.
-                vae_model.clear_cache()
-                return output
-
-            if torch.is_grad_enabled() and latents.requires_grad:
-                return checkpoint(decode_once, latents, use_reentrant=False)
-            return decode_once(latents)
+            video = self._tiny_vae_apply(
+                self._tiny_vae.decoder,
+                latent_ntchw,
+                self.tiny_vae_parallel,
+                False,
+            )
+            if self._tiny_vae.patch_size > 1:
+                video = F.pixel_shuffle(video, self._tiny_vae.patch_size)
+        skip_trim = (
+            self._tiny_vae.is_cogvideox and latent_ntchw.shape[1] % 2 == 0
+        )
+        if not skip_trim:
+            video = video[:, self._tiny_vae.frames_to_trim :]
+        return video
 
     def _preprocess_xssc_loss(self, video: torch.Tensor) -> torch.Tensor:
-        """Convert [B,C,T,H,W] in [-1,1] to [B,T,C,256,256]."""
-        if video.ndim != 5 or int(video.shape[1]) != 3:
+        """Convert Tiny-VAE [B,T,C,H,W] in [0,1] to xSSC input."""
+        if video.ndim != 5 or int(video.shape[2]) != 3:
             raise ValueError(
-                f"Wan VAE video must be [B,3,T,H,W], got {tuple(video.shape)}"
+                f"Tiny VAE video must be [B,T,3,H,W], got {tuple(video.shape)}"
             )
-        frames = video.permute(0, 2, 1, 3, 4).float()
+        frames = video.float()
         batch, time_steps, channels, height, width = frames.shape
         crop_size = min(int(height), int(width))
         top = (int(height) - crop_size) // 2
@@ -245,7 +224,7 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             align_corners=False,
             antialias=True,
         )
-        frames = (frames + 1.0) * 127.5
+        frames = frames * 255.0
         mean = frames.new_tensor(official_xssc.XSSC_IMAGENET_MEAN).view(
             1, 3, 1, 1
         )
@@ -379,16 +358,9 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         *,
         return_visuals: bool = False,
     ) -> tuple[torch.Tensor, dict[str, float], dict[str, torch.Tensor] | None]:
-        encoder = self._xssc_loss_encoder
-        encoder_device = next(encoder.parameters()).device
-        target_device = pred_x0_latents.device
-        if encoder_device != target_device:
-            encoder.to(device=target_device)
-        encoder.eval()
-
         with torch.no_grad():
-            target_raw = self._decode_wan_vae_raw(target_x0_latents)
-            target_video = target_raw.clamp(-1.0, 1.0)
+            target_raw = self._decode_tiny_vae_raw(target_x0_latents)
+            target_video = target_raw.clamp(0.0, 1.0)
             target_input = self._preprocess_xssc_loss(target_video)
             initial_query, valid_slots = self._make_shared_initial_query(target_input)
             target_slots, target_attention = self._extract_xssc_loss_slots(
@@ -398,22 +370,11 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             )
             target_slots = target_slots.detach()
 
-        pred_raw = self._decode_wan_vae_raw(pred_x0_latents)
-        # The frozen xSSC graph is differentiated immediately with respect to
-        # decoded pixels, then released before the much larger Wan-VAE/DiT
-        # backward. The surrogate below applies the exact first-order chain
-        # rule gradient to pred_raw without retaining xSSC activations.
-        pred_raw_xssc = (
-            pred_raw.detach().requires_grad_(True)
-            if pred_raw.requires_grad
-            else pred_raw
-        )
-        pred_clipped = pred_raw_xssc.clamp(-1.0, 1.0)
+        pred_raw = self._decode_tiny_vae_raw(pred_x0_latents)
+        pred_clipped = pred_raw.clamp(0.0, 1.0)
         # Straight-through clipping keeps the frozen encoder in its trained
         # range without silently zeroing all out-of-range prediction gradients.
-        pred_video = pred_raw_xssc + (
-            pred_clipped - pred_raw_xssc
-        ).detach()
+        pred_video = pred_raw + (pred_clipped - pred_raw).detach()
         pred_input = self._preprocess_xssc_loss(pred_video)
         pred_slots, pred_attention = self._extract_xssc_loss_slots(
             pred_input,
@@ -433,47 +394,24 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         future_valid = valid_slots[:, None, :].expand_as(cosine_distance)
         valid_count = int(future_valid.sum().item())
         if valid_count:
-            feature_loss_value = cosine_distance[future_valid].mean()
+            feature_loss = cosine_distance[future_valid].mean()
+            cosine_similarity = 1.0 - feature_loss.detach()
         else:
             # Preserve graph connectivity while safely skipping an AMG sample
             # for which no usable first-frame boxes were detected.
-            feature_loss_value = cosine_distance.sum() * 0.0
-
-        if pred_raw.requires_grad:
-            pred_raw_grad = torch.autograd.grad(
-                feature_loss_value,
-                pred_raw_xssc,
-                retain_graph=False,
-                create_graph=False,
-            )[0]
-            surrogate = (pred_raw * pred_raw_grad.detach()).sum()
-            feature_loss = (
-                feature_loss_value.detach()
-                + surrogate
-                - surrogate.detach()
-            )
-            # The encoder is unregistered and frozen, so moving it after its
-            # exact input gradient has been materialized is safe. This frees
-            # enough CUDA memory for full 512x896x49 Wan-VAE backward.
-            encoder.to(device="cpu")
-        else:
-            feature_loss = feature_loss_value
+            feature_loss = cosine_distance.sum() * 0.0
+            cosine_similarity = feature_loss.detach()
 
         metrics = {
-            "train/loss_xssc": float(feature_loss_value.detach().item()),
-            "train/xssc_cosine_similarity": float(
-                (1.0 - feature_loss_value.detach()).item()
-            ),
+            "train/loss_xssc": float(feature_loss.detach().item()),
+            "train/xssc_cosine_similarity": float(cosine_similarity.item()),
             "train/xssc_valid_slot_fraction": float(valid_slots.float().mean().item()),
             "train/xssc_future_frames": float(pred_future.shape[1]),
-            "train/xssc_pred_below_minus_one_fraction": float(
-                (pred_raw.detach() < -1.0).float().mean().item()
+            "train/xssc_pred_below_zero_fraction": float(
+                (pred_raw.detach() < 0.0).float().mean().item()
             ),
             "train/xssc_pred_above_one_fraction": float(
-                (pred_raw_xssc.detach() > 1.0).float().mean().item()
-            ),
-            "train/xssc_encoder_offloaded_for_backward": float(
-                pred_raw.requires_grad
+                (pred_raw.detach() > 1.0).float().mean().item()
             ),
         }
         visuals = None
@@ -541,16 +479,6 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
     def forward(self, data, inputs=None):
         if isinstance(data, list):
             return super().forward(data, inputs=inputs)
-        vae_model = self.pipe.vae.model
-        vae_device = self.pipe.device
-        self._move_frozen_dit_preprocessors(vae_device)
-        # The input-processing units need the frozen VAE encoder. Move it back
-        # only for that phase; the auxiliary loss and its backward use solely
-        # conv2 + decoder.
-        vae_model.encoder.to(device=vae_device)
-        vae_model.conv1.to(device=vae_device)
-        if self.pipe.text_encoder is not None:
-            self.pipe.text_encoder.to(device=vae_device)
         if inputs is None:
             inputs = self.get_pipeline_inputs(data)
         inputs = self.transfer_data_to_device(
@@ -560,12 +488,6 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         )
         for unit in self.pipe.units:
             inputs = self.pipe.unit_runner(unit, self.pipe, *inputs)
-        vae_model.encoder.to(device="cpu")
-        vae_model.conv1.to(device="cpu")
-        if self.pipe.text_encoder is not None:
-            self.pipe.text_encoder.to(device="cpu")
-        gc.collect()
-        torch.cuda.empty_cache()
         loss, metrics = self._compute_object_losses(
             self.pipe,
             inputs[0],
@@ -600,13 +522,6 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         finally:
             pipe.model_fn = original_model_fn
 
-        # DiT input embeddings are frozen and their outputs have no gradient
-        # path back to the conditioning inputs.  The block/head backward no
-        # longer needs these weights once the single DiT forward has finished.
-        self._move_frozen_dit_preprocessors("cpu")
-        gc.collect()
-        torch.cuda.empty_cache()
-
         if len(captured) != 1:
             raise RuntimeError(
                 "Expected exactly one DiT forward in flow-matching loss, "
@@ -635,11 +550,6 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             pred_x0,
             target_x0,
         )
-        # Clear only after _xssc_feature_loss has returned, so its temporary
-        # decoded videos and xSSC inputs are no longer live Python locals.
-        if pred_x0.requires_grad and pred_x0.device.type == "cuda":
-            gc.collect()
-            torch.cuda.empty_cache()
         (
             timestep_weight,
             raw_timestep_weight,
@@ -711,6 +621,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=400,
     )
+    group.add_argument("--tiny_vae_root", required=True)
+    group.add_argument("--tiny_vae_checkpoint", required=True)
+    group.add_argument("--tiny_vae_parallel", action="store_true")
     return parser
 
 
@@ -727,6 +640,9 @@ def build_model(args: argparse.Namespace, accelerator):
             "xssc_loss_gradient_diagnostics_every_n_forwards": (
                 args.xssc_loss_gradient_diagnostics_every_n_forwards
             ),
+            "tiny_vae_root": args.tiny_vae_root,
+            "tiny_vae_checkpoint": args.tiny_vae_checkpoint,
+            "tiny_vae_parallel": args.tiny_vae_parallel,
         },
     )
 
@@ -745,9 +661,7 @@ def log_stage_summary(accelerator, model, args: argparse.Namespace) -> None:
             f"backbone_chunk={args.xssc_loss_backbone_chunk_size}, "
             "scheduler_timestep_weight=normalized_global_mean, "
             f"DiT-gradient-checkpointing-offload={args.use_gradient_checkpointing_offload}, "
-            "Wan-VAE differentiable decode=True, "
-            "Wan-VAE encoder CPU-offload during decoder backward=True, "
-            "UMT5 CPU-offload after prompt encoding=True, "
+            f"Tiny-VAE differentiable decode=True (parallel={args.tiny_vae_parallel}), "
             "object branch=False"
         )
 

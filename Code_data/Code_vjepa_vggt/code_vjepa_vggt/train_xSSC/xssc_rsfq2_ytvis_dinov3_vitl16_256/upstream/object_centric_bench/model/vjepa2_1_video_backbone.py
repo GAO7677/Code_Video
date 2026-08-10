@@ -12,7 +12,8 @@ import torch.nn as nn
 
 DEFAULT_VJEPA2_ROOT = Path("/home/gaoya/Code_Video/vjepa2-main")
 DEFAULT_VJEPA2_CHECKPOINT = Path(
-    "/data/gaoya/ckpt/VJEPA2/vjepa2_1_vitl_dist_vitG_384.pt"
+    "/data/gaoya/agent-data/weights/"
+    "vjepa2_1_vitl_dist_vitG_384_ema_encoder.pt"
 )
 
 
@@ -27,6 +28,7 @@ class VJEPA21VideoViT(nn.Module):
         in_size=256,
         patch_size=16,
         tubelet_size=2,
+        temporal_mode="noncausal",
     ):
         super().__init__()
         if model_name != "vjepa2_1_vit_large_384":
@@ -35,6 +37,11 @@ class VJEPA21VideoViT(nn.Module):
             raise ValueError(
                 "This controlled experiment requires input=256, patch=16, "
                 f"tubelet=2; got {in_size}, {patch_size}, {tubelet_size}"
+            )
+        if temporal_mode not in {"noncausal", "prefix_causal"}:
+            raise ValueError(
+                "temporal_mode must be 'noncausal' or 'prefix_causal', "
+                f"got {temporal_mode!r}"
             )
 
         source_root = Path(
@@ -81,6 +88,7 @@ class VJEPA21VideoViT(nn.Module):
         self.in_size = int(in_size)
         self.patch_size = int(patch_size)
         self.tubelet_size = int(tubelet_size)
+        self.temporal_mode = temporal_mode
         self.out_size = self.in_size // self.patch_size
         self.embed_dim = int(encoder.embed_dim)
         self.checkpoint = str(checkpoint)
@@ -99,20 +107,8 @@ class VJEPA21VideoViT(nn.Module):
         self.model.eval()
         return self
 
-    def forward(self, input):
-        if input.ndim != 5 or input.shape[2] != 3:
-            raise ValueError(
-                f"V-JEPA2.1 video input must be [B,T,3,H,W], got {tuple(input.shape)}"
-            )
-        if tuple(input.shape[-2:]) != (self.in_size, self.in_size):
-            raise ValueError(
-                f"V-JEPA2.1 expects {self.in_size}x{self.in_size}, got {tuple(input.shape[-2:])}"
-            )
+    def _encode_video(self, input):
         temporal_tokens = input.shape[1] // self.tubelet_size
-        if temporal_tokens < 1:
-            raise ValueError("V-JEPA2.1 video input requires at least two frames")
-
-        self.model.eval()
         video = rearrange(input, "b t c h w -> b c t h w")
         tokens = self.model(video)
         expected_tokens = temporal_tokens * self.out_size * self.out_size
@@ -128,3 +124,33 @@ class VJEPA21VideoViT(nn.Module):
             h=self.out_size,
             w=self.out_size,
         )
+
+    def forward(self, input):
+        if input.ndim != 5 or input.shape[2] != 3:
+            raise ValueError(
+                f"V-JEPA2.1 video input must be [B,T,3,H,W], got {tuple(input.shape)}"
+            )
+        if tuple(input.shape[-2:]) != (self.in_size, self.in_size):
+            raise ValueError(
+                f"V-JEPA2.1 expects {self.in_size}x{self.in_size}, got {tuple(input.shape[-2:])}"
+            )
+        if input.shape[1] % self.tubelet_size:
+            raise ValueError(
+                "V-JEPA2.1 video input must contain a whole number of tubelets; "
+                f"got {input.shape[1]} frames for tubelet_size={self.tubelet_size}"
+            )
+        temporal_tokens = input.shape[1] // self.tubelet_size
+        if temporal_tokens < 1:
+            raise ValueError("V-JEPA2.1 video input requires at least two frames")
+
+        self.model.eval()
+        if self.temporal_mode == "noncausal":
+            return self._encode_video(input)
+
+        # Prefix encoding is the reference implementation of block-temporal
+        # causality: a tubelet can attend bidirectionally within its spatial
+        # tokens and to all earlier tubelets, but never to a future tubelet.
+        outputs = []
+        for end in range(self.tubelet_size, input.shape[1] + 1, self.tubelet_size):
+            outputs.append(self._encode_video(input[:, :end])[:, -1:])
+        return torch.cat(outputs, dim=1)

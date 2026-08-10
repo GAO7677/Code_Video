@@ -1,3 +1,4 @@
+
 """Train the existing Wan Full-SA LoRA with a frozen V-JEPA2 feature loss.
 
 The original flow-matching loss remains authoritative. This module captures the

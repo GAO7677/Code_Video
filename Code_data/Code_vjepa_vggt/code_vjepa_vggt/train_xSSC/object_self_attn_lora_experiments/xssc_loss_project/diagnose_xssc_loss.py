@@ -98,9 +98,13 @@ def _parse_trainer_args(
 
 
 def _to_uint8_video(video: torch.Tensor) -> np.ndarray:
-    item = video[0].detach().float().clamp(-1.0, 1.0)
-    item = ((item + 1.0) * 127.5).round().to(torch.uint8)
-    return item.permute(1, 2, 3, 0).cpu().numpy()
+    if video.ndim != 5 or int(video.shape[2]) != 3:
+        raise ValueError(
+            f"Tiny-VAE video must be [B,T,3,H,W], got {tuple(video.shape)}"
+        )
+    item = video[0].detach().float().clamp(0.0, 1.0)
+    item = (item * 255.0).round().to(torch.uint8)
+    return item.permute(0, 2, 3, 1).cpu().numpy()
 
 
 def _attention_overlay(
@@ -176,7 +180,7 @@ def _render_dashboard(output_root: Path) -> Path:
         videos = []
         for filename, title in (
             ("gt.mp4", "GT video"),
-            ("pred_x0.mp4", "Predicted x0 (Wan VAE)"),
+            ("pred_x0.mp4", "Predicted x0 (Tiny VAE)"),
             ("gt_xssc_overlay.mp4", "GT xSSC slot overlay"),
             ("pred_xssc_overlay.mp4", "Pred x0 xSSC slot overlay"),
         ):
@@ -318,7 +322,7 @@ def main() -> None:
         {
             "diagnostic_loss_tensor": float(loss.detach().item()),
             "resolution": f"{cli.height}x{cli.width}",
-            "frames": int(visuals["target_video"].shape[2]),
+            "frames": int(visuals["target_video"].shape[1]),
             "fps": cli.fps,
             "sample_index": cli.sample_index,
             "sample": _jsonable_sample_metadata(sample),

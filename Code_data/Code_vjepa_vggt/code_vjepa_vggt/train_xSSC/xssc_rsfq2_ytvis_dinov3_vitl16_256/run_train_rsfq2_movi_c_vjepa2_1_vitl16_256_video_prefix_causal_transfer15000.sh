@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VJEPA2_ROOT="${VJEPA2_ROOT:-/home/gaoya/Code_Video/vjepa2-main}"
 VJEPA2_CHECKPOINT="${VJEPA2_CHECKPOINT:-/data/gaoya/agent-data/weights/vjepa2_1_vitl_dist_vitG_384_ema_encoder.pt}"
 DATA_DIR="${DATA_DIR:-/data/gaoya/dataset}"
-SAVE_DIR="${SAVE_DIR:-/data/gaoya/agent-data/checkpoints/xssc_vjepa2_1_video_noncausal_movi_c}"
+SAVE_DIR="${SAVE_DIR:-/data/gaoya/agent-data/checkpoints/xssc_vjepa2_1_video_prefix_causal_movi_c}"
 YTVIS_CHECKPOINT="${YTVIS_CHECKPOINT:-}"
 GPU_IDS="${GPU_IDS:-5,6}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-2}"
@@ -25,7 +25,7 @@ if [[ ! -f "${VJEPA2_CHECKPOINT}" ]]; then
   exit 2
 fi
 if [[ -z "${RESUME_FILE}" && ! -f "${YTVIS_CHECKPOINT}" ]]; then
-  echo "ERROR: YTVIS xSSC checkpoint is missing: ${YTVIS_CHECKPOINT}" >&2
+  echo "ERROR: causal YTVIS xSSC checkpoint is missing: ${YTVIS_CHECKPOINT}" >&2
   exit 2
 fi
 if [[ ! -x "${PYTHON_BIN}" ]]; then
@@ -58,7 +58,7 @@ exec env \
   train_ddp_ytvis_hq.py \
   --project "${WANDB_PROJECT}" \
   --seed "${SEED}" \
-  --cfg-file upstream/config-randsfq/rsfq2_c-movi_c-vjepa2_1_vitl16_256-video-slot512-transfer15000.py \
+  --cfg-file upstream/config-randsfq/rsfq2_c-movi_c-vjepa2_1_vitl16_256-video-slot512-prefix-causal-transfer15000.py \
   --data-dir "${DATA_DIR}" \
   --save-dir "${SAVE_DIR}" \
   "${extra_args[@]}"

@@ -15,8 +15,14 @@ _base = _importlib_cfg(
 globals().update(_base)
 
 variant_name = "vjepa2_1_vitl16_video_256_movi_c_slot512_transfer15000_native_tubelet"
+source_variant_name = "vjepa2_1_vitl16_video_256_ytvis_hq_slot512_native_tubelet"
+temporal_mode = "noncausal"
+tubelet_label_policy = "second_frame"
 vjepa2_root = "/home/gaoya/Code_Video/vjepa2-main"
-vjepa2_checkpoint = "/data/gaoya/ckpt/VJEPA2/vjepa2_1_vitl_dist_vitG_384.pt"
+vjepa2_checkpoint = (
+    "/data/gaoya/agent-data/weights/"
+    "vjepa2_1_vitl_dist_vitG_384_ema_encoder.pt"
+)
 raw_clip_frames = 6
 xssc_steps = raw_clip_frames // 2
 label_frame_indices = [1, 3, 5]
@@ -31,12 +37,28 @@ drop_incomplete_accumulation = True
 effective_global_batch_size = (
     batch_size_t * expected_world_size * gradient_accumulation_steps
 )
+checkpoint_allowed_missing = [r"^m\.encode_backbone\..*"]
+checkpoint_keep_steps = [15000, 50000]
 
 # YTVIS and MOVi-C both use three native tubelet steps. Only the dataset-specific
 # initializer changes, so the learned transition time embedding can transfer.
 transfer_load_exclude = [r"^m\.initializ\..*"]
+transfer_allowed_missing = [r"^m\.encode_backbone\..*", r"^m\.initializ\..*"]
+transfer_expected_source_variant = source_variant_name
+
+
+def _pad_encoded_even(video, segment):
+    if len(video) % 2 == 0:
+        return video, segment
+    return list(video) + [video[-1]], list(segment) + [segment[-1]]
 
 dataset_t["transform0"]["size"] = raw_clip_frames
+dataset_v["transform0"] = dict(
+    type=Lambda,
+    ikeys=[["video"], ["segment"]],
+    okeys=[["video"], ["segment"]],
+    func=_pad_encoded_even,
+)
 transform_t.append(
     dict(type=Lambda, ikeys=[["segment"]], func=lambda value: value[1::2])
 )
@@ -53,6 +75,7 @@ model["encode_backbone"] = dict(
     in_size=resolut0[0],
     patch_size=16,
     tubelet_size=2,
+    temporal_mode=temporal_mode,
 )
 model["transit"]["dt"] = transition_dt
 

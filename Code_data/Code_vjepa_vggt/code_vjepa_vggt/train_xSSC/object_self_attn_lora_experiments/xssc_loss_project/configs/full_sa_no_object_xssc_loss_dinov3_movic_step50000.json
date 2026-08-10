@@ -20,6 +20,9 @@
     "weight": 0.1,
     "future_start_frame": 8,
     "backbone_chunk_size": 2,
+    "tiny_vae_parallel": false,
+    "tiny_vae_root": "/home/gaoya/Code_Video/taehv",
+    "tiny_vae_checkpoint": "/data/gaoya/ckpt/taew2_2.pth",
     "gradient_checkpointing_offload": true,
     "gradient_diagnostics_every_n_forwards": 400
   },

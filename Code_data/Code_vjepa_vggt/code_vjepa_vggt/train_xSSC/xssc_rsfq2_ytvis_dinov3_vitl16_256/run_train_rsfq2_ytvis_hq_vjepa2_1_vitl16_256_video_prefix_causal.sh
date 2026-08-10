@@ -5,8 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VJEPA2_ROOT="${VJEPA2_ROOT:-/home/gaoya/Code_Video/vjepa2-main}"
 VJEPA2_CHECKPOINT="${VJEPA2_CHECKPOINT:-/data/gaoya/agent-data/weights/vjepa2_1_vitl_dist_vitG_384_ema_encoder.pt}"
 DATA_DIR="${DATA_DIR:-/data/gaoya/dataset}"
-SAVE_DIR="${SAVE_DIR:-/data/gaoya/agent-data/checkpoints/xssc_vjepa2_1_video_noncausal_movi_c}"
-YTVIS_CHECKPOINT="${YTVIS_CHECKPOINT:-}"
+SAVE_DIR="${SAVE_DIR:-/data/gaoya/agent-data/checkpoints/xssc_vjepa2_1_video_prefix_causal_ytvis_hq}"
 GPU_IDS="${GPU_IDS:-5,6}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-2}"
 SEED="${SEED:-42}"
@@ -16,16 +15,19 @@ WANDB_MODE="${WANDB_MODE:-online}"
 MAX_STEP="${MAX_STEP:-}"
 RESUME_FILE="${RESUME_FILE:-}"
 
+for split in train val; do
+  path="${DATA_DIR}/ytvis_hq/${split}.lmdb"
+  if [[ ! -e "${path}" ]]; then
+    echo "ERROR: required YTVIS-HQ dataset is missing: ${path}" >&2
+    exit 2
+  fi
+done
 if [[ ! -f "${VJEPA2_ROOT}/src/hub/backbones.py" ]]; then
   echo "ERROR: V-JEPA2 repository is missing: ${VJEPA2_ROOT}" >&2
   exit 2
 fi
 if [[ ! -f "${VJEPA2_CHECKPOINT}" ]]; then
   echo "ERROR: V-JEPA2.1 checkpoint is missing: ${VJEPA2_CHECKPOINT}" >&2
-  exit 2
-fi
-if [[ -z "${RESUME_FILE}" && ! -f "${YTVIS_CHECKPOINT}" ]]; then
-  echo "ERROR: YTVIS xSSC checkpoint is missing: ${YTVIS_CHECKPOINT}" >&2
   exit 2
 fi
 if [[ ! -x "${PYTHON_BIN}" ]]; then
@@ -41,8 +43,6 @@ if [[ -n "${MAX_STEP}" ]]; then
 fi
 if [[ -n "${RESUME_FILE}" ]]; then
   extra_args+=(--resume-file "${RESUME_FILE}")
-else
-  extra_args+=(--ckpt-file "${YTVIS_CHECKPOINT}")
 fi
 exec env \
   CUDA_VISIBLE_DEVICES="${GPU_IDS}" \
@@ -58,7 +58,7 @@ exec env \
   train_ddp_ytvis_hq.py \
   --project "${WANDB_PROJECT}" \
   --seed "${SEED}" \
-  --cfg-file upstream/config-randsfq/rsfq2_c-movi_c-vjepa2_1_vitl16_256-video-slot512-transfer15000.py \
+  --cfg-file upstream/config-randsfq/rsfq2_r-ytvis_hq-vjepa2_1_vitl16_256-video-slot512-prefix-causal.py \
   --data-dir "${DATA_DIR}" \
   --save-dir "${SAVE_DIR}" \
   "${extra_args[@]}"

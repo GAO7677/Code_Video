@@ -6,7 +6,9 @@ Common training path:
 - No object-conditioning branch.
 - Trainable parameters remain the rank-32 Q/K/V/O LoRA modules in all 30
   self-attention blocks (23,592,960 parameters).
-- The frozen Wan VAE decodes reconstructed latent `pred x0` and GT latent `x0`.
+- The frozen Tiny VAE `taew2_2` differentiably decodes reconstructed latent
+  `pred x0` and decodes GT latent `x0` under `no_grad`, matching the proven
+  V-JEPA-loss training path.
 - A frozen xSSC encoder extracts aligned slots from all 49 frames; cosine loss
   is averaged only over future frames 8--48 and weighted by 0.1.
 - DINOv3 MOVi-C uses GT first-frame SAM2 AMG boxes for both branches. Official
@@ -30,3 +32,6 @@ Validate without launching training:
 Formal training is intentionally not started by the implementation/diagnostic
 step. Remove `--validate-only` only after choosing the GPUs and approving the
 formal run.
+
+The 512x896x49 two-GPU backward smoke test is configured in
+`configs/smoke_full_sa_no_object_xssc_loss_dinov3_movic_step50000_gpu01.json`.

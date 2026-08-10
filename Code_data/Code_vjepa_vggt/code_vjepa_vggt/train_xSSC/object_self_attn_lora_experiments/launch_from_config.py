@@ -256,6 +256,8 @@ def validate_config(config: dict, config_dir: Path) -> dict:
             )
         if int(require(config, "xssc_loss.backbone_chunk_size")) <= 0:
             raise ValueError("xssc_loss.backbone_chunk_size must be positive")
+        if not isinstance(require(config, "xssc_loss.tiny_vae_parallel"), bool):
+            raise TypeError("xssc_loss.tiny_vae_parallel must be a boolean")
         if not isinstance(
             require(config, "xssc_loss.gradient_checkpointing_offload"),
             bool,
@@ -326,6 +328,17 @@ def validate_config(config: dict, config_dir: Path) -> dict:
                 raise FileNotFoundError(
                     f"Configured V-JEPA loss path does not exist ({key}): "
                     f"{normalized['vjepa_loss'][key]}"
+                )
+
+    if xssc_loss_enabled:
+        for key in ("tiny_vae_root", "tiny_vae_checkpoint"):
+            normalized["xssc_loss"][key] = resolve_config_path(
+                str(require(config, f"xssc_loss.{key}")), config_dir
+            )
+            if not Path(normalized["xssc_loss"][key]).exists():
+                raise FileNotFoundError(
+                    f"Configured xSSC loss path does not exist ({key}): "
+                    f"{normalized['xssc_loss'][key]}"
                 )
 
     normalized["paths"]["output_root"] = resolve_config_path(
@@ -569,6 +582,8 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
                 "--xssc_loss_gradient_diagnostics_every_n_forwards": xssc_loss[
                     "gradient_diagnostics_every_n_forwards"
                 ],
+                "--tiny_vae_root": xssc_loss["tiny_vae_root"],
+                "--tiny_vae_checkpoint": xssc_loss["tiny_vae_checkpoint"],
                 "--xssc_root": paths["xssc_root"],
                 "--xssc_config": paths["xssc_config"],
                 "--xssc_checkpoint": paths["xssc_checkpoint"],
@@ -681,6 +696,8 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
     if optim["fail_on_nonfinite_train_values"]:
         command.append("--fail_on_nonfinite_train_values")
     if vjepa_loss_enabled and vjepa_loss["tiny_vae_parallel"]:
+        command.append("--tiny_vae_parallel")
+    if xssc_loss_enabled and xssc_loss["tiny_vae_parallel"]:
         command.append("--tiny_vae_parallel")
     if adaptation["enable_object_branch"] and logging["debug_print_object_regularization"]:
         command.append("--debug_print_object_regularization")

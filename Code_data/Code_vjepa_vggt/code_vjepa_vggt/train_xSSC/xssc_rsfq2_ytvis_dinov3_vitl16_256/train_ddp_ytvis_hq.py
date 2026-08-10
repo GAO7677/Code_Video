@@ -78,6 +78,7 @@ def parse_args():
     parser.add_argument("--data-dir", type=Path, default=Path("/data/gaoya/dataset"))
     parser.add_argument("--save-dir", type=Path, required=True)
     parser.add_argument("--ckpt-file", type=Path, default=None)
+    parser.add_argument("--resume-file", type=Path, default=None)
     parser.add_argument("--start-step", type=int, default=None)
     parser.add_argument("--max-step", type=int, default=None)
     return parser.parse_args()
@@ -136,26 +137,69 @@ def checkpoint_path(save_path, step):
     return save_path / f"step-{step:06d}.pth"
 
 
-def save_checkpoint(model, save_path, step, key=r".*"):
-    save_file = checkpoint_path(save_path, step)
+def checkpoint_metadata_path(checkpoint_file):
+    return checkpoint_file.with_suffix(".metadata.json")
+
+
+def save_checkpoint(model, save_file, key=r".*", metadata=None):
     temporary_file = save_file.with_suffix(f"{save_file.suffix}.tmp")
     model.save(temporary_file, key=key)
     os.replace(temporary_file, save_file)
+    if metadata is not None:
+        metadata_file = checkpoint_metadata_path(save_file)
+        temporary_metadata_file = metadata_file.with_suffix(
+            f"{metadata_file.suffix}.tmp"
+        )
+        temporary_metadata_file.write_text(json.dumps(metadata, indent=2) + "\n")
+        os.replace(temporary_metadata_file, metadata_file)
     size_gib = save_file.stat().st_size / 1024**3
     print(
-        f"[checkpoint] step={step} file={save_file} size_gib={size_gib:.3f}",
+        f"[checkpoint] step={metadata['optimizer_step']} file={save_file} "
+        f"size_gib={size_gib:.3f}",
         flush=True,
     )
     return save_file
 
 
-def load_matching_checkpoint(model, checkpoint_file, exclude_patterns):
+def read_checkpoint_metadata(checkpoint_file):
+    metadata_file = checkpoint_metadata_path(checkpoint_file)
+    if not metadata_file.is_file():
+        return {}
+    return json.loads(metadata_file.read_text())
+
+
+def load_model_state(checkpoint_file):
     checkpoint_file = checkpoint_file.resolve()
     source = torch.load(
         checkpoint_file, map_location="cpu", weights_only=True, mmap=True
     )
+    if not isinstance(source, dict) or not all(
+        isinstance(key, str) for key in source
+    ):
+        raise TypeError(f"Invalid model checkpoint: {checkpoint_file}")
+    return source
+
+
+def load_matching_checkpoint(
+    model,
+    checkpoint_file,
+    exclude_patterns,
+    allowed_missing_patterns=(),
+    expected_source_variant=None,
+):
+    checkpoint_file = checkpoint_file.resolve()
+    metadata = read_checkpoint_metadata(checkpoint_file)
+    source_variant = metadata.get("variant_name")
+    if expected_source_variant is not None and source_variant != expected_source_variant:
+        raise RuntimeError(
+            "Transfer checkpoint variant mismatch: "
+            f"expected {expected_source_variant!r}, got {source_variant!r} from "
+            f"{checkpoint_file}"
+        )
+    source = load_model_state(checkpoint_file)
     target = model.state_dict()
     excludes = [re.compile(pattern) for pattern in exclude_patterns]
+    allowed_missing = [re.compile(pattern) for pattern in allowed_missing_patterns]
     matched = {}
     excluded = []
     unexpected = []
@@ -177,15 +221,148 @@ def load_matching_checkpoint(model, checkpoint_file, exclude_patterns):
             matched[key] = value
 
     load_result = model.load_state_dict(matched, strict=False)
-    return {
+    missing_keys = sorted(load_result.missing_keys)
+    disallowed_missing = [
+        key
+        for key in missing_keys
+        if not any(pattern.match(key) for pattern in allowed_missing)
+    ]
+    report = {
         "checkpoint": str(checkpoint_file),
+        "source_variant": source_variant,
         "matched_key_count": len(matched),
         "matched_parameter_count": sum(value.numel() for value in matched.values()),
         "excluded_keys": sorted(excluded),
         "unexpected_keys": sorted(unexpected),
         "shape_mismatches": shape_mismatch,
-        "missing_keys": sorted(load_result.missing_keys),
+        "missing_keys": missing_keys,
+        "disallowed_missing_keys": disallowed_missing,
     }
+    if not matched or unexpected or shape_mismatch or disallowed_missing:
+        raise RuntimeError(
+            "Checkpoint did not pass strict compatibility checks:\n"
+            + json.dumps(report, indent=2)
+        )
+    return report
+
+
+def capture_runtime_state(pack):
+    numpy_state = np.random.get_state()
+    return {
+        "python_random": random.getstate(),
+        "numpy_random": {
+            "name": numpy_state[0],
+            "keys": torch.from_numpy(numpy_state[1].copy()),
+            "position": numpy_state[2],
+            "has_gauss": numpy_state[3],
+            "cached_gaussian": numpy_state[4],
+        },
+        "torch_cpu": torch.get_rng_state(),
+        "torch_cuda": torch.cuda.get_rng_state(pack.device),
+        "data_generators": {
+            key: generator.get_state()
+            for key, generator in pack.data_generators.items()
+        },
+    }
+
+
+def restore_runtime_state(runtime_state, generators, device):
+    random.setstate(runtime_state["python_random"])
+    numpy_state = runtime_state["numpy_random"]
+    np.random.set_state(
+        (
+            numpy_state["name"],
+            numpy_state["keys"].cpu().numpy(),
+            numpy_state["position"],
+            numpy_state["has_gauss"],
+            numpy_state["cached_gaussian"],
+        )
+    )
+    torch.set_rng_state(runtime_state["torch_cpu"].cpu())
+    torch.cuda.set_rng_state(runtime_state["torch_cuda"].cpu(), device)
+    for key, state in runtime_state["data_generators"].items():
+        generators[key].set_state(state.cpu())
+
+
+def save_checkpoint_bundle(pack, save_file=None):
+    runtime_states = [None] * pack.world_size if pack.rank == 0 else None
+    dist.gather_object(
+        capture_runtime_state(pack), runtime_states, dst=0
+    )
+    final_checkpoint = None
+    if pack.rank == 0:
+        if save_file is None:
+            save_file = checkpoint_path(pack.save_path, pack.step_count)
+        metadata = {
+            "format": "xssc_model_checkpoint_v1",
+            "variant_name": pack.variant_name,
+            "config_file": str(pack.config_file),
+            "optimizer_step": pack.step_count,
+            "epoch": pack.epoch,
+            "seed": pack.seed,
+            "world_size": pack.world_size,
+            "effective_global_batch_size": (
+                pack.batch_size_per_gpu
+                * pack.world_size
+                * pack.gradient_accumulation_steps
+            ),
+        }
+        final_checkpoint = save_checkpoint(
+            pack.model,
+            save_file,
+            key=pack.checkpoint_key,
+            metadata=metadata,
+        )
+        resume_state = {
+            "format": "xssc_training_state_v1",
+            **metadata,
+            "model_checkpoint": final_checkpoint.name,
+            "optimizer": pack.optimiz.state_dict(),
+            "scaler": pack.scaler.state_dict(),
+            "runtime_states": runtime_states,
+            # Dataloader worker prefetch state is not serializable. Resume at
+            # the next sampler epoch to avoid replaying a partial epoch.
+            "resume_epoch": pack.epoch + 1,
+            "data_resume_policy": "next_sampler_epoch",
+        }
+        resume_file = pack.save_path / "resume-latest.pth"
+        temporary_resume_file = resume_file.with_suffix(".pth.tmp")
+        torch.save(resume_state, temporary_resume_file)
+        os.replace(temporary_resume_file, resume_file)
+        current_step = pack.step_count
+        for old_checkpoint in pack.save_path.glob("step-*.pth"):
+            match = re.fullmatch(r"step-(\d+)\.pth", old_checkpoint.name)
+            if match is None:
+                continue
+            old_step = int(match.group(1))
+            if old_step == current_step or old_step in pack.checkpoint_keep_steps:
+                continue
+            old_metadata = checkpoint_metadata_path(old_checkpoint)
+            old_checkpoint.unlink()
+            if old_metadata.is_file():
+                old_metadata.unlink()
+            print(
+                f"[checkpoint-retention] removed superseded step {old_step}: "
+                f"{old_checkpoint}",
+                flush=True,
+            )
+    dist.barrier()
+    return final_checkpoint
+
+
+def load_training_state(resume_file):
+    resume_file = resume_file.resolve()
+    state = torch.load(
+        resume_file, map_location="cpu", weights_only=True, mmap=True
+    )
+    if state.get("format") != "xssc_training_state_v1":
+        raise ValueError(f"Not an xSSC training-state checkpoint: {resume_file}")
+    model_checkpoint = resume_file.parent / state["model_checkpoint"]
+    if not model_checkpoint.is_file():
+        raise FileNotFoundError(
+            f"Resume model checkpoint is missing: {model_checkpoint}"
+        )
+    return state, model_checkpoint
 
 
 def concatenate_metrics(metric_batches):
@@ -383,15 +560,7 @@ def train_epoch(pack, sampler, epoch):
             )
 
         if pack.step_count % pack.checkpoint_interval == 0:
-            dist.barrier()
-            if pack.rank == 0:
-                save_checkpoint(
-                    pack.model,
-                    pack.save_path,
-                    pack.step_count,
-                    key=pack.checkpoint_key,
-                )
-            dist.barrier()
+            save_checkpoint_bundle(pack)
 
     run_after_epoch_callbacks(pack.callback_t, pack)
     if pack.rank == 0:
@@ -428,13 +597,32 @@ def main():
     from object_centric_bench.model import ModelWrap
     from object_centric_bench.util import Config, build_from_config
 
+    if args.ckpt_file is not None and args.resume_file is not None:
+        raise ValueError("--ckpt-file and --resume-file are mutually exclusive")
+
     config_file = args.cfg_file
     if not config_file.is_absolute():
         config_file = (ROOT / config_file).resolve()
     cfg = Config.fromfile(config_file)
     rank, local_rank, world_size, device = setup_distributed(cfg)
     max_step = cfg.max_step if args.max_step is None else args.max_step
-    start_step = cfg.start_step if args.start_step is None else args.start_step
+    resume_state = None
+    resume_model_checkpoint = None
+    if args.resume_file is not None:
+        resume_state, resume_model_checkpoint = load_training_state(args.resume_file)
+        if resume_state.get("variant_name") != cfg.variant_name:
+            raise RuntimeError(
+                "Resume variant mismatch: "
+                f"checkpoint={resume_state.get('variant_name')!r}, "
+                f"config={cfg.variant_name!r}"
+            )
+        start_step = int(resume_state["optimizer_step"])
+        if args.start_step is not None and args.start_step != start_step:
+            raise ValueError(
+                f"--start-step={args.start_step} conflicts with resume step {start_step}"
+            )
+    else:
+        start_step = cfg.start_step if args.start_step is None else args.start_step
     if not 1 <= max_step <= cfg.total_step:
         raise ValueError(
             f"max_step must be in [1, {cfg.total_step}], got {max_step}"
@@ -475,9 +663,13 @@ def main():
     worker_seed = args.seed + rank
 
     def worker_init_fn(_):
-        set_seed(worker_seed)
+        seed = torch.initial_seed() % 2**32
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
-    generator = torch.Generator().manual_seed(worker_seed)
+    generator_t = torch.Generator().manual_seed(worker_seed)
+    generator_v = torch.Generator().manual_seed(worker_seed + 10_000)
     dataload_t = DataLoader(
         dataset_t,
         batch_size=cfg.batch_size_t,
@@ -486,7 +678,7 @@ def main():
         collate_fn=build_from_config(cfg.collate_fn_t),
         pin_memory=True,
         worker_init_fn=worker_init_fn,
-        generator=generator,
+        generator=generator_t,
         drop_last=cfg.train_loader_drop_last,
     )
 
@@ -528,24 +720,49 @@ def main():
         collate_fn=build_from_config(cfg.collate_fn_v),
         pin_memory=True,
         worker_init_fn=worker_init_fn,
-        generator=generator,
+        generator=generator_v,
     )
 
     model = ModelWrap(build_from_config(cfg.model), cfg.model_imap, cfg.model_omap)
-    if args.ckpt_file is not None:
+    if resume_model_checkpoint is not None:
+        load_report = load_matching_checkpoint(
+            model,
+            resume_model_checkpoint,
+            exclude_patterns=(),
+            allowed_missing_patterns=cfg.checkpoint_allowed_missing,
+            expected_source_variant=cfg.variant_name,
+        )
+    elif args.ckpt_file is not None:
         transfer_load_exclude = getattr(cfg, "transfer_load_exclude", None)
         if transfer_load_exclude is None:
-            model.load(args.ckpt_file, cfg.ckpt_map)
-            load_report = None
+            ckpt_map = getattr(cfg, "ckpt_map", None)
+            if ckpt_map:
+                model.load(args.ckpt_file, ckpt_map)
+                load_report = None
+            else:
+                load_report = load_matching_checkpoint(
+                    model,
+                    args.ckpt_file,
+                    exclude_patterns=(),
+                    allowed_missing_patterns=getattr(
+                        cfg, "checkpoint_allowed_missing", ()
+                    ),
+                )
         else:
             load_report = load_matching_checkpoint(
-                model, args.ckpt_file, transfer_load_exclude
+                model,
+                args.ckpt_file,
+                transfer_load_exclude,
+                allowed_missing_patterns=cfg.transfer_allowed_missing,
+                expected_source_variant=cfg.transfer_expected_source_variant,
             )
-            if rank == 0:
-                (save_path / "checkpoint_load_report.json").write_text(
-                    json.dumps(load_report, indent=2) + "\n"
-                )
-                print(json.dumps(load_report, indent=2), flush=True)
+    else:
+        load_report = None
+    if load_report is not None and rank == 0:
+        (save_path / "checkpoint_load_report.json").write_text(
+            json.dumps(load_report, indent=2) + "\n"
+        )
+        print(json.dumps(load_report, indent=2), flush=True)
     model.freez(cfg.freez, verbose=False)
     model = model.to(device)
     ddp_model = DistributedDataParallel(
@@ -562,6 +779,9 @@ def main():
     amp_dtype = getattr(torch, cfg.amp_dtype)
     use_scaler = amp_dtype == torch.float16
     scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
+    if resume_state is not None:
+        optimiz.load_state_dict(resume_state["optimizer"])
+        scaler.load_state_dict(resume_state["scaler"])
     gclip = build_from_config(cfg.gclip)
     loss_fn_t = MetricWrap(**build_from_config(cfg.loss_fn_t))
     loss_fn_v = MetricWrap(**build_from_config(cfg.loss_fn_v))
@@ -573,13 +793,18 @@ def main():
 
     pack = Config({})
     pack.rank = rank
+    pack.device = device
     pack.world_size = world_size
+    pack.seed = args.seed
+    pack.variant_name = cfg.variant_name
+    pack.config_file = config_file
     pack.batch_size_per_gpu = cfg.batch_size_t
     pack.dataset_t = dataload_t
     pack.dataset_v = dataload_v
     pack.model = model_proxy
     pack.optimiz = optimiz
     pack.scaler = scaler
+    pack.data_generators = {"train": generator_t, "val": generator_v}
     pack.use_scaler = use_scaler
     pack.gclip = gclip
     pack.amp_dtype = amp_dtype
@@ -598,6 +823,9 @@ def main():
         getattr(cfg, "drop_incomplete_accumulation", False)
     )
     pack.checkpoint_interval = checkpoint_interval
+    pack.checkpoint_keep_steps = set(
+        int(step) for step in getattr(cfg, "checkpoint_keep_steps", ())
+    )
     pack.checkpoint_key = cfg.checkpoint_key
     pack.save_path = save_path
     pack.val_interval = cfg.val_interval
@@ -606,6 +834,16 @@ def main():
     pack.last_lr = None
     pack.step_metrics_file = save_path / "step_metrics.jsonl"
     pack.wabrun = wabrun
+
+    if resume_state is not None:
+        runtime_states = resume_state["runtime_states"]
+        if len(runtime_states) != world_size:
+            raise RuntimeError(
+                f"Resume world size changed: {len(runtime_states)} -> {world_size}"
+            )
+        restore_runtime_state(
+            runtime_states[rank], pack.data_generators, device
+        )
 
     [callback.before_train(**pack) for callback in pack.callback_t]
     if rank == 0 and wabrun is not None:
@@ -620,7 +858,7 @@ def main():
                 ),
             }
         )
-    epoch = 0
+    epoch = 0 if resume_state is None else int(resume_state["resume_epoch"])
     validation_count = start_step // pack.val_interval
     torch.cuda.reset_peak_memory_stats(device)
     while pack.step_count < pack.max_step:
@@ -641,14 +879,12 @@ def main():
         torch.cuda.max_memory_reserved(device) / 1024**3, device=device
     )
     dist.all_reduce(peak_reserved, op=dist.ReduceOp.MAX)
+    if pack.step_count % checkpoint_interval == 0:
+        final_checkpoint = checkpoint_path(save_path, pack.step_count)
+    else:
+        final_checkpoint = save_path / "last.pth"
+        save_checkpoint_bundle(pack, save_file=final_checkpoint)
     if rank == 0:
-        if pack.step_count % checkpoint_interval == 0:
-            final_checkpoint = checkpoint_path(save_path, pack.step_count)
-        else:
-            final_checkpoint = save_path / "last.pth"
-            temporary_file = final_checkpoint.with_suffix(".pth.tmp")
-            model.save(temporary_file, key=pack.checkpoint_key)
-            os.replace(temporary_file, final_checkpoint)
         summary = {
             "config": str(config_file),
             "gpu_ids": cfg.gpu_ids,
