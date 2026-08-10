@@ -364,6 +364,9 @@ PhysicIQ67 case JSON + 50 seeds
 | `run_legacy_ti2v_temporal_object_tube_ablations.py` | 将 object query扩展为冻结的全 latent 时间 tube，执行 M1/M2/M3及不同 head scope 干预。 |
 | `object_query_ablation_metrics/*.py` | 计算消融视频相对 GT/Baseline 的轨迹、形状、RAFT、DINOv2、LPIPS、VBench 和像素指标；这些是干预效果评估，不是 Attention Q→K PCK。 |
 
+消融评价中全部已实现指标的定义、精确公式、数值方向和代码路径统一记录在：
+[`object_query_ablation_metrics/METRICS_IMPLEMENTATION_INDEX.md`](object_query_ablation_metrics/METRICS_IMPLEMENTATION_INDEX.md)。
+
 因此，排查“某个 Head 为什么进入排名”时，应依次检查 PCK worker 的 `metrics.npz`、aggregate 的 `combined_counts.npz/ranking.json` 和 export 的 `pck_head_rankings.json`，不要从消融 manifest 或25项视频指标报告反推 PCK 排名。
 
 ## 9. 产物结构
@@ -753,3 +756,63 @@ nvidia-smi --id=6,7 --query-gpu=index,memory.used,utilization.gpu --format=csv,n
 ```
 
 如果两卡都在运行且错误数为 0，继续等待并观察 `aggregate/summary.json`。达到 3350/3350 后执行第 13 节验收，再按第 14、15 节更新稳定排名导出与 8092 页面。
+
+## 19. 001460 / seed 47326：108 项 S039 Top100 Mean Overlay
+
+实验矩阵固定为：
+
+```text
+3 targets（Object A / Object B / all_objects）
+× 3 intervention Head Scopes（Top100 / Bottom100 / All720）
+× 3 operators（M1 / M2 / M3）
+× 4 temporal scopes（All-time / Same / Future / Past）
+= 108
+```
+
+完整编号清单：
+
+```text
+/data/gaoya/agent-data/outputs/object_query_attention_overlays/
+  m123_head_scope_s039_top100_mean_v1/EXPERIMENT_LIST.md
+/data/gaoya/agent-data/outputs/object_query_attention_overlays/
+  m123_head_scope_s039_top100_mean_v1/experiment_list.json
+```
+
+观察协议必须与干预 Head Scope 分开解释：
+
+- 干预 Head Scope 是各视频实际消融的 `Top100`、`Bottom100` 或 `All720`。
+- 观察 Head 永远是冻结 S039 PCK ranking 的 Top100，用于跨实验统一比较。
+- Query 永远是 F04 的固定 Object A/B SAM2 queries，每个对象 8 点，latent `tq=1`。
+- 只抓 denoising `S039`；两个 CFG 调用平均。
+- `Before` 是该消融重放运行中进入当前算子前的 `softmax(QK^T/sqrt(d))`。
+- `Effective After` 只把该 M1/M2/M3 算子实际删除的 entries 设为 0，不重新归一化。
+- `Removed = max(Before - Effective After, 0)`。
+- 每张图横向展示 `F00/F04/…/F48`；Query 行先对 8 点求和，再对 100 heads 和两个 CFG 调用取平均。
+
+因此 Bottom100 实验的 Top100 局部 `Effective After` 与 `Before` 相同，因为两个 Head 集合不相交；但其 `Before` 仍可能包含早期层和早期去噪步 Bottom100 干预传来的上游变化。
+
+相关代码：
+
+```text
+AAA_my_test/run_legacy_m123_head_scope_s039_top100_mean.py
+AAA_my_test/render_m123_s039_top100_mean_overlay.py
+AAA_my_test/run_legacy_m123_s039_top100_mean_gpu.sh
+AAA_my_test/launch_legacy_m123_s039_top100_mean_tmux.sh
+AAA_my_test/test_m123_s039_top100_mean_capture.py
+```
+
+当前队列：
+
+```bash
+tmux attach -t m123_s039_top100_mean_capture
+```
+
+该 session 的 GPU 0–3 worker 会等待各卡显存完全释放后再启动，每卡 27 项；不会使用 GPU 4，也不会覆盖已有 108 个 `generated.mp4`。
+
+页面：
+
+```text
+http://localhost:8092/wan22-ti2v-legacy-physiciq67-samples?v=15
+```
+
+每个 M1/M2/M3 视频卡下方有 `S039 Fixed F04 Query · Top100 Mean` 折叠栏；页面每 20 秒检查一次新产物并增量刷新。

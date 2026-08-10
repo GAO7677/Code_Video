@@ -165,11 +165,14 @@ Head Scope 只改变被 hook 的物理 `(layer, head)` 集合，不改变 `R_tub
 | `bottom100` | **同一冻结排名**第 621–720 名 | 作为等数量低 PCK head 对照；不能从另一次更新后的排名截取 |
 | `all720` | 30 layers × 24 heads 的全部 720 个物理 self-attention heads | 检查 M1/M2/M3 通路在删除全部 heads 后的上限效应；这不是 720 个独立视频，而是一次同时干预 720 heads |
 
-每个 head scope 对 `object_A`、`object_B`、`all_objects` 分别执行 M1/M2/M3 的 All-time、Same、Future、Past：
+对于多对象 case，每个 head scope 对各个 `single_object` 和额外的 `all_objects` 并集分别执行 M1/M2/M3 的 All-time、Same、Future、Past。对于只有一个对象的 case，`single_object::object_A` 与 `all_objects` 选择的 R 完全相同，因此只保留前者，不再生成、统计或展示重复的 `all_objects`：
 
 \[
-3\ \text{targets}\times3\ \text{operators}\times4\ \text{temporal scopes}=36\ \text{videos/head scope}.
+T(n)=\begin{cases}1,&n=1\\n+1,&n>1\end{cases},\qquad
+N_{\text{videos/head scope}}=T(n)\times3\times4.
 \]
+
+所以单对象 case 为 `12 videos/head scope`、三个 head scope 合计 `36`；`0613pybullet_sample_001460_w002` 有两个对象，仍为 `3 targets × 12 = 36 videos/head scope`、三个 head scope 合计 `108`。
 
 `0613pybullet_sample_001460_w002 / seed=47326` 的 Top100/Bottom100/All720 必须使用同一个 134-run S039 冻结快照；其中 Bottom100 的 PCK 范围为 `23.7883% → 0.0932%`。`cases_other10_6seeds_latest.json` 使用另一份 2735-run 快照，因此输出 ID 带 `s039r2735`，其 Bottom100 范围为 `28.4571% → 0.0641%`。两份快照不能混用或相互复用完成标记。
 

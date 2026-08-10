@@ -192,7 +192,8 @@ def build_tasks(
         if row.get("region_type") == "object"
     ]
     targets = [("single_object", region) for region in regions]
-    targets.append(("all_objects", None))
+    if len(regions) > 1:
+        targets.append(("all_objects", None))
     return [
         {
             "case": str(sample["case"]),

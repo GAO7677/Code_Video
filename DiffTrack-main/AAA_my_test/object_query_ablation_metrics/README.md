@@ -5,6 +5,9 @@ Object Query ablation set: one no-intervention baseline, 24 Fixed Top100
 ablations and 24 Tube Top100 ablations. The dashboard table is a strict macro
 mean over seeds `13248 32466 35075 47326 68613 90094`.
 
+The complete definition/formula/code-path index for every implemented metric is
+[`METRICS_IMPLEMENTATION_INDEX.md`](METRICS_IMPLEMENTATION_INDEX.md).
+
 Large caches and generated media are written to:
 
 `/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/`

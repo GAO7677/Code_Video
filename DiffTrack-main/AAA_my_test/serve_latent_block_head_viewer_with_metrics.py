@@ -404,7 +404,9 @@ UNLISTED_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-ablation-metrics?v=4"><div><span>35 / OBJECT QUERY METRICS</span><h2>Fixed × Tube 消融量化诊断</h2><p>001460 / seed 47326 的 49 个 Top100 视频；四张实验指标表逐列标注定义与数值方向，并展示全部审计量。</p></div><span class="go">打开消融指标页</span></a>
 <a class="card new" href="/object-query-m1-temporal-gallery?v=1"><div><span>36 / M1 TEMPORAL GALLERY</span><h2>M1 Same / Future / Past</h2><p>只展示 001460 / seed 47326；每条时间方向行汇总 Object A、Object B、all_objects 与 Top100、Bottom100、All720。</p></div><span class="go">打开 M1 时间消融页</span></a>
 <a class="card new" href="/object-query-all720-ablation-gallery?v=1"><div><span>37 / ALL720 ABLATION GALLERY</span><h2>All720 全部时序消融</h2><p>汇总现有全部 All720 视频：M1/M2/M3 × All-time/Same/Future/Past × Object A/Object B/all_objects。</p></div><span class="go">打开 All720 消融页</span></a>
-<a class="card new" href="/object-query-m123-temporal-batch?v=1"><div><span>38 / M1–M3 TEMPORAL BATCH</span><h2>M1/M2/M3 · Same/Future/Past</h2><p>当前多 case、多 seed 的 Top100/Bottom100 批次独立入口；按 case、seed、target 查看已生成视频。</p></div><span class="go">打开 M1–M3 批次</span></a>
+<a class="card new" href="/object-query-m123-temporal-batch?v=1"><div><span>38 / M1–M3 TEMPORAL BATCH</span><h2>M1/M2/M3 · All-time/Same/Future/Past</h2><p>当前多 case、多 seed 的 Top100/Bottom100 批次独立入口；按 case、seed、target 查看已生成视频。</p></div><span class="go">打开 M1–M3 批次</span></a>
+<a class="card new" href="/object-query-m123-temporal-batch?single=1&amp;case=0613pybullet_sample_001460_w002&amp;seed=47326&amp;target=single_object%3A%3Aobject_A&amp;v=4"><div><span>39 / 001460 · SEED 47326 METRICS</span><h2>M1/M2/M3 · 完整指标轻量页</h2><p>0613pybullet_sample_001460_w002 / seed 47326；All-time/Same/Future/Past × Top100/Bottom100/All720，顶部含指标定义表，每个视频下方可展开完整指标。</p></div><span class="go">打开 Seed 47326 完整指标页</span></a>
+<a class="card new" href="/wan22-ti2v-legacy-physiciq67-samples?v=16#m123HeadScopePanel"><div><span>40 / S039 TOP100 MEAN · 108</span><h2>M1/M2/M3 Head-Scope Overlay</h2><p>001460 / seed 47326 的 108 项 Head-Scope 消融；每个视频下方可展开固定 F04 Object A/B Query 在 S039 的 F00/F04/…/F48 Top100 mean、有效置零后响应和 removed mass。</p></div><span class="go">打开 108 项 S039 Overlay</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + "</section>", 1
@@ -452,8 +454,11 @@ class MetricsHandler(viewer.Handler):
                 seed = int(seed_text) if seed_text is not None else None
             except ValueError:
                 seed = None
+            selected_only = params.get("single", ["0"])[0] == "1"
             payload = json.dumps(
-                wan22_ti2v_legacy_m123_temporal_batch_catalog(case, seed),
+                wan22_ti2v_legacy_m123_temporal_batch_catalog(
+                    case, seed, selected_only=selected_only
+                ),
                 ensure_ascii=False,
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
@@ -1322,6 +1327,20 @@ class MetricsHandler(viewer.Handler):
                 raise FileNotFoundError("Head-Scope trajectory overlay is not ready")
             viewer.send_file_with_range(self, asset, "video/mp4")
             return
+        if path == "/api/wan22-ti2v-legacy-physiciq67-samples/head-scope-s039-top100-mean-overlay":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = wan22_ti2v_legacy_physiciq67_m123_s039_top100_mean_overlay(
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("variant_id", [""])[0],
+                params.get("region", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("S039 Top100 mean overlay is not ready")
+            viewer.send_file_with_range(self, asset, "image/jpeg")
+            return
         if path == "/api/wan22-ti2v-legacy-physiciq67-samples/head-scope-survival-overlay":
             from urllib.parse import parse_qs
 
@@ -1707,6 +1726,10 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPE_METRICS_ROOT = Path(
 WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPE_TRAJECTORY_ROOT = Path(
     "/data/gaoya/agent-data/outputs/object_query_ablation_metrics/"
     "head_scope_trajectory"
+)
+WAN22_TI2V_LEGACY_PHYSICIQ67_M123_S039_TOP100_MEAN_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/object_query_attention_overlays/"
+    "m123_head_scope_s039_top100_mean_v1"
 )
 WAN22_TI2V_LEGACY_PHYSICIQ67_VBENCH_METRICS = (
     ("vbench_subject_consistency", "Subject"),
@@ -2482,6 +2505,11 @@ WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS = (
     "outgoing_future",
     "outgoing_past",
 )
+WAN22_TI2V_LEGACY_PHYSICIQ67_M123_GALLERY_MASKS = (
+    "self_only",
+    "incoming_only",
+    "outgoing_only",
+) + WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
 WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_PROTOCOL = (
     "attention_matrix_ablation_temporal_direction_v1"
 )
@@ -2855,6 +2883,77 @@ def _wan22_ti2v_legacy_physiciq67_head_scope_variant(
     return f"{target_scope}__{target}__{mask_mode}__{suffix}"
 
 
+def _wan22_ti2v_legacy_physiciq67_m123_targets(regions: list[str]):
+    targets = [("single_object", region) for region in regions]
+    if len(regions) > 1:
+        targets.append(("all_objects", ""))
+    return targets
+
+
+def _wan22_ti2v_legacy_physiciq67_m123_s039_top100_mean_record(
+    case: str, seed: int, variant_id: str
+):
+    if not variant_id or Path(variant_id).name != variant_id:
+        return {"ready": False}
+    root = (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_M123_S039_TOP100_MEAN_ROOT
+        / case
+        / f"seed_{seed:05d}"
+        / variant_id
+    )
+    if not all(
+        (root / name).is_file()
+        for name in ("complete.json", "manifest.json", "overlay_manifest.json")
+    ):
+        return {"ready": False}
+    try:
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        overlay = json.loads(
+            (root / "overlay_manifest.json").read_text(encoding="utf-8")
+        )
+        if (
+            manifest.get("case") != case
+            or int(manifest.get("seed", -1)) != seed
+            or manifest.get("variant_id") != variant_id
+            or int(manifest.get("capture_step", -1)) != 39
+        ):
+            raise ValueError("S039 Top100 mean manifest identity mismatch")
+        records = []
+        for row in overlay.get("records", []):
+            region = str(row.get("region_name") or "")
+            image = str(row.get("images", {}).get("comparison") or "")
+            if region not in {"object_A", "object_B"} or Path(image).name != image:
+                raise ValueError("invalid S039 Top100 mean overlay record")
+            if not (root / image).is_file():
+                raise FileNotFoundError(root / image)
+            records.append(
+                {
+                    "region_name": region,
+                    "region_phrase": row.get("region_phrase"),
+                    "locally_ablated_top100_heads": row.get(
+                        "locally_ablated_top100_heads"
+                    ),
+                    "locally_ablated_query_rows": row.get(
+                        "locally_ablated_query_rows"
+                    ),
+                    "image": image,
+                }
+            )
+        if [row["region_name"] for row in records] != ["object_A", "object_B"]:
+            raise ValueError("expected Object A/B S039 Top100 mean records")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {"ready": False}
+    return {
+        "ready": True,
+        "step": 39,
+        "query_pixel_frame": 4,
+        "query_latent_frame": 1,
+        "observation_heads": "frozen S039 PCK Top100",
+        "intervention_head_scope": manifest.get("head_scope"),
+        "records": records,
+    }
+
+
 def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
     case, seed = str(sample["case"]), int(sample["seed"])
     ranking_path = Path(
@@ -2897,8 +2996,7 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
         for row in sample.get("regions", [])
         if row.get("region_type") == "object"
     ]
-    targets = [("single_object", region) for region in regions]
-    targets.append(("all_objects", ""))
+    targets = _wan22_ti2v_legacy_physiciq67_m123_targets(regions)
     metric_report_path = (
         WAN22_TI2V_LEGACY_PHYSICIQ67_HEAD_SCOPE_METRICS_ROOT
         / case
@@ -3033,6 +3131,11 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
                         "baseline_metrics": metric_records.get(str(variant)),
                         "trajectory_metrics": trajectory_records.get(str(variant)),
                         "object_survival_metrics": survival_records.get(str(variant)),
+                        "s039_top100_mean": (
+                            _wan22_ti2v_legacy_physiciq67_m123_s039_top100_mean_record(
+                                case, seed, str(variant)
+                            )
+                        ),
                         "temporal_directional": mask_mode
                         in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS,
                     }
@@ -3161,6 +3264,13 @@ def _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample: dict):
             "measured": int(survival_report.get("measured_ablation_count", 0)),
             "ranked": int(survival_report.get("ranked_ablation_count", 0)),
             "expected": int(survival_report.get("expected_ablation_count", 0)),
+        },
+        "s039_top100_mean_progress": {
+            "ready": sum(
+                int(bool(row.get("s039_top100_mean", {}).get("ready")))
+                for row in records
+            ),
+            "expected": len(records),
         },
         "disappearance_ranking": disappearance_ranking,
         "mask_absence_ranking": mask_absence_ranking,
@@ -3304,11 +3414,351 @@ def wan22_ti2v_legacy_physiciq67_visual_catalog():
     }
 
 
+def _wan22_ti2v_legacy_m123_batch_metric_aggregate(samples, summaries):
+    mode_order = (
+        "self_only",
+        "self_same",
+        "self_future",
+        "self_past",
+        "incoming_only",
+        "incoming_same",
+        "incoming_future",
+        "incoming_past",
+        "outgoing_only",
+        "outgoing_same",
+        "outgoing_future",
+        "outgoing_past",
+    )
+    appearance_metric_names = (
+        "impact",
+        "global_appearance",
+        "target_local",
+        "temporal_appearance",
+        "outside_spillover",
+        "global_ssim",
+        "global_mae",
+        "global_delta_mae",
+        "target_roi_mae",
+        "target_roi_delta_mae",
+        "outside_mae",
+        "outside_delta_mae",
+    )
+
+    def mean(values):
+        finite = [float(value) for value in values if value is not None and math.isfinite(float(value))]
+        return round(math.fsum(finite) / len(finite), 8) if finite else None
+
+    def balanced_metrics(rows):
+        by_case_seed = {}
+        for row in rows:
+            by_case_seed.setdefault((row["case"], row["seed"]), []).append(row)
+        case_seed_means = {
+            key: {
+                metric: mean(item.get(metric) for item in values)
+                for metric in appearance_metric_names
+            }
+            for key, values in by_case_seed.items()
+        }
+        by_case = {}
+        for (case, _seed), values in case_seed_means.items():
+            by_case.setdefault(case, []).append(values)
+        case_means = {
+            case: {
+                metric: mean(item.get(metric) for item in values)
+                for metric in appearance_metric_names
+            }
+            for case, values in by_case.items()
+        }
+        return {
+            metric: mean(values.get(metric) for values in case_means.values())
+            for metric in appearance_metric_names
+        }
+
+    summary_lookup = {
+        (str(row["case"]), int(row["seed"])): row for row in summaries
+    }
+    case_rows = {}
+    appearance_rows = []
+    trajectory_rows = []
+    for sample in samples:
+        case, seed = str(sample["case"]), int(sample["seed"])
+        case_row = case_rows.setdefault(
+            case,
+            {
+                "case": case,
+                "configured_seeds": set(),
+                "generated_seeds": set(),
+                "appearance_seeds": set(),
+                "trajectory_seeds": set(),
+                "survival_seeds": set(),
+                "expected_videos": 0,
+                "generated_videos": 0,
+                "appearance_records": 0,
+                "trajectory_records": 0,
+                "survival_records": 0,
+            },
+        )
+        case_row["configured_seeds"].add(seed)
+        summary = summary_lookup.get((case, seed), {})
+        case_row["expected_videos"] += int(summary.get("expected", 0))
+        payload = _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(sample)
+        for record in payload.get("records", []):
+            if (
+                not record.get("ready")
+                or record.get("mask_mode") not in mode_order
+            ):
+                continue
+            case_row["generated_videos"] += 1
+            case_row["generated_seeds"].add(seed)
+            target = (
+                f"single_object::{record.get('region')}"
+                if record.get("target_scope") == "single_object"
+                else "all_objects::"
+            )
+            baseline_row = record.get("baseline_metrics") or {}
+            baseline = baseline_row.get("metrics", {})
+            if baseline:
+                global_metrics = baseline.get("global", {})
+                target_roi = baseline.get("target_roi", {})
+                outside = baseline.get("outside_objects", {})
+                categories = baseline.get("category_scores_0_100", {})
+                appearance_rows.append(
+                    {
+                        "case": case,
+                        "seed": seed,
+                        "target": target,
+                        "head_scope": record.get("head_scope"),
+                        "mask_mode": record.get("mask_mode"),
+                        "impact": baseline.get("impact_score_0_100"),
+                        "global_appearance": categories.get("global_appearance"),
+                        "target_local": categories.get("target_local"),
+                        "temporal_appearance": categories.get("temporal_appearance"),
+                        "outside_spillover": categories.get("outside_spillover"),
+                        "global_ssim": global_metrics.get("ssim_mean"),
+                        "global_mae": global_metrics.get("mae_0_1"),
+                        "global_delta_mae": global_metrics.get(
+                            "temporal_delta_mae_0_1"
+                        ),
+                        "target_roi_mae": target_roi.get("mae_0_1"),
+                        "target_roi_delta_mae": target_roi.get(
+                            "temporal_delta_mae_0_1"
+                        ),
+                        "outside_mae": outside.get("mae_0_1"),
+                        "outside_delta_mae": outside.get(
+                            "temporal_delta_mae_0_1"
+                        ),
+                    }
+                )
+                case_row["appearance_records"] += 1
+                case_row["appearance_seeds"].add(seed)
+            trajectory = (record.get("trajectory_metrics") or {}).get(
+                "metrics", {}
+            )
+            survival = (record.get("object_survival_metrics") or {}).get(
+                "metrics", {}
+            )
+            if trajectory:
+                case_row["trajectory_records"] += 1
+                case_row["trajectory_seeds"].add(seed)
+            if survival:
+                case_row["survival_records"] += 1
+                case_row["survival_seeds"].add(seed)
+            if trajectory or survival:
+                trajectory_rows.append(
+                    {
+                        "case": case,
+                        "seed": seed,
+                        "target": target,
+                        "head_scope": record.get("head_scope"),
+                        "mask_mode": record.get("mask_mode"),
+                        "trajectory_impact_percent_d0": trajectory.get(
+                            "trajectory_impact_percent_d0"
+                        ),
+                        "track_loss": trajectory.get(
+                            "target_worst_track_loss_score_0_100"
+                        ),
+                        "retention_failure": survival.get(
+                            "target_worst_disappearance_score_0_100"
+                        ),
+                        "mask_absence": survival.get(
+                            "target_worst_mask_absence_score_0_100"
+                        ),
+                    }
+                )
+
+    appearance_index = {
+        (
+            row["case"],
+            row["seed"],
+            row["target"],
+            row["head_scope"],
+            row["mask_mode"],
+        ): row
+        for row in appearance_rows
+    }
+    candidate_units = {
+        (case, seed, target, head_scope)
+        for case, seed, target, head_scope, _mode in appearance_index
+    }
+    matched_units = sorted(
+        unit
+        for unit in candidate_units
+        if all((*unit, mode) in appearance_index for mode in mode_order)
+    )
+    appearance_by_mode = []
+    for mode in mode_order:
+        selected = [appearance_index[(*unit, mode)] for unit in matched_units]
+        appearance_by_mode.append(
+            {
+                "mask_mode": mode,
+                "matched_units": len(selected),
+                "cases": len({row["case"] for row in selected}),
+                "case_seeds": len(
+                    {(row["case"], row["seed"]) for row in selected}
+                ),
+                "metrics": balanced_metrics(selected),
+            }
+        )
+
+    scope_order = ("top100", "bottom100", "all720")
+    scope_index = {
+        (
+            row["case"],
+            row["seed"],
+            row["target"],
+            row["mask_mode"],
+            row["head_scope"],
+        ): row
+        for row in appearance_rows
+    }
+    scope_candidates = {
+        (case, seed, target, mode)
+        for case, seed, target, mode, _scope in scope_index
+    }
+    matched_scope_units = sorted(
+        unit
+        for unit in scope_candidates
+        if all((*unit, scope) in scope_index for scope in scope_order)
+    )
+    appearance_by_scope = []
+    for scope in scope_order:
+        selected = [scope_index[(*unit, scope)] for unit in matched_scope_units]
+        appearance_by_scope.append(
+            {
+                "head_scope": scope,
+                "matched_units": len(selected),
+                "cases": len({row["case"] for row in selected}),
+                "case_seeds": len(
+                    {(row["case"], row["seed"]) for row in selected}
+                ),
+                "metrics": balanced_metrics(selected),
+            }
+        )
+
+    trajectory_by_mode = []
+    for mode in mode_order:
+        selected = [row for row in trajectory_rows if row["mask_mode"] == mode]
+        valid_ade = [
+            row["trajectory_impact_percent_d0"]
+            for row in selected
+            if row.get("trajectory_impact_percent_d0") is not None
+        ]
+        trajectory_by_mode.append(
+            {
+                "mask_mode": mode,
+                "records": len(selected),
+                "cases": len({row["case"] for row in selected}),
+                "case_seeds": len(
+                    {(row["case"], row["seed"]) for row in selected}
+                ),
+                "ade_valid_records": len(valid_ade),
+                "ade_pass_rate": (
+                    round(len(valid_ade) / len(selected), 8) if selected else None
+                ),
+                "trajectory_impact_percent_d0": mean(valid_ade),
+                "track_loss": mean(row.get("track_loss") for row in selected),
+                "retention_failure": mean(
+                    row.get("retention_failure") for row in selected
+                ),
+                "mask_absence": mean(
+                    row.get("mask_absence") for row in selected
+                ),
+            }
+        )
+
+    serializable_cases = []
+    for case in sorted(case_rows):
+        row = case_rows[case]
+        serializable_cases.append(
+            {
+                **{
+                    key: value
+                    for key, value in row.items()
+                    if not key.endswith("_seeds")
+                },
+                **{
+                    key: sorted(value)
+                    for key, value in row.items()
+                    if key.endswith("_seeds")
+                },
+            }
+        )
+    return {
+        "method": (
+            "Only complete case×seed×target×head-scope cells containing all "
+            "12 M1/M2/M3 time variants enter the ablation comparison. Means are "
+            "hierarchical: targets/head scopes within seed, seeds within case, then "
+            "equal-weight cases. Missing values are excluded, never replaced by zero."
+        ),
+        "configured": {
+            "cases": len(case_rows),
+            "case_seeds": len(samples),
+            "expected_videos": sum(
+                int(row.get("expected", 0)) for row in summaries
+            ),
+        },
+        "coverage": {
+            "generated_videos": sum(row["generated_videos"] for row in case_rows.values()),
+            "appearance_records": len(appearance_rows),
+            "appearance_cases": len({row["case"] for row in appearance_rows}),
+            "appearance_case_seeds": len(
+                {(row["case"], row["seed"]) for row in appearance_rows}
+            ),
+            "trajectory_records": sum(
+                row["trajectory_records"] for row in case_rows.values()
+            ),
+            "trajectory_cases": len(
+                {row["case"] for row in trajectory_rows if row.get("track_loss") is not None}
+            ),
+            "trajectory_case_seeds": len(
+                {
+                    (row["case"], row["seed"])
+                    for row in trajectory_rows
+                    if row.get("track_loss") is not None
+                }
+            ),
+            "survival_records": sum(
+                row["survival_records"] for row in case_rows.values()
+            ),
+            "matched_appearance_units": len(matched_units),
+            "matched_appearance_cases": len({unit[0] for unit in matched_units}),
+            "matched_appearance_case_seeds": len(
+                {(unit[0], unit[1]) for unit in matched_units}
+            ),
+        },
+        "cases": serializable_cases,
+        "appearance_by_mode": appearance_by_mode,
+        "appearance_by_scope": appearance_by_scope,
+        "trajectory_by_mode": trajectory_by_mode,
+    }
+
+
 def wan22_ti2v_legacy_m123_temporal_batch_catalog(
     selected_case: str | None = None,
     selected_seed: int | None = None,
+    selected_only: bool = False,
 ):
-    """Small catalog for the M1/M2/M3 Same/Future/Past video gallery.
+    """Small catalog for the M1/M2/M3 All-time/Same/Future/Past video gallery.
 
     The full PhysicIQ67 catalog embeds every metric report for every sample and
     is intentionally not reused here.  This endpoint scans completion markers
@@ -3350,10 +3800,19 @@ def wan22_ti2v_legacy_m123_temporal_batch_catalog(
     }
     if selected_key not in available_keys:
         selected_key = (str(samples[0]["case"]), int(samples[0]["seed"]))
+    summary_samples = (
+        [
+            row
+            for row in samples
+            if (str(row["case"]), int(row["seed"])) == selected_key
+        ]
+        if selected_only
+        else samples
+    )
 
     summaries = []
     total_ready = total_expected = total_errors = 0
-    for sample in samples:
+    for sample in summary_samples:
         case, seed = str(sample["case"]), int(sample["seed"])
         ranking_tag = str(sample.get("m123_head_ranking_tag") or "")
         head_scopes = tuple(
@@ -3367,12 +3826,11 @@ def wan22_ti2v_legacy_m123_temporal_batch_catalog(
             for row in sample.get("regions", [])
             if row.get("region_type") == "object"
         ]
-        targets = [("single_object", region) for region in regions]
-        targets.append(("all_objects", ""))
+        targets = _wan22_ti2v_legacy_physiciq67_m123_targets(regions)
         ready = errors = 0
         for head_scope in head_scopes:
             for target_scope, region in targets:
-                for mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS:
+                for mask_mode in WAN22_TI2V_LEGACY_PHYSICIQ67_M123_GALLERY_MASKS:
                     variant = _wan22_ti2v_legacy_physiciq67_head_scope_variant(
                         target_scope, region, mask_mode, head_scope, ranking_tag
                     )
@@ -3390,7 +3848,7 @@ def wan22_ti2v_legacy_m123_temporal_batch_catalog(
                     )
                     errors += int((root / "error.txt").is_file())
         expected = len(head_scopes) * len(targets) * len(
-            WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
+            WAN22_TI2V_LEGACY_PHYSICIQ67_M123_GALLERY_MASKS
         )
         total_ready += ready
         total_expected += expected
@@ -3414,17 +3872,203 @@ def wan22_ti2v_legacy_m123_temporal_batch_catalog(
         for row in samples
         if (str(row["case"]), int(row["seed"])) == selected_key
     )
-    selected_payload = _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(
+    full_selected_payload = _wan22_ti2v_legacy_physiciq67_m123_head_scope_records(
         selected_sample
     )
-    selected_payload["records"] = [
+    m123_records = [
         row
-        for row in selected_payload.get("records", [])
+        for row in full_selected_payload.get("records", [])
         if row.get("mask_mode")
-        in WAN22_TI2V_LEGACY_PHYSICIQ67_TEMPORAL_DIRECTIONAL_MASKS
+        in WAN22_TI2V_LEGACY_PHYSICIQ67_M123_GALLERY_MASKS
     ]
-    selected_payload.update(
-        {
+    compact_records = []
+    for row in m123_records:
+        baseline_row = row.get("baseline_metrics") or {}
+        baseline = baseline_row.get("metrics", {})
+        global_metrics = baseline.get("global", {})
+        target_roi = baseline.get("target_roi", {})
+        outside_objects = baseline.get("outside_objects", {})
+        trajectory_row = row.get("trajectory_metrics") or {}
+        trajectory = trajectory_row.get("metrics", {})
+        trajectory_objects = {
+            name: {
+                key: values.get(key)
+                for key in (
+                    "quality_pass",
+                    "baseline_center_valid_frames",
+                    "common_center_valid_frames",
+                    "common_center_coverage",
+                    "track_retention_score_0_100",
+                    "track_loss_score_0_100",
+                    "last_common_visible_frame",
+                    "center_ade_px",
+                    "center_ade_norm",
+                    "center_fde_px",
+                    "center_fde_norm",
+                    "velocity_vector_error_px_per_frame",
+                    "velocity_vector_error_norm_per_frame",
+                    "velocity_valid_count",
+                    "point_ade_px",
+                    "point_ade_norm",
+                    "point_valid_count",
+                    "pck_normalized",
+                )
+            }
+            for name, values in trajectory.get("objects", {}).items()
+        }
+        survival_row = row.get("object_survival_metrics") or {}
+        survival = survival_row.get("metrics", {})
+        survival_objects = {
+            name: {
+                key: values.get(key)
+                for key in (
+                    "quality_pass",
+                    "f00_prompt_iou",
+                    "survival_rate",
+                    "retention_score_0_100",
+                    "disappearance_score_0_100",
+                    "identity_similarity_mean",
+                    "identity_failure_rate",
+                    "area_failure_rate",
+                    "empty_mask_rate",
+                    "first_sustained_loss_frame",
+                    "terminal_missing_rate",
+                    "alive_frame_count",
+                    "frame_count",
+                )
+            }
+            for name, values in survival.get("objects", {}).items()
+        }
+        compact_records.append(
+            {
+                key: row.get(key)
+                for key in (
+                    "target_scope",
+                    "region",
+                    "mask_mode",
+                    "head_scope",
+                    "head_count",
+                    "variant_id",
+                    "ready",
+                    "error",
+                    "s039_top100_mean",
+                )
+            }
+            | {
+                "metrics": {
+                    "impact_score_0_100": baseline.get("impact_score_0_100"),
+                    "trajectory_impact_percent_d0": trajectory.get(
+                        "trajectory_impact_percent_d0"
+                    ),
+                    "trajectory_rank": trajectory_row.get(
+                        "trajectory_rank_within_case_seed"
+                    ),
+                    "track_loss_score_0_100": trajectory.get(
+                        "target_worst_track_loss_score_0_100"
+                    ),
+                    "track_loss_rank": trajectory_row.get(
+                        "track_loss_rank_within_case_seed"
+                    ),
+                    "retention_failure_score_0_100": survival.get(
+                        "target_worst_disappearance_score_0_100"
+                    ),
+                    "retention_failure_rank": survival_row.get(
+                        "disappearance_rank_within_case_seed"
+                    ),
+                    "mask_absence_score_0_100": survival.get(
+                        "target_worst_mask_absence_score_0_100"
+                    ),
+                    "mask_absence_rank": survival_row.get(
+                        "mask_absence_rank_within_case_seed"
+                    ),
+                    "appearance": {
+                        "impact_score_0_100": baseline.get("impact_score_0_100"),
+                        "impact_rank": baseline_row.get(
+                            "impact_rank_within_case_seed"
+                        ),
+                        "spillover_score_0_100": baseline.get(
+                            "spillover_score_0_100"
+                        ),
+                        "category_scores_0_100": baseline.get(
+                            "category_scores_0_100", {}
+                        ),
+                        "category_ranks": baseline_row.get(
+                            "category_ranks_within_case_seed", {}
+                        ),
+                        "global_ssim": global_metrics.get("ssim_mean"),
+                        "global_psnr_db": global_metrics.get("psnr_db"),
+                        "global_mae_0_1": global_metrics.get("mae_0_1"),
+                        "global_temporal_delta_mae_0_1": global_metrics.get(
+                            "temporal_delta_mae_0_1"
+                        ),
+                        "target_roi_key": baseline_row.get("target_roi_key"),
+                        "target_roi_mae_0_1": target_roi.get("mae_0_1"),
+                        "target_roi_temporal_delta_mae_0_1": target_roi.get(
+                            "temporal_delta_mae_0_1"
+                        ),
+                        "target_roi_mean_area_fraction": target_roi.get(
+                            "mean_area_fraction"
+                        ),
+                        "outside_objects_mae_0_1": outside_objects.get(
+                            "mae_0_1"
+                        ),
+                        "outside_objects_temporal_delta_mae_0_1": (
+                            outside_objects.get("temporal_delta_mae_0_1")
+                        ),
+                        "outside_objects_mean_area_fraction": outside_objects.get(
+                            "mean_area_fraction"
+                        ),
+                    },
+                    "trajectory": {
+                        "quality_pass": trajectory.get("quality_pass"),
+                        "selected_objects": trajectory.get("selected_objects", []),
+                        "target_center_ade_norm": trajectory.get(
+                            "target_center_ade_norm"
+                        ),
+                        "trajectory_impact_percent_d0": trajectory.get(
+                            "trajectory_impact_percent_d0"
+                        ),
+                        "trajectory_rank": trajectory_row.get(
+                            "trajectory_rank_within_case_seed"
+                        ),
+                        "target_mean_track_loss_score_0_100": trajectory.get(
+                            "target_mean_track_loss_score_0_100"
+                        ),
+                        "target_worst_track_loss_score_0_100": trajectory.get(
+                            "target_worst_track_loss_score_0_100"
+                        ),
+                        "track_loss_rank": trajectory_row.get(
+                            "track_loss_rank_within_case_seed"
+                        ),
+                        "objects": trajectory_objects,
+                    },
+                    "survival": {
+                        "quality_pass": survival.get("quality_pass"),
+                        "selected_objects": survival.get("selected_objects", []),
+                        "target_mean_disappearance_score_0_100": survival.get(
+                            "target_mean_disappearance_score_0_100"
+                        ),
+                        "target_worst_disappearance_score_0_100": survival.get(
+                            "target_worst_disappearance_score_0_100"
+                        ),
+                        "disappearance_rank": survival_row.get(
+                            "disappearance_rank_within_case_seed"
+                        ),
+                        "target_mean_mask_absence_score_0_100": survival.get(
+                            "target_mean_mask_absence_score_0_100"
+                        ),
+                        "target_worst_mask_absence_score_0_100": survival.get(
+                            "target_worst_mask_absence_score_0_100"
+                        ),
+                        "mask_absence_rank": survival_row.get(
+                            "mask_absence_rank_within_case_seed"
+                        ),
+                        "objects": survival_objects,
+                    },
+                }
+            }
+        )
+    selected_payload = {
             "case": selected_key[0],
             "seed": selected_key[1],
             "category": selected_sample.get("category", ""),
@@ -3438,9 +4082,9 @@ def wan22_ti2v_legacy_m123_temporal_batch_catalog(
                     selected_key[0], str(selected_key[1])
                 )
             ),
+            "records": compact_records,
         }
-    )
-    return {
+    response = {
         "ready": True,
         "samples": summaries,
         "selected": selected_payload,
@@ -3453,6 +4097,11 @@ def wan22_ti2v_legacy_m123_temporal_batch_catalog(
             "case_count": len({row["case"] for row in summaries}),
         },
     }
+    if not selected_only:
+        response["aggregate"] = _wan22_ti2v_legacy_m123_batch_metric_aggregate(
+            samples, summaries
+        )
+    return response
 
 
 def _wan22_ti2v_legacy_physiciq67_sample(case: str, seed: str):
@@ -3621,6 +4270,35 @@ def wan22_ti2v_legacy_physiciq67_head_scope_trajectory_overlay(
     if variant_id not in allowed:
         return None
     return root / "overlays" / f"{variant_id}.mp4"
+
+
+def wan22_ti2v_legacy_physiciq67_m123_s039_top100_mean_overlay(
+    case: str, seed: str, variant_id: str, region: str
+):
+    if region not in {"object_A", "object_B"}:
+        return None
+    try:
+        seed_value = int(seed)
+    except ValueError:
+        return None
+    record = _wan22_ti2v_legacy_physiciq67_m123_s039_top100_mean_record(
+        case, seed_value, variant_id
+    )
+    if not record.get("ready"):
+        return None
+    region_row = next(
+        (row for row in record.get("records", []) if row.get("region_name") == region),
+        None,
+    )
+    if region_row is None:
+        return None
+    return (
+        WAN22_TI2V_LEGACY_PHYSICIQ67_M123_S039_TOP100_MEAN_ROOT
+        / case
+        / f"seed_{seed_value:05d}"
+        / variant_id
+        / str(region_row["image"])
+    )
 
 
 def wan22_ti2v_legacy_physiciq67_head_scope_survival_overlay(
@@ -4179,9 +4857,9 @@ categoryOrder=['global_appearance','target_local','temporal_appearance','outside
 categoryDefs=payload.category_definitions||{},
 categoryName=id=>categoryDefs[id]?.name||id,
 metricDetails=r=>{const row=r.baseline_metrics;if(!row)return `<details class="m123-metrics pending"><summary>vs Baseline 指标待计算</summary><p>视频已生成，但增量 bench 尚未写入该 variant。刷新后会自动出现。</p></details>`;const m=row.metrics,g=m.global,t=m.target_roi,o=m.outside_objects,c=m.category_scores_0_100||{},cr=row.category_ranks_within_case_seed||{},rank=row.impact_rank_within_case_seed,categoryRows=categoryOrder.map(id=>`<tr class="m123-category-score"><th>${e(categoryName(id))} ↑</th><td>${num(c[id])} · #${num(cr[id],0)}</td></tr>`).join('');return `<details class="m123-metrics"><summary>vs Baseline · 四类影响与排名 · 综合 ${num(m.impact_score_0_100)} (#${num(rank,0)})</summary><div class="m123-metric-body"><table><tbody><tr><th>综合影响分 ↑</th><td>${num(m.impact_score_0_100)} · #${num(rank,0)}</td></tr>${categoryRows}<tr class="m123-raw-start"><th>Global SSIM ↓</th><td>${num(g.ssim_mean)}</td></tr><tr><th>Global MAE ↑</th><td>${num(g.mae_0_1)}</td></tr><tr><th>Global Δ-MAE ↑</th><td>${num(g.temporal_delta_mae_0_1)}</td></tr><tr><th>${e(row.target_roi_key)} ROI MAE ↑</th><td>${num(t.mae_0_1)}</td></tr><tr><th>${e(row.target_roi_key)} ROI Δ-MAE ↑</th><td>${num(t.temporal_delta_mae_0_1)}</td></tr><tr><th>Outside-object MAE ↑</th><td>${num(o.mae_0_1)}</td></tr><tr><th>Outside-object Δ-MAE ↑</th><td>${num(o.temporal_delta_mae_0_1)}</td></tr></tbody></table><p>四类分数均只衡量相对同 seed Baseline 的可见干预强度，越大表示该类影响越强，不代表生成质量或物理正确性。“时序外观”依然是像素变化指标，不用于判断轨迹差异。</p></div></details>`},
-trajectoryDetails=r=>{const row=r.trajectory_metrics;if(!row)return `<details class="m123-trajectory pending"><summary>真实轨迹指标待 CoTracker</summary><p>尚未对该视频跟踪；不使用 Δ-MAE 代替。</p></details>`;const m=row.metrics||{},objects=m.objects||{},rank=row.trajectory_rank_within_case_seed,trackRank=row.track_loss_rank_within_case_seed,objectRows=Object.entries(objects).map(([name,o])=>`<tr><th>${e(name)} Center-ADE / FDE</th><td>${num(o.center_ade_norm)} / ${num(o.center_fde_norm)}</td></tr><tr><th>${e(name)} Velocity vector error</th><td>${num(o.velocity_vector_error_norm_per_frame)}</td></tr><tr><th>${e(name)} PCK@5/10/20%</th><td>${num(o.pck_normalized?.['0.05'])} / ${num(o.pck_normalized?.['0.1'])} / ${num(o.pck_normalized?.['0.2'])}</td></tr><tr><th>${e(name)} common coverage / Track Loss</th><td>${num(o.common_center_coverage)} (${o.common_center_valid_frames}/${o.baseline_center_valid_frames}) / ${num(o.track_loss_score_0_100)} ${o.quality_pass?'✓':'ADE N/A'}</td></tr>`).join(''),score=m.trajectory_impact_percent_d0,trackLoss=m.target_worst_track_loss_score_0_100,overlay=`${api}/head-scope-trajectory-overlay?${base}&variant_id=${encodeURIComponent(r.variant_id)}`;return `<details class="m123-trajectory"><summary>轨迹/可跟踪性 vs Baseline · ADE ${score==null?'N/A':`${num(score)}% D0 (#${num(rank,0)})`} · Track Loss ${num(trackLoss)} (#${num(trackRank,0)})</summary><div class="m123-trajectory-body"><table><tbody><tr><th>Worst Track Loss /100 ↑</th><td>${num(trackLoss)} · #${num(trackRank,0)}</td></tr><tr><th>Mean Track Loss /100 ↑</th><td>${num(m.target_mean_track_loss_score_0_100)}</td></tr><tr><th>轨迹影响（% D0）↑</th><td>${num(score)}</td></tr><tr><th>Target Center-ADE norm ↑</th><td>${num(m.target_center_ade_norm)}</td></tr>${objectRows}</tbody></table><video controls muted playsinline preload="metadata" src="${overlay}"></video><p>Track Loss = 100 × (1−共同中心覆盖率)，全部视频都可比较，但只表示 CoTracker 可观测性损失。ADE 覆盖质量门未通过时仍保持 N/A，绝不以 Track Loss 填充。</p></div></details>`},
-survivalDetails=r=>{const row=r.object_survival_metrics;if(!row)return `<details class="m123-survival pending"><summary>对象存活指标待 SAM2+DINOv2</summary><p>模型指标正在增量计算；Track Loss 不能替代对象存活判断。</p></details>`;const m=row.metrics||{},objects=m.objects||{},rank=row.disappearance_rank_within_case_seed,maskRank=row.mask_absence_rank_within_case_seed,objectRows=Object.entries(objects).map(([name,o])=>`<tr><th>${e(name)} Retention / Failure (/100)</th><td>${num(o.retention_score_0_100)} / ${num(o.disappearance_score_0_100)}</td></tr><tr><th>${e(name)} DINO cosine / identity-fail / area-fail</th><td>${num(o.identity_similarity_mean)} / ${num(o.identity_failure_rate)} / ${num(o.area_failure_rate)}</td></tr><tr><th>${e(name)} empty-mask / terminal-missing rate</th><td>${num(o.empty_mask_rate)} / ${num(o.terminal_missing_rate)}</td></tr><tr><th>${e(name)} first 3-frame sustained loss</th><td>${o.first_sustained_loss_frame==null?'—':`F${o.first_sustained_loss_frame}`}</td></tr>`).join(''),score=m.target_worst_disappearance_score_0_100,maskAbsence=m.target_worst_mask_absence_score_0_100,overlay=`${api}/head-scope-survival-overlay?${base}&variant_id=${encodeURIComponent(r.variant_id)}`;return `<details class="m123-survival"><summary>对象保留 vs Baseline · Retention Failure ${num(score)} (#${num(rank,0)}) · Mask Absence ${num(maskAbsence)} (#${num(maskRank,0)})</summary><div class="m123-survival-body"><table><tbody><tr><th>Worst retention failure /100 ↑</th><td>${num(score)} · #${num(rank,0)}</td></tr><tr><th>Worst SAM2 mask absence /100 ↑</th><td>${num(maskAbsence)} · #${num(maskRank,0)}</td></tr><tr><th>Mean target retention failure /100 ↑</th><td>${num(m.target_mean_disappearance_score_0_100)}</td></tr><tr><th>Mean target mask absence /100 ↑</th><td>${num(m.target_mean_mask_absence_score_0_100)}</td></tr>${objectRows}</tbody></table><video controls muted playsinline preload="metadata" src="${overlay}"></video><p>Retention Failure 是 mask、DINO identity、面积条件的 composite；Mask Absence = 100 × empty-mask rate，更接近纯消失，但仍可能包含 SAM2 跟踪失败。failure rate 为 0–1；绿色=保留，红色=至少一个条件失败。三种失败原因保留为独立字段，必须结合 overlay 审计。</p></div></details>`},
-card=(target,scope,scopeLabel,scopeDetail,op,time)=>{const suffix=time[0]==='only'?'only':time[0],mode=`${op.base}_${suffix}`,r=find(target,scope,mode);if(!r?.ready)return '';const src=`${api}/temporal-tube-ablation-video?${base}&target_scope=${encodeURIComponent(target.target_scope)}&mask_mode=${encodeURIComponent(mode)}&top_n=${r.head_count}&head_scope=${encodeURIComponent(scope)}${target.region?`&region=${encodeURIComponent(target.region)}`:''}`;return `<figure><video controls muted playsinline preload="metadata" src="${src}"></video><figcaption><strong>${e(op.id)}-${e(time[1])} · ${e(scopeLabel)}</strong><span class="caption-protocol">${e(scopeDetail)} · ${r.head_count} layer-heads</span><span class="caption-flow"><b>切断：</b>${e(op.flow)} · ${e(time[2])}</span><span class="caption-exact"><b>精确计算：</b>${e(formula(op,time[2]))}</span><span class="caption-exact"><b>理论诊断：</b>${e(op.theory)}</span></figcaption>${trajectoryDetails(r)}${survivalDetails(r)}${metricDetails(r)}</figure>`},
+trajectoryDetails=r=>{const row=r.trajectory_metrics;if(!row)return `<details class="m123-trajectory pending"><summary>真实轨迹指标待 CoTracker</summary><p>尚未对该视频跟踪；不使用 Δ-MAE 代替。</p></details>`;const m=row.metrics||{},objects=m.objects||{},rank=row.trajectory_rank_within_case_seed,trackRank=row.track_loss_rank_within_case_seed,objectRows=Object.entries(objects).map(([name,o])=>`<tr><th>${e(name)} Center-ADE / FDE</th><td>${num(o.center_ade_norm)} / ${num(o.center_fde_norm)}</td></tr><tr><th>${e(name)} Velocity vector error</th><td>${num(o.velocity_vector_error_norm_per_frame)}</td></tr><tr><th>${e(name)} PCK@5/10/20%</th><td>${num(o.pck_normalized?.['0.05'])} / ${num(o.pck_normalized?.['0.1'])} / ${num(o.pck_normalized?.['0.2'])}</td></tr><tr><th>${e(name)} common coverage / Track Loss</th><td>${num(o.common_center_coverage)} (${o.common_center_valid_frames}/${o.baseline_center_valid_frames}) / ${num(o.track_loss_score_0_100)} ${o.quality_pass?'✓':'ADE N/A'}</td></tr>`).join(''),score=m.trajectory_impact_percent_d0,trackLoss=m.target_worst_track_loss_score_0_100,overlay=`${api}/head-scope-trajectory-overlay?${base}&variant_id=${encodeURIComponent(r.variant_id)}`;return `<details class="m123-trajectory"><summary>轨迹/可跟踪性 vs Baseline · ADE ${score==null?'N/A':`${num(score)}% D0 (#${num(rank,0)})`} · Track Loss ${num(trackLoss)} (#${num(trackRank,0)})</summary><div class="m123-trajectory-body"><table><tbody><tr><th>Worst Track Loss /100 ↑</th><td>${num(trackLoss)} · #${num(trackRank,0)}</td></tr><tr><th>Mean Track Loss /100 ↑</th><td>${num(m.target_mean_track_loss_score_0_100)}</td></tr><tr><th>轨迹影响（% D0）↑</th><td>${num(score)}</td></tr><tr><th>Target Center-ADE norm ↑</th><td>${num(m.target_center_ade_norm)}</td></tr>${objectRows}</tbody></table><video controls muted playsinline preload="none" data-src="${overlay}"></video><p>Track Loss = 100 × (1−共同中心覆盖率)，全部视频都可比较，但只表示 CoTracker 可观测性损失。ADE 覆盖质量门未通过时仍保持 N/A，绝不以 Track Loss 填充。</p></div></details>`},
+survivalDetails=r=>{const row=r.object_survival_metrics;if(!row)return `<details class="m123-survival pending"><summary>对象存活指标待 SAM2+DINOv2</summary><p>模型指标正在增量计算；Track Loss 不能替代对象存活判断。</p></details>`;const m=row.metrics||{},objects=m.objects||{},rank=row.disappearance_rank_within_case_seed,maskRank=row.mask_absence_rank_within_case_seed,objectRows=Object.entries(objects).map(([name,o])=>`<tr><th>${e(name)} Retention / Failure (/100)</th><td>${num(o.retention_score_0_100)} / ${num(o.disappearance_score_0_100)}</td></tr><tr><th>${e(name)} DINO cosine / identity-fail / area-fail</th><td>${num(o.identity_similarity_mean)} / ${num(o.identity_failure_rate)} / ${num(o.area_failure_rate)}</td></tr><tr><th>${e(name)} empty-mask / terminal-missing rate</th><td>${num(o.empty_mask_rate)} / ${num(o.terminal_missing_rate)}</td></tr><tr><th>${e(name)} first 3-frame sustained loss</th><td>${o.first_sustained_loss_frame==null?'—':`F${o.first_sustained_loss_frame}`}</td></tr>`).join(''),score=m.target_worst_disappearance_score_0_100,maskAbsence=m.target_worst_mask_absence_score_0_100,overlay=`${api}/head-scope-survival-overlay?${base}&variant_id=${encodeURIComponent(r.variant_id)}`;return `<details class="m123-survival"><summary>对象保留 vs Baseline · Retention Failure ${num(score)} (#${num(rank,0)}) · Mask Absence ${num(maskAbsence)} (#${num(maskRank,0)})</summary><div class="m123-survival-body"><table><tbody><tr><th>Worst retention failure /100 ↑</th><td>${num(score)} · #${num(rank,0)}</td></tr><tr><th>Worst SAM2 mask absence /100 ↑</th><td>${num(maskAbsence)} · #${num(maskRank,0)}</td></tr><tr><th>Mean target retention failure /100 ↑</th><td>${num(m.target_mean_disappearance_score_0_100)}</td></tr><tr><th>Mean target mask absence /100 ↑</th><td>${num(m.target_mean_mask_absence_score_0_100)}</td></tr>${objectRows}</tbody></table><video controls muted playsinline preload="none" data-src="${overlay}"></video><p>Retention Failure 是 mask、DINO identity、面积条件的 composite；Mask Absence = 100 × empty-mask rate，更接近纯消失，但仍可能包含 SAM2 跟踪失败。failure rate 为 0–1；绿色=保留，红色=至少一个条件失败。三种失败原因保留为独立字段，必须结合 overlay 审计。</p></div></details>`},
+card=(target,scope,scopeLabel,scopeDetail,op,time)=>{const suffix=time[0]==='only'?'only':time[0],mode=`${op.base}_${suffix}`,r=find(target,scope,mode);if(!r?.ready)return '';const src=`${api}/temporal-tube-ablation-video?${base}&target_scope=${encodeURIComponent(target.target_scope)}&mask_mode=${encodeURIComponent(mode)}&top_n=${r.head_count}&head_scope=${encodeURIComponent(scope)}${target.region?`&region=${encodeURIComponent(target.region)}`:''}`;return `<figure><video controls muted playsinline preload="none" src="${src}"></video><figcaption><strong>${e(op.id)}-${e(time[1])} · ${e(scopeLabel)}</strong><span class="caption-protocol">${e(scopeDetail)} · ${r.head_count} layer-heads</span><span class="caption-flow"><b>切断：</b>${e(op.flow)} · ${e(time[2])}</span><span class="caption-exact"><b>精确计算：</b>${e(formula(op,time[2]))}</span><span class="caption-exact"><b>理论诊断：</b>${e(op.theory)}</span></figcaption>${trajectoryDetails(r)}${survivalDetails(r)}${metricDetails(r)}</figure>`},
 targetSections=targets.map(target=>{const opSections=ops.map(op=>{const scopeRows=scopes.map(([scope,scopeLabel,scopeDetail])=>{const cards=times.map(time=>card(target,scope,scopeLabel,scopeDetail,op,time)).filter(Boolean);if(!cards.length)return '';return `<div class="m123-scope-row"><div class="m123-scope-heading"><strong>${e(scopeLabel)}</strong><span>${e(scopeDetail)} · ${cards.length}/4 已生成</span></div><div class="m123-video-grid">${cards.join('')}</div></div>`}).join('');return scopeRows?`<section class="m123-op"><h4>${e(op.id)} · ${e(op.flow)}</h4>${scopeRows}</section>`:''}).join('');return opSections?`<section class="m123-target"><h3>${e(target.label)}</h3>${opSections}</section>`:''}).join(''),
 ranking=(payload.impact_ranking||[]).filter(r=>Number.isFinite(Number(r.impact_score_0_100))),
 trajectoryRanking=(payload.trajectory_ranking||[]).filter(r=>Number.isFinite(Number(r.metrics?.trajectory_impact_percent_d0))),
@@ -4197,10 +4875,45 @@ maskAbsenceRankingPanel=`<section class="m123-loss-ranking mask-absence"><h3>SAM
 categoryPanels=categoryOrder.map(id=>{const rows=(payload.category_rankings?.[id]||[]).filter(r=>Number.isFinite(Number(r.category_scores_0_100?.[id]))),def=categoryDefs[id]||{};if(!rows.length)return '';return `<section class="m123-category-ranking ${e(id)}"><h3>${e(categoryName(id))} ↑</h3><p>${e(def.direction||'越大表示该类影响越强')}</p><code>${e(def.formula||'')}</code><ol>${rows.slice(0,12).map((r,index)=>`<li><b>#${index+1} · ${e(r.target_scope==='single_object'?(r.region||'object'):'all_objects')} · ${e(modeLabel(r.mask_mode))} · ${e(r.head_scope)}</b><span>${e(categoryName(id))} ${num(r.category_scores_0_100[id])}</span></li>`).join('')}</ol></section>`}).join(''),
 categoryRankingPanel=categoryPanels?`<div class="m123-category-rankings"><div class="m123-ranking-intro"><h3>vs Baseline · 分类影响独立排序</h3><p>同一 case / seed 中按每类分数单独降序；未计算视频不参与排名。</p></div><div class="m123-category-ranking-grid">${categoryPanels}</div></div>`:`<section class="m123-impact-ranking pending"><h3>vs Baseline 分类排名待计算</h3><p>增量 bench 会在视频生成后自动写入。</p></section>`,
 overallRankingPanel=ranking.length?`<details class="m123-overall-ranking"><summary>展开查看旧版综合影响排序 · ${ranking.length} 个视频</summary><ol>${ranking.slice(0,15).map(r=>`<li><b>${e(r.target_scope==='single_object'?(r.region||'object'):'all_objects')} · ${e(modeLabel(r.mask_mode))} · ${e(r.head_scope)}</b><span>综合影响 ${num(r.impact_score_0_100)}</span></li>`).join('')}</ol></details>`:'',
-done=records.filter(r=>r.ready).length,expected=records.length,scopeText=scopes.map(x=>x[1]).join(' / '),baseline=s.video_ready?`<figure class="m123-baseline"><video controls muted playsinline preload="metadata" src="${api}/video?${base}"></video><figcaption><strong>Baseline · seed=${s.seed} · No intervention</strong></figcaption></figure>`:'';
+done=records.filter(r=>r.ready).length,expected=records.length,scopeText=scopes.map(x=>x[1]).join(' / '),baseline=s.video_ready?`<figure class="m123-baseline"><video controls muted playsinline preload="none" src="${api}/video?${base}"></video><figcaption><strong>Baseline · seed=${s.seed} · No intervention</strong></figcaption></figure>`:'';
 panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果对照</h2><p>当前比较 ${e(scopeText)}；ranking=${e(payload.ranking_tag||'frozen134')}。每个集合均比较 All-time / Same / Future / Past；干预覆盖 40 个去噪步和 conditional/unconditional 两个 CFG 分支。只展示已生成视频，当前 ${done}/${expected}。</p></div>${trackLossRankingPanel}${disappearanceRankingPanel}${maskAbsenceRankingPanel}${trajectoryRankingPanel}${categoryRankingPanel}${overallRankingPanel}${baseline}${targetSections}`
 }
+document.addEventListener('toggle',event=>{const details=event.target;if(!details.open||!details.matches('.m123-trajectory,.m123-survival'))return;details.querySelectorAll('video[data-src]').forEach(video=>{video.src=video.dataset.src;delete video.dataset.src;video.load()})},true)
+let m123AttentionLast=null,m123AttentionPoll=null;
+async function pollM123Attention(){try{const fresh=await fetch(`${api}/catalog?v=${Date.now()}`,{cache:'no-store'}).then(r=>r.json()),sample=(fresh.samples||[]).find(row=>row.case==='0613pybullet_sample_001460_w002'&&Number(row.seed)===47326),progress=sample?.m123_head_scope_ablations?.s039_top100_mean_progress||{},ready=Number(progress.ready||0),expected=Number(progress.expected||108);if(m123AttentionLast===null)m123AttentionLast=ready;else if(ready>m123AttentionLast){m123AttentionLast=ready;await load()}if(expected&&ready>=expected&&m123AttentionPoll){clearInterval(m123AttentionPoll);m123AttentionPoll=null}}catch(error){console.warn('S039 Top100 mean auto-refresh failed',error)}}
+m123AttentionPoll=setInterval(pollM123Attention,20000);pollM123Attention();
 '''
+    attention_card_anchor = "card=(target,scope,scopeLabel,scopeDetail,op,time)=>"
+    if head_scope_renderer.count(attention_card_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 Head-Scope card anchor changed")
+    attention_details = r'''attentionDetails=r=>{const capture=r.s039_top100_mean;if(!capture?.ready)return `<details class="m123-attention pending"><summary>S039 Fixed F04 Query · Top100 Mean 待提取</summary><p>完成后自动出现 Object A/B 的 F00/F04/…/F48 横向 overlay。</p></details>`;const rows=(capture.records||[]).map(row=>{const src=`${api}/head-scope-s039-top100-mean-overlay?${base}&variant_id=${encodeURIComponent(r.variant_id)}&region=${encodeURIComponent(row.region_name)}`;return `<section><h5>${e(row.region_name)} · ${e(row.region_phrase||'')}</h5><p>本实验在观察用 Top100 中直接置零 ${num(row.locally_ablated_top100_heads,0)} heads；固定 F04 query 中有 ${num(row.locally_ablated_query_rows,0)}/8 行落入该算子的 target partition。</p><img loading="lazy" data-src="${src}" alt="${e(row.region_name)} S039 Top100 mean overlay"></section>`}).join('');return `<details class="m123-attention"><summary>S039 Fixed F04 Query · Top100 Mean · Object A/B</summary><div class="m123-attention-body"><p><b>三行依次：</b>该消融重放中进入算子前的 softmax；按精确 M1/M2/M3 entries 置零后的有效系数（不重归一化）；被删除系数质量。每行横向为 F00/F04/…/F48。</p>${r.head_scope==='bottom100'?'<p class="m123-attention-note">Bottom100 与观察用 Top100 不相交，所以局部 Effective After = Before；但 Before 已包含早期层/时间步 Bottom100 干预产生的上游变化。</p>':''}${rows}</div></details>`},
+'''
+    head_scope_renderer = head_scope_renderer.replace(
+        attention_card_anchor, attention_details + attention_card_anchor, 1
+    )
+    metric_order_anchor = "${trajectoryDetails(r)}${survivalDetails(r)}${metricDetails(r)}"
+    if head_scope_renderer.count(metric_order_anchor) != 1:
+        raise RuntimeError("PhysicIQ67 Head-Scope metric details order changed")
+    head_scope_renderer = head_scope_renderer.replace(
+        metric_order_anchor,
+        "${attentionDetails(r)}${trajectoryDetails(r)}${survivalDetails(r)}${metricDetails(r)}",
+        1,
+    )
+    head_scope_renderer = head_scope_renderer.replace(
+        "只展示已生成视频，当前 ${done}/${expected}。",
+        "视频 ${done}/${expected}；S039 Fixed-F04 Top100 mean overlay ${Number(payload.s039_top100_mean_progress?.ready||0)}/${expected}。",
+        1,
+    )
+    head_scope_renderer = head_scope_renderer.replace(
+        ".m123-trajectory,.m123-survival'))return;",
+        ".m123-trajectory,.m123-survival,.m123-attention'))return;",
+        1,
+    )
+    head_scope_renderer = head_scope_renderer.replace(
+        "video.load()})},true)",
+        "video.load()});details.querySelectorAll('img[data-src]').forEach(image=>{image.src=image.dataset.src;delete image.dataset.src})},true)",
+        1,
+    )
     renderer_anchor = "function renderAblations(s,base){"
     if page.count(renderer_anchor) != 1:
         raise RuntimeError("PhysicIQ67 ablation renderer anchor changed")
@@ -4251,6 +4964,11 @@ panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果�
         ".m123-survival{margin:0 8px 9px;border:1px solid #a64c35;background:#fff6f1}.m123-survival summary{cursor:pointer;padding:8px 9px;font:800 11px/1.4 ui-monospace,monospace;color:#8c3625}.m123-survival-body{padding:7px}.m123-survival-body table{width:100%;font:11px/1.35 ui-monospace,monospace}.m123-survival-body th{text-align:left}.m123-survival-body td{text-align:right;font-weight:800}.m123-survival-body video{width:100%;margin-top:8px;aspect-ratio:1280/400}.m123-survival-body p{font-size:11px;line-height:1.45}.m123-loss-ranking{margin:13px 0;padding:12px;border-left:8px solid #8052a5;background:#fff}.m123-loss-ranking.disappearance{border-left-color:#a64c35}.m123-loss-ranking.mask-absence{border-left-color:#111;background:#f6f6f3}.m123-loss-ranking h3{margin:0 0 6px}.m123-loss-ranking ol{margin:10px 0 0;padding-left:27px;columns:2;column-gap:28px}.m123-loss-ranking li{break-inside:avoid;margin:0 0 7px;padding:5px 7px;background:#f4eff8}.m123-loss-ranking.disappearance li{background:#fff1eb}.m123-loss-ranking.mask-absence li{background:#ecece7}.m123-loss-ranking li b,.m123-loss-ranking li span{display:block}.m123-loss-ranking li span{font:11px ui-monospace,monospace;color:#695578}@media(max-width:900px){.m123-loss-ranking ol{columns:1}}</style>",
         1,
     )
+    page = page.replace(
+        "</style>",
+        ".m123-attention{margin:0 8px 9px;border:1px solid #b17a19;background:#fffaf0}.m123-attention summary{cursor:pointer;padding:8px 9px;font:800 11px/1.4 ui-monospace,monospace;color:#79500c}.m123-attention-body{padding:8px;overflow-x:auto}.m123-attention-body>p{font-size:11px;line-height:1.5}.m123-attention-body section{margin:10px 0;padding:7px;background:#fff}.m123-attention-body h5{margin:0 0 4px}.m123-attention-body section p{margin:0 0 7px;font-size:10px;line-height:1.45}.m123-attention-body img{display:block;width:2260px;max-width:none;height:auto}.m123-attention-note{padding:7px;border-left:5px solid #b17a19;background:#fff3cf}</style>",
+        1,
+    )
 
     progress_start = page.index("const temporalProgress=catalog=>")
     progress_end = page.index(";async function pollDirectionalCompletion", progress_start)
@@ -4293,26 +5011,88 @@ panel.innerHTML=`<div class="m123-title"><h2>M1 / M2 / M3 · Head Scope 因果�
 
 def wan22_ti2v_legacy_m123_temporal_batch_page():
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>M1 M2 M3 Temporal Batch</title><link rel="icon" href="data:"><style>
-:root{--paper:#ece4d5;--ink:#17261f;--deep:#17443a;--line:#baad98;--card:#fffaf0;--gold:#d29c35;--blue:#315f9a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 0 0,#d65f3c3b,transparent 34rem),radial-gradient(circle at 100% 0,#27897938,transparent 40rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:14px 22px;background:#ece4d5f4;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:5px 0;font-size:clamp(29px,4vw,54px);line-height:1}.lead{max-width:1500px;margin:6px 0;line-height:1.5}.tools{display:flex;align-items:end;gap:9px;flex-wrap:wrap}label{display:grid;gap:4px;font:700 11px ui-monospace,monospace}select,button{max-width:min(72vw,700px);padding:8px 10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:800}button{cursor:pointer}.status{font:12px ui-monospace,monospace}main{width:min(100% - 18px,2200px);margin:auto;padding:18px 0 70px}.note,.baseline,.operator{margin:14px 0;padding:13px;border:1px solid var(--line);background:#fffaf0e8;box-shadow:0 12px 30px #58442b16}.note{border-left:7px solid var(--gold);line-height:1.55}.baseline{width:min(560px,100%)}.baseline video,.card video{display:block;width:100%;aspect-ratio:1280/704;background:#111}.operator{border-radius:14px}.operator>h2{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:-13px -13px 12px;padding:11px 13px;background:var(--deep);color:#fff}.operator-replay{flex:0 0 auto;border-color:#d7cdbd;background:#fff;color:var(--deep)}.scope{margin:14px 0;border:1px solid #9fbdb4;background:#f7fbf9}.scope-head{display:flex;justify-content:space-between;gap:12px;padding:9px 11px;background:#dcece6}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;padding:9px}.card{min-width:0;margin:0;padding:8px;border:1px solid #d4c8b5;background:#fff}.card figcaption{padding:8px 2px 2px;line-height:1.45}.card figcaption strong,.card figcaption span{display:block}.formula{margin-top:5px;font:11px/1.45 ui-monospace,monospace;color:#4f5e58}.metric{margin-top:7px;border:1px solid #b9cec7;background:#f5faf8}.metric summary{cursor:pointer;padding:7px;font:700 11px ui-monospace,monospace}.metric div{padding:0 7px 7px;font:11px/1.5 ui-monospace,monospace}.empty{padding:24px;text-align:center;color:#776e60;background:#f0eadf}.lazy-note{color:#315f9a;font-weight:800}@media(max-width:1050px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:680px){header{position:static}.grid{grid-template-columns:1fr}.scope-head,.operator>h2{align-items:flex-start;flex-direction:column}}
-</style></head><body><header><a href="/">返回总览</a> · <a href="/wan22-ti2v-legacy-physiciq67-samples?v=20">返回完整页面</a><h1>M1 / M2 / M3<br>Same · Future · Past</h1><p class="lead">当前多 case、多 seed 批次的独立入口。只显示已生成视频；每次仅渲染选中的 target，视频滚动到视口附近时才加载。</p><div class="tools"><label>Case / Seed<select id="sample"></select></label><label>Target<select id="target"></select></label><button id="refresh" type="button">刷新</button><span id="status" class="status">读取中</span></div></header><main><section class="note"><b>共同设置：</b>R 为 Baseline 冻结轨迹在 latent t=0…12 的 object token tube；干预覆盖 S000–S039 全部 40 个去噪步和 conditional/unconditional 两个 CFG 分支。<br><b>时间方向：</b>Same 删除 tk=tq；Future 删除 tk&lt;tq（历史 K/V → 未来 Query）；Past 删除 tk&gt;tq（未来 K/V → 过去 Query）。三者互斥，合并后等于对应 M1/M2/M3 的 All-time 块。<br><span class="lazy-note">页面不会在首屏同时请求全部 MP4。</span></section><div id="content"><div class="empty">读取批次记录…</div></div></main><script>
+:root{--paper:#ece4d5;--ink:#17261f;--deep:#17443a;--line:#baad98;--card:#fffaf0;--gold:#d29c35;--blue:#315f9a}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 0 0,#d65f3c3b,transparent 34rem),radial-gradient(circle at 100% 0,#27897938,transparent 40rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:8;padding:14px 22px;background:#ece4d5f4;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}header a{color:var(--deep);font-weight:900}h1{margin:5px 0;font-size:clamp(29px,4vw,54px);line-height:1}.lead{max-width:1500px;margin:6px 0;line-height:1.5}.tools{display:flex;align-items:end;gap:9px;flex-wrap:wrap}label{display:grid;gap:4px;font:700 11px ui-monospace,monospace}select,button{max-width:min(72vw,700px);padding:8px 10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:800}button{cursor:pointer}.status{font:12px ui-monospace,monospace}main{width:min(100% - 18px,2200px);margin:auto;padding:18px 0 70px}.note,.definitions,.baseline,.operator{margin:14px 0;padding:13px;border:1px solid var(--line);background:#fffaf0e8;box-shadow:0 12px 30px #58442b16}.note{border-left:7px solid var(--gold);line-height:1.55}.definitions{border-left:7px solid var(--blue)}.definitions h2{margin:0 0 7px}.definitions>p{margin:0 0 10px;line-height:1.5}.table-scroll{overflow:auto;max-height:62vh;border:1px solid var(--line)}.definitions table,.metric table{width:100%;border-collapse:collapse;background:#fff}.definitions th,.definitions td,.metric th,.metric td{padding:7px 8px;border:1px solid #d8cebd;vertical-align:top;text-align:left}.definitions thead th{position:sticky;top:0;background:var(--deep);color:#fff}.definitions .group th{background:#dcece6;color:var(--deep)}.definitions td:nth-child(3),.metric td{font-family:ui-monospace,monospace}.baseline{width:min(560px,100%)}.baseline video,.card video{display:block;width:100%;aspect-ratio:1280/704;background:#111}.operator{border-radius:14px}.operator>h2{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:-13px -13px 12px;padding:11px 13px;background:var(--deep);color:#fff}.operator-replay{flex:0 0 auto;border-color:#d7cdbd;background:#fff;color:var(--deep)}.scope{margin:14px 0;border:1px solid #9fbdb4;background:#f7fbf9}.scope-head{display:flex;justify-content:space-between;gap:12px;padding:9px 11px;background:#dcece6}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;padding:9px}.card{min-width:0;margin:0;padding:8px;border:1px solid #d4c8b5;background:#fff}.card figcaption{padding:8px 2px 2px;line-height:1.45}.card figcaption strong,.card figcaption span{display:block}.formula{margin-top:5px;font:11px/1.45 ui-monospace,monospace;color:#4f5e58}.metric{margin-top:7px;border:1px solid #b9cec7;background:#f5faf8}.metric summary{cursor:pointer;padding:7px;font:700 11px/1.45 ui-monospace,monospace}.metric-body{padding:0 7px 8px;font:11px/1.5 ui-monospace,monospace}.metric-body h4{margin:9px 0 4px;padding:5px 7px;background:#dcece6;color:var(--deep)}.metric-body h5{margin:8px 0 3px;color:var(--blue)}.metric th{width:58%;font-family:inherit}.metric .metric-na{padding:8px;color:#776e60}.empty{padding:24px;text-align:center;color:#776e60;background:#f0eadf}.lazy-note{color:#315f9a;font-weight:800}@media(max-width:1250px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:680px){header{position:static}.grid{grid-template-columns:1fr}.scope-head,.operator>h2{align-items:flex-start;flex-direction:column}.definitions{font-size:12px}}
+</style></head><body><header><a href="/">返回总览</a> · <a href="/wan22-ti2v-legacy-physiciq67-samples?v=20">返回完整页面</a><h1>M1 / M2 / M3<br>All-time · Same · Future · Past</h1><p class="lead">当前多 case、多 seed 批次的独立入口。只显示已生成视频；每次仅渲染选中的 target，视频滚动到视口附近时才加载。</p><div class="tools"><label>Case / Seed<select id="sample"></select></label><label>Target<select id="target"></select></label><button id="refresh" type="button">刷新</button><span id="status" class="status">读取中</span></div></header><main><section class="note"><b>共同设置：</b>R 为 Baseline 冻结轨迹在 latent t=0…12 的 object token tube；干预覆盖 S000–S039 全部 40 个去噪步和 conditional/unconditional 两个 CFG 分支。<br><b>Target 去重：</b>单对象 case 只保留该 `single_object`；多对象 case 才额外加入 `all_objects` 并集。<br><b>时间方向：</b>All-time 删除所有 tk；Same 删除 tk=tq；Future 删除 tk&lt;tq（历史 K/V → 未来 Query）；Past 删除 tk&gt;tq（未来 K/V → 过去 Query）。后三者互斥，合并后等于 All-time 块。<br><span class="lazy-note">页面不会在首屏同时请求全部 MP4。</span></section><section class="definitions"><h2>指标定义与精确计算</h2><p>本页指标均与同 seed 未消融 Baseline 比较。“影响更大”不等于“质量更差”；轨迹质量门未通过时 ADE/FDE 保持 N/A。未计算的 RAFT、LPIPS、VBench 不在表中伪造数值。</p><div class="table-scroll"><table><thead><tr><th>指标</th><th>定义</th><th>计算形式</th><th>数值方向</th></tr></thead><tbody id="metricDefinitions"></tbody></table></div></section><div id="content"><div class="empty">读取批次记录…</div></div></main><script>
 const api='/api/object-query-m123-temporal-batch/catalog',videoApi='/api/wan22-ti2v-legacy-physiciq67-samples',q=new URL(location.href).searchParams,$=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data=null;
-const ops=[{id:'M1',base:'self',target:'R',source:'R',flow:'R_tk K/V ──X──> R_tq Query',meaning:'对象 tube 内部状态对对象 Query 的自支持与时序传播。'},{id:'M2',base:'incoming',target:'R',source:'C',flow:'C_tk K/V ──X──> R_tq Query',meaning:'环境、背景和其他对象向对象 Query 输入上下文。'},{id:'M3',base:'outgoing',target:'C',source:'R',flow:'R_tk K/V ──X──> C_tq Query',meaning:'对象状态向环境和其他对象 Query 广播。'}],times=[{key:'same',label:'Same',predicate:'tk=tq'},{key:'future',label:'Future',predicate:'tk<tq'},{key:'past',label:'Past',predicate:'tk>tq'}],scopeLabel={top100:'Top100 PCK Heads',bottom100:'Bottom100 PCK Heads',all720:'All Heads · 720 layer-heads'},scopeOrder={top100:0,bottom100:1,all720:2};
+const ops=[{id:'M1',base:'self',target:'R',source:'R',flow:'R_tk K/V ──X──> R_tq Query',meaning:'对象 tube 内部状态对对象 Query 的自支持与时序传播。'},{id:'M2',base:'incoming',target:'R',source:'C',flow:'C_tk K/V ──X──> R_tq Query',meaning:'环境、背景和其他对象向对象 Query 输入上下文。'},{id:'M3',base:'outgoing',target:'C',source:'R',flow:'R_tk K/V ──X──> C_tq Query',meaning:'对象状态向环境和其他对象 Query 广播。'}],times=[{key:'only',label:'All-time',predicate:'all tk'},{key:'same',label:'Same',predicate:'tk=tq'},{key:'future',label:'Future',predicate:'tk<tq'},{key:'past',label:'Past',predicate:'tk>tq'}],scopeLabel={top100:'Top100 PCK Heads',bottom100:'Bottom100 PCK Heads',all720:'All Heads · 720 layer-heads'},scopeOrder={top100:0,bottom100:1,all720:2};
+const metricDefs=[
+['视觉与区域影响','Composite Impact /100','像素与目标 ROI 的综合可见干预强度','100×[0.20(1−SSIM)+0.15 Global MAE+0.15 Global Δ-MAE+0.30 ROI MAE+0.20 ROI Δ-MAE]','↑ 影响更强；不是质量分'],
+['视觉与区域影响','Global SSIM','49 帧全画面结构相似性','mean_t SSIM(I_abl(t), I_base(t))','↓ 整体结构差异更大'],
+['视觉与区域影响','Global PSNR','49 帧全画面峰值信噪比','mean_t PSNR(I_abl(t), I_base(t))','↓ 全局像素差异更大'],
+['视觉与区域影响','Global MAE','全画面 RGB 绝对误差','mean |I_abl−I_base| / 255','↑ 全局像素影响更强'],
+['视觉与区域影响','Global Δ-MAE','两视频相邻帧差分之差','mean |ΔI_abl−ΔI_base| / 255','↑ 逐帧像素变化差异更强；不是纯轨迹'],
+['视觉与区域影响','Target ROI MAE','Baseline 冻结对象 tube ROI 内 RGB 误差','mean_(x∈ROI_base) |I_abl−I_base| / 255','↑ 目标所在区域的位置/外观影响更强'],
+['视觉与区域影响','Target ROI Δ-MAE','冻结 ROI 内相邻帧差分误差','mean_(x∈ROI_t∪ROI_t+1) |ΔI_abl−ΔI_base| / 255','↑ 目标区域时序外观差异更强'],
+['视觉与区域影响','Outside-object MAE','排除全部 Baseline 对象 ROI 后的 RGB 误差','mean_(x outside object ROIs) |I_abl−I_base| / 255','↑ 背景/其他区域 spillover 更强'],
+['视觉与区域影响','Outside-object Δ-MAE','对象 ROI 外的相邻帧差分误差','mean_(x outside ROI union) |ΔI_abl−ΔI_base| / 255','↑ 对象外动态 spillover 更强'],
+['视觉与区域影响','Spillover /100','对象外静态与动态像素影响','100×mean(Outside MAE, Outside Δ-MAE)','↑ 向背景/其他区域传播更强'],
+['视觉与区域影响','Global appearance /100','全局结构与像素外观类别分','100×[0.5(1−SSIM)+0.5 Global MAE]','↑ 全局外观影响更强'],
+['视觉与区域影响','Target local /100','目标对象冻结 ROI 局部影响','100×Target ROI MAE','↑ 目标局部影响更强'],
+['视觉与区域影响','Temporal appearance /100','全局与 ROI 的时序像素变化','100×[0.4 Global Δ-MAE+0.6 ROI Δ-MAE]','↑ 时序外观/形变/闪烁等综合差异更强'],
+['视觉与区域影响','ROI mean area fraction','计算 ROI 或 outside 区域占全帧比例','mean_t |region(t)| / |frame|','用于审计指标支持域，非效果分'],
+['轨迹与可跟踪性','Trajectory impact (% D0)','选中对象中心平均轨迹偏移，以 F00 bbox 对角线 D0 归一化','100×mean_selected_objects(Center-ADE / D0)','↑ 真实对象轨迹改变更强；质量门失败为 N/A'],
+['轨迹与可跟踪性','Center-ADE','共同可见帧上对象中心距离的时间均值','mean_t ||c_abl(t)−c_base(t)||₂；并同时报告 /D0','↑ 整段轨迹差异更大'],
+['轨迹与可跟踪性','Center-FDE','最后共同有效帧的对象中心距离','||c_abl(t*)−c_base(t*)||₂；并同时报告 /D0','↑ 最终运动结果偏移更大'],
+['轨迹与可跟踪性','Velocity vector error','4 帧差分的中心速度向量误差','mean_t ||(c_abl(t+4)−c_abl(t))/4−(c_base(t+4)−c_base(t))/4||₂','↑ 运动速度/方向差异更大'],
+['轨迹与可跟踪性','Point-ADE','共同可见 CoTracker 表面点的平均距离','mean_(t,p) ||p_abl(t)−p_base(t)||₂；并同时报告 /D0','↑ 表面点轨迹差异更大'],
+['轨迹与可跟踪性','PCK@5/10/20% D0','点距离落在对象尺度阈值内的比例','mean_(t,p) 1[||p_abl−p_base||<αD0], α∈{.05,.10,.20}','↑ 与 Baseline 点轨迹更接近'],
+['轨迹与可跟踪性','Common center coverage','Baseline 可跟踪中心帧中，消融后仍共同可跟踪的比例','N_common_center / N_baseline_center','↑ 可跟踪保留更好'],
+['轨迹与可跟踪性','Track Loss /100','CoTracker 中心可观测性损失','100×(1−common center coverage)','↑ 更不可跟踪；不单独证明对象消失'],
+['轨迹与可跟踪性','Trajectory quality gate','ADE/FDE 是否有足够共同中心帧与覆盖率','common frames≥min_valid_frames AND coverage≥min_coverage','未通过时 ADE/FDE 不参与排名'],
+['对象存活与身份','F00 prompt IoU','SAM2 在首帧初始化的 mask 质量','IoU(mask_SAM2(F00), prompt/reference mask(F00))','↑ 存活评估初始化更可靠；<0.5 失败'],
+['对象存活与身份','Survival rate','同时满足非空 mask、DINO 身份阈值、面积比在 [0.25,4] 的帧比例','mean_t 1[mask≠∅ AND cosine≥τ AND area ratio∈[.25,4]]','↑ 对象保留更好'],
+['对象存活与身份','Retention / Disappearance /100','对象存活率及其补集','Retention=100×survival rate; Disappearance=100×(1−survival rate)','Retention ↑ 更好；Disappearance ↑ 保留失败更强'],
+['对象存活与身份','DINO identity similarity','当前帧对象与 Baseline 同帧对象的 mask-pooled DINOv2 cosine','mean_t cosine(f_DINO(mask_abl), f_DINO(mask_base))','↑ 对象身份/语义外观更接近'],
+['对象存活与身份','Identity failure rate','DINO cosine 低于校准身份阈值的帧比例','mean_t 1[cosine_t<τ_object]','↑ 身份/外观损坏更多'],
+['对象存活与身份','Area failure rate','mask 面积比超出 [0.25,4] 的帧比例','mean_t 1[area_abl/area_base ∉ [.25,4]]','↑ 极端缩放/分割异常更多'],
+['对象存活与身份','Mask absence /100','SAM2 输出空 mask 的帧比例','100×mean_t 1[mask_t=∅]','↑ 纯消失代理更强；仍可包含 SAM2 失败'],
+['对象存活与身份','First sustained loss frame','首次连续至少 3 帧 not-alive 的起始帧','min t such that alive[t:t+3]=false','越早表示对象保留更早崩溃'],
+['对象存活与身份','Terminal missing rate','最后 8 帧中 not-alive 的比例','mean_(t in last 8) 1[not alive_t]','↑ 视频末段对象保留更差'],
+['对象存活与身份','Target mean / worst score','多对象 target 上存活失败或 mask absence 的聚合','mean_selected_objects(score), max_selected_objects(score)','↑ 平均/最差对象受影响更强']
+];
+function renderMetricDefinitions(){let group='';$('metricDefinitions').innerHTML=metricDefs.map(row=>{const section=row[0]!==group?(group=row[0],`<tr class="group"><th colspan="4">${esc(group)}</th></tr>`):'';return `${section}<tr><th>${esc(row[1])}</th><td>${esc(row[2])}</td><td>${esc(row[3])}</td><td>${esc(row[4])}</td></tr>`}).join('')}
 const sampleKey=x=>`${x.case}::${x.seed}`,targetKey=r=>r.target_scope==='single_object'?`single_object::${r.region}`:'all_objects::',targetLabel=k=>k.startsWith('single_object::')?`Selected object · ${k.split('::')[1]}`:'All objects union',num=(v,d=3)=>Number.isFinite(Number(v))?Number(v).toFixed(d):'—';
-function catalogUrl(caseName,seed){const u=new URL(api,location.origin);if(caseName){u.searchParams.set('case',caseName);u.searchParams.set('seed',seed)}u.searchParams.set('v',Date.now());return u}
+function catalogUrl(caseName,seed){const u=new URL(api,location.origin);if(caseName){u.searchParams.set('case',caseName);u.searchParams.set('seed',seed)}if(q.get('single')==='1')u.searchParams.set('single','1');u.searchParams.set('v',Date.now());return u}
 function videoTag(src){return `<video controls muted playsinline preload="none" data-src="${esc(src)}"></video>`}
 function ensureVideo(video){if(video.dataset.src){video.src=video.dataset.src;delete video.dataset.src;video.load()}}
 const lazyObserver='IntersectionObserver'in window?new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){ensureVideo(entry.target);lazyObserver.unobserve(entry.target)}}),{rootMargin:'360px 0px'}):null;
 function armVideos(root=document){root.querySelectorAll('video[data-src]').forEach(video=>lazyObserver?lazyObserver.observe(video):ensureVideo(video))}
-function metricDetails(r){const b=r.baseline_metrics?.metrics,t=r.trajectory_metrics?.metrics,s=r.object_survival_metrics?.metrics;if(!b&&!t&&!s)return '';return `<details class="metric"><summary>展开指标</summary><div>${b?`vs Baseline 综合影响：${num(b.impact_score_0_100)}<br>`:''}${t?`轨迹影响：${num(t.trajectory_impact_percent_d0)}% D0 · Track Loss：${num(t.target_worst_track_loss_score_0_100)}/100<br>`:''}${s?`Worst Disappearance：${num(s.target_worst_disappearance_score_0_100)}/100`:''}</div></details>`}
+const rank=v=>Number.isFinite(Number(v))?`#${num(v,0)}`:'—',flag=v=>v==null?'—':v?'✓ 通过':'✗ 未通过',frame=v=>v==null?'—':`F${num(v,0)}`,metricTable=(title,rows)=>`<h4>${esc(title)}</h4><table><tbody>${rows.map(([label,value])=>`<tr><th>${esc(label)}</th><td>${esc(value)}</td></tr>`).join('')}</tbody></table>`;
+function metricDetails(r){
+ const m=r.metrics||{},a=m.appearance||{},t=m.trajectory||{},s=m.survival||{},has=a.impact_score_0_100!=null||Object.keys(t.objects||{}).length||Object.keys(s.objects||{}).length;
+ if(!has)return '<details class="metric"><summary>指标待计算</summary><div class="metric-na">该 variant 暂无完整指标报告。</div></details>';
+ const category=a.category_scores_0_100||{},categoryRanks=a.category_ranks||{},appearanceRows=[
+  ['Composite Impact /100',`${num(a.impact_score_0_100)} (${rank(a.impact_rank)})`],
+  ['Spillover /100',num(a.spillover_score_0_100)],
+  ['Global appearance /100',`${num(category.global_appearance)} (${rank(categoryRanks.global_appearance)})`],
+  ['Target local /100',`${num(category.target_local)} (${rank(categoryRanks.target_local)})`],
+  ['Temporal appearance /100',`${num(category.temporal_appearance)} (${rank(categoryRanks.temporal_appearance)})`],
+  ['Outside spillover /100',`${num(category.outside_spillover)} (${rank(categoryRanks.outside_spillover)})`],
+  ['Global SSIM',num(a.global_ssim)],['Global PSNR (dB)',num(a.global_psnr_db)],
+  ['Global MAE [0,1]',num(a.global_mae_0_1)],['Global Δ-MAE [0,1]',num(a.global_temporal_delta_mae_0_1)],
+  [`${a.target_roi_key||'Target'} ROI MAE [0,1]`,num(a.target_roi_mae_0_1)],
+  [`${a.target_roi_key||'Target'} ROI Δ-MAE [0,1]`,num(a.target_roi_temporal_delta_mae_0_1)],
+  ['Target ROI mean area fraction',num(a.target_roi_mean_area_fraction)],
+  ['Outside-object MAE [0,1]',num(a.outside_objects_mae_0_1)],
+  ['Outside-object Δ-MAE [0,1]',num(a.outside_objects_temporal_delta_mae_0_1)],
+  ['Outside mean area fraction',num(a.outside_objects_mean_area_fraction)]
+ ];
+ const trajectoryRows=[['Quality gate',flag(t.quality_pass)],['Selected objects',(t.selected_objects||[]).join(', ')||'—'],['Trajectory impact (% D0)',`${num(t.trajectory_impact_percent_d0)} (${rank(t.trajectory_rank)})`],['Target Center-ADE / D0',num(t.target_center_ade_norm)],['Mean Track Loss /100',num(t.target_mean_track_loss_score_0_100)],['Worst Track Loss /100',`${num(t.target_worst_track_loss_score_0_100)} (${rank(t.track_loss_rank)})`]];
+ const trajectoryObjectTables=Object.entries(t.objects||{}).map(([name,o])=>{const p=o.pck_normalized||{},gated=value=>o.quality_pass?value:`N/A (raw ${value}; gate failed)`;return metricTable(`轨迹 · ${name}`,[['Quality gate',flag(o.quality_pass)],['Valid center frames',`${num(o.common_center_valid_frames,0)} / ${num(o.baseline_center_valid_frames,0)}`],['Common center coverage',num(o.common_center_coverage)],['Track retention /100',num(o.track_retention_score_0_100)],['Track Loss /100',num(o.track_loss_score_0_100)],['Last common visible frame',frame(o.last_common_visible_frame)],['Center-ADE (px / D0)',gated(`${num(o.center_ade_px)} / ${num(o.center_ade_norm)}`)],['Center-FDE (px / D0)',gated(`${num(o.center_fde_px)} / ${num(o.center_fde_norm)}`)],['Velocity vector error (px/frame / D0)',gated(`${num(o.velocity_vector_error_px_per_frame)} / ${num(o.velocity_vector_error_norm_per_frame)}`)],['Velocity valid count',num(o.velocity_valid_count,0)],['Point-ADE (px / D0)',gated(`${num(o.point_ade_px)} / ${num(o.point_ade_norm)}`)],['Point valid count',num(o.point_valid_count,0)],['PCK@5/10/20% D0',gated(`${num(p['0.05'])} / ${num(p['0.1'])} / ${num(p['0.2'])}`)]])}).join('');
+ const survivalRows=[['Quality gate',flag(s.quality_pass)],['Selected objects',(s.selected_objects||[]).join(', ')||'—'],['Mean retention failure /100',num(s.target_mean_disappearance_score_0_100)],['Worst retention failure /100',`${num(s.target_worst_disappearance_score_0_100)} (${rank(s.disappearance_rank)})`],['Mean mask absence /100',num(s.target_mean_mask_absence_score_0_100)],['Worst mask absence /100',`${num(s.target_worst_mask_absence_score_0_100)} (${rank(s.mask_absence_rank)})`]];
+ const survivalObjectTables=Object.entries(s.objects||{}).map(([name,o])=>metricTable(`存活/身份 · ${name}`,[['Quality gate',flag(o.quality_pass)],['F00 prompt IoU',num(o.f00_prompt_iou)],['Survival rate',num(o.survival_rate)],['Retention /100',num(o.retention_score_0_100)],['Disappearance /100',num(o.disappearance_score_0_100)],['DINO identity cosine',num(o.identity_similarity_mean)],['Identity failure rate',num(o.identity_failure_rate)],['Area failure rate',num(o.area_failure_rate)],['Empty-mask rate',num(o.empty_mask_rate)],['First sustained loss frame',frame(o.first_sustained_loss_frame)],['Terminal missing rate',num(o.terminal_missing_rate)],['Alive frames',`${num(o.alive_frame_count,0)} / ${num(o.frame_count,0)}`]])).join('');
+ const summary=[`Impact ${num(a.impact_score_0_100)}`,`Trajectory ${num(t.trajectory_impact_percent_d0)}% D0`,`Track Loss ${num(t.target_worst_track_loss_score_0_100)}`,`Retention Failure ${num(s.target_worst_disappearance_score_0_100)}`,`Mask Absence ${num(s.target_worst_mask_absence_score_0_100)}`].join(' · ');
+ return `<details class="metric"><summary>展开完整指标 · ${esc(summary)}</summary><div class="metric-body">${metricTable('视觉与区域影响 vs Baseline',appearanceRows)}${metricTable('轨迹与可跟踪性 · target 聚合',trajectoryRows)}${trajectoryObjectTables}${metricTable('对象存活与身份 · target 聚合',survivalRows)}${survivalObjectTables}</div></details>`
+}
 function videoUrl(r){const s=data.selected,u=new URL(`${videoApi}/temporal-tube-ablation-video`,location.origin);u.searchParams.set('case',s.case);u.searchParams.set('seed',s.seed);u.searchParams.set('target_scope',r.target_scope);u.searchParams.set('mask_mode',r.mask_mode);u.searchParams.set('top_n',r.head_count);u.searchParams.set('head_scope',r.head_scope);if(r.region)u.searchParams.set('region',r.region);return u}
 function card(r,op,time){const formula=`Y′_${op.target}(tq)=Y_${op.target}(tq)−Σ_{${time.predicate}} A[${op.target}_tq,${op.source}_tk]V_${op.source}(tk)`;return `<figure class="card">${videoTag(videoUrl(r))}<figcaption><strong>${esc(op.id)}-${esc(time.label)} · ${esc(scopeLabel[r.head_scope]||r.head_scope)}</strong><span>${r.head_count} layer-heads · ${esc(time.predicate)}</span><span class="formula"><b>切断：</b>${esc(op.flow)}<br><b>精确计算：</b>${esc(formula)}<br><b>诊断：</b>${esc(op.meaning)}</span></figcaption>${metricDetails(r)}</figure>`}
-function render(){const s=data.selected,records=s.records||[],target=$('target').value,filtered=records.filter(r=>targetKey(r)===target),scopes=[...new Set(filtered.map(r=>r.head_scope))].sort((a,b)=>(scopeOrder[a]??99)-(scopeOrder[b]??99)),base=new URL(`${videoApi}/video`,location.origin);base.searchParams.set('case',s.case);base.searchParams.set('seed',s.seed);const operators=ops.map(op=>{const scopeRows=scopes.map(scope=>{const cards=times.map(time=>{const r=filtered.find(x=>x.head_scope===scope&&x.mask_mode===`${op.base}_${time.key}`);return r?.ready?card(r,op,time):''}).filter(Boolean);return cards.length?`<section class="scope"><div class="scope-head"><b>${esc(scopeLabel[scope]||scope)}</b><span>${cards.length}/3 已生成</span></div><div class="grid">${cards.join('')}</div></section>`:''}).join('');return scopeRows?`<section class="operator"><h2><span>${esc(op.id)} · ${esc(op.flow)}</span><button type="button" class="operator-replay">重播 ${esc(op.id)} 板块</button></h2>${scopeRows}</section>`:''}).join('');const baseline=s.baseline_ready?`<figure class="baseline">${videoTag(base)}<figcaption><b>Baseline · ${esc(s.case)} · seed ${s.seed} · No intervention</b></figcaption></figure>`:'';$('content').innerHTML=`${baseline}${operators||'<div class="empty">当前 target 暂无已生成的 Same/Future/Past 视频</div>'}`;armVideos($('content'));syncUrl()}
+function render(){const s=data.selected,records=s.records||[],target=$('target').value,filtered=records.filter(r=>targetKey(r)===target),scopes=[...new Set(filtered.map(r=>r.head_scope))].sort((a,b)=>(scopeOrder[a]??99)-(scopeOrder[b]??99)),base=new URL(`${videoApi}/video`,location.origin);base.searchParams.set('case',s.case);base.searchParams.set('seed',s.seed);const operators=ops.map(op=>{const scopeRows=scopes.map(scope=>{const cards=times.map(time=>{const r=filtered.find(x=>x.head_scope===scope&&x.mask_mode===`${op.base}_${time.key}`);return r?.ready?card(r,op,time):''}).filter(Boolean);return cards.length?`<section class="scope"><div class="scope-head"><b>${esc(scopeLabel[scope]||scope)}</b><span>${cards.length}/4 已生成</span></div><div class="grid">${cards.join('')}</div></section>`:''}).join('');return scopeRows?`<section class="operator"><h2><span>${esc(op.id)} · ${esc(op.flow)}</span><button type="button" class="operator-replay">重播 ${esc(op.id)} 板块</button></h2>${scopeRows}</section>`:''}).join('');const baseline=s.baseline_ready?`<figure class="baseline">${videoTag(base)}<figcaption><b>Baseline · ${esc(s.case)} · seed ${s.seed} · No intervention</b></figcaption></figure>`:'';$('content').innerHTML=`${baseline}${operators||'<div class="empty">当前 target 暂无已生成的 All-time/Same/Future/Past 视频</div>'}`;armVideos($('content'));syncUrl()}
 function fillTargets(){const records=data.selected.records||[],keys=[...new Set(records.map(targetKey))];$('target').innerHTML=keys.map(k=>`<option value="${esc(k)}">${esc(targetLabel(k))}</option>`).join('');const wanted=q.get('target');if(keys.includes(wanted))$('target').value=wanted}
 function syncUrl(){const s=data.selected,u=new URL(location.href);u.searchParams.set('case',s.case);u.searchParams.set('seed',s.seed);u.searchParams.set('target',$('target').value);history.replaceState(null,'',u)}
-async function load(caseName,seed){$('status').textContent='读取批次…';const d=await fetch(catalogUrl(caseName,seed),{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json()});if(!d.ready)throw new Error(d.reason||'catalog unavailable');data=d;$('sample').innerHTML=d.samples.map(x=>`<option value="${esc(sampleKey(x))}">${esc(x.case)} · seed ${x.seed} · ${x.ready}/${x.expected}</option>`).join('');$('sample').value=sampleKey(d.selected);fillTargets();render();const p=d.progress,selectedReady=(d.selected.records||[]).filter(r=>r.ready).length;$('status').textContent=`全批次 ${p.ready}/${p.expected} · 完整 case-seed ${p.complete_samples}/${p.sample_count} · 当前 ${selectedReady}/${(d.selected.records||[]).length} · errors ${p.errors}`}
+async function load(caseName,seed){$('status').textContent='读取批次…';const d=await fetch(catalogUrl(caseName,seed),{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json()});if(!d.ready)throw new Error(d.reason||'catalog unavailable');data=d;$('sample').innerHTML=d.samples.map(x=>`<option value="${esc(sampleKey(x))}">${esc(x.case)} · seed ${x.seed} · ${x.ready}/${x.expected}</option>`).join('');$('sample').value=sampleKey(d.selected);fillTargets();render();const p=d.progress,selectedReady=(d.selected.records||[]).filter(r=>r.ready).length;$('status').textContent=`${q.get('single')==='1'?'独立入口':'全批次'} ${p.ready}/${p.expected} · 当前 ${selectedReady}/${(d.selected.records||[]).length} · errors ${p.errors}`}
 function replayOperator(button){const section=button.closest('.operator'),videos=[...section.querySelectorAll('video')];videos.forEach(video=>{ensureVideo(video);const play=()=>{video.currentTime=0;video.play().catch(()=>{})};video.pause();if(video.readyState>=1)play();else video.addEventListener('loadedmetadata',play,{once:true})});const label=button.textContent;button.textContent=`已重播 ${videos.length} 个视频`;setTimeout(()=>{button.textContent=label},1200)}
 $('sample').addEventListener('change',()=>{const value=$('sample').value,index=value.lastIndexOf('::');load(value.slice(0,index),value.slice(index+2)).catch(showError)});$('target').addEventListener('change',render);$('refresh').addEventListener('click',()=>load(data?.selected.case,data?.selected.seed).catch(showError));document.addEventListener('click',event=>{const button=event.target.closest('.operator-replay');if(button)replayOperator(button)});function showError(error){$('status').textContent=`加载失败：${error.message}`}
-const initialCase=q.get('case')||'',initialSeed=q.get('seed')||'';load(initialCase,initialSeed).catch(showError);
+if(q.get('single')==='1'){document.title='001460 · Seed 47326 M1/M2/M3';document.querySelector('h1').innerHTML='001460 · Seed 47326<br>M1 / M2 / M3 · All-time / Same / Future / Past';document.querySelector('.lead').textContent='独立轻量入口：接口只返回当前 case/seed，每次只渲染一个 target，视频进入视口附近才加载。';$('sample').closest('label').hidden=true}renderMetricDefinitions();const initialCase=q.get('case')||'',initialSeed=q.get('seed')||'';load(initialCase,initialSeed).catch(showError);
 </script></body></html>'''
 
 

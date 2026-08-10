@@ -389,6 +389,7 @@ def build_markdown(report: dict[str, Any], report_path: Path, output: Path) -> s
         f"- Seed：`{report['seed']}`",
         f"- Reference：{report['reference']}",
         f"- 原始报告：[`report.json`]({report_rel})",
+        "- 全部指标定义/公式/代码路径：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/METRICS_IMPLEMENTATION_INDEX.md`",
         f"- 统计范围：**1 个 case × 1 个 seed × {report['expected_ablation_count']} 个消融视频**；不是跨 case/seed 平均",
         f"- 轨迹已提取：**{report['tracked_ablation_count']}/{report['expected_ablation_count']}**；通过质量门控并参与排序：**{report['ranked_ablation_count']}**；N/A：**{len(invalid)}**",
         f"- Track Loss：**{report.get('track_loss_ranked_ablation_count', 0)}/{report['expected_ablation_count']}**；SAM2+DINOv2 Object Retention / Mask Absence：**{survival_report.get('measured_ablation_count', 0)}/{report['expected_ablation_count']}**",
