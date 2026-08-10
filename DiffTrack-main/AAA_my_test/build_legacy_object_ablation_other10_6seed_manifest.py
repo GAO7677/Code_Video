@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from AAA_my_test.build_legacy_ti2v_firstlatent_physiciq67_visual_samples import (
+    provisional_s039_top_heads,
+)
 from AAA_my_test.run_legacy_ti2v_firstlatent_pck_worker import object_queries
 from AAA_my_test.sam2_region_query_utils import load_region_cache, region_metadata
 
@@ -66,8 +70,25 @@ def source_states(source_video: Path) -> Path | None:
     return first_existing(list(candidates))
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--latest-ranking", action="store_true")
+    parser.add_argument("--output-manifest", type=Path, default=OUTPUT_MANIFEST)
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
     source = json.loads(SOURCE_MANIFEST.read_text(encoding="utf-8"))
+    if args.latest_ranking:
+        entries, completed_runs = provisional_s039_top_heads(100)
+        source["entries"] = entries
+        source["completed_runs_at_selection"] = completed_runs
+        source["ranking_status"] = (
+            "final at 3350/3350 runs"
+            if completed_runs >= 3350
+            else "provisional until 3350/3350 runs complete"
+        )
     if len(source.get("entries", [])) < 100:
         raise RuntimeError("source manifest does not contain the frozen Top100 ranking")
     source_samples = {str(row["case"]): row for row in source["samples"]}
@@ -142,15 +163,16 @@ def main() -> None:
         "sample_group": "other10_6seeds",
         "samples": samples,
     }
-    temporary = OUTPUT_MANIFEST.with_suffix(".json.tmp")
+    args.output_manifest.parent.mkdir(parents=True, exist_ok=True)
+    temporary = args.output_manifest.with_suffix(".json.tmp")
     temporary.write_text(
         json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    temporary.replace(OUTPUT_MANIFEST)
+    temporary.replace(args.output_manifest)
     missing_baselines = sum(
         not Path(str(sample["baseline_video"])).is_file() for sample in samples
     )
-    print(f"wrote {OUTPUT_MANIFEST}")
+    print(f"wrote {args.output_manifest}")
     print(
         f"cases={len(INPUT_JSONS)} samples={len(samples)} seeds={len(SEEDS)} "
         f"missing_baselines={missing_baselines} entries={len(output['entries'])}"

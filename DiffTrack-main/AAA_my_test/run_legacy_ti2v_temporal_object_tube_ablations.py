@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Top100 attention ablations on frozen all-latent object-token tubes."""
+"""Run ranked-head attention ablations on frozen all-latent object-token tubes."""
 
 from __future__ import annotations
 
@@ -49,7 +49,10 @@ DEFAULT_MANIFEST = Path(
     "attention_zero_seed47326/cases.json"
 )
 DEFAULT_OUTPUT_ROOT = DEFAULT_MANIFEST.parent / "attention_matrix_ablations_temporal_tube_v1"
+DEFAULT_HEAD_RANKING = DEFAULT_MANIFEST.parent / "pck_head_scopes_s039_frozen134.json"
 TOP_N = 100
+HEAD_SCOPES = ("top100", "bottom100", "all720")
+HEAD_SCOPE_COUNTS = {"top100": 100, "bottom100": 100, "all720": 720}
 TEMPORAL_DIRECTIONAL_SPECS = {
     "self_future": {
         "id": "M1-future",
@@ -130,11 +133,19 @@ def parse_args() -> argparse.Namespace:
         help="process every manifest sample; workers are sharded by case/seed sample",
     )
     parser.add_argument("--manifest-path", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument("--head-ranking-path", type=Path, default=DEFAULT_HEAD_RANKING)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--worker-id", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--mask-modes", nargs="+", choices=MASK_MODES, default=None)
+    parser.add_argument(
+        "--head-scopes",
+        nargs="+",
+        choices=HEAD_SCOPES,
+        default=["top100"],
+        help="frozen S039 PCK head subset; top100 keeps legacy output IDs",
+    )
     parser.add_argument("--task-index", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -142,7 +153,8 @@ def parse_args() -> argparse.Namespace:
 
 def temporal_variant_id(task: dict) -> str:
     mask_mode = str(task["mask_mode"])
-    if mask_mode not in TEMPORAL_DIRECTIONAL_MODES:
+    head_scope = str(task.get("head_scope", "top100"))
+    if head_scope == "top100" and mask_mode not in TEMPORAL_DIRECTIONAL_MODES:
         return variant_id(
             str(task["target_scope"]),
             mask_mode,
@@ -154,10 +166,11 @@ def temporal_variant_id(task: dict) -> str:
         if str(task["target_scope"]) == "single_object"
         else "all_objects"
     )
-    return f"{task['target_scope']}__{target}__{mask_mode}__top{int(task['top_n']):03d}"
+    suffix = "top100" if head_scope == "top100" else head_scope
+    return f"{task['target_scope']}__{target}__{mask_mode}__{suffix}"
 
 
-def build_tasks(sample: dict) -> list[dict]:
+def build_tasks(sample: dict, head_scopes: list[str] | tuple[str, ...] = ("top100",)) -> list[dict]:
     regions = [
         str(row["region_name"])
         for row in sample["regions"]
@@ -172,11 +185,37 @@ def build_tasks(sample: dict) -> list[dict]:
             "target_scope": target_scope,
             "mask_mode": mask_mode,
             "region": region,
-            "top_n": TOP_N,
+            "top_n": HEAD_SCOPE_COUNTS[head_scope],
+            "head_scope": head_scope,
         }
+        for head_scope in head_scopes
         for target_scope, region in targets
         for mask_mode in MASK_MODES
     ]
+
+
+def validate_head_ranking(manifest: dict, ranking: dict) -> list[dict]:
+    entries = list(ranking.get("entries") or [])
+    if len(entries) != 720:
+        raise RuntimeError(f"head ranking must contain 720 entries, got {len(entries)}")
+    pairs = [(int(row["block"]), int(row["head"])) for row in entries]
+    if len(set(pairs)) != 720 or set(pairs) != {
+        (block, head) for block in range(30) for head in range(24)
+    }:
+        raise RuntimeError("head ranking is not a one-to-one 30 x 24 layer-head ranking")
+    if entries[:TOP_N] != list(manifest.get("entries") or [])[:TOP_N]:
+        raise RuntimeError("head ranking Top100 does not match the frozen experiment manifest")
+    return entries
+
+
+def selected_head_entries(ranking_entries: list[dict], head_scope: str) -> list[dict]:
+    if head_scope == "top100":
+        return ranking_entries[:100]
+    if head_scope == "bottom100":
+        return ranking_entries[-100:]
+    if head_scope == "all720":
+        return ranking_entries
+    raise ValueError(f"unknown head scope: {head_scope}")
 
 
 def task_root(task: dict, output_root: Path) -> Path:
@@ -465,6 +504,8 @@ class TemporalObjectTubeAblator(AttentionMatrixAblator):
 def process(
     pipe,
     manifest: dict,
+    ranking_entries: list[dict],
+    head_ranking_path: Path,
     sample: dict,
     case_lookup: dict,
     task: dict,
@@ -494,7 +535,8 @@ def process(
     with np.load(track_path) as arrays:
         tracks = arrays["tracks"].astype(np.float32)
         anchors = arrays["anchor_pixel_frames"].astype(np.int64)
-    entries = manifest["entries"][:TOP_N]
+    head_scope = str(task.get("head_scope", "top100"))
+    entries = selected_head_entries(ranking_entries, head_scope)
     ablator = TemporalObjectTubeAblator(
         pipe.pipe,
         entries,
@@ -572,6 +614,9 @@ def process(
         "input_json": str(json_path),
         "query_cache_dir": str(cache_dir),
         "selected_entries": entries,
+        "head_scope": head_scope,
+        "selected_head_count": len(entries),
+        "head_ranking_snapshot": str(head_ranking_path),
         "denoising_steps": list(range(40)),
         "cfg_branches": ["conditional", "unconditional"],
         "audit": audit,
@@ -605,6 +650,8 @@ def main() -> None:
     manifest = json.loads(args.manifest_path.read_text(encoding="utf-8"))
     if len(manifest.get("entries", [])) < TOP_N:
         raise RuntimeError("manifest does not contain the frozen Top100 ranking")
+    head_ranking = json.loads(args.head_ranking_path.read_text(encoding="utf-8"))
+    ranking_entries = validate_head_ranking(manifest, head_ranking)
     if args.all_samples:
         samples = list(manifest["samples"])
     else:
@@ -623,7 +670,7 @@ def main() -> None:
     selected_modes = set(args.mask_modes) if args.mask_modes is not None else None
     sample_tasks: list[tuple[dict, list[dict]]] = []
     for sample in samples:
-        tasks = build_tasks(sample)
+        tasks = build_tasks(sample, args.head_scopes)
         if selected_modes is not None:
             tasks = [task for task in tasks if str(task["mask_mode"]) in selected_modes]
         if tasks:
@@ -676,6 +723,8 @@ def main() -> None:
                 process(
                     pipe,
                     manifest,
+                    ranking_entries,
+                    args.head_ranking_path,
                     sample,
                     case_lookup,
                     task,
