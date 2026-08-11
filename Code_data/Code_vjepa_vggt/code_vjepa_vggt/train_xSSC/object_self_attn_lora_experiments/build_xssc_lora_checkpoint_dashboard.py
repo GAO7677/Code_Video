@@ -61,14 +61,14 @@ METHOD_PLOT_STYLES = {
 DEFAULT_PLOT_STYLE = {"marker": "o", "linestyle": "-"}
 
 CASE_METRIC_SPECS = [
-    {"key": "videophy2", "label": "VideoPhy2 joint", "direction": "higher", "path": ("videophy2", "score")},
-    {"key": "videophy2_sa", "label": "VideoPhy2 SA", "direction": "higher", "path": ("videophy2", "sa_score")},
-    {"key": "videophy2_pc", "label": "VideoPhy2 PC", "direction": "higher", "path": ("videophy2", "pc_score")},
-    {"key": "videophy2_joint_rate", "label": "VideoPhy2 pass", "direction": "higher", "path": ("videophy2", "joint_rate")},
     {"key": "videophy2_pc_raw", "label": "VideoPhy2 PC raw", "direction": "higher", "path": ("videophy2", "pc_raw_score")},
     {"key": "cosmos_reason1", "label": "Cosmos Reason", "direction": "higher", "path": ("cosmos_reason1", "score")},
     {"key": "physics_iq_with_context", "label": "Physics-IQ ctx", "direction": "higher", "path": ("physics_iq_with_context", "score")},
     {"key": "physics_iq_without_context", "label": "Physics-IQ no ctx", "direction": "higher", "path": ("physics_iq_without_context", "score")},
+    {"key": "videophy2", "label": "VideoPhy2 joint", "direction": "higher", "path": ("videophy2", "score")},
+    {"key": "videophy2_sa", "label": "VideoPhy2 SA", "direction": "higher", "path": ("videophy2", "sa_score")},
+    {"key": "videophy2_pc", "label": "VideoPhy2 PC", "direction": "higher", "path": ("videophy2", "pc_score")},
+    {"key": "videophy2_joint_rate", "label": "VideoPhy2 pass", "direction": "higher", "path": ("videophy2", "joint_rate")},
     {"key": "pmf_with_context", "label": "PMF ctx", "direction": "higher", "path": ("pmf_with_context", "score")},
     {"key": "pmf_without_context", "label": "PMF no ctx", "direction": "higher", "path": ("pmf_without_context", "score")},
     {"key": "wmreward", "label": "WMReward surprise", "direction": "lower", "path": ("wmreward", "surprise")},
