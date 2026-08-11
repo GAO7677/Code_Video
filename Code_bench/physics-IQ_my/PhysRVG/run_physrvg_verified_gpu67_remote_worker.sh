@@ -7,7 +7,8 @@ CONFIG="${CONFIG:-${SCRIPT_DIR}/physrvg_verified_remote118_gpu67.env}"
 source "${CONFIG}"
 
 RUN_DIR="${REMOTE_OUTPUT_ROOT}/${RUN_NAME}"
-mkdir -p "${RUN_DIR}" "${REMOTE_EVAL_ROOT}" "${REMOTE_LOG_ROOT}"
+RAW_RUN_DIR="${REMOTE_RAW_OUTPUT_ROOT}/${RUN_NAME}"
+mkdir -p "${RUN_DIR}" "${RAW_RUN_DIR}" "${REMOTE_EVAL_ROOT}" "${REMOTE_LOG_ROOT}"
 
 generate_shard() {
   local physical_gpu="$1"
@@ -20,6 +21,7 @@ generate_shard() {
     --lora-checkpoint "${REMOTE_LORA_CHECKPOINT}" \
     --input-list "${REMOTE_INPUT_LIST}" \
     --output-root "${REMOTE_OUTPUT_ROOT}" \
+    --raw-output-root "${REMOTE_RAW_OUTPUT_ROOT}" \
     --run-name "${RUN_NAME}" \
     --device cuda:0 \
     --height "${HEIGHT}" \
@@ -97,4 +99,3 @@ RESULT_CSV="${REMOTE_EVAL_ROOT}/physics-IQ-benchmark-verified/results/${RUN_NAME
 "${REMOTE_EVAL_PYTHON}" physiq/aggregate_runs_from_csvs.py \
   "${RESULT_CSV}" --score-type verified
 echo "[$(date -Is)] evaluation_complete result=${RESULT_CSV}"
-

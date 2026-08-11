@@ -15,6 +15,8 @@ from .transform import (
     RandomCrop,
     CenterCrop,
     Resize,
+    ResizeToAspectRatioBucket,
+    choose_aspect_ratio_bucket,
     Slice1,
     SliceTo1,
     RandomSliceTo1,
@@ -22,5 +24,6 @@ from .transform import (
     RandomSliceToSequence,
     StridedRandomSliceSequence,
 )
+from .sampler import DistributedAspectRatioBatchSampler
 from .transform_bbox import Ltrb2Xywh, Xywh2Ltrb
 from .collate import ClPadToMax1, ClPadTo1, DefaultCollate

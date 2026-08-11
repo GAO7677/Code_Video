@@ -361,6 +361,20 @@ class RandomFlip:
 INTERPOLATS = {_.value: _ for _ in ptvt2.InterpolationMode}
 
 
+def choose_aspect_ratio_bucket(height, width, buckets):
+    """Choose the closest ``(height, width)`` bucket in log-aspect space."""
+    if height <= 0 or width <= 0:
+        raise ValueError(f"Invalid spatial size: {(height, width)}")
+    normalized = [tuple(int(value) for value in bucket) for bucket in buckets]
+    if not normalized or any(h <= 0 or w <= 0 for h, w in normalized):
+        raise ValueError(f"Invalid aspect-ratio buckets: {buckets}")
+    ratio = width / height
+    return min(
+        normalized,
+        key=lambda bucket: abs(math.log(ratio / (bucket[1] / bucket[0]))),
+    )
+
+
 class Resize:
     """Support tensor shape (..,c,h,w). Can skip unnecessary resizing.
     ??? To support bounding box tensor=(..,4) ???
@@ -387,6 +401,46 @@ class Resize:
             if not self.c:
                 input = input[..., None, :, :]  # (..,c=1,h,w)
             output = self.resize(input)
+            if not self.c:
+                output = output[..., 0, :, :]
+            DictTool.setattr(sample, key, output)
+        return sample
+
+
+class ResizeToAspectRatioBucket:
+    """Resize a sample to the closest configured aspect-ratio bucket."""
+
+    def __init__(self, keys, buckets, interp="bilinear", c=1):
+        self.keys = keys
+        self.buckets = [tuple(int(value) for value in bucket) for bucket in buckets]
+        self.interp = INTERPOLATS[interp]
+        self.c = c
+        for height, width in self.buckets:
+            if height % 16 or width % 16:
+                raise ValueError(
+                    "V-JEPA aspect-ratio bucket dimensions must be divisible by 16: "
+                    f"{(height, width)}"
+                )
+        self.resizers = {
+            bucket: ptvt2.Resize(
+                bucket,
+                self.interp,
+                antialias=interp != "nearest-exact",
+            )
+            for bucket in self.buckets
+        }
+
+    def __call__(self, **sample: dict) -> dict:
+        reference = DictTool.getattr(sample, self.keys[0])
+        bucket = choose_aspect_ratio_bucket(
+            reference.shape[-2], reference.shape[-1], self.buckets
+        )
+        resize = self.resizers[bucket]
+        for key in self.keys:
+            input = DictTool.getattr(sample, key)
+            if not self.c:
+                input = input[..., None, :, :]
+            output = resize(input)
             if not self.c:
                 output = output[..., 0, :, :]
             DictTool.setattr(sample, key, output)

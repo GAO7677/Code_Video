@@ -340,6 +340,14 @@ samples 展开后共 1188 个任务。GPU2/3 的两个分片已启动，输出�
 4. 给出 case-level paired effect、95% CI、head-group 倍数差、贡献剂量和代表性/反例视频路径。
 5. 同步更新 definitions、hypotheses、metrics index 和结论 md；页面只读取统一 report，避免页面与 md 数值漂移。
 
+当前实时入口（2026-08-11）：
+
+- 独立页面：`http://localhost:8092/object-query-information-flow-validation?v=1`；
+- 8092 总入口 `/` 已增加 `42 / LATEST3350 VALIDATION` 卡片；
+- 页面已接入 Stage 1 的 13-anchor 数值与 F00/F24/F48 overlays、Stage 2 的 9 项硬门槛与两个真实 smoke，以及 Stage 3 的 1188-cell 实时进度、Baseline、已生成 M1/M2/M3 × 四种 head scope 视频和按视频懒加载的 attention-dose；
+- 未生成视频不创建空卡片；轨迹、外观、背景和对象存活指标在统一 `report.json` 生成前明确标为未完成，不用 attention-dose 冒充结果指标；
+- 页面模块：`AAA_my_test/object_query_ablation_metrics/information_flow_validation_dashboard.py`，主服务路由：`AAA_my_test/serve_latent_block_head_viewer_with_metrics.py`。
+
 ---
 
 ## 6. 统计分析计划

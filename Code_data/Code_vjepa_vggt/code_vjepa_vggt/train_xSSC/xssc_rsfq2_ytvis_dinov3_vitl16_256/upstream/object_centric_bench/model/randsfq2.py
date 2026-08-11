@@ -113,13 +113,22 @@ class MarkovRarDecoder(ARRandTransformerDecoder):
         self.register_buffer("prob", pt.tensor(prob, dtype=pt.float), persistent=False)
         self.rd = rd
 
-    def forward(self, input, slotz, smask=None, p=0.5):
+    def forward(self, input, slotz, smask=None, p=0.5, spatial_shape=None):
         """
         - input: shape=(b,t,n=h*w,c)
         - slotz: shape=(b,t,s,c)
         - smask: shape=(b,t,s)
         """
         b, t, n, c = input.shape
+        if spatial_shape is None:
+            positional_embedding = self.posit_embed.pe[:, :n, :]
+        else:
+            height, width = (int(value) for value in spatial_shape)
+            if height * width != n:
+                raise ValueError(
+                    f"spatial_shape {(height, width)} does not match {n} tokens"
+                )
+            positional_embedding = self.posit_embed.interpolate_2d(height, width)
         # assert n == self.posit_embed.pe.size(1)
         _, _, s, _ = slotz.shape
         bt = b * t
@@ -141,7 +150,10 @@ class MarkovRarDecoder(ARRandTransformerDecoder):
 
             idxs0 = pt.arange(0, n, device=device)[None, :]  # (1,n)
             keep1 = pt.randint(0, n - 1, [bt, 1], device=device)  # (b*t,1)
-            keep2 = pt.ones(bt, 1, dtype=pt.long, device=device) * int(256 * 0.1) - 1
+            keep2 = (
+                pt.ones(bt, 1, dtype=pt.long, device=device)
+                * max(int(n * 0.1) - 1, 0)
+            )
             cond = pt.rand(bt, 1, device=device) < p
             keep = pt.where(cond, keep1, keep2)
             mask = idxs0 < keep  # (b,n)
@@ -153,12 +165,12 @@ class MarkovRarDecoder(ARRandTransformerDecoder):
             tokens_masked = tokens_shuffled.where(mask[:, :, None], mask_token_expanded)
 
             # shuffle pe
-            pe_expanded = self.posit_embed.pe[:, :n, :].expand(bt, -1, -1)  # (b*t,n,c)
+            pe_expanded = positional_embedding.expand(bt, -1, -1)  # (b*t,n,c)
             pe_shuffled = pe_expanded.gather(1, idxs_expanded)  # (b*t,n,c)
             query = tokens_masked + pe_shuffled
 
         else:
-            query = tokens + self.posit_embed.pe[:, :n, :]
+            query = tokens + positional_embedding
 
         memory = self.project2(slotz)  # (b*t,s,c)
 

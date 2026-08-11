@@ -1,6 +1,6 @@
 # Legacy PhysicIQ67 PCK50 项目交接文档
 
-最后核对时间：2026-08-08 07:11 UTC
+最后核对时间：2026-08-11 04:54 UTC
 
 ## 1. 项目目标
 
@@ -61,9 +61,9 @@
 /data/gaoya/agent-data/outputs/three_model_allblocks_allsteps_headwise_50case/three_model_combined_summary.csv
 ```
 
-注意：旧五系列导出已经完整，不能在新的 67-case Legacy 只完成一部分时覆盖它。
+注意：旧五系列导出已经完整。67-case Legacy 虽已完成，但尚未自动替换该稳定导出；切换前仍需按第 14 节确认页面口径与 provenance。
 
-### 2.2 正在运行的 Legacy PhysicIQ67 扩展统计
+### 2.2 已完成的 Legacy PhysicIQ67 扩展统计
 
 新实验将 Legacy 扩展到：
 
@@ -83,7 +83,7 @@
 /data/gaoya/agent-data/cache/wan22_ti2v_legacy_firstlatent_physiciq67_regions_704x1280
 ```
 
-新实验完成后，需要明确选择：
+该统计已于 2026-08-10 17:09 UTC 完成全部 3350 runs。正式接入五系列页面前，仍需要明确选择：
 
 - 用 67-case Legacy 替换页面中的旧 6-case Legacy；或
 - 保留旧系列，并新增一个独立的 `Legacy PhysicIQ67` 系列。
@@ -92,20 +92,20 @@
 
 ## 3. 当前运行状态
 
-2026-08-08 07:11 UTC 快照：
+2026-08-11 04:54 UTC 最终核对：
 
 | 项目 | 状态 |
 |---|---:|
 | 区域缓存 | 67 / 67 |
-| 文件系统完成标记 | 48 / 3350 |
+| `complete.json` | 3350 / 3350 |
+| `metrics.npz` | 3350 / 3350 |
 | PCK `error.txt` | 0 |
-| 最近一次增量聚合 | 47 / 3350 |
-| GPU | 物理 GPU 6、7 |
-| GPU 显存 | 各约 25.6 GiB |
-| GPU 利用率 | 约 94%-100% |
-| 预计总耗时 | 两卡约 55-70 小时 |
+| 最终聚合 | 3350 / 3350，`final=true` |
+| 67 个 case | 每个均为 50 seeds |
+| `final_top10.json` | 已生成 |
+| PCK worker | GPU 6、7 均已完成并退出 |
 
-文件系统完成数可能比 `aggregate/summary.json` 大 1-2，因为聚合每 300 秒刷新一次。
+最终聚合时间为 2026-08-10 17:09 UTC；当前文件系统完成数与 `aggregate/summary.json` 已一致，不再存在增量聚合延迟。
 
 `task_summary.json` 是任务清单生成时的快照，不是实时进度。当前清单是在完整冒烟 run 完成后生成的，因此记录 `completed_runs=1`、`missing_runs=3349` 是正常的。
 
@@ -116,6 +116,33 @@ runs/**/complete.json
 aggregate/summary.json
 tmux legacy_physiciq67_pck50
 ```
+
+### 3.1 最终 S039 Rank JSON 与版本差异
+
+后续新实验推荐固定使用最终 3350-run 排名：
+
+```text
+/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/pck_head_scopes_s039_latest3350.json
+/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/cases_other10_6seeds_latest3350.json
+```
+
+最终 Rank JSON 已验证：720 个唯一 `(Block, Head)`、3350 个唯一 source runs、Top100 与配套 manifest 完全一致，并与最终 aggregate 的 S039 排序及 PCK 数值一致。
+
+下表均以最终 3350-run 版本为参照；Top-K 表示成员集合重合，PCK 变化单位为百分点：
+
+| 旧版本 | Runs | Top10 | Top30 | Top50 | Top100 | Spearman ρ | 720-head 平均名次变化 | 平均绝对 PCK 变化 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `frozen134` | 134 | 7/10 | 18/30 | 23/50 | 50/100 | 0.96846 | 40.15 | 6.669 |
+| `latest2735` | 2735 | 10/10 | 30/30 | 50/50 | 99/100 | 0.99978 | 2.78 | 0.316 |
+| `latest3027` | 3027 | 10/10 | 30/30 | 50/50 | 100/100 | 0.99994 | 1.47 | 0.183 |
+
+关键差异：
+
+- `2735 → 3350` 的 Top100 只有边界替换：`L24H03` 移出，`L23H09` 进入最终第 100 名。
+- `3027 → 3350` 的 Top10/30/50/100 成员均不变，Top10 顺序也不变；只有集合内部小幅重排。
+- `frozen134` 是早期快照，Top100 只有一半与最终版重合，不应作为新实验的默认排名。
+
+已经生成的旧消融视频必须继续保留其 manifest 中的 `frozen134` 或 `s039r2735` provenance，不能事后改称由 3350-run 排名生成。最终版只用于新批次，或在明确重新生成旧批次时使用。
 
 ## 4. 数据来源
 
@@ -337,7 +364,7 @@ PhysicIQ67 case JSON + 50 seeds
 |---|---|
 | `aggregate_allblocks_allsteps_headwise_50case.py` | 验证并聚合 GT teacher-forced、LoRA、Wan2.2 Baseline 各 50 cases 的全 40 steps、30 blocks、24 heads Q@K 结果，输出 `block_step_head_summary.csv` 等文件。 |
 | `aggregate_three_model_combined_rankings.py` | 对 GT、LoRA、Baseline 的同一 S/B/H 做等模型权重平均，生成 `three_model_combined_summary.csv`。Three-model combined 不包含 Legacy。 |
-| `export_pck_head_rankings.py` | 读取 Legacy `combined_counts.npz`、三模型 summary 和 combined summary，生成两个 view（`s039`、`all_steps_mean`）的五系列720 Head排名、Top10/30/50/100交集、Jaccard、Pearson/Spearman及 Markdown/JSON。当前 `LEGACY_ROOT` 仍指向旧 6-case，切换到 67-case 前必须先完成第13节验收并按第14节更新。 |
+| `export_pck_head_rankings.py` | 读取 Legacy `combined_counts.npz`、三模型 summary 和 combined summary，生成两个 view（`s039`、`all_steps_mean`）的五系列720 Head排名、Top10/30/50/100交集、Jaccard、Pearson/Spearman及 Markdown/JSON。当前 `LEGACY_ROOT` 仍指向旧 6-case；67-case 已完成第13节验收，但切换前仍需按第14节确认页面口径与 provenance。 |
 
 必须区分两个跨 step 定义：aggregate 的 `block_head_across_all_steps` 是先合并 count 的 micro PCK；页面的 `all_steps_mean` 是40个 per-step PCK的算术平均。五系列正式导出采用后者。
 
@@ -579,6 +606,8 @@ aggregate 是只读 run 指标、重写 aggregate 结果的幂等过程。直接
 
 ## 13. 完成验收
 
+2026-08-11 已按本节脚本实际验收通过：3350 个 `complete.json`、3350 个 `metrics.npz`、0 个 `error.txt`；`summary.final=true`；67 个 case 均为 50 runs；三个核心数组 shape 均为 `(40, 30, 24)`，最小 comparisons 为 `617255`；`aggregate/final_top10.json` 存在。
+
 必须同时满足：
 
 1. `runs/**/complete.json` 数量为 3350。
@@ -625,6 +654,8 @@ PY
 ```
 
 ## 14. 完成后更新五系列排名
+
+67-case PCK 统计与最终 S039 720-head JSON 已完成，但本节所述五系列稳定导出尚未自动切换，不能把“最终 Rank JSON 已生成”误写成“8092 五系列页面已替换”。
 
 当前 `export_pck_head_rankings.py` 明确硬编码旧 Legacy：
 
@@ -740,22 +771,17 @@ WAN22_TI2V_LEGACY_PCK50_CASES
 
 ## 18. 最短接手路径
 
-接手者首先执行：
-
-```bash
-tmux attach -t legacy_physiciq67_pck50
-```
-
-然后检查：
+当前统计已经完成，不需要重启 GPU 6/7 worker。接手者首先复核最终聚合与版本化排名：
 
 ```bash
 OUT=/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50
 find "$OUT/runs" -name complete.json -type f | wc -l
 find "$OUT/runs" -name error.txt -type f | wc -l
-nvidia-smi --id=6,7 --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader
+sed -n '1,40p' "$OUT/aggregate/summary.json"
+ls -lh "$OUT/visual_samples/attention_zero_seed47326/pck_head_scopes_s039_latest3350.json"
 ```
 
-如果两卡都在运行且错误数为 0，继续等待并观察 `aggregate/summary.json`。达到 3350/3350 后执行第 13 节验收，再按第 14、15 节更新稳定排名导出与 8092 页面。
+预期分别为 `3350`、`0`、`completed_runs=3350` 且 `final=true`。之后按第 14、15 节决定是否用 67-case Legacy 替换旧五系列导出与 8092 页面；该选择目前仍未自动执行。
 
 ## 19. 001460 / seed 47326：108 项 S039 Top100 Mean Overlay
 

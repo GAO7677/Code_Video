@@ -18,6 +18,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--height", type=int, default=None)
+    parser.add_argument("--width", type=int, default=None)
     parser.add_argument("--backward", action="store_true")
     parser.add_argument(
         "--cfg-file",
@@ -60,12 +62,14 @@ def main():
     model = model.to(device)
     model.train(args.backward)
     torch.manual_seed(42)
+    height = cfg.resolut0[0] if args.height is None else args.height
+    width = cfg.resolut0[1] if args.width is None else args.width
     video = torch.randn(
         args.batch_size,
         cfg.raw_clip_frames,
         3,
-        cfg.resolut0[0],
-        cfg.resolut0[1],
+        height,
+        width,
         device=device,
     )
     if device.type == "cuda":
@@ -87,12 +91,32 @@ def main():
         torch.cuda.synchronize(device)
     elapsed_seconds = time.perf_counter() - started
 
+    grid_height = height // 16
+    grid_width = width // 16
     expected = {
-        "feature": [args.batch_size, cfg.xssc_steps, 1024, 16, 16],
+        "feature": [args.batch_size, cfg.xssc_steps, 1024, grid_height, grid_width],
         "slotz": [args.batch_size, cfg.xssc_steps, cfg.num_slots, cfg.slot_dim],
-        "attenta": [args.batch_size, cfg.xssc_steps, cfg.num_slots, 16, 16],
-        "recon": [args.batch_size, cfg.xssc_steps, 1024, 16, 16],
-        "attentd": [args.batch_size, cfg.xssc_steps, cfg.num_slots, 16, 16],
+        "attenta": [
+            args.batch_size,
+            cfg.xssc_steps,
+            cfg.num_slots,
+            grid_height,
+            grid_width,
+        ],
+        "recon": [
+            args.batch_size,
+            cfg.xssc_steps,
+            1024,
+            grid_height,
+            grid_width,
+        ],
+        "attentd": [
+            args.batch_size,
+            cfg.xssc_steps,
+            cfg.num_slots,
+            grid_height,
+            grid_width,
+        ],
     }
     actual = {key: list(value.shape) for key, value in outputs.items()}
     if actual != expected:
@@ -103,6 +127,8 @@ def main():
         "total_parameters": total,
         "trainable_parameters": trainable,
         "raw_frames": cfg.raw_clip_frames,
+        "input_height": height,
+        "input_width": width,
         "xssc_steps": cfg.xssc_steps,
         "label_frame_indices_zero_based": cfg.label_frame_indices,
         "temporal_mode": cfg.temporal_mode,

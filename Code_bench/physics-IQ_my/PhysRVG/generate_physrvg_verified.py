@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-checkpoint", type=Path, required=True)
     parser.add_argument("--input-list", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--raw-output-root", type=Path)
     parser.add_argument("--run-name", required=True)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--height", type=int, default=512)
@@ -140,7 +141,9 @@ def load_pipeline(args: argparse.Namespace):
     return pipe
 
 
-def generate_future(pipe, prompt: str, condition: list[Image.Image], args: argparse.Namespace) -> list[np.ndarray]:
+def generate_future(
+    pipe, prompt: str, condition: list[Image.Image], args: argparse.Namespace
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
     set_seed(args.seed)
     sample = pipe(
         video=condition,
@@ -156,12 +159,13 @@ def generate_future(pipe, prompt: str, condition: list[Image.Image], args: argpa
     )[0][0]
     if len(sample) != args.model_chunk_frames:
         raise RuntimeError(f"PhysRVG returned {len(sample)} frames, expected {args.model_chunk_frames}")
-    future = list(sample[args.clean_prefix_frames :])
+    raw = list(sample)
+    future = raw[args.clean_prefix_frames :]
     if len(future) != args.target_frames:
         raise RuntimeError(
             f"prediction segment has {len(future)} frames, expected {args.target_frames}"
         )
-    return future
+    return raw, future
 
 
 def probe_submission(path: Path, fps: int, frames: int) -> None:
@@ -198,6 +202,10 @@ def main() -> None:
     cases = all_cases[args.shard_index :: args.num_shards]
     run_dir = (args.output_root / args.run_name).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
+    raw_run_dir = None
+    if args.raw_output_root is not None:
+        raw_run_dir = (args.raw_output_root / args.run_name).resolve()
+        raw_run_dir.mkdir(parents=True, exist_ok=True)
     pipe = load_pipeline(args)
     manifest = {
         "protocol": "physics-iq-verified-bpp-v2v-strict",
@@ -220,11 +228,18 @@ def main() -> None:
             "seed": args.seed,
         },
         "submission": {"prediction_only": True, "fps": 24, "frames": 120, "seconds": 5.0},
+        "raw_output": {
+            "enabled": raw_run_dir is not None,
+            "root": str(raw_run_dir) if raw_run_dir is not None else None,
+            "fps": 24,
+            "frames": 189,
+        },
         "cases": [],
     }
 
     for index, (case_json, payload) in enumerate(cases, start=1):
         output_path = run_dir / payload["generated_video_name"]
+        raw_output_path = raw_run_dir / payload["generated_video_name"] if raw_run_dir else None
         sidecar_path = output_path.with_suffix(".json")
         source_path = resolve_source(case_json, payload)
         if output_path.exists() and not args.force:
@@ -234,7 +249,12 @@ def main() -> None:
             condition = load_condition(
                 source_path, args.condition_fps, args.condition_frames, args.height, args.width
             )
-            submission = generate_future(pipe, payload["input_caption"], condition, args)
+            raw, submission = generate_future(pipe, payload["input_caption"], condition, args)
+            if raw_output_path is not None:
+                temporary_raw = raw_output_path.with_name(f"{raw_output_path.stem}.tmp.mp4")
+                export_to_video(raw, str(temporary_raw), fps=args.target_fps, macro_block_size=1)
+                probe_submission(temporary_raw, args.target_fps, args.model_chunk_frames)
+                temporary_raw.replace(raw_output_path)
             export_to_video(submission, str(output_path), fps=args.target_fps, macro_block_size=1)
             probe_submission(output_path, args.target_fps, args.target_frames)
             status = "generated"
@@ -247,6 +267,9 @@ def main() -> None:
             "condition_frames_validated": 72,
             "model_context_policy": "all 72 official condition frames encoded as condition latents",
             "output_video": str(output_path),
+            "raw_output_video": (
+                str(raw_output_path) if raw_output_path is not None and raw_output_path.exists() else None
+            ),
             "status": status,
         }
         sidecar_path.write_text(json.dumps(case_record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

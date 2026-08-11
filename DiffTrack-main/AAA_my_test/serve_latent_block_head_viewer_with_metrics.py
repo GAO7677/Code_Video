@@ -409,14 +409,18 @@ UNLISTED_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-m123-s039-top100-mean-overlays?v=5"><div><span>40 / S039 KEY + QUERY · 108</span><h2>M1/M2/M3 Head-Scope Overlay</h2><p>001460 / seed 47326 的独立 Overlay 入口；同一 M/Time 下 Object A/B 成对排列，同时展示固定 Query 的 Key-side 三行图，以及完整 Query 空间的 S(q)/E(q) receiver 图。</p></div><span class="go">打开独立 Overlay 页面</span></a>
 <a class="card new" href="/object-query-head-scope-comparison?v=1"><div><span>41 / HEAD-SCOPE STRICT PAIRS</span><h2>Top100 / Bottom100 / All720 严格对比</h2><p>按 case×seed×Object×M/时间严格配对三种 Head scope；逐指标给出影响排序，并用三列代表视频对比生成、轨迹与对象存活结果。</p></div><span class="go">打开 Head-Scope 对比</span></a>
 '''
+INFORMATION_FLOW_VALIDATION_PORTAL_CARD = r'''
+<a class="card new" href="/object-query-information-flow-validation?v=1"><div><span>42 / LATEST3350 VALIDATION</span><h2>Object Query 信息流验证</h2><p>执行计划 Stage 1–3 的实时入口：Query-time 排名稳定性、实现审计，以及 10 cases × 3 seeds 的 M1/M2/M3 × Top/Bottom/Random/All720 生成与 dose。</p></div><span class="go">打开信息流验证页</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + "</section>", 1
 )
 
 
 from AAA_my_test import serve_attention_noise_metrics as combined_metrics
 from AAA_my_test.object_query_ablation_metrics import dashboard as object_query_metrics_dashboard
 from AAA_my_test.object_query_ablation_metrics import head_scope_comparison
+from AAA_my_test.object_query_ablation_metrics import information_flow_validation_dashboard
 
 
 class MetricsHandler(viewer.Handler):
@@ -427,6 +431,58 @@ class MetricsHandler(viewer.Handler):
                 object_query_metrics_dashboard.page().encode("utf-8"),
                 "text/html; charset=utf-8",
             )
+            return
+        if path == "/object-query-information-flow-validation":
+            self.send_payload(
+                information_flow_validation_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/object-query-information-flow-validation/catalog":
+            payload = json.dumps(
+                information_flow_validation_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/object-query-information-flow-validation/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            try:
+                seed = int(params.get("seed", ["-1"])[0])
+            except ValueError:
+                seed = -1
+            asset = information_flow_validation_dashboard.asset(
+                params.get("kind", [""])[0],
+                case=params.get("case", [""])[0],
+                seed=seed,
+                variant=params.get("variant", [""])[0],
+                name=params.get("name", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("information-flow validation asset is not ready")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
+        if path == "/api/object-query-information-flow-validation/dose":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            try:
+                seed = int(params.get("seed", ["-1"])[0])
+            except ValueError:
+                seed = -1
+            result = information_flow_validation_dashboard.dose(
+                params.get("stage", [""])[0],
+                params.get("case", [""])[0],
+                seed,
+                params.get("variant", [""])[0],
+            )
+            if result is None:
+                raise FileNotFoundError("information-flow dose is not ready")
+            payload = json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
             return
         if path == "/object-query-m123-s039-top100-mean-overlays":
             self.send_payload(

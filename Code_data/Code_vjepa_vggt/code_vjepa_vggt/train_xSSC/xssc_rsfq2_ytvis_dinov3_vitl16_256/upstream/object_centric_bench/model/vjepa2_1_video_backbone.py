@@ -35,7 +35,7 @@ class VJEPA21VideoViT(nn.Module):
             raise ValueError(f"Unsupported V-JEPA2.1 model: {model_name}")
         if int(in_size) != 256 or int(patch_size) != 16 or int(tubelet_size) != 2:
             raise ValueError(
-                "This controlled experiment requires input=256, patch=16, "
+                "This controlled experiment requires reference input=256, patch=16, "
                 f"tubelet=2; got {in_size}, {patch_size}, {tubelet_size}"
             )
         if temporal_mode not in {"noncausal", "prefix_causal"}:
@@ -89,16 +89,16 @@ class VJEPA21VideoViT(nn.Module):
         self.patch_size = int(patch_size)
         self.tubelet_size = int(tubelet_size)
         self.temporal_mode = temporal_mode
-        self.out_size = self.in_size // self.patch_size
+        self.reference_grid_size = self.in_size // self.patch_size
         self.embed_dim = int(encoder.embed_dim)
         self.checkpoint = str(checkpoint)
         self.source_root = str(source_root)
         self.load_report = str(load_result)
 
-        if self.out_size != 16 or self.embed_dim != 1024:
+        if self.reference_grid_size != 16 or self.embed_dim != 1024:
             raise RuntimeError(
                 "Unexpected V-JEPA2.1 ViT-L geometry: "
-                f"grid={self.out_size}, dim={self.embed_dim}"
+                f"reference_grid={self.reference_grid_size}, dim={self.embed_dim}"
             )
 
     def train(self, mode=True):
@@ -109,9 +109,11 @@ class VJEPA21VideoViT(nn.Module):
 
     def _encode_video(self, input):
         temporal_tokens = input.shape[1] // self.tubelet_size
+        grid_height = input.shape[-2] // self.patch_size
+        grid_width = input.shape[-1] // self.patch_size
         video = rearrange(input, "b t c h w -> b c t h w")
         tokens = self.model(video)
-        expected_tokens = temporal_tokens * self.out_size * self.out_size
+        expected_tokens = temporal_tokens * grid_height * grid_width
         if tokens.shape[1:] != (expected_tokens, self.embed_dim):
             raise RuntimeError(
                 "Unexpected V-JEPA2.1 output shape: "
@@ -121,8 +123,8 @@ class VJEPA21VideoViT(nn.Module):
             tokens,
             "b (t h w) c -> b t c h w",
             t=temporal_tokens,
-            h=self.out_size,
-            w=self.out_size,
+            h=grid_height,
+            w=grid_width,
         )
 
     def forward(self, input):
@@ -130,9 +132,15 @@ class VJEPA21VideoViT(nn.Module):
             raise ValueError(
                 f"V-JEPA2.1 video input must be [B,T,3,H,W], got {tuple(input.shape)}"
             )
-        if tuple(input.shape[-2:]) != (self.in_size, self.in_size):
+        height, width = input.shape[-2:]
+        if height < self.patch_size or width < self.patch_size:
             raise ValueError(
-                f"V-JEPA2.1 expects {self.in_size}x{self.in_size}, got {tuple(input.shape[-2:])}"
+                f"V-JEPA2.1 input is smaller than one patch: {(height, width)}"
+            )
+        if height % self.patch_size or width % self.patch_size:
+            raise ValueError(
+                "V-JEPA2.1 rectangular input dimensions must be divisible by "
+                f"patch_size={self.patch_size}, got {(height, width)}"
             )
         if input.shape[1] % self.tubelet_size:
             raise ValueError(

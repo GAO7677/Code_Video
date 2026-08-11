@@ -53,7 +53,7 @@ class RandSFQ2VJEPAVideo(RandSFQ2):
         attenta = rearrange(attenta, "b t s (h w) -> b t s h w", h=h, w=w)
 
         clue = rearrange(feature, "b t c h w -> b t (h w) c")
-        recon, attentd, fsti = self.decode(clue, slotz)
+        recon, attentd, fsti = self.decode(clue, slotz, spatial_shape=(h, w))
         if self.training:
             feature = feature.gather(
                 1, fsti[:, :, None, None, None].expand(-1, -1, c, h, w)

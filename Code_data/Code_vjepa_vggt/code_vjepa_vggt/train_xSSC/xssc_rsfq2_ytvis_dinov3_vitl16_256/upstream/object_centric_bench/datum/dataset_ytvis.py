@@ -88,6 +88,30 @@ class YTVIS(ptud.Dataset):
         self.transform0 = transform0
         self.transform = transform
 
+    def get_spatial_shapes(self):
+        """Return original ``(height, width)`` for aspect-ratio batching."""
+        if hasattr(self, "_spatial_shapes"):
+            return self._spatial_shapes
+
+        shape_by_key = {}
+        spatial_shapes = []
+        env = lmdb_open_read(self.data_file)
+        with env.begin(write=False) as txn:
+            for key in self.keys:
+                if key not in shape_by_key:
+                    sample = pkl.loads(txn.get(key))
+                    frame = cv2.imdecode(
+                        np.frombuffer(sample["video"][0], dtype=np.uint8),
+                        cv2.IMREAD_UNCHANGED,
+                    )
+                    if frame is None or frame.ndim < 2:
+                        raise RuntimeError(f"Failed to decode spatial shape for key {key!r}")
+                    shape_by_key[key] = tuple(int(value) for value in frame.shape[:2])
+                spatial_shapes.append(shape_by_key[key])
+        env.close()
+        self._spatial_shapes = spatial_shapes
+        return self._spatial_shapes
+
     def __getitem__(self, index):
         """
         - video: (t=?,c=3,h,w), uint8 | float32

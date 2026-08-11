@@ -92,6 +92,39 @@ class CbLinearCosine(Schedule):
         ] + [CbCosine.cosine(_, ncos, vbase, vfinal) for _ in range(1, ncos + 1)]
 
 
+class CbLinearCosineRestart(CbLinearCosine):
+    """Linear-cosine schedule indexed relative to a global restart step."""
+
+    def __init__(
+        self,
+        assigns,
+        start_step,
+        nlin,
+        ntotal,
+        vstart,
+        vbase,
+        vfinal=0,
+    ):
+        self.start_step = int(start_step)
+        if not 0 <= nlin < ntotal:
+            raise ValueError(f"Expected 0 <= nlin < ntotal, got {nlin}, {ntotal}")
+        super().__init__(assigns, nlin, ntotal, vstart, vbase, vfinal)
+
+    @pt.inference_mode()
+    def __call__(self, **pack: dict) -> dict:
+        phase_step = int(pack[self.step_count_key]) - self.start_step
+        if not 0 <= phase_step < len(self.sched):
+            raise IndexError(
+                f"Schedule phase step {phase_step} outside [0, {len(self.sched)})"
+            )
+        for key in pack.keys():
+            exec(f"{key} = pack['{key}']")
+        for assign in self.assigns:
+            value = self[phase_step]
+            exec(assign)
+        return pack
+
+
 class CbSquarewave(Schedule):
     """
     e.g., points=[0,500,1000] and values=[1,0] means that value is 1 before step 500 while value is 0 after step 500

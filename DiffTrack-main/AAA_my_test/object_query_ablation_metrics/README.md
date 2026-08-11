@@ -18,6 +18,26 @@ The evaluation has two references:
 - `source_gt_video` plus `states.npz`: source render and projected simulator state,
   measuring physical/source fidelity.
 
+## Head-Scope ranking provenance
+
+This metric pipeline evaluates already generated ablation videos; it does not
+recompute or replace the PCK Head Scope stored in each video's manifest.  The
+PhysicIQ67 PCK sweep is final at `3350/3350` runs.  New generation batches
+should use:
+
+```text
+/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/pck_head_scopes_s039_latest3350.json
+/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/cases_other10_6seeds_latest3350.json
+```
+
+Historical outputs remain tied to their original snapshot: the 001460 pilot
+uses `frozen134`, while the existing ten-case/six-seed batch tagged
+`s039r2735` uses the 2735-run ranking.  Do not relabel those videos as
+3350-run results or reuse their completion markers for a final-rank rerun.
+Compared with the final ranking, `latest3027` has identical Top10/30/50/100
+membership; `latest2735` differs by one Top100 boundary head; `frozen134`
+shares only 50 of the final Top100 heads.
+
 The web page is exposed by the existing 8092 viewer at
 `/object-query-ablation-metrics` after all stages have generated `report.json`.
 

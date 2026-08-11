@@ -174,7 +174,11 @@ N_{\text{videos/head scope}}=T(n)\times3\times4.
 
 所以单对象 case 为 `12 videos/head scope`、三个 head scope 合计 `36`；`0613pybullet_sample_001460_w002` 有两个对象，仍为 `3 targets × 12 = 36 videos/head scope`、三个 head scope 合计 `108`。
 
-`0613pybullet_sample_001460_w002 / seed=47326` 的 Top100/Bottom100/All720 必须使用同一个 134-run S039 冻结快照；其中 Bottom100 的 PCK 范围为 `23.7883% → 0.0932%`。`cases_other10_6seeds_latest.json` 使用另一份 2735-run 快照，因此输出 ID 带 `s039r2735`，其 Bottom100 范围为 `28.4571% → 0.0641%`。两份快照不能混用或相互复用完成标记。
+`0613pybullet_sample_001460_w002 / seed=47326` 已生成视频的 Top100/Bottom100/All720 必须使用同一个 134-run S039 冻结快照；其中 Bottom100 的 PCK 范围为 `23.7883% → 0.0932%`。已有 `cases_other10_6seeds_latest.json` 批次使用另一份 2735-run 快照，因此输出 ID 带 `s039r2735`，其 Bottom100 范围为 `28.4571% → 0.0641%`。两份历史快照不能混用或相互复用完成标记。
+
+PhysicIQ67 PCK 统计现已完成 `3350/3350`。后续新实验的标准排名是 `pck_head_scopes_s039_latest3350.json`，配套 manifest 是 `cases_other10_6seeds_latest3350.json`；最终 Top100 cutoff 为 `88.9558%`，Bottom100 范围为 `28.1665% → 0.0593%`。最终版与 3027-run 版的 Top10/30/50/100 成员完全一致，与 2735-run 版的 Top100 仅有一个边界差异：`L24H03` 移出、`L23H09` 进入最终第 100 名。
+
+最终排名的发布不改变历史视频的真实 head selection。已有 `frozen134`、`s039r2735` 目录必须继续按原 manifest 解释；若需要使用 3350-run Top/Bottom scope，必须使用新的排名 tag 和独立输出目录，或显式重新生成旧批次。
 
 ## 6. C1–C3：不要与矩阵分块混用
 
@@ -196,7 +200,7 @@ C2、C3 不依赖 `R`，因此固定 Q00 与 Tube 对照不重复生成；页面
 | Target scope | 每个 `single_object`；`all_objects` 并集 |
 | Object-dependent operators | M1–M7、C1 |
 | Head count | Top30、Top50、Top100；新增 9 case 当前优先 Top100 |
-| Head selection | 冻结的 provisional S039 PCK ranking |
+| Head selection | 由每个 manifest 固定的 S039 PCK ranking；历史输出保留原快照，新批次使用最终 3350-run 版 |
 | Denoising | S000–S039 全 40 步 |
 | CFG | conditional 与 unconditional |
 | Seed | 新增 9 case 统一为 `47326` |
@@ -232,9 +236,11 @@ M1/M2/M3 的 Head Scope 扩展另含 `3 scopes × 36 = 108` 个对照视频；�
 
 object_A 的 13 个 latent 时刻分别为 `[6,7,6,8,6,7,6,5,6,6,5,6,5]`。这说明左右干预剂量并不相等；`all_objects` 的 179 小于 79+104，是因为两个对象轨迹映射后存在 token 重合并被联合去重。
 
-### 7.3 latest 10-case × 6-seed Head Scope 扩展
+### 7.3 2735-run 10-case × 6-seed Head Scope 扩展
 
 `cases_other10_6seeds_latest.json` 含 10 个 case、6 个 seed，共 60 个 case-seed 样本；对象数为 1–4。对每个样本执行 Top100 与 Bottom100 上的 M1/M2/M3 All-time/Same/Future/Past，共 `2448 + 2448 = 4896` 个视频。Top100 输出后缀为 `top100_s039r2735`，Bottom100 为 `bottom100_s039r2735`，避免与旧 134-run 排名产生目录冲突。
+
+这里的文件名 `latest` 是批次启动时的历史命名，不代表当前最终排名。今后新批次应读取 `cases_other10_6seeds_latest3350.json` 与 `pck_head_scopes_s039_latest3350.json`，并使用新的 `s039r3350` tag；不能只替换 JSON 后继续复用 `s039r2735` 的完成标记。
 
 ### 7.4 五个新 seed 的重复实验
 
@@ -248,7 +254,7 @@ object_A 的 13 个 latent 时刻分别为 `[6,7,6,8,6,7,6,5,6,6,5,6,5]`。这�
 | Tube 时间分解 | `3 targets × 3 base blocks (M1/M2/M3) × 3 time blocks (Same/Future/Past) = 27` 个 Top100 视频 |
 | 原 Fixed/Tube 规模 | `5 seeds × (24 Fixed + 24 Tube) = 240` 个视频 |
 | 时间分解新增规模 | `5 seeds × 27 = 135` 个视频；扩展后五 seed 合计 `375` 个消融视频 |
-| Head 排名 | 六个 seed 均使用与 seed 47326 相同的冻结 provisional Top100 排名，以固定被干预 head 这一变量 |
+| Head 排名 | 这批六个 seed 均使用与 seed 47326 相同的 134-run 冻结 Top100，以固定被干预 head 这一变量；最终 3350-run 排名不追溯替换已有视频 |
 | Tube 轨迹 | 每个 seed 从自己的 baseline 独立运行 CoTracker、冻结轨迹并映射到 latent token；不复用 seed 47326 的 token 集合 |
 | 采样控制 | 同一 seed 内 baseline、Fixed 与 Tube 保持相同扩散 seed；跨 seed 只改变采样随机性 |
 | 时间分解计算资源 | 4-way task shard 使用 GPU 1/2/3/5；全程不使用 GPU 4 |
@@ -499,7 +505,7 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 1. Top heads 只由 S039 positive-conditional 的 `Q00 → K01...K12` PCK 排名选出。
 2. Tube 实验把这些 heads 扩展到 Q00–Q12，但这只是测试其干预效应，不等于重新验证每个 query 时刻的 tracking accuracy。
 3. 干预覆盖全部 40 个 denoising steps 和两个 CFG 分支；不能假设这些 head 在早期步骤或 unconditional 分支仍是 Top tracking heads。
-4. 排名是 aggregate 未完成时冻结的 provisional snapshot；特异性结论仍需 random、bottom 或 layer-matched controls。
+4. 历史消融视频使用 aggregate 未完成时冻结的 134-run 或 2735-run snapshot；最终 3350-run 排名已经发布，但不能追溯改变已有视频的实际 Head Scope。特异性结论仍需 random、bottom 或 layer-matched controls。
 5. 视频结果经过残差、其他 heads、FFN、cross-attention 和扩散动力学传播。身份漂移、碰撞改变等只能是待检验解释，不能写成理论必然结果。
 
 ## 11. 实现、输出与页面
@@ -515,6 +521,8 @@ RAFT 也使“不同消融为何像同一个结果”更容易定位：Fixed obj
 - 全指标一键入口：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/bench.sh`；输入单个 `seed_<seed>` 结果目录，或包含多个直接 `seed_*` 子目录的 case 目录。
 - 六 seed 严格共同 cohort 聚合脚本：`/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/aggregate_reports.py`
 - 六 seed 聚合报告：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/aggregate/report.json`
+- 最终 S039 720-head 排名：`/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/pck_head_scopes_s039_latest3350.json`
+- 最终 10-case × 6-seed manifest：`/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/cases_other10_6seeds_latest3350.json`
 - 标量完整性审计：`/data/gaoya/agent-data/outputs/object_query_ablation_metrics/0613pybullet_sample_001460_w002/aggregate/scalar_completeness.csv`；只有 `finite_sample_count=expected_sample_count=6` 的标量才可显示数值。
 - 单 seed 报告：同一输出根目录下的 `seed_<seed>/report.json` 和 `seed_<seed>/summary.csv`。
 - 固定 Q00 输出：`/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/attention_matrix_ablations_v2`

@@ -221,6 +221,7 @@ def load_matching_checkpoint(
     expected_source_variant=None,
     expected_source_step=None,
     prefix_map=(),
+    partial_row_patterns=(),
 ):
     checkpoint_file = checkpoint_file.resolve()
     metadata = read_checkpoint_metadata(checkpoint_file)
@@ -242,6 +243,7 @@ def load_matching_checkpoint(
     target = model.state_dict()
     excludes = [re.compile(pattern) for pattern in exclude_patterns]
     allowed_missing = [re.compile(pattern) for pattern in allowed_missing_patterns]
+    partial_rows = [re.compile(pattern) for pattern in partial_row_patterns]
     normalized_prefix_map = []
     for destination_prefix, source_prefix in prefix_map:
         if not destination_prefix or not source_prefix:
@@ -267,6 +269,7 @@ def load_matching_checkpoint(
     excluded = []
     unexpected = []
     shape_mismatch = []
+    partial_row_loads = []
     for source_key, value in source.items():
         if any(pattern.match(source_key) for pattern in excludes):
             excluded.append(source_key)
@@ -275,14 +278,34 @@ def load_matching_checkpoint(
         if target_key not in target:
             unexpected.append({"source": source_key, "target": target_key})
         elif target[target_key].shape != value.shape:
-            shape_mismatch.append(
-                {
-                    "source_key": source_key,
-                    "target_key": target_key,
-                    "checkpoint_shape": list(value.shape),
-                    "model_shape": list(target[target_key].shape),
-                }
+            target_value = target[target_key]
+            can_load_rows = (
+                any(pattern.match(target_key) for pattern in partial_rows)
+                and value.ndim == target_value.ndim
+                and value.shape[1:] == target_value.shape[1:]
+                and value.shape[0] < target_value.shape[0]
             )
+            if can_load_rows:
+                merged = target_value.clone()
+                merged[: value.shape[0]] = value
+                matched[target_key] = merged
+                partial_row_loads.append(
+                    {
+                        "source_key": source_key,
+                        "target_key": target_key,
+                        "copied_rows": value.shape[0],
+                        "target_rows": target_value.shape[0],
+                    }
+                )
+            else:
+                shape_mismatch.append(
+                    {
+                        "source_key": source_key,
+                        "target_key": target_key,
+                        "checkpoint_shape": list(value.shape),
+                        "model_shape": list(target_value.shape),
+                    }
+                )
         else:
             if target_key in matched:
                 raise ValueError(
@@ -307,6 +330,7 @@ def load_matching_checkpoint(
         "excluded_keys": sorted(excluded),
         "unexpected_keys": unexpected,
         "shape_mismatches": shape_mismatch,
+        "partial_row_loads": partial_row_loads,
         "missing_keys": missing_keys,
         "disallowed_missing_keys": disallowed_missing,
     }
@@ -329,6 +353,7 @@ def checkpoint_load_summary(report):
         "excluded_key_count": len(report["excluded_keys"]),
         "unexpected_key_count": len(report["unexpected_keys"]),
         "shape_mismatch_count": len(report["shape_mismatches"]),
+        "partial_row_load_count": len(report.get("partial_row_loads", [])),
         "missing_key_count": len(report["missing_keys"]),
         "disallowed_missing_key_count": len(report["disallowed_missing_keys"]),
     }
@@ -700,7 +725,10 @@ def val_epoch(pack):
 
 def main():
     args = parse_args()
-    from object_centric_bench.datum import DataLoader
+    from object_centric_bench.datum import (
+        DataLoader,
+        DistributedAspectRatioBatchSampler,
+    )
     from object_centric_bench.learn import MetricWrap
     from object_centric_bench.model import ModelWrap
     from object_centric_bench.util import Config, build_from_config
@@ -784,14 +812,30 @@ def main():
     cfg.dataset_t.base_dir = cfg.dataset_v.base_dir = args.data_dir
 
     dataset_t = build_from_config(cfg.dataset_t)
-    sampler_t = DistributedSampler(
-        dataset_t,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=True,
-        seed=args.seed,
-        drop_last=cfg.train_sampler_drop_last,
-    )
+    aspect_ratio_buckets = getattr(cfg, "aspect_ratio_buckets", None)
+    if aspect_ratio_buckets:
+        sampler_t = DistributedAspectRatioBatchSampler(
+            dataset_t,
+            buckets=aspect_ratio_buckets,
+            batch_size=cfg.batch_size_t,
+            num_replicas=world_size,
+            rank=rank,
+            seed=args.seed,
+            drop_last=cfg.train_sampler_drop_last,
+        )
+        if rank == 0:
+            (save_path / "aspect_ratio_batching.json").write_text(
+                json.dumps(sampler_t.summary(), indent=2) + "\n"
+            )
+    else:
+        sampler_t = DistributedSampler(
+            dataset_t,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=True,
+            seed=args.seed,
+            drop_last=cfg.train_sampler_drop_last,
+        )
     worker_seed = args.seed + rank
 
     def worker_init_fn(_):
@@ -802,17 +846,23 @@ def main():
 
     generator_t = torch.Generator().manual_seed(worker_seed)
     generator_v = torch.Generator().manual_seed(worker_seed + 10_000)
-    dataload_t = DataLoader(
-        dataset_t,
-        batch_size=cfg.batch_size_t,
-        sampler=sampler_t,
+    train_loader_kwargs = dict(
+        dataset=dataset_t,
         num_workers=cfg.num_work,
         collate_fn=build_from_config(cfg.collate_fn_t),
         pin_memory=True,
         worker_init_fn=worker_init_fn,
         generator=generator_t,
-        drop_last=cfg.train_loader_drop_last,
     )
+    if aspect_ratio_buckets:
+        train_loader_kwargs["batch_sampler"] = sampler_t
+    else:
+        train_loader_kwargs.update(
+            batch_size=cfg.batch_size_t,
+            sampler=sampler_t,
+            drop_last=cfg.train_loader_drop_last,
+        )
+    dataload_t = DataLoader(**train_loader_kwargs)
 
     dataset_v = build_from_config(cfg.dataset_v)
     all_val_indices = list(range(len(dataset_v)))
@@ -901,6 +951,9 @@ def main():
                 expected_source_variant=cfg.transfer_expected_source_variant,
                 expected_source_step=cfg.transfer_expected_source_step,
                 prefix_map=getattr(cfg, "transfer_prefix_map", ()),
+                partial_row_patterns=getattr(
+                    cfg, "transfer_partial_row_patterns", ()
+                ),
             )
     else:
         load_report = None

@@ -124,10 +124,30 @@ class LearntPositionalEmbedding(nn.Module):
     PositionalEncoding: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
     """
 
-    def __init__(self, resolut: list, embed_dim: int, in_dim: int = 0):
+    def __init__(
+        self,
+        resolut: list,
+        embed_dim: int,
+        in_dim: int = 0,
+        spatial_shape=None,
+    ):
         super().__init__()
         self.resolut = resolut
         self.embed_dim = embed_dim
+        self.spatial_shape = (
+            None
+            if spatial_shape is None
+            else tuple(int(value) for value in spatial_shape)
+        )
+        if self.spatial_shape is not None:
+            if len(resolut) != 1 or len(self.spatial_shape) != 2:
+                raise ValueError(
+                    "spatial_shape requires one flattened resolution dimension"
+                )
+            if self.spatial_shape[0] * self.spatial_shape[1] != resolut[0]:
+                raise ValueError(
+                    f"spatial_shape {self.spatial_shape} does not match {resolut}"
+                )
         if in_dim:
             self._pe = nn.Parameter(pt.zeros(1, *resolut, in_dim), requires_grad=True)
             self._project = nn.Linear(in_dim, embed_dim)
@@ -155,8 +175,28 @@ class LearntPositionalEmbedding(nn.Module):
             return output, pe
         return output
 
+    def interpolate_2d(self, height, width):
+        """Interpolate a flattened learned 2D grid without changing parameters."""
+        if self.spatial_shape is None:
+            raise RuntimeError("interpolate_2d requires spatial_shape at construction")
+        height, width = int(height), int(width)
+        if height <= 0 or width <= 0:
+            raise ValueError(f"Invalid target positional grid: {(height, width)}")
+        base_height, base_width = self.spatial_shape
+        pe = self.pe.reshape(1, base_height, base_width, self.embed_dim)
+        if (height, width) == self.spatial_shape:
+            return pe.flatten(1, 2)
+        pe = pe.permute(0, 3, 1, 2)
+        pe = ptnf.interpolate(
+            pe,
+            size=(height, width),
+            mode="bilinear",
+            align_corners=False,
+        )
+        return pe.permute(0, 2, 3, 1).flatten(1, 2)
+
     def extra_repr(self):
-        return f"{self.resolut}, {self.embed_dim}"
+        return f"{self.resolut}, {self.embed_dim}, spatial_shape={self.spatial_shape}"
 
 
 class NormalSeparat(nn.Module):

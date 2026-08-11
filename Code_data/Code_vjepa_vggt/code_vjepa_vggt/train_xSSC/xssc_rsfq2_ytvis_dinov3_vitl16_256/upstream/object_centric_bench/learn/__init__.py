@@ -27,5 +27,6 @@ from .callback_sched import (
     CbCosine,
     CbCosineLinear,
     CbLinearCosine,
+    CbLinearCosineRestart,
     CbSquarewave,
 )
