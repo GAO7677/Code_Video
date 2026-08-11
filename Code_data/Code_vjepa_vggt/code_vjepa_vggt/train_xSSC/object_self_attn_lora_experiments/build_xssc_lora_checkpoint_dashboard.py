@@ -37,6 +37,10 @@ METHOD_PLOT_STYLES = {
         "marker": "D",
         "linestyle": (0, (5, 1, 1, 1)),
     },
+    "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000": {
+        "marker": "H",
+        "linestyle": (0, (4, 1, 1, 1)),
+    },
     "full_sa_no_object_pybullet100": {"marker": "p", "linestyle": (0, (4, 1))},
     "full_sa_no_object_kubric100": {"marker": "*", "linestyle": (0, (2, 1))},
     "s_head59": {"marker": "s", "linestyle": "--"},
@@ -1335,6 +1339,11 @@ MERGED_METHODS = [
         "key": "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
         "label": "Full-SA + No-Object + xSSC Loss (DINOv3 MOVi-C 50k)",
         "color": "#6F4EAD",
+    },
+    {
+        "key": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
+        "label": "Full-SA + Object + Slot-Dedup (xSSC-50k) + xSSC Loss (DINOv3 MOVi-C 50k)",
+        "color": "#D55E00",
     },
     {"key": "s_head59", "label": "S-head59 + Object", "color": "#2CA02C"},
     {"key": "t_head70", "label": "T-head70 + Object", "color": "#9467BD"},

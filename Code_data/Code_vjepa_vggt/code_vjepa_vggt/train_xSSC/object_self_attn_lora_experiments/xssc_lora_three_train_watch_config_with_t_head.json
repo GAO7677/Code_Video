@@ -70,6 +70,7 @@
       "t_head100_lora_pck32_no_object",
       "full_sa_no_object_vjepa_loss",
       "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
+      "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
       "full_sa_physrvg_dit"
     ],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
@@ -288,6 +289,14 @@
       "color": "#6F4EAD",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_no_object_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints"
+      ]
+    },
+    {
+      "key": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
+      "label": "Full-SA + Object + Slot-Dedup (xSSC-50k) + xSSC Loss (DINOv3 MOVi-C 50k)",
+      "color": "#D55E00",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints"
       ]
     },
     {

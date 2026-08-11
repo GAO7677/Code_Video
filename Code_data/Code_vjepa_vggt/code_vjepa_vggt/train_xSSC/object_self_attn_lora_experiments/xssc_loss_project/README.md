@@ -35,3 +35,25 @@ formal run.
 
 The 512x896x49 two-GPU backward smoke test is configured in
 `configs/smoke_full_sa_no_object_xssc_loss_dinov3_movic_step50000_gpu01.json`.
+
+## Full-SA + Object + Slot-Dedup + xSSC loss
+
+`train_full_sa_object_slot_dedup_xssc_loss.py` combines the previously used
+`train_xssc_object_self_attn_lora_slot_dedup.py` object-conditioning path with
+the same frozen DINOv3 MOVi-C step-050000 future-slot loss.  The object branch
+and auxiliary loss share one frozen xSSC-50k encoder.
+
+Config validation without starting training:
+
+```bash
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  ../launch_from_config.py \
+  configs/full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000.json \
+  --validate-only
+```
+
+Foreground formal launcher (GPU 0/1 must be available first):
+
+```bash
+bash run_train_full_sa_object_slot_dedup_xssc_loss_gpu01.sh
+```

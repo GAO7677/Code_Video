@@ -1,0 +1,30 @@
+{
+  "extends": "../../configs/formal_full_sa_slot_dedup_merge_xssc_step050000_gpu67.json",
+  "experiment": {
+    "name": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
+    "description": "Wan2.2 + merged OpenVid LoRA; Full-SA + Object + Slot-Dedup using xSSC step-050000; frozen DINOv3 MOVi-C xSSC step-050000 future-slot cosine loss"
+  },
+  "paths": {
+    "output_root": "/data/gaoya/agent-data/checkpoints/xssc_feature_loss"
+  },
+  "launch": {
+    "gpu_set": "0,1",
+    "num_processes": 2,
+    "main_process_port": 29534
+  },
+  "xssc_loss": {
+    "enabled": true,
+    "backend": "dinov3_movic",
+    "weight": 0.1,
+    "future_start_frame": 8,
+    "backbone_chunk_size": 2,
+    "tiny_vae_parallel": false,
+    "tiny_vae_root": "/home/gaoya/Code_Video/taehv",
+    "tiny_vae_checkpoint": "/data/gaoya/ckpt/taew2_2.pth",
+    "gradient_checkpointing_offload": true,
+    "gradient_diagnostics_every_n_forwards": 400
+  },
+  "logging": {
+    "wandb_name": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000"
+  }
+}

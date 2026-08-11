@@ -43,6 +43,8 @@ VALID_XSSC_LOSS_BACKENDS = ("dinov3_movic", "official_dinov2")
 class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
     """Existing no-object Full-SA module plus differentiable frozen-xSSC loss."""
 
+    require_object_branch_disabled = True
+
     def __init__(
         self,
         *args,
@@ -67,7 +69,7 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         amg_filter_args = kwargs.get("xssc_amg_filter_args")
 
         super().__init__(*args, **kwargs)
-        if self.enable_object_branch:
+        if self.require_object_branch_disabled and self.enable_object_branch:
             raise ValueError("xSSC feature-loss experiments require no-object mode")
         if self.self_attn_adaptation_mode != "full_sa":
             raise ValueError("xSSC feature-loss experiments require Full-SA adaptation")
@@ -99,21 +101,32 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
 
         model_device = self.pipe.dit.patch_embedding.weight.device
         if self.xssc_loss_backend == "dinov3_movic":
-            encoder, slot_dim, num_slots = core._load_dinov3_xssc_model(
-                xssc_root=xssc_root,
-                config_path=xssc_config,
-                checkpoint_path=xssc_checkpoint,
-                dinov3_root=dinov3_root,
-                dinov3_checkpoint=dinov3_checkpoint,
-                device=model_device,
-            )
+            if self.enable_object_branch:
+                if self.xssc is None:
+                    raise RuntimeError("Object branch did not initialize its xSSC encoder")
+                encoder = self.xssc
+                slot_dim = self.xssc_slot_dim
+                num_slots = self.xssc_num_slots
+            else:
+                encoder, slot_dim, num_slots = core._load_dinov3_xssc_model(
+                    xssc_root=xssc_root,
+                    config_path=xssc_config,
+                    checkpoint_path=xssc_checkpoint,
+                    dinov3_root=dinov3_root,
+                    dinov3_checkpoint=dinov3_checkpoint,
+                    device=model_device,
+                )
             if amg_filter_args is None:
                 raise ValueError("DINOv3 MOVi-C xSSC loss requires AMG filter settings")
-            box_builder = core.AMGBoxBuilder(
-                sam2_config=sam2_config,
-                sam2_checkpoint=sam2_checkpoint,
-                cache_dir=box_cache_dir,
-                filter_args=amg_filter_args,
+            box_builder = (
+                self.xssc_box_builder
+                if self.enable_object_branch and self.xssc_box_builder is not None
+                else core.AMGBoxBuilder(
+                    sam2_config=sam2_config,
+                    sam2_checkpoint=sam2_checkpoint,
+                    cache_dir=box_cache_dir,
+                    filter_args=amg_filter_args,
+                )
             )
         else:
             encoder, slot_dim, num_slots = official_xssc._load_xssc_model(
@@ -662,7 +675,7 @@ def log_stage_summary(accelerator, model, args: argparse.Namespace) -> None:
             "scheduler_timestep_weight=normalized_global_mean, "
             f"DiT-gradient-checkpointing-offload={args.use_gradient_checkpointing_offload}, "
             f"Tiny-VAE differentiable decode=True (parallel={args.tiny_vae_parallel}), "
-            "object branch=False"
+            f"object branch={model.enable_object_branch}"
         )
 
 

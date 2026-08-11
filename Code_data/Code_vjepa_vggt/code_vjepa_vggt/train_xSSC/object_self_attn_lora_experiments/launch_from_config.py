@@ -23,6 +23,9 @@ VJEPA_LOSS_TRAIN_SCRIPT = (
 XSSC_LOSS_TRAIN_SCRIPT = (
     ROOT / "xssc_loss_project/train_xssc_object_self_attn_lora_xssc_loss.py"
 )
+SLOT_DEDUP_XSSC_LOSS_TRAIN_SCRIPT = (
+    ROOT / "xssc_loss_project/train_full_sa_object_slot_dedup_xssc_loss.py"
+)
 OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT = ROOT / "train_official_xssc_object_only.py"
 VALID_MODES = {"object_only", "full_sa", "s_head", "t_head"}
 HEAD_SELECTIVE_MODES = {"s_head", "t_head"}
@@ -237,10 +240,28 @@ def validate_config(config: dict, config_dir: Path) -> dict:
             )
 
     if xssc_loss_enabled:
-        if mode != "full_sa" or enable_object_branch:
-            raise ValueError(
-                "xssc_loss requires adaptation.mode=full_sa and the object branch disabled"
-            )
+        if mode != "full_sa":
+            raise ValueError("xssc_loss requires adaptation.mode=full_sa")
+        if enable_object_branch:
+            slot_dedup = require(config, "conditioning.slot_dedup")
+            if str(require(slot_dedup, "mode")) not in {"mask", "merge"}:
+                raise ValueError(
+                    "Object-branch xssc_loss requires Slot-Dedup mode mask or merge"
+                )
+            threshold = float(require(slot_dedup, "similarity_threshold"))
+            if not 0.0 <= threshold <= 1.0:
+                raise ValueError(
+                    "conditioning.slot_dedup.similarity_threshold must be in [0,1]"
+                )
+            if str(require(slot_dedup, "similarity_metric")) not in {
+                "mean_frame_cosine",
+                "pooled_cosine",
+            }:
+                raise ValueError(
+                    "conditioning.slot_dedup.similarity_metric is unsupported"
+                )
+            if int(require(slot_dedup, "min_keep")) <= 0:
+                raise ValueError("conditioning.slot_dedup.min_keep must be positive")
         backend = str(require(config, "xssc_loss.backend"))
         if backend != xssc_backend:
             raise ValueError(
@@ -430,7 +451,11 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         config.get("initialization", {}).get("type", "openvid_lora")
     )
     if xssc_loss_enabled:
-        train_script = XSSC_LOSS_TRAIN_SCRIPT
+        train_script = (
+            SLOT_DEDUP_XSSC_LOSS_TRAIN_SCRIPT
+            if adaptation["enable_object_branch"]
+            else XSSC_LOSS_TRAIN_SCRIPT
+        )
     elif vjepa_loss_enabled:
         train_script = VJEPA_LOSS_TRAIN_SCRIPT
     elif initialization_type == "physrvg_dit":
@@ -603,6 +628,20 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
             )
         if xssc_loss["gradient_checkpointing_offload"]:
             options["--use_gradient_checkpointing_offload"] = None
+        if adaptation["enable_object_branch"]:
+            slot_dedup = conditioning["slot_dedup"]
+            options.update(
+                {
+                    "--xssc_slot_dedup_mode": slot_dedup["mode"],
+                    "--xssc_slot_dedup_similarity_threshold": slot_dedup[
+                        "similarity_threshold"
+                    ],
+                    "--xssc_slot_dedup_similarity_metric": slot_dedup[
+                        "similarity_metric"
+                    ],
+                    "--xssc_slot_dedup_min_keep": slot_dedup["min_keep"],
+                }
+            )
     if not adaptation["enable_object_branch"]:
         options["--disable_object_branch"] = None
     else:

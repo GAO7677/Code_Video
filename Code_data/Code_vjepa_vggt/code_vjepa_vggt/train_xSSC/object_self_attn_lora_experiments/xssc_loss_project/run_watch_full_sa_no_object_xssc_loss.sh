@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Foreground watcher for the DINOv3 MOVi-C step-50000 xSSC-loss method.
+# Foreground watcher for DINOv3 MOVi-C step-50000 xSSC-loss methods.
 set -u -o pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${PROJECT_DIR}/.." && pwd)"
 PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 CONFIG="${CONFIG:-${ROOT}/xssc_lora_three_train_watch_config_with_t_head.json}"
-METHOD="${METHOD:-full_sa_no_object_xssc_loss_dinov3_movic_step50000}"
+METHOD="${METHOD:-full_sa_no_object_xssc_loss_dinov3_movic_step50000,full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000}"
 GPUS="${GPUS:-3}"
 POLL_SECONDS="${POLL_SECONDS:-60}"
 GPU_WORKERS_PER_GPU="${GPU_WORKERS_PER_GPU:-2}"
