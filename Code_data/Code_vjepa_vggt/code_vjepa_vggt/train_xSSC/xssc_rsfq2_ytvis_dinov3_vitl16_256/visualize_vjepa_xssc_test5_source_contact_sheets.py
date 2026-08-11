@@ -48,6 +48,12 @@ def parse_args():
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--max-sampled-frames", type=int, default=32)
     parser.add_argument(
+        "--source-frame-count-lt",
+        type=int,
+        default=0,
+        help="Render only videos with strictly fewer than this many decoded frames; 0 disables filtering.",
+    )
+    parser.add_argument(
         "--resize-mode",
         choices=("center-crop", "padding"),
         default="padding",
@@ -89,7 +95,12 @@ def load_unique_cases(test5_file):
     return cases
 
 
-def decode_and_sample(path, max_sampled_frames, resize_mode):
+def decode_and_sample(
+    path,
+    max_sampled_frames,
+    resize_mode,
+    source_frame_count_lt=0,
+):
     metadata = iio.immeta(path, plugin="pyav")
     processed = []
     source_shape = None
@@ -98,6 +109,10 @@ def decode_and_sample(path, max_sampled_frames, resize_mode):
         if source_shape is None:
             source_shape = list(frame.shape)
         processed.append(preprocess_frames(frame[None], 256, resize_mode)[0])
+        # Once the strict upper bound is reached, the video cannot belong to
+        # the requested subset. Stop decoding early and avoid model inference.
+        if source_frame_count_lt > 0 and len(processed) >= source_frame_count_lt:
+            return None, None, len(processed), source_shape, metadata
     if len(processed) < 2:
         raise ValueError(f"video must contain at least two frames: {path}")
     frames = np.stack(processed).astype(np.uint8)
@@ -122,11 +137,17 @@ def render_case(
     columns,
     alpha,
     quality,
+    source_frame_count_lt,
 ):
     source_video = Path(case["source_video"])
     frames, source_indices, source_count, source_shape, metadata = decode_and_sample(
-        source_video, max_sampled_frames, resize_mode
+        source_video,
+        max_sampled_frames,
+        resize_mode,
+        source_frame_count_lt,
     )
+    if frames is None:
+        return None
     source_fps = float(metadata.get("fps", 30.0))
     padded = len(frames) % 2
     model_frames = (
@@ -193,11 +214,19 @@ def build_html(report):
         f'<span><i style="background:rgb({r},{g},{b})"></i>S{slot}</span>'
         for slot, (r, g, b) in enumerate(SLOT_COLORS.tolist())
     )
+    if report["max_sampled_frames"] == 0:
+        sampling_note = (
+            "每个 source video 的全部连续帧均输入模型：不均匀抽帧、不跳帧。"
+        )
+    else:
+        sampling_note = (
+            f"每个 source video 均匀抽取最多{report['max_sampled_frames']}帧覆盖完整时间范围。"
+        )
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>V-JEPA xSSC · test_5 source slot overlay</title><style>
 *{{box-sizing:border-box}}:root{{color-scheme:dark}}body{{margin:0;background:#0d1117;color:#e6edf3;font:14px system-ui,sans-serif}}header{{position:sticky;top:0;z-index:3;background:rgba(13,17,23,.97);border-bottom:1px solid #30363d}}.bar{{max-width:2200px;margin:auto;padding:12px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}}h1{{font-size:19px;margin:0 auto 0 0}}select,button{{height:36px;border:1px solid #4b535d;border-radius:6px;background:#20262d;color:#f2f5f7;font:inherit}}select{{min-width:min(760px,75vw);padding:0 10px}}button{{width:38px;cursor:pointer}}main{{max-width:2200px;margin:auto;padding:18px}}.meta{{display:grid;grid-template-columns:150px minmax(0,1fr);gap:7px 14px;padding:14px;border:1px solid #30363d;border-radius:8px;background:#161b22;margin-bottom:14px}}.key{{color:#8b949e}}code{{color:#79c0ff;overflow-wrap:anywhere}}.legend{{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;color:#c9d1d9}}.legend span{{display:flex;align-items:center;gap:5px}}.legend i{{width:15px;height:15px;border-radius:3px}}.sheet{{display:block;width:100%;height:auto;background:#050607;border:1px solid #30363d;border-radius:8px;cursor:zoom-in}}.note{{color:#8b949e;line-height:1.5}}
-</style></head><body><header><div class="bar"><h1>V-JEPA xSSC · test_5 source video 帧拼接</h1><button id="prev">‹</button><select id="case"></select><button id="next">›</button></div></header><main><section id="meta" class="meta"></section><div class="legend">{legend}</div><a id="sheetLink" target="_blank"><img id="sheet" class="sheet" alt="Input and slot-overlay frames stitched as a contact sheet"></a><p class="note">每格左侧是模型实际输入，右侧是对应的 slot overlay；顺序从左到右、从上到下。每个 source video 均匀抽取最多32帧覆盖完整时间范围。V-JEPA tubelet=2，同一个 tubelet 的预测重复叠加到组成它的两帧。颜色表示 slot index，不是语义类别。</p></main><script>
+</style></head><body><header><div class="bar"><h1>V-JEPA xSSC · test_5 source video 帧拼接</h1><button id="prev">‹</button><select id="case"></select><button id="next">›</button></div></header><main><section id="meta" class="meta"></section><div class="legend">{legend}</div><a id="sheetLink" target="_blank"><img id="sheet" class="sheet" alt="Input and slot-overlay frames stitched as a contact sheet"></a><p class="note">每格左侧是模型实际输入，右侧是对应的 slot overlay；顺序从左到右、从上到下。{sampling_note} V-JEPA tubelet=2，同一个 tubelet 的预测重复叠加到组成它的两帧。颜色表示 slot index，不是语义类别。</p></main><script>
 const DATA={payload};const sel=document.getElementById('case');const meta=document.getElementById('meta');const image=document.getElementById('sheet');const link=document.getElementById('sheetLink');DATA.cases.forEach((c,i)=>{{const o=document.createElement('option');o.value=String(i);o.textContent=`${{String(i+1).padStart(2,'0')}} | ${{c.case_id}} | ${{c.source_frame_count}}f`;sel.appendChild(o)}});function show(){{const c=DATA.cases[Number(sel.value)];image.src=c.sheet;link.href=c.sheet;meta.innerHTML=`<span class="key">Case</span><strong>${{c.case_id}}</strong><span class="key">Source video</span><code>${{c.source_video}}</code><span class="key">Sampling</span><span>${{c.sampled_frame_count}} / ${{c.source_frame_count}} frames · indices [${{c.sampled_source_indices.join(', ')}}]</span><span class="key">Model</span><span>${{DATA.temporal_mode}} · tubelet=${{DATA.tubelet_size}} · 7 slots</span><span class="key">Checkpoint</span><code>${{DATA.checkpoint}}</code><span class="key">Attention shape</span><code>${{JSON.stringify(c.attention_shape)}}</code>`}}sel.addEventListener('change',show);document.getElementById('prev').onclick=()=>{{sel.selectedIndex=(sel.selectedIndex-1+DATA.cases.length)%DATA.cases.length;show()}};document.getElementById('next').onclick=()=>{{sel.selectedIndex=(sel.selectedIndex+1)%DATA.cases.length;show()}};show();
 </script></body></html>"""
 
@@ -208,6 +237,8 @@ def main():
         raise RuntimeError("CUDA is required")
     if args.max_sampled_frames != 0 and args.max_sampled_frames < 2:
         raise ValueError("max-sampled-frames must be 0 or at least 2")
+    if args.source_frame_count_lt < 0:
+        raise ValueError("source-frame-count-lt must be non-negative")
     if not 0 <= args.alpha <= 1:
         raise ValueError("alpha must be in [0,1]")
     checkpoint = (
@@ -237,25 +268,34 @@ def main():
     cases = load_unique_cases(test5_file)
     rendered = []
     for index, case in enumerate(cases, 1):
-        rendered.append(
-            render_case(
-                case,
-                model,
-                cfg,
-                device,
-                output_dir,
-                args.max_sampled_frames,
-                args.resize_mode,
-                args.contact_columns,
-                args.alpha,
-                args.quality,
-            )
+        result = render_case(
+            case,
+            model,
+            cfg,
+            device,
+            output_dir,
+            args.max_sampled_frames,
+            args.resize_mode,
+            args.contact_columns,
+            args.alpha,
+            args.quality,
+            args.source_frame_count_lt,
         )
+        if result is None:
+            print(
+                f"[skip] {index}/{len(cases)} {case['case_id']} "
+                f"frames>={args.source_frame_count_lt}",
+                flush=True,
+            )
+            continue
+        rendered.append(result)
         print(
             f"[render] {index}/{len(cases)} {case['case_id']} "
             f"frames={rendered[-1]['sampled_frame_count']}",
             flush=True,
         )
+    if not rendered:
+        raise RuntimeError("no source videos matched the requested frame-count filter")
 
     report = {
         "title": "V-JEPA xSSC test_5 source-video slot overlays",
@@ -269,6 +309,7 @@ def main():
         "tubelet_label_policy": cfg.tubelet_label_policy,
         "resize_mode": args.resize_mode,
         "max_sampled_frames": args.max_sampled_frames,
+        "source_frame_count_lt": args.source_frame_count_lt,
         "slot_colors_rgb": SLOT_COLORS.tolist(),
         "cases": rendered,
     }
@@ -280,7 +321,8 @@ def main():
         f"- Config: `{config_file}`\n"
         f"- Unique source videos: {len(rendered)}\n"
         f"- Resize: `{args.resize_mode}` to 256x256\n"
-        f"- Uniform samples per video: at most {args.max_sampled_frames}\n"
+        f"- Maximum sampled frames: {args.max_sampled_frames} (0 means all frames)\n"
+        f"- Source-frame strict upper bound: {args.source_frame_count_lt} (0 means disabled)\n"
     )
     print(
         json.dumps(
