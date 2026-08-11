@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 import html
 import json
 from pathlib import Path
+import re
 import sys
 
 import imageio.v3 as iio
@@ -20,6 +21,7 @@ sys.path.insert(0, str(ROOT / "upstream"))
 from train_ddp_ytvis_hq import (  # noqa: E402
     checkpoint_load_summary,
     load_matching_checkpoint,
+    read_checkpoint_metadata,
 )
 from visualize_vjepa_xssc_downstream_one_train_step import (  # noqa: E402
     FONT,
@@ -27,7 +29,6 @@ from visualize_vjepa_xssc_downstream_one_train_step import (  # noqa: E402
     add_header,
     fit_width,
     set_seed,
-    write_h264,
 )
 
 
@@ -35,11 +36,10 @@ DEFAULT_CONFIG = ROOT / (
     "upstream/config-randsfq/"
     "rsfq2_r-ytvis_hq-vjepa2_1_vitl16_256-video-slot512.py"
 )
-DEFAULT_CHECKPOINT = Path(
+DEFAULT_CHECKPOINT_DIR = Path(
     "/data/gaoya/agent-data/checkpoints/"
     "xssc_vjepa2_1_video_noncausal_ytvis_hq_bs64_steps10000/"
-    "rsfq2_r-ytvis_hq-vjepa2_1_vitl16_256-video-slot512/42/"
-    "step-007000.pth"
+    "rsfq2_r-ytvis_hq-vjepa2_1_vitl16_256-video-slot512/42"
 )
 DEFAULT_INPUT = Path(
     "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/"
@@ -69,7 +69,12 @@ def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--input-video", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--cfg-file", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="Checkpoint path; omit to use the largest step in the default run.",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--max-frames",
@@ -81,7 +86,7 @@ def parse_args():
     parser.add_argument("--resize-mode", choices=("center-crop", "padding"), default="center-crop")
     parser.add_argument("--alpha", type=float, default=0.55)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--fps", type=float, default=None)
+    parser.add_argument("--contact-columns", type=int, default=4)
     return parser.parse_args()
 
 
@@ -126,19 +131,34 @@ def normalize_frames(frames):
     return (video - IMAGENET_MEAN) / IMAGENET_STD
 
 
+def latest_checkpoint(checkpoint_dir):
+    candidates = []
+    for checkpoint in checkpoint_dir.glob("step-*.pth"):
+        match = re.fullmatch(r"step-(\d+)\.pth", checkpoint.name)
+        if match is not None:
+            candidates.append((int(match.group(1)), checkpoint))
+    if not candidates:
+        raise FileNotFoundError(f"no step checkpoint found in {checkpoint_dir}")
+    return max(candidates)[1]
+
+
 def load_model(config_file, checkpoint, device):
     from object_centric_bench.model import ModelWrap
     from object_centric_bench.util import Config, build_from_config
 
     cfg = Config.fromfile(config_file)
     model = ModelWrap(build_from_config(cfg.model), cfg.model_imap, cfg.model_omap)
+    checkpoint_metadata = read_checkpoint_metadata(checkpoint)
+    checkpoint_step = checkpoint_metadata.get("optimizer_step")
+    if not isinstance(checkpoint_step, int):
+        raise RuntimeError(f"checkpoint metadata has no integer optimizer_step: {checkpoint}")
     load_report = load_matching_checkpoint(
         model,
         checkpoint,
         exclude_patterns=(),
         allowed_missing_patterns=cfg.checkpoint_allowed_missing,
         expected_source_variant=cfg.variant_name,
-        expected_source_step=7000,
+        expected_source_step=checkpoint_step,
     )
     model.freez(cfg.freez, verbose=False)
     return cfg, model.to(device).eval(), load_report
@@ -214,6 +234,27 @@ def add_legend(frame):
     return np.asarray(image)
 
 
+def make_contact_sheet(frames, columns, gap=10):
+    if columns < 1:
+        raise ValueError("contact-columns must be >= 1")
+    frames = [np.asarray(frame, dtype=np.uint8) for frame in frames]
+    if not frames:
+        raise ValueError("contact sheet needs at least one frame")
+    cell_height, cell_width = frames[0].shape[:2]
+    if any(frame.shape[:2] != (cell_height, cell_width) for frame in frames):
+        raise ValueError("all contact-sheet frames must have the same size")
+    rows = (len(frames) + columns - 1) // columns
+    sheet_width = columns * cell_width + (columns - 1) * gap
+    sheet_height = rows * cell_height + (rows - 1) * gap
+    sheet = Image.new("RGB", (sheet_width, sheet_height), (13, 17, 23))
+    for frame_index, frame in enumerate(frames):
+        row, column = divmod(frame_index, columns)
+        x = column * (cell_width + gap)
+        y = row * (cell_height + gap)
+        sheet.paste(Image.fromarray(frame), (x, y))
+    return sheet, rows
+
+
 def build_page(report):
     legend = "".join(
         f'<span><i style="background:rgb({r},{g},{b})"></i>S{slot}</span>'
@@ -222,8 +263,8 @@ def build_page(report):
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>V-JEPA xSSC slot overlay</title><style>
-*{{box-sizing:border-box}}body{{margin:0;background:#0d1117;color:#e6edf3;font:14px system-ui,sans-serif}}header{{position:sticky;top:0;z-index:3;padding:14px 22px;background:rgba(13,17,23,.96);border-bottom:1px solid #30363d}}h1{{margin:0 0 4px;font-size:20px}}main{{max-width:1450px;margin:auto;padding:18px}}.card{{padding:15px;border:1px solid #30363d;border-radius:8px;background:#161b22}}video{{width:100%;display:block;background:#000;border-radius:6px}}.sub{{color:#8b949e}}.legend{{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}}.legend span{{display:flex;align-items:center;gap:5px}}.legend i{{display:inline-block;width:15px;height:15px;border-radius:3px}}code{{color:#79c0ff;overflow-wrap:anywhere}}button{{position:fixed;right:20px;bottom:20px;border:1px solid #388bfd;border-radius:7px;padding:10px 15px;color:white;background:#1f6feb;font-weight:650;cursor:pointer}}table{{width:100%;border-collapse:collapse;margin-top:12px}}td{{padding:8px;border-bottom:1px solid #30363d}}td:first-child{{color:#8b949e;width:180px}}
-</style></head><body><header><h1>V-JEPA xSSC 彩色 Slot Overlay</h1><div class="sub">V-JEPA2.1 ViT-L/16 video encoder → noncausal xSSC step-7000 → decoder slot assignment</div></header><main><section class="card"><video id="video" controls muted loop autoplay playsinline src="comparison.mp4" poster="poster.jpg"></video><div class="legend">{legend}</div><table><tr><td>输入视频</td><td><code>{html.escape(report['input_video'])}</code></td></tr><tr><td>有效模型输入</td><td>{report['processed_frames']} frames × 256×256，{html.escape(report['resize_mode'])}，fps={report['output_fps']:.3f}</td></tr><tr><td>V-JEPA/xSSC shape</td><td><code>{html.escape(str(report['shapes']))}</code></td></tr><tr><td>Checkpoint</td><td><code>{html.escape(report['checkpoint'])}</code></td></tr></table><p class="sub">颜色仅表示本次 forward 中的 slot index，不表示语义类别。V-JEPA tubelet=2，每个 tubelet 的 slot map 在视频中覆盖对应的两帧；白线是 slot 边界。</p></section></main><button id="replay">重新播放</button><script>document.getElementById('replay').onclick=()=>{{const v=document.getElementById('video');v.currentTime=0;v.play()}}</script></body></html>"""
+*{{box-sizing:border-box}}body{{margin:0;background:#0d1117;color:#e6edf3;font:14px system-ui,sans-serif}}header{{position:sticky;top:0;z-index:3;padding:14px 22px;background:rgba(13,17,23,.96);border-bottom:1px solid #30363d}}h1{{margin:0 0 4px;font-size:20px}}main{{max-width:2200px;margin:auto;padding:18px}}.card{{padding:15px;border:1px solid #30363d;border-radius:8px;background:#161b22}}.sheet{{display:block;width:100%;height:auto;background:#000;border-radius:6px;cursor:zoom-in}}.sub{{color:#8b949e}}.legend{{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}}.legend span{{display:flex;align-items:center;gap:5px}}.legend i{{display:inline-block;width:15px;height:15px;border-radius:3px}}code{{color:#79c0ff;overflow-wrap:anywhere}}table{{width:100%;border-collapse:collapse;margin-top:12px}}td{{padding:8px;border-bottom:1px solid #30363d}}td:first-child{{color:#8b949e;width:180px}}
+</style></head><body><header><h1>V-JEPA xSSC 视频帧 Contact Sheet</h1><div class="sub">noncausal xSSC step-{report['checkpoint_load']['source_optimizer_step']} · 每格：输入视频帧 | 彩色 slot overlay 帧 · 按时间从左到右、从上到下</div></header><main><section class="card"><a href="contact_sheet.webp" target="_blank"><img class="sheet" src="contact_sheet.webp" alt="All input and slot-overlay video frames stitched into one contact sheet"></a><div class="legend">{legend}</div><table><tr><td>帧图像拼接</td><td>{report['processed_frames']} 帧，{report['contact_sheet']['columns']} 列 × {report['contact_sheet']['rows']} 行；点击大图可查看原始分辨率</td></tr><tr><td>输入视频</td><td><code>{html.escape(report['input_video'])}</code></td></tr><tr><td>有效模型输入</td><td>{report['processed_frames']} frames × 256×256，{html.escape(report['resize_mode'])}</td></tr><tr><td>V-JEPA/xSSC shape</td><td><code>{html.escape(str(report['shapes']))}</code></td></tr><tr><td>Checkpoint</td><td><code>{html.escape(report['checkpoint'])}</code></td></tr></table><p class="sub">页面没有视频播放器。颜色仅表示本次 forward 中的 slot index，不表示语义类别。V-JEPA tubelet=2，同一 tubelet 的 slot map 分别叠加到对应的两张视频帧图像；白线是 slot 边界。</p></section></main></body></html>"""
 
 
 def main():
@@ -234,7 +275,11 @@ def main():
         raise ValueError("alpha must be in [0,1]")
     input_video = args.input_video.resolve()
     config_file = args.cfg_file.resolve()
-    checkpoint = args.checkpoint.resolve()
+    checkpoint = (
+        latest_checkpoint(DEFAULT_CHECKPOINT_DIR)
+        if args.checkpoint is None
+        else args.checkpoint.resolve()
+    )
     for path in (input_video, config_file, checkpoint):
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -266,10 +311,7 @@ def main():
     labels_256 = upsample_labels(slot_labels, 256, 256)
     labels_per_frame = np.repeat(labels_256, 2, axis=0)[:original_frame_count]
 
-    source_fps = float(video_metadata.get("fps", 30.0)) / args.frame_stride
-    output_fps = source_fps if args.fps is None else float(args.fps)
     comparison_frames = []
-    overlay_frames = []
     for frame_index, (frame, labels) in enumerate(zip(frames, labels_per_frame)):
         tubelet_index = frame_index // 2
         source = add_header(
@@ -290,11 +332,17 @@ def main():
         comparison_frames.append(
             add_legend(np.concatenate([fit_width(source, width), fit_width(overlay, width)], axis=1))
         )
-        overlay_frames.append(add_legend(overlay))
-
-    write_h264(output_dir / "comparison.mp4", comparison_frames, output_fps)
-    write_h264(output_dir / "slot_overlay.mp4", overlay_frames, output_fps)
-    Image.fromarray(comparison_frames[0]).save(output_dir / "poster.jpg", quality=92)
+    contact_sheet, contact_rows = make_contact_sheet(
+        comparison_frames, args.contact_columns
+    )
+    contact_sheet.save(
+        output_dir / "contact_sheet.webp",
+        format="WEBP",
+        quality=92,
+        method=6,
+    )
+    for stale_name in ("comparison.mp4", "slot_overlay.mp4", "poster.jpg"):
+        (output_dir / stale_name).unlink(missing_ok=True)
     report = {
         "input_video": str(input_video),
         "config_file": str(config_file),
@@ -309,9 +357,14 @@ def main():
         "resize_mode": args.resize_mode,
         "frame_stride": args.frame_stride,
         "source_fps": float(video_metadata.get("fps", 30.0)),
-        "output_fps": output_fps,
         "alpha": args.alpha,
         "seed": args.seed,
+        "contact_sheet": {
+            "file": "contact_sheet.webp",
+            "columns": args.contact_columns,
+            "rows": contact_rows,
+            "size": list(contact_sheet.size),
+        },
         "shapes": {
             "model_input": list(video.shape),
             "decoder_attention": list(attention_shape),
