@@ -211,7 +211,11 @@ def build_tasks(
     ]
 
 
-def validate_head_ranking(manifest: dict, ranking: dict) -> list[dict]:
+def validate_head_ranking(
+    manifest: dict,
+    ranking: dict,
+    allow_tagged_snapshot_change: bool = False,
+) -> list[dict]:
     entries = list(ranking.get("entries") or [])
     if len(entries) != 720:
         raise RuntimeError(f"head ranking must contain 720 entries, got {len(entries)}")
@@ -221,7 +225,21 @@ def validate_head_ranking(manifest: dict, ranking: dict) -> list[dict]:
     }:
         raise RuntimeError("head ranking is not a one-to-one 30 x 24 layer-head ranking")
     if entries[:TOP_N] != list(manifest.get("entries") or [])[:TOP_N]:
-        raise RuntimeError("head ranking Top100 does not match the frozen experiment manifest")
+        if not allow_tagged_snapshot_change:
+            raise RuntimeError(
+                "head ranking Top100 does not match the frozen experiment manifest"
+            )
+        source_path = Path(str(ranking.get("source_manifest") or ""))
+        try:
+            source = json.loads(source_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "tagged head ranking must reference a readable source_manifest"
+            ) from exc
+        if entries[:TOP_N] != list(source.get("entries") or [])[:TOP_N]:
+            raise RuntimeError(
+                "tagged head ranking Top100 does not match its source_manifest"
+            )
     return entries
 
 
@@ -670,7 +688,11 @@ def main() -> None:
     if len(manifest.get("entries", [])) < TOP_N:
         raise RuntimeError("manifest does not contain the frozen Top100 ranking")
     head_ranking = json.loads(args.head_ranking_path.read_text(encoding="utf-8"))
-    ranking_entries = validate_head_ranking(manifest, head_ranking)
+    ranking_entries = validate_head_ranking(
+        manifest,
+        head_ranking,
+        allow_tagged_snapshot_change=bool(args.ranking_tag),
+    )
     if args.all_samples:
         samples = list(manifest["samples"])
     else:
