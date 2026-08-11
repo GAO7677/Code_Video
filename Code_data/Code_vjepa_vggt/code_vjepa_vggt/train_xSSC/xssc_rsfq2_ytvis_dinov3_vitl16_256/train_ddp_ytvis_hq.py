@@ -149,14 +149,20 @@ def metric_means(metrics):
 
 def apply_sample_validity(metrics, sample_valid):
     sample_valid = sample_valid.bool().flatten()
+    if bool(sample_valid.all()):
+        return metrics
     masked = {}
     for key, (value, valid) in metrics.items():
-        if len(valid) != len(sample_valid):
+        if len(valid) == len(sample_valid):
+            valid = valid & sample_valid.to(valid.device)
+        elif len(sample_valid) == 1:
+            valid = valid & sample_valid[0].to(valid.device)
+        else:
             raise RuntimeError(
                 f"metric {key} has {len(valid)} validity entries for "
                 f"{len(sample_valid)} validation samples"
             )
-        masked[key] = (value, valid & sample_valid.to(valid.device))
+        masked[key] = (value, valid)
     return masked
 
 
@@ -214,6 +220,7 @@ def load_matching_checkpoint(
     allowed_missing_patterns=(),
     expected_source_variant=None,
     expected_source_step=None,
+    prefix_map=(),
 ):
     checkpoint_file = checkpoint_file.resolve()
     metadata = read_checkpoint_metadata(checkpoint_file)
@@ -235,25 +242,53 @@ def load_matching_checkpoint(
     target = model.state_dict()
     excludes = [re.compile(pattern) for pattern in exclude_patterns]
     allowed_missing = [re.compile(pattern) for pattern in allowed_missing_patterns]
+    normalized_prefix_map = []
+    for destination_prefix, source_prefix in prefix_map:
+        if not destination_prefix or not source_prefix:
+            raise ValueError("checkpoint prefix mappings must be non-empty")
+        normalized_prefix_map.append((destination_prefix, source_prefix))
+
+    def map_key(source_key):
+        matches = [
+            (destination_prefix, source_prefix)
+            for destination_prefix, source_prefix in normalized_prefix_map
+            if source_key.startswith(source_prefix)
+        ]
+        if len(matches) > 1:
+            raise ValueError(
+                f"checkpoint key {source_key!r} matches multiple prefix mappings"
+            )
+        if not matches:
+            return source_key
+        destination_prefix, source_prefix = matches[0]
+        return destination_prefix + source_key[len(source_prefix) :]
+
     matched = {}
     excluded = []
     unexpected = []
     shape_mismatch = []
-    for key, value in source.items():
-        if any(pattern.match(key) for pattern in excludes):
-            excluded.append(key)
-        elif key not in target:
-            unexpected.append(key)
-        elif target[key].shape != value.shape:
+    for source_key, value in source.items():
+        if any(pattern.match(source_key) for pattern in excludes):
+            excluded.append(source_key)
+            continue
+        target_key = map_key(source_key)
+        if target_key not in target:
+            unexpected.append({"source": source_key, "target": target_key})
+        elif target[target_key].shape != value.shape:
             shape_mismatch.append(
                 {
-                    "key": key,
+                    "source_key": source_key,
+                    "target_key": target_key,
                     "checkpoint_shape": list(value.shape),
-                    "model_shape": list(target[key].shape),
+                    "model_shape": list(target[target_key].shape),
                 }
             )
         else:
-            matched[key] = value
+            if target_key in matched:
+                raise ValueError(
+                    f"multiple checkpoint keys map to target key {target_key!r}"
+                )
+            matched[target_key] = value
 
     load_result = model.load_state_dict(matched, strict=False)
     missing_keys = sorted(load_result.missing_keys)
@@ -266,10 +301,11 @@ def load_matching_checkpoint(
         "checkpoint": str(checkpoint_file),
         "source_variant": source_variant,
         "source_optimizer_step": source_step,
+        "prefix_map": normalized_prefix_map,
         "matched_key_count": len(matched),
         "matched_parameter_count": sum(value.numel() for value in matched.values()),
         "excluded_keys": sorted(excluded),
-        "unexpected_keys": sorted(unexpected),
+        "unexpected_keys": unexpected,
         "shape_mismatches": shape_mismatch,
         "missing_keys": missing_keys,
         "disallowed_missing_keys": disallowed_missing,
@@ -864,6 +900,7 @@ def main():
                 allowed_missing_patterns=cfg.transfer_allowed_missing,
                 expected_source_variant=cfg.transfer_expected_source_variant,
                 expected_source_step=cfg.transfer_expected_source_step,
+                prefix_map=getattr(cfg, "transfer_prefix_map", ()),
             )
     else:
         load_report = None

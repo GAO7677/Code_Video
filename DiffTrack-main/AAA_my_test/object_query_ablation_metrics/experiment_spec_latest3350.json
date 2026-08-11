@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "experiment_id": "object_query_information_flow_latest3350_v1",
+  "status": "frozen_gate0_confirmed",
+  "confirmed_at_utc": "2026-08-11",
+  "objective": "Separate trajectory, center-aligned appearance, outside-object propagation, and survival effects of R-to-R, C-to-R, and R-to-C self-attention contribution ablations under latest3350 head ranking.",
+  "intervention": {
+    "operator": "post_softmax_value_contribution_subtraction_without_renormalization",
+    "flows": {
+      "M1": "R_KV_to_R_Query",
+      "M2": "C_KV_to_R_Query",
+      "M3": "R_KV_to_C_Query"
+    },
+    "latent_time_modes": {
+      "all_time": "all_tk_tq",
+      "same": "tk_eq_tq",
+      "future": "tk_lt_tq",
+      "past": "tk_gt_tq"
+    },
+    "denoising_default": "all_40_steps_both_cfg_branches"
+  },
+  "head_scopes": {
+    "source": "/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/pck_head_scopes_s039_latest3350.json",
+    "ranking_tag": "s039r3350",
+    "primary": [
+      "top100",
+      "bottom100",
+      "random100_layer_matched_draw0",
+      "all720"
+    ],
+    "random_robustness_subset": [
+      "random100_layer_matched_draw1",
+      "random100_layer_matched_draw2"
+    ],
+    "random_seed": 20260811,
+    "random_sampling_pool": "exclude_latest3350_top100_and_bottom100"
+  },
+  "seeds": {
+    "discovery": [13248, 47326, 90094],
+    "confirmation": [32466, 35075, 68613],
+    "note": "47326 is heavily inspected and remains exploratory only."
+  },
+  "data_policy": {
+    "ranking_source": "67 PhysicIQ cases x 50 seeds = 3350 runs",
+    "discovery": "existing cases may be used but ranking-source overlap must be labeled",
+    "confirmation": "cases must be absent from ranking construction and prior visual selection",
+    "confirmation_case_count": "freeze from case-level pilot variance, MDE, corrected alpha, and power >= 0.8",
+    "fewer_than_8_independent_cases": "pilot_or_exploratory_only"
+  },
+  "stage1_query_time_validation": {
+    "query_anchors": "all_available_latent_anchors",
+    "target_anchors": "all_other_available_latent_anchors",
+    "threshold_calibration_seed": 20260811,
+    "threshold_rule": "freeze permutation-null and case-bootstrap thresholds before reading head-stability results",
+    "external_exploratory_cases": [
+      "0613pybullet_sample_000301_w000",
+      "0613pybullet_sample_000331_w001",
+      "0613pybullet_sample_000336_w001",
+      "0613pybullet_sample_001455_w000",
+      "0613pybullet_sample_001460_w002"
+    ],
+    "seeds": [13248, 47326, 90094],
+    "interpretation": "external exploratory ranking validation, not confirmatory ablation evidence"
+  },
+  "primary_metrics": {
+    "trajectory": "baseline_relative_center_ADE_over_F00_bbox_diagonal",
+    "appearance": "center_aligned_object_LPIPS",
+    "propagation": "other_object_center_ADE_over_F00_bbox_diagonal",
+    "survival": [
+      "track_retention",
+      "mask_retention",
+      "disappearance_onset"
+    ]
+  },
+  "statistics": {
+    "highest_independent_cluster": "case",
+    "interval": "case_cluster_bootstrap_95pct_CI",
+    "primary_multiple_testing": "BH_FDR",
+    "missing_policy": "never_impute_missing_trajectory_or_mask_as_zero",
+    "fixed_stopping": true
+  },
+  "probe_and_rescue": {
+    "message_probe": "included_after_causal_screening",
+    "activation_rescue": "only_for_small_number_of_strong_replicated_contrasts"
+  },
+  "compute": {
+    "requested_gpus": [2, 3],
+    "forbidden_gpus": [4],
+    "artifact_root": "/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1",
+    "do_not_terminate_unrelated_processes": true
+  }
+}

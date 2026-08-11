@@ -149,7 +149,15 @@ class HandleLog(Callback):
         for k, v in kwds.items():
             assert len(v) == 2  # [loss/acc,valid]
             v = tuple(
-                _.detach().cpu().numpy() if isinstance(_, pt.Tensor) else _ for _ in v
+                (
+                    _.detach()
+                    .to(dtype=pt.float32 if _.dtype == pt.bfloat16 else _.dtype)
+                    .cpu()
+                    .numpy()
+                    if isinstance(_, pt.Tensor)
+                    else _
+                )
+                for _ in v
             )
             if k in self.state_dict:
                 self.state_dict[k].append(v)
