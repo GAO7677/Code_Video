@@ -236,6 +236,15 @@ case-level Top−Bottom PCK@32 均值=`51.128 pp`，case-cluster bootstrap 95% l
 
 任何一项失败，停止大规模运行。
 
+执行结果（2026-08-11）：**PASS**。9 项 CPU 代数/回归测试全部通过；3 个
+layer-matched Random100 draw 均为 100 heads、与 fixed Top100/Bottom100 不重叠，且逐层
+数量直方图与 Top100 完全一致。真实 GPU smoke 使用
+`0613pybullet_sample_000301_w000 / seed 47326 / object_A`，分别验证
+Random100-M2 和 All720-M3：视频均可完整解码为 49 帧（704×1280），dose 张量均为
+`40 × 2 × 30 × 24`，有效事件数分别精确等于 `100×40×2=8000` 和
+`720×40×2=57600`，无缺失或 NaN。Stage 2 smoke 输出位于
+`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage2_smoke_videos/`。
+
 ### Stage 3 — Primary：All-time 信息类型筛查
 
 固定因素：
@@ -256,6 +265,11 @@ case-level Top−Bottom PCK@32 均值=`51.128 pp`，case-cluster bootstrap 95% l
 - Baseline 可在同 case/seed 下复用，不按每个消融单独生成。
 
 筛查输出：每个 primary metric 的 case-cluster effect、95% CI、case/object/seed 分层图、Top/Bottom/Random/All720 倍数对比和原始效应，不只给全局平均。
+
+实际冻结矩阵（2026-08-11）：10 cases、每个 seed 共 33 targets、3 discovery seeds，
+`33 × 3 seeds × 4 head groups × 3 flows = 1188` 个任务；即 30 个 case-seed
+samples 展开后共 1188 个任务。GPU2/3 的两个分片已启动，输出写入
+`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage3_discovery_videos/`。
 
 ### Stage 4 — latent-video 时间方向分解
 

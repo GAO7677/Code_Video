@@ -59,6 +59,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--guidance-scale", type=float, default=5.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-items", type=int)
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
@@ -188,12 +190,21 @@ def main() -> None:
     if args.target_frames != 120 or args.target_fps != 24 or args.model_fps != 24:
         raise ValueError("shared Verified submission requires exactly 120 frames at 24 FPS")
 
-    cases = load_cases(args.input_list, args.max_items)
+    all_cases = load_cases(args.input_list, args.max_items)
+    if args.num_shards < 1 or not 0 <= args.shard_index < args.num_shards:
+        raise ValueError(
+            f"invalid shard {args.shard_index}/{args.num_shards}; expected 0 <= shard-index < num-shards"
+        )
+    cases = all_cases[args.shard_index :: args.num_shards]
     run_dir = (args.output_root / args.run_name).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     pipe = load_pipeline(args)
     manifest = {
         "protocol": "physics-iq-verified-bpp-v2v-strict",
+        "shard_index": args.shard_index,
+        "num_shards": args.num_shards,
+        "num_total_cases": len(all_cases),
+        "num_shard_cases": len(cases),
         "input_list": str(args.input_list),
         "condition": {"fps": 24, "frames": 72, "seconds": 3.0},
         "physrvg_xssc_aligned": {
@@ -242,7 +253,8 @@ def main() -> None:
         manifest["cases"].append(case_record)
         print(f"[{index:03d}/{len(cases):03d}] {status}: {output_path.name}", flush=True)
 
-    manifest_path = args.output_root / f"{args.run_name}_manifest.json"
+    shard_suffix = "" if args.num_shards == 1 else f"_shard{args.shard_index:02d}-of-{args.num_shards:02d}"
+    manifest_path = args.output_root / f"{args.run_name}{shard_suffix}_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"manifest={manifest_path}")
 

@@ -510,6 +510,15 @@ class AttentionMatrixAblator:
             )
         if self.target_scope != "all_tokens" and not self.query_token_indices:
             raise RuntimeError("object query token indices were not resolved")
+        dose_finite_events = int(np.isfinite(self.dose_attention_mass).sum())
+        if (
+            self.record_dose
+            and self.mask_mode in {"self_only", "incoming_only", "outgoing_only"}
+            and dose_finite_events != expected_head_events
+        ):
+            raise RuntimeError(
+                f"recorded {dose_finite_events} dose events, expected {expected_head_events}"
+            )
         return {
             "model_call_counts": self.model_call_counts,
             "modified_forward_calls": self.modified_forward_calls,
@@ -519,7 +528,7 @@ class AttentionMatrixAblator:
             "affected_query_vectors": self.affected_query_vectors,
             "query_token_indices": self.query_token_indices,
             "dose_recorded": self.record_dose,
-            "dose_finite_events": int(np.isfinite(self.dose_attention_mass).sum()),
+            "dose_finite_events": dose_finite_events,
         }
 
 

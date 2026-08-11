@@ -170,6 +170,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task-index", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--record-dose",
+        action="store_true",
+        help=(
+            "record exact removed attention mass and A@V contribution/output norms "
+            "for M1/M2/M3 in dose_metrics.npz"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -592,13 +600,14 @@ def process(
     output_root: Path,
     track_path: Path,
     overwrite: bool,
+    record_dose: bool,
 ) -> None:
     output = task_root(task, output_root)
     complete_path = output / "complete.json"
-    ready = all(
-        (output / name).is_file()
-        for name in ("complete.json", "manifest.json", "generated.mp4")
-    )
+    required_outputs = ["complete.json", "manifest.json", "generated.mp4"]
+    if record_dose:
+        required_outputs.append("dose_metrics.npz")
+    ready = all((output / name).is_file() for name in required_outputs)
     if ready and not overwrite:
         print(f"skip {output.relative_to(output_root)}", flush=True)
         return
@@ -628,6 +637,7 @@ def process(
         task.get("region"),
         tracks=tracks,
         anchor_frames=anchors,
+        record_dose=record_dose,
     )
     ablator.install()
     try:
@@ -635,6 +645,9 @@ def process(
     finally:
         ablator.remove()
     audit = ablator.audit()
+    dose_path = output / "dose_metrics.npz"
+    if record_dose:
+        atomic_npz(dose_path, **ablator.dose_arrays())
     temporary_video = output / "generated.tmp.mp4"
     save_video_np(video, temporary_video, fps=30)
     temporary_video.replace(output / "generated.mp4")
@@ -700,6 +713,25 @@ def process(
         "denoising_steps": list(range(40)),
         "cfg_branches": ["conditional", "unconditional"],
         "audit": audit,
+        "dose_metrics": (
+            {
+                "path": str(dose_path),
+                "attention_mass": (
+                    "mean over removed source attention probability for affected query rows"
+                ),
+                "removed_value_norm": (
+                    "mean L2 norm of the exact removed sum_k A_qk V_k per affected query"
+                ),
+                "original_output_norm": (
+                    "mean L2 norm of the original selected-head attention output on the same queries"
+                ),
+                "removed_to_output_ratio": "removed_value_norm / original_output_norm",
+                "axes": ["denoising_step", "cfg_call", "block", "head"],
+                "cfg_call_order": ["conditional_first_call", "unconditional_second_call"],
+            }
+            if record_dose
+            else None
+        ),
     }
     (output / "manifest.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -713,6 +745,7 @@ def process(
                 "protocol": metadata["protocol"],
                 "selected_temporal_tokens": len(audit["query_token_indices"]),
                 "modified_head_events": audit["modified_head_events"],
+                "dose_finite_events": audit["dose_finite_events"],
             },
             ensure_ascii=False,
             indent=2,
@@ -856,6 +889,7 @@ def main() -> None:
                     args.output_root,
                     track_path,
                     bool(args.overwrite),
+                    bool(args.record_dose),
                 )
             except Exception:
                 output.mkdir(parents=True, exist_ok=True)

@@ -166,6 +166,21 @@ HTML_TEMPLATE = r'''<!doctype html>
     h1{margin:0 0 6px;font-size:22px}.intro p,.prompt,.note{margin:0;color:var(--muted);
       font-size:13px;line-height:1.55}.summary-grid{display:grid;
       grid-template-columns:minmax(560px,1.05fr) minmax(620px,1fr);gap:14px;align-items:start}
+    .extreme-metric{margin:0 0 16px}.extreme-metric>h2{margin:0 0 9px;font-size:18px}
+    .extreme-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .extreme-card{padding:12px;background:var(--paper);border:1px solid var(--line);border-radius:8px}
+    .extreme-card.xssc-win{border-top:4px solid var(--xssc)}.extreme-card.physrvg-win{
+      border-top:4px solid var(--off)}.extreme-head{display:flex;align-items:flex-start;gap:9px;
+      margin-bottom:9px}.extreme-head h3{margin:0 0 4px;font-size:14px;overflow-wrap:anywhere}
+    .extreme-head p{margin:0;color:var(--muted);font-size:11px}.advantage{margin-left:auto;
+      flex:none;padding:5px 8px;border-radius:999px;background:#fff1d1;color:#8a4b00;
+      font-size:12px;font-weight:900}.extreme-videos{display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.mini-video{padding:6px;
+      border:1px solid #e0e6e8;border-radius:6px}.mini-label{min-height:31px;margin-bottom:4px;
+      font-size:10px;font-weight:850;line-height:1.3}.mini-video video{aspect-ratio:16/9}
+    .extreme-table{margin-top:8px}.extreme-table th,.extreme-table td{padding:5px 6px;
+      font-size:10px}.extreme-table tr.focus td{background:#fff7db;font-weight:900}
+    .open-detail{margin-top:8px;height:32px;color:#006d77;font-size:11px;font-weight:850}
     .panel{background:var(--paper);border:1px solid var(--line);border-radius:8px;overflow:hidden}
     .panel-head{padding:12px 14px;border-bottom:1px solid var(--line)}
     .panel-head h2{margin:0 0 4px;font-size:16px}.rank-wrap{max-height:410px;overflow:auto}
@@ -189,10 +204,11 @@ HTML_TEMPLATE = r'''<!doctype html>
       gap:5px 9px;margin:0;font-size:12px}.metric-card dt{color:var(--muted)}
     .metric-card dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;font-weight:800}
     .gap{color:#9b3a31}.footer{margin:16px 0 5px;color:var(--muted);font-size:11px}
-    @media(max-width:1200px){.summary-grid{grid-template-columns:1fr}.video-grid,
+    @media(max-width:1200px){.summary-grid,.extreme-pair{grid-template-columns:1fr}.video-grid,
       .metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:700px){.toolbar{flex-wrap:wrap}.title{width:100%;order:-1}main{padding:10px}
-      select{max-width:calc(100vw - 22px)}.video-grid,.metric-grid{grid-template-columns:1fr}}
+      select{max-width:calc(100vw - 22px)}.video-grid,.metric-grid,
+      .extreme-videos{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -208,6 +224,7 @@ HTML_TEMPLATE = r'''<!doctype html>
       <p>共 39 个 case。四个指标分别独立排序，不做归一化；排名值为
       max(|xSSC − PhysRVG LoRA OFF|, |xSSC − PhysRVG +LoRA|)。表格同时保留两组原始绝对差值。</p>
     </section>
+    <section id="extremes"></section>
     <div class="summary-grid">
       <section class="panel"><div class="panel-head"><h2 id="rank-title"></h2>
         <p class="note">点击任意一行切换下方视频；差值越大排名越靠前。</p></div>
@@ -235,6 +252,55 @@ HTML_TEMPLATE = r'''<!doctype html>
     function fmt(value){return Number.isInteger(value)?String(value):value.toFixed(2)}
     function rankedCases(){const key=metricSelect.value;return [...D.cases]
       .sort((a,b)=>b.metrics[key].rank_gap-a.metrics[key].rank_gap||a.stem.localeCompare(b.stem))}
+    function physrvgBest(values){
+      return values.physrvg_off>=values.physrvg_on
+        ? {key:'physrvg_off',label:'PhysRVG LoRA OFF',value:values.physrvg_off}
+        : {key:'physrvg_on',label:'PhysRVG +LoRA',value:values.physrvg_on};
+    }
+    function extremeVideos(item,spec){
+      const value=item.metrics[spec.key];
+      return `<div class="extreme-videos">
+        <div class="mini-video"><div class="mini-label">GT</div><video src="${item.gt}" muted playsinline preload="none"></video></div>
+        <div class="mini-video"><div class="mini-label" style="color:var(--xssc)">xSSC · ${spec.label} ${fmt(value.xssc)}</div><video src="${item.videos.xssc}" muted playsinline preload="none"></video></div>
+        <div class="mini-video"><div class="mini-label" style="color:var(--off)">PhysRVG OFF · ${spec.label} ${fmt(value.physrvg_off)}</div><video src="${item.videos.physrvg_off}" muted playsinline preload="none"></video></div>
+        <div class="mini-video"><div class="mini-label" style="color:var(--on)">PhysRVG +LoRA · ${spec.label} ${fmt(value.physrvg_on)}</div><video src="${item.videos.physrvg_on}" muted playsinline preload="none"></video></div>
+      </div>`;
+    }
+    function extremeMetrics(item,selectedKey){
+      const rows=D.metrics.map(spec=>{const value=item.metrics[spec.key];return `<tr class="${spec.key===selectedKey?'focus':''}"><td class="case">${spec.label} ${spec.direction}</td>
+        <td>${fmt(value.xssc)}</td><td>${fmt(value.physrvg_off)}</td><td>${fmt(value.physrvg_on)}</td></tr>`}).join('');
+      return `<table class="extreme-table"><thead><tr><th class="case">指标</th><th>xSSC</th><th>LoRA OFF</th><th>+LoRA</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    function extremeCard(spec,item,side){
+      const values=item.metrics[spec.key];const best=physrvgBest(values);
+      const advantage=side==='xssc'?values.xssc-best.value:best.value-values.xssc;
+      const title=side==='xssc'?'xSSC 优势最大':`${best.label} 优势最大`;
+      const article=document.createElement('article');
+      article.className=`extreme-card ${side==='xssc'?'xssc-win':'physrvg-win'}`;
+      article.innerHTML=`<div class="extreme-head"><div><h3>${title} · ${item.stem}</h3>
+        <p>${side==='xssc'?'xSSC 同时超过两种 PhysRVG':'PhysRVG 系列最高值与 xSSC 比较'}</p></div>
+        <span class="advantage">优势 +${fmt(advantage)}</span></div>${extremeVideos(item,spec)}
+        ${extremeMetrics(item,spec.key)}<button class="open-detail">在完整排名中打开</button>`;
+      article.querySelector('.open-detail').onclick=()=>{
+        metricSelect.value=spec.key;renderMetric();renderCase(item.stem);
+        document.querySelector('.summary-grid').scrollIntoView({behavior:'smooth'});
+      };
+      return article;
+    }
+    function renderExtremes(){
+      const root=document.getElementById('extremes');root.replaceChildren();
+      D.metrics.forEach(spec=>{
+        const rows=D.cases.map(item=>{const values=item.metrics[spec.key];const best=physrvgBest(values);
+          return {item,xsscAdvantage:values.xssc-best.value,physrvgAdvantage:best.value-values.xssc}});
+        const xsscWinner=[...rows].sort((a,b)=>b.xsscAdvantage-a.xsscAdvantage||a.item.stem.localeCompare(b.item.stem))[0];
+        const physrvgWinner=[...rows].sort((a,b)=>b.physrvgAdvantage-a.physrvgAdvantage||a.item.stem.localeCompare(b.item.stem))[0];
+        const section=document.createElement('section');section.className='extreme-metric';
+        const heading=document.createElement('h2');heading.textContent=`${spec.label} ${spec.direction} · 双向最大优势样本`;
+        const pair=document.createElement('div');pair.className='extreme-pair';
+        pair.append(extremeCard(spec,xsscWinner.item,'xssc'),extremeCard(spec,physrvgWinner.item,'physrvg'));
+        section.append(heading,pair);root.append(section);
+      });
+    }
     function renderCase(stem){
       const item=D.cases.find(row=>row.stem===stem);if(!item)return;selectedStem=stem;
       videos().forEach(video=>video.pause());
@@ -275,7 +341,7 @@ HTML_TEMPLATE = r'''<!doctype html>
     document.getElementById('play').onclick=()=>videos().forEach(video=>video.play().catch(()=>{}));
     document.getElementById('pause').onclick=()=>videos().forEach(video=>video.pause());
     document.getElementById('replay').onclick=()=>videos().forEach(video=>{video.currentTime=0;video.play().catch(()=>{})});
-    renderMetric();
+    renderExtremes();renderMetric();
   </script>
 </body>
 </html>
