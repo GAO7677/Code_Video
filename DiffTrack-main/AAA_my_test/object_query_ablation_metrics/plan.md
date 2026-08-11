@@ -2,7 +2,7 @@
 
 ## 0. 文档状态
 
-- 状态：**Gate 0 已确认；Stage 0 已完成；Stage 1 执行中**。
+- 状态：**Gate 0、Stage 0、Stage 1 已完成；等待进入 Stage 2/3 的确认**。
 - Gate 0 后先执行只读清单审计和 query-time ranking validation；尚未启动新的大规模消融视频矩阵。
 - 目标：在新的 `latest3350` PCK head 排名下，区分 `R→R`、`C→R`、`R→C` 三类 self-attention 信息流更主要地影响对象轨迹、对象外观，还是对象外区域，并比较 Top100、Bottom100、随机匹配 100 heads 与 All720。
 - 结论边界：`R` 是由追踪点构成的**稀疏 object-token tube**，不是完整对象 mask；因此结论首先针对该 tube 表示，不能直接外推成“完整对象区域的全部信息流”。
@@ -213,6 +213,14 @@ m_V=\left\|\sum_{k\in B(q)}A_{qk}V_k\right\|_2,
 - 若明显不稳定，则新增按多个 `Q_t` 聚合的 `TubeTop100/TubeBottom100`，并将 S039 Top/Bottom 保留为对照，不偷偷替换定义。
 
 “足够稳定”的数值阈值需在执行前根据 anchor 数量冻结，不能看完结果后再定。
+
+执行结果（2026-08-11）：5 个外部 PyBullet cases × 3 discovery seeds，共 15/15 runs 完成。
+冻结阈值下判定为 **PASS**：query-time Top100 两两 median Jaccard=`0.7391`，
+median Spearman=`0.9817`；fixed latest3350 Top100 在 13/13 query anchors 上优于 Bottom100；
+case-level Top−Bottom PCK@32 均值=`51.128 pp`，case-cluster bootstrap 95% lower bound=`29.921 pp`。
+因此主矩阵继续使用 fixed latest3350 Top/Bottom；`TubeTop/TubeBottom` 保留为敏感性分析，不替换主定义。
+完整报告和固定 Q overlay 位于
+`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage1_query_time_validation/analysis/`。
 
 ### Stage 2 — 实现审计、单元测试和 smoke test
 

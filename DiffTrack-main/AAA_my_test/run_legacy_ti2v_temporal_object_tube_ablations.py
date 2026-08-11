@@ -141,6 +141,12 @@ def parse_args() -> argparse.Namespace:
         help="optional output-ID suffix for a different frozen ranking snapshot",
     )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument(
+        "--tracks-root",
+        type=Path,
+        default=None,
+        help="optional root containing reusable frozen_baseline_tracks; defaults to output-root",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--worker-id", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=1)
@@ -148,12 +154,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--head-scopes",
         nargs="+",
-        choices=HEAD_SCOPES,
         default=["top100"],
-        help="frozen S039 PCK head subset; top100 keeps legacy output IDs",
+        help=(
+            "head scopes declared by the ranking JSON; built-ins are top100, "
+            "bottom100, all720 and custom pair scopes such as layer-matched Random100"
+        ),
+    )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=None,
+        help="optional seed filter applied before worker sharding",
     )
     parser.add_argument("--task-index", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
@@ -185,7 +201,9 @@ def build_tasks(
     sample: dict,
     head_scopes: list[str] | tuple[str, ...] = ("top100",),
     ranking_tag: str = "",
+    head_scope_counts: dict[str, int] | None = None,
 ) -> list[dict]:
+    counts = HEAD_SCOPE_COUNTS if head_scope_counts is None else head_scope_counts
     regions = [
         str(row["region_name"])
         for row in sample["regions"]
@@ -201,7 +219,7 @@ def build_tasks(
             "target_scope": target_scope,
             "mask_mode": mask_mode,
             "region": region,
-            "top_n": HEAD_SCOPE_COUNTS[head_scope],
+            "top_n": counts[head_scope],
             "head_scope": head_scope,
             "ranking_tag": ranking_tag,
         }
@@ -243,14 +261,40 @@ def validate_head_ranking(
     return entries
 
 
-def selected_head_entries(ranking_entries: list[dict], head_scope: str) -> list[dict]:
+def selected_head_entries(
+    ranking_entries: list[dict],
+    head_scope: str,
+    head_scope_definitions: dict[str, dict] | None = None,
+) -> list[dict]:
     if head_scope == "top100":
         return ranking_entries[:100]
     if head_scope == "bottom100":
         return ranking_entries[-100:]
     if head_scope == "all720":
         return ranking_entries
+    definition = (head_scope_definitions or {}).get(head_scope)
+    if definition and definition.get("pairs") is not None:
+        lookup = {
+            (int(row["block"]), int(row["head"])): row for row in ranking_entries
+        }
+        pairs = [(int(pair[0]), int(pair[1])) for pair in definition["pairs"]]
+        if len(pairs) != len(set(pairs)):
+            raise RuntimeError(f"{head_scope}: duplicate physical heads")
+        try:
+            return [lookup[pair] for pair in pairs]
+        except KeyError as exc:
+            raise RuntimeError(f"{head_scope}: unknown layer-head pair {exc.args[0]}") from exc
     raise ValueError(f"unknown head scope: {head_scope}")
+
+
+def head_scope_counts(ranking: dict) -> dict[str, int]:
+    result = dict(HEAD_SCOPE_COUNTS)
+    for name, definition in (ranking.get("head_scopes") or {}).items():
+        if definition.get("pairs") is not None:
+            result[str(name)] = len(definition["pairs"])
+        elif "rank_start" in definition and "rank_end" in definition:
+            result[str(name)] = int(definition["rank_end"]) - int(definition["rank_start"]) + 1
+    return result
 
 
 def task_root(task: dict, output_root: Path) -> Path:
@@ -540,6 +584,7 @@ def process(
     pipe,
     manifest: dict,
     ranking_entries: list[dict],
+    head_scope_definitions: dict[str, dict],
     head_ranking_path: Path,
     sample: dict,
     case_lookup: dict,
@@ -571,7 +616,7 @@ def process(
         tracks = arrays["tracks"].astype(np.float32)
         anchors = arrays["anchor_pixel_frames"].astype(np.int64)
     head_scope = str(task.get("head_scope", "top100"))
-    entries = selected_head_entries(ranking_entries, head_scope)
+    entries = selected_head_entries(ranking_entries, head_scope, head_scope_definitions)
     ablator = TemporalObjectTubeAblator(
         pipe.pipe,
         entries,
@@ -693,6 +738,11 @@ def main() -> None:
         head_ranking,
         allow_tagged_snapshot_change=bool(args.ranking_tag),
     )
+    scope_definitions = dict(head_ranking.get("head_scopes") or {})
+    scope_counts = head_scope_counts(head_ranking)
+    unknown_scopes = sorted(set(args.head_scopes) - set(scope_counts))
+    if unknown_scopes:
+        raise ValueError(f"head scopes not declared by ranking JSON: {unknown_scopes}")
     if args.all_samples:
         samples = list(manifest["samples"])
     else:
@@ -707,11 +757,22 @@ def main() -> None:
         if sample is None:
             raise KeyError(f"case/seed not found in manifest: {args.case}/{args.seed}")
         samples = [sample]
+    if args.seeds is not None:
+        selected_seeds = set(args.seeds)
+        samples = [row for row in samples if int(row["seed"]) in selected_seeds]
+        missing_seeds = selected_seeds - {int(row["seed"]) for row in samples}
+        if missing_seeds:
+            raise KeyError(f"requested seeds absent from selected manifest samples: {sorted(missing_seeds)}")
 
     selected_modes = set(args.mask_modes) if args.mask_modes is not None else None
     sample_tasks: list[tuple[dict, list[dict]]] = []
     for sample in samples:
-        tasks = build_tasks(sample, args.head_scopes, args.ranking_tag)
+        tasks = build_tasks(
+            sample,
+            args.head_scopes,
+            args.ranking_tag,
+            head_scope_counts=scope_counts,
+        )
         if selected_modes is not None:
             tasks = [task for task in tasks if str(task["mask_mode"]) in selected_modes]
         if tasks:
@@ -735,6 +796,24 @@ def main() -> None:
     sample_tasks = [(sample, tasks) for sample, tasks in sample_tasks if tasks]
     if not sample_tasks:
         return
+    if args.dry_run:
+        flattened = [task for _, tasks in sample_tasks for task in tasks]
+        print(
+            json.dumps(
+                {
+                    "sample_count": len(sample_tasks),
+                    "task_count": len(flattened),
+                    "head_scopes": args.head_scopes,
+                    "mask_modes": sorted({str(task["mask_mode"]) for task in flattened}),
+                    "seeds": sorted({int(task["seed"]) for task in flattened}),
+                    "first_task": flattened[0],
+                    "last_task": flattened[-1],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
 
     from AAA_my_test.legacy_ti2v_firstlatent_physiciq67_common import CASES
 
@@ -744,7 +823,11 @@ def main() -> None:
         sample_key = (str(sample["case"]), int(sample["seed"]))
         print(f"prepare frozen tracks {sample_key[0]}/seed_{sample_key[1]:05d}", flush=True)
         track_paths[sample_key] = prepare_tracks(
-            sample, case_lookup, args.output_root, str(args.device), bool(args.overwrite)
+            sample,
+            case_lookup,
+            args.tracks_root or args.output_root,
+            str(args.device),
+            bool(args.overwrite),
         )
 
     total_tasks = sum(len(tasks) for _, tasks in sample_tasks)
@@ -765,6 +848,7 @@ def main() -> None:
                     pipe,
                     manifest,
                     ranking_entries,
+                    scope_definitions,
                     args.head_ranking_path,
                     sample,
                     case_lookup,

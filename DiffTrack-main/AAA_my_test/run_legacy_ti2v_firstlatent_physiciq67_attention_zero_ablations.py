@@ -11,6 +11,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from PIL import Image
 
@@ -171,6 +172,7 @@ class AttentionMatrixAblator:
         mask_mode: str,
         region: str | None,
         extra_mask_modes: tuple[str, ...] = (),
+        record_dose: bool = False,
     ) -> None:
         if target_scope not in TARGET_SCOPES + ("all_tokens",):
             raise ValueError(f"unsupported target scope: {target_scope}")
@@ -190,6 +192,7 @@ class AttentionMatrixAblator:
         self.target_scope = target_scope
         self.mask_mode = mask_mode
         self.region = region
+        self.record_dose = bool(record_dose)
         self.by_block: dict[int, list[int]] = {}
         for entry in entries:
             self.by_block.setdefault(int(entry["block"]), []).append(int(entry["head"]))
@@ -198,6 +201,7 @@ class AttentionMatrixAblator:
         if sum(len(heads) for heads in self.by_block.values()) != len(entries):
             raise RuntimeError("selected ranking contains duplicate physical heads")
         self.current_step = -1
+        self.current_cfg_call = -1
         self.current_grid: tuple[int, int, int] | None = None
         self.active = False
         self.model_call_counts: dict[int, int] = {}
@@ -206,6 +210,12 @@ class AttentionMatrixAblator:
         self.auxiliary_attention_calls = 0
         self.affected_query_vectors = 0
         self.query_token_indices: list[int] | None = None
+        dose_shape = (40, 2, 30, 24)
+        self.dose_attention_mass = np.full(dose_shape, np.nan, dtype=np.float32)
+        self.dose_removed_value_norm = np.full(dose_shape, np.nan, dtype=np.float32)
+        self.dose_original_output_norm = np.full(dose_shape, np.nan, dtype=np.float32)
+        self.dose_removed_to_output_ratio = np.full(dose_shape, np.nan, dtype=np.float32)
+        self.dose_target_query_count = np.zeros(dose_shape, dtype=np.int32)
         self._original_model_fn = None
         self._original_forwards: list[tuple[Any, Any]] = []
 
@@ -225,13 +235,15 @@ class AttentionMatrixAblator:
             int(latents.shape[4] // patch[2]),
         )
         self.current_step = self._step(timestep)
-        self.model_call_counts[self.current_step] = self.model_call_counts.get(self.current_step, 0) + 1
+        self.current_cfg_call = self.model_call_counts.get(self.current_step, 0)
+        self.model_call_counts[self.current_step] = self.current_cfg_call + 1
         self.active = True
         try:
             return self._original_model_fn(*args, **kwargs)
         finally:
             self.active = False
             self.current_step = -1
+            self.current_cfg_call = -1
 
     def _rows(self, device: torch.device) -> torch.Tensor | None:
         if self.target_scope == "all_tokens":
@@ -298,6 +310,49 @@ class AttentionMatrixAblator:
             modified_heads[:, :, head, :] = 0
         return modified
 
+    def _record_removed_dose(
+        self,
+        block: int,
+        heads: tuple[int, ...] | list[int],
+        target_rows: torch.Tensor,
+        removed_heads: torch.Tensor,
+        original_heads: torch.Tensor,
+        removed_mass: torch.Tensor,
+    ) -> None:
+        """Store exact per-head removed mass and value/output norm summaries."""
+        if not self.record_dose:
+            return
+        if self.current_step not in range(40) or self.current_cfg_call not in (0, 1):
+            raise RuntimeError(
+                f"invalid dose coordinates step={self.current_step} cfg={self.current_cfg_call}"
+            )
+        selected = torch.as_tensor(heads, device=removed_heads.device, dtype=torch.long)
+        removed = removed_heads[:, target_rows][:, :, selected]
+        original = original_heads[:, target_rows][:, :, selected]
+        mass = removed_mass[:, target_rows][:, :, selected]
+        removed_norm = torch.linalg.vector_norm(removed.float(), dim=-1).mean(dim=(0, 1))
+        original_norm = torch.linalg.vector_norm(original.float(), dim=-1).mean(dim=(0, 1))
+        mass_mean = mass.float().mean(dim=(0, 1, 3))
+        ratio = removed_norm / original_norm.clamp_min(1e-12)
+        values = torch.stack((mass_mean, removed_norm, original_norm, ratio)).cpu().numpy()
+        index = (self.current_step, self.current_cfg_call, block)
+        self.dose_attention_mass[index][list(heads)] = values[0]
+        self.dose_removed_value_norm[index][list(heads)] = values[1]
+        self.dose_original_output_norm[index][list(heads)] = values[2]
+        self.dose_removed_to_output_ratio[index][list(heads)] = values[3]
+        self.dose_target_query_count[index][list(heads)] = int(target_rows.numel())
+
+    def dose_arrays(self) -> dict[str, np.ndarray]:
+        if not self.record_dose:
+            return {}
+        return {
+            "attention_mass": self.dose_attention_mass,
+            "removed_value_norm": self.dose_removed_value_norm,
+            "original_output_norm": self.dose_original_output_norm,
+            "removed_to_output_ratio": self.dose_removed_to_output_ratio,
+            "target_query_count": self.dose_target_query_count,
+        }
+
     def _attention(self, q, k, v, original, block: int):
         heads = self.by_block.get(block, ())
         if not self.active or not heads:
@@ -360,6 +415,38 @@ class AttentionMatrixAblator:
                 selected_contribution = original(q, k, selected_v)
                 self.auxiliary_attention_calls += 1
                 contribution_heads = self._head_view(selected_contribution, num_heads)
+                if self.record_dose and self.mask_mode in {
+                    "self_only",
+                    "incoming_only",
+                    "outgoing_only",
+                }:
+                    selected_ones = self._selected_values(
+                        torch.ones_like(v), rows, heads, num_heads
+                    )
+                    selected_mass = original(q, k, selected_ones)
+                    self.auxiliary_attention_calls += 1
+                    mass_heads = self._head_view(selected_mass, num_heads)
+                    if self.mask_mode == "self_only":
+                        target_rows = rows
+                        removed_heads = contribution_heads
+                        removed_mass = mass_heads
+                    elif self.mask_mode == "incoming_only":
+                        target_rows = rows
+                        removed_heads = output_heads - contribution_heads
+                        removed_mass = 1.0 - mass_heads
+                    else:
+                        all_rows = torch.arange(q.shape[1], device=q.device, dtype=torch.long)
+                        target_rows = all_rows[~torch.isin(all_rows, rows)]
+                        removed_heads = contribution_heads
+                        removed_mass = mass_heads
+                    self._record_removed_dose(
+                        block,
+                        heads,
+                        target_rows,
+                        removed_heads,
+                        output_heads,
+                        removed_mass,
+                    )
                 for head in heads:
                     if self.mask_mode == "self_only":
                         output_heads[:, rows, head, :] -= contribution_heads[:, rows, head, :]
@@ -431,6 +518,8 @@ class AttentionMatrixAblator:
             "auxiliary_attention_calls": self.auxiliary_attention_calls,
             "affected_query_vectors": self.affected_query_vectors,
             "query_token_indices": self.query_token_indices,
+            "dose_recorded": self.record_dose,
+            "dose_finite_events": int(np.isfinite(self.dose_attention_mass).sum()),
         }
 
 

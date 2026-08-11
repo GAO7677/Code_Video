@@ -54,6 +54,62 @@ PALETTE = np.asarray(
     ],
     dtype=np.uint8,
 )
+YTVIS_CLASSES = [
+    "background",
+    "person",
+    "giant_panda",
+    "lizard",
+    "parrot",
+    "skateboard",
+    "sedan",
+    "ape",
+    "dog",
+    "snake",
+    "monkey",
+    "hand",
+    "rabbit",
+    "duck",
+    "cat",
+    "cow",
+    "fish",
+    "train",
+    "horse",
+    "turtle",
+    "bear",
+    "motorbike",
+    "giraffe",
+    "leopard",
+    "fox",
+    "deer",
+    "owl",
+    "surfboard",
+    "airplane",
+    "truck",
+    "zebra",
+    "tiger",
+    "elephant",
+    "snowboard",
+    "boat",
+    "shark",
+    "mouse",
+    "frog",
+    "eagle",
+    "earless_seal",
+    "tennis_racket",
+]
+
+
+def class_text(class_id):
+    name = YTVIS_CLASSES[class_id] if 0 <= class_id < len(YTVIS_CLASSES) else "unknown"
+    return f"{name} (c{class_id})"
+
+
+def ltrb_status(box):
+    box = np.asarray(box, dtype=np.float32)
+    finite = bool(np.isfinite(box).all())
+    ordered = finite and bool(box[2] > box[0] and box[3] > box[1])
+    in_bounds = finite and bool(((0 <= box) & (box <= 1)).all())
+    return ordered, in_bounds
 
 
 def parse_args():
@@ -156,6 +212,15 @@ def snapshot(model, loss_fn, batch, amp_dtype):
         for match in frame_matches.detach().cpu().tolist():
             slot_index, gt_index = (int(match[0]), int(match[1]))
             logits = output["clspd"][prediction_cursor]
+            pred_box = [
+                float(value)
+                for value in output["boxpd"][prediction_cursor].detach().float().cpu()
+            ]
+            gt_box = [
+                float(value)
+                for value in output["boxgt"][prediction_cursor].detach().float().cpu()
+            ]
+            box_valid, box_in_bounds = ltrb_status(pred_box)
             frame_records.append(
                 {
                     "slot": slot_index,
@@ -163,6 +228,10 @@ def snapshot(model, loss_fn, batch, amp_dtype):
                     "pred_class": int(logits.argmax().item()),
                     "gt_class": int(output["clsgt"][prediction_cursor].item()),
                     "confidence": float(logits.float().softmax(0).max().item()),
+                    "pred_box_ltrb_raw": pred_box,
+                    "pred_box_valid_ltrb": box_valid,
+                    "pred_box_in_unit_bounds": box_in_bounds,
+                    "gt_box_ltrb": gt_box,
                 }
             )
             prediction_cursor += 1
@@ -259,7 +328,7 @@ def draw_gt(frame, segment, boxes, classes):
         draw.rectangle(coords, outline=color, width=3)
         draw.text(
             (coords[0] + 3, max(1, coords[1] + 2)),
-            f"GT c{clazz}",
+            f"GT {class_text(clazz)}",
             fill=(255, 255, 255),
             stroke_width=2,
             stroke_fill=(0, 0, 0),
@@ -272,14 +341,60 @@ def summarize_matches(records):
     if not records:
         return "no IoU>0.1 slot/GT match"
     return " | ".join(
-        f"s{record['slot']}→c{record['pred_class']} "
-        f"(GT c{record['gt_class']}, {record['confidence']:.2f})"
+        f"P:{class_text(record['pred_class'])} {record['confidence']:.2f} "
+        f"| GT:{class_text(record['gt_class'])}"
         for record in records
     )
 
 
-def render_output(frame, labels, records):
-    return blend_labels(frame, labels, include_background=True), summarize_matches(records)
+def box_to_pixels(box, width, height):
+    ordered, _ = ltrb_status(box)
+    if not ordered:
+        return None
+    left, top, right, bottom = np.clip(np.asarray(box, dtype=np.float32), 0, 1)
+    if right <= left or bottom <= top:
+        return None
+    return (
+        max(0, min(width - 1, round(float(left) * width))),
+        max(0, min(height - 1, round(float(top) * height))),
+        max(0, min(width - 1, round(float(right) * width))),
+        max(0, min(height - 1, round(float(bottom) * height))),
+    )
+
+
+def render_output(frame, labels, records, box_color):
+    result = blend_labels(frame, labels, include_background=True)
+    image = Image.fromarray(result)
+    draw = ImageDraw.Draw(image)
+    height, width = labels.shape
+    invalid_row = 4
+    for record in records:
+        coords = box_to_pixels(record["pred_box_ltrb_raw"], width, height)
+        label = (
+            f"PRED {class_text(record['pred_class'])} "
+            f"p={record['confidence']:.2f}"
+        )
+        if coords is None:
+            draw.text(
+                (5, invalid_row),
+                f"INVALID BOX · {label}",
+                fill=box_color,
+                stroke_width=2,
+                stroke_fill=(0, 0, 0),
+                font=FONT_SMALL,
+            )
+            invalid_row += 17
+            continue
+        draw.rectangle(coords, outline=box_color, width=3)
+        draw.text(
+            (coords[0] + 3, max(1, coords[1] + 2)),
+            label,
+            fill=box_color,
+            stroke_width=2,
+            stroke_fill=(0, 0, 0),
+            font=FONT_SMALL,
+        )
+    return np.asarray(image), summarize_matches(records)
 
 
 def fit_width(frame, width):
@@ -340,6 +455,35 @@ def render_page(metadata):
             f"<td class={'good' if delta < 0 else 'bad'}>{delta:+.6f}</td>"
             "</tr>"
         )
+    detection_rows = []
+    for frame_index, (before_records, after_records) in enumerate(
+        zip(metadata["detections"]["before"], metadata["detections"]["after"])
+    ):
+        if len(before_records) != len(after_records):
+            raise RuntimeError("before/after detection counts differ")
+        for before_record, after_record in zip(before_records, after_records):
+            if (before_record["slot"], before_record["gt_index"]) != (
+                after_record["slot"],
+                after_record["gt_index"],
+            ):
+                raise RuntimeError("before/after slot-to-GT matches differ")
+            fmt_box = lambda box: "[" + ", ".join(f"{value:.3f}" for value in box) + "]"
+            before_status = (
+                "valid" if before_record["pred_box_valid_ltrb"] else "invalid"
+            )
+            after_status = "valid" if after_record["pred_box_valid_ltrb"] else "invalid"
+            detection_rows.append(
+                "<tr>"
+                f"<td>t{frame_index}</td>"
+                f"<td>s{before_record['slot']}→gt{before_record['gt_index']}</td>"
+                f"<td>{html.escape(class_text(before_record['gt_class']))}</td>"
+                f"<td><code>{fmt_box(before_record['gt_box_ltrb'])}</code></td>"
+                f"<td>{html.escape(class_text(before_record['pred_class']))}<br>p={before_record['confidence']:.3f}</td>"
+                f"<td class={'good' if before_status == 'valid' else 'bad'}>{before_status}<br><code>{fmt_box(before_record['pred_box_ltrb_raw'])}</code></td>"
+                f"<td>{html.escape(class_text(after_record['pred_class']))}<br>p={after_record['confidence']:.3f}</td>"
+                f"<td class={'good' if after_status == 'valid' else 'bad'}>{after_status}<br><code>{fmt_box(after_record['pred_box_ltrb_raw'])}</code></td>"
+                "</tr>"
+            )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -361,6 +505,7 @@ def render_page(metadata):
     th,td {{ padding:9px 10px; border-bottom:1px solid #30363d; text-align:right; }}
     th:first-child,td:first-child {{ text-align:left; }} .good {{ color:#3fb950; }} .bad {{ color:#f85149; }}
     .notes {{ margin-top:16px; display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
+    .wide {{ margin-top:16px; overflow-x:auto; }} .wide td,.wide th {{ white-space:nowrap; }}
     code {{ color:#79c0ff; overflow-wrap:anywhere; }} li {{ margin:7px 0; color:#b1bac4; }}
     @media(max-width:900px) {{ .grid,.notes {{ grid-template-columns:1fr; }} main {{ padding:10px; }} }}
   </style>
@@ -370,7 +515,7 @@ def render_page(metadata):
   <main>
     <section class="grid">
       <article class="card"><h2>完整输入（6 帧）</h2><video controls muted loop autoplay playsinline src="input.mp4"></video></article>
-      <article class="card"><h2>同步对照：输入 / GT / 更新前 / 更新后</h2><video controls muted loop autoplay playsinline src="comparison.mp4"></video></article>
+      <article class="card"><h2>同步对照：输入 / GT box+标签 / Pred box+识别（更新前后）</h2><video controls muted loop autoplay playsinline src="comparison.mp4"></video></article>
     </section>
     <section class="notes">
       <article class="card"><h2>Loss</h2><table><thead><tr><th>项</th><th>更新前 eval</th><th>训练 forward</th><th>更新后 eval</th><th>after-before</th></tr></thead><tbody>{''.join(loss_rows)}</tbody></table><p class="sub">梯度 L2 norm（clip 前）：{metadata['gradient_norm_before_clip']:.6f}；clip={metadata['gradient_clip_norm']}; LR={metadata['learning_rate']}</p></article>
@@ -379,9 +524,11 @@ def render_page(metadata):
         <li>V-JEPA tubelet 对齐原始帧索引：<code>{metadata['label_frame_indices']}</code></li>
         <li>严格加载：{metadata['checkpoint_load']['matched_key_count']} keys，source step={metadata['checkpoint_load']['source_optimizer_step']}</li>
         <li>Checkpoint：<code>{html.escape(metadata['source_checkpoint'])}</code></li>
-        <li>输出 overlay 是 slot mask + 分类；GT overlay 是真实 mask + bbox。未把 raw box head 值误画成 LTRB。</li>
+        <li>GT：真实 mask + 归一化 LTRB bbox + 类别标签；Pred：slot mask + raw LTRB bbox + 识别类别/置信度。</li>
+        <li>预测框按训练目标的 LTRB 语义解释；画图副本裁剪到 [0,1]，表格始终保留未修改的 raw 值。</li>
       </ul></article>
     </section>
+    <section class="card wide"><h2>GT 与识别/框回归明细</h2><table><thead><tr><th>时刻</th><th>匹配</th><th>GT 标签</th><th>GT LTRB</th><th>更新前识别</th><th>更新前 Pred LTRB</th><th>更新后识别</th><th>更新后 Pred LTRB</th></tr></thead><tbody>{''.join(detection_rows)}</tbody></table></section>
   </main>
   <div class="toolbar"><button id="replay">全部重新播放</button></div>
   <script>document.getElementById('replay').onclick=()=>document.querySelectorAll('video').forEach(v=>{{v.currentTime=0;v.play();}});</script>
@@ -520,7 +667,10 @@ def main():
             color=(126, 231, 135),
         )
         before_frame, before_text = render_output(
-            aligned[time_index], before["segment"][time_index], before["matches"][time_index]
+            aligned[time_index],
+            before["segment"][time_index],
+            before["matches"][time_index],
+            box_color=(255, 196, 107),
         )
         before_panel = add_header(
             before_frame,
@@ -528,7 +678,10 @@ def main():
             color=(255, 196, 107),
         )
         after_frame, after_text = render_output(
-            aligned[time_index], after["segment"][time_index], after["matches"][time_index]
+            aligned[time_index],
+            after["segment"][time_index],
+            after["matches"][time_index],
+            box_color=(224, 145, 255),
         )
         after_panel = add_header(
             after_frame,
@@ -570,12 +723,22 @@ def main():
             "before": [len(records) for records in before["matches"]],
             "after": [len(records) for records in after["matches"]],
         },
+        "detections": {
+            "before": before["matches"],
+            "after": after["matches"],
+        },
         "frozen_slot_masks_identical_before_after": slot_masks_identical,
         "checkpoint_load": checkpoint_load_summary(load_report),
         "interpretation": {
             "gt_overlay": "ground-truth mask, normalized LTRB box, and class",
-            "output_overlay": "xSSC slot mask and downstream predicted class",
-            "box_output": "raw regression values intentionally not drawn as LTRB",
+            "output_overlay": (
+                "xSSC slot mask, raw predicted normalized LTRB box, predicted "
+                "class, and confidence"
+            ),
+            "box_output": (
+                "raw prediction is retained in metadata/table; only the rendered "
+                "copy is clipped to the [0,1] viewport, without coordinate reordering"
+            ),
         },
     }
     (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")

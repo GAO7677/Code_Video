@@ -184,7 +184,7 @@ def main() -> None:
             text(info, f"Fixed Q latent t={qt} / pixel F{int(anchors[qt]):02d}", 48, 0.75)
             text(info, "white: query point | green ring: GT at K_t", 88)
             text(info, "colored line: GT tube | cross: 100-head mean argmax", 122)
-            text(info, "red dots: deterministic 20-head argmax cloud", 156)
+            text(info, "blue dots: deterministic 20-head argmax cloud", 156)
             text(info, f"Fixed Top100 PCK@32: {row['fixed_top100_pck32']:.2f}%", 210)
             text(info, f"Fixed Bottom100 PCK@32: {row['fixed_bottom100_pck32']:.2f}%", 244)
             text(info, f"Top-Bottom: {row['top_minus_bottom_pck32']:+.2f} pp", 278)
