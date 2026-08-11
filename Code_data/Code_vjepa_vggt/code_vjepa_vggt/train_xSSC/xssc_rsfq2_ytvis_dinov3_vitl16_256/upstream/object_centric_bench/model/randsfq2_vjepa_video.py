@@ -53,7 +53,17 @@ class RandSFQ2VJEPAVideo(RandSFQ2):
         attenta = rearrange(attenta, "b t s (h w) -> b t s h w", h=h, w=w)
 
         clue = rearrange(feature, "b t c h w -> b t (h w) c")
-        recon, attentd, fsti = self.decode(clue, slotz, spatial_shape=(h, w))
+        # Legacy square checkpoints use the original flat positional embedding.
+        # New aspect-ratio configs opt into 2-D interpolation by constructing the
+        # positional embedding with a reference spatial_shape.
+        decode_spatial_shape = (
+            (h, w)
+            if getattr(self.decode.posit_embed, "spatial_shape", None) is not None
+            else None
+        )
+        recon, attentd, fsti = self.decode(
+            clue, slotz, spatial_shape=decode_spatial_shape
+        )
         if self.training:
             feature = feature.gather(
                 1, fsti[:, :, None, None, None].expand(-1, -1, c, h, w)

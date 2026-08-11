@@ -26,8 +26,8 @@ MOVi-C 上没有变量意义；本阶段先解决 YTVIS 的时间粒度和非正
 | frozen backbone | V-JEPA2.1 ViT-L/16 | 避免小数据集破坏预训练特征 |
 | trainable params | 80,779,264 | xSSC encoder-project、slot、transition、decoder |
 | GPU | 5、6 | 不使用 GPU4 |
-| batch/GPU | 16 | 10帧矩形输入的保守稳定值 |
-| accumulation | 12 | 保持 effective global batch=384 |
+| batch/GPU | 64 | GPU7 实测完整 backward 峰值32.12 GiB |
+| accumulation | 3 | 保持 effective global batch=384 |
 | optimizer steps | 10000→20000 | 新阶段共10000次更新 |
 | validation | 每500 step | 计算完整 val loss 与 slot segmentation 指标 |
 | checkpoint | 每1000 step | 保存模型，并维护 `resume-latest.pth` |
@@ -76,7 +76,9 @@ bucket 选择最小化输入宽高比与 bucket 宽高比的 log-distance。YTVI
 | 192×336 | 1589 | 1600 | 11 |
 | 144×448 | 4 | 32 | 28 |
 
-总样本1678，分桶对齐后为1760个抽样位，重复率4.89%。宽高比相对误差均值
+以上是最初 batch=16/GPU 的分桶统计。正式训练按要求改为 batch=64/GPU 后，
+global batch 为128；各 bucket 需补齐到128的倍数，总抽样位变为2048，新增重复位
+370个，相对原数据量为22.05%。宽高比相对误差均值
 1.72%，P99为4.76%；极少数约2.13:1视频的最大误差为21.25%。ultrawide 样本被
 有意轻度过采样，这是用固定 global batch 保证 DDP 梯度等权的代价，必须在解释
 实验时保留该 caveat。
@@ -185,10 +187,10 @@ DINOv3 reconstruction MSE 横向比较。ARI/mBO/mIoU 可以比较，但本实�
 
 ## 10. batch、梯度与 DDP
 
-`16 samples/GPU × 2 GPUs × 12 accumulation = 384 samples/update`。
+`64 samples/GPU × 2 GPUs × 3 accumulation = 384 samples/update`。
 
-一个 sampler epoch 有55个 microbatches；为保证每次更新正好累积12个 microbatch，
-每个 epoch 使用前48个、随机丢弃尾部7个。batch 顺序每个 epoch 重洗，所以不是永久
+一个 sampler epoch 有16个 microbatches；为保证每次更新正好累积3个 microbatch，
+每个 epoch 使用前15个、随机丢弃尾部1个。batch 顺序每个 epoch重洗，所以不是永久
 丢弃固定 bucket。该策略与旧训练“丢弃不足一次 accumulation 的 epoch 尾部”一致。
 
 使用 bf16 autocast；因 bf16 不需要 GradScaler。每次更新前执行 global gradient
@@ -263,7 +265,7 @@ W&B project：`xssc_vjepa2_1_video_10f_ar`。日志横轴是全局 optimizer ste
 保留风险：
 
 - 本实验同时改变时间步与空间预处理，不是单变量 ablation；
-- rare bucket 有4.89%总体重复，ultrawide 被明显过采样；
+- batch=64/GPU 使分桶补齐重复位达到原数据量的22.05%，ultrawide 被明显过采样；
 - 前期 gradient clip 可能频繁生效；
 - 10帧使 frozen V-JEPA 的时空 attention 成本高于6帧版本；
 - 训练 step 不能等价为相同 epoch，因为新 sampler 每个 epoch 的有效样本流不同。

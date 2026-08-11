@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VJEPA2_ROOT="${VJEPA2_ROOT:-/home/gaoya/Code_Video/vjepa2-main}"
 VJEPA2_CHECKPOINT="${VJEPA2_CHECKPOINT:-/data/gaoya/agent-data/weights/vjepa2_1_vitl_dist_vitG_384_ema_encoder.pt}"
 DATA_DIR="${DATA_DIR:-/data/gaoya/dataset}"
-SAVE_DIR="${SAVE_DIR:-/data/gaoya/agent-data/checkpoints/xssc_vjepa2_1_video_noncausal_ytvis_hq_10f_ar_steps20000}"
+SAVE_DIR="${SAVE_DIR:-/data/gaoya/agent-data/checkpoints/xssc_vjepa2_1_video_noncausal_ytvis_hq_10f_ar_bs64_steps20000}"
 SOURCE_CHECKPOINT="${SOURCE_CHECKPOINT:-/data/gaoya/agent-data/checkpoints/xssc_vjepa2_1_video_noncausal_ytvis_hq_bs64_steps10000/rsfq2_r-ytvis_hq-vjepa2_1_vitl16_256-video-slot512/42/step-010000.pth}"
 GPU_IDS="${GPU_IDS:-5,6}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-2}"
@@ -65,7 +65,7 @@ exec env \
   train_ddp_ytvis_hq.py \
   --project "${WANDB_PROJECT}" \
   --seed "${SEED}" \
-  --cfg-file upstream/config-randsfq/rsfq2_r-ytvis_hq-vjepa2_1_vitl16-ar10f-slot512-transfer10000.py \
+  --cfg-file upstream/config-randsfq/rsfq2_r-ytvis_hq-vjepa2_1_vitl16-ar10f-slot512-transfer10000-bs64.py \
   --data-dir "${DATA_DIR}" \
   --save-dir "${SAVE_DIR}" \
   "${extra_args[@]}"
