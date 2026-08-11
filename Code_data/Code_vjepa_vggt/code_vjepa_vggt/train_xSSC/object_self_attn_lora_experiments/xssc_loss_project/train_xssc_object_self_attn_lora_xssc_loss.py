@@ -490,6 +490,14 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         }
 
     def forward(self, data, inputs=None):
+        if (
+            self.enable_object_branch
+            and self.training
+            and self.xssc_filter_empty_amg
+            and inputs is None
+            and self.xssc_box_source == "amg"
+        ):
+            return super().forward(data, inputs=inputs)
         if isinstance(data, list):
             return super().forward(data, inputs=inputs)
         if inputs is None:
