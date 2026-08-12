@@ -19,8 +19,10 @@ from AAA_my_test.run_wan_gt_spatiotemporal_correspondence_guidance import (
     cached_object_prompt_spec,
     cached_object_phrases,
     cached_segmentation_prompt_spec,
+    correspondence_component_modes,
     deduplicated_json_paths,
     masks_to_token_rows,
+    mean_component_gradients,
     load_target_map,
     normalize_guidance_gradient,
     point_correspondence_loss,
@@ -51,6 +53,31 @@ def qk_for_two_frame_match(correct: bool) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 class CorrespondenceGuidanceTests(unittest.TestCase):
+    def test_combined_guidance_uses_sequential_equivalent_gradients(self) -> None:
+        self.assertEqual(correspondence_component_modes("region"), ("region",))
+        self.assertEqual(
+            correspondence_component_modes("combined"), ("region", "point")
+        )
+
+        value = torch.tensor([1.25, -0.75], requires_grad=True)
+        region_loss = value.square().sum()
+        point_loss = (value - 2.0).square().mean()
+        joint_gradient = torch.autograd.grad(
+            0.5 * (region_loss + point_loss), value
+        )[0]
+
+        sequential_value = value.detach().clone().requires_grad_(True)
+        region_gradient = torch.autograd.grad(
+            sequential_value.square().sum(), sequential_value
+        )[0]
+        point_gradient = torch.autograd.grad(
+            (sequential_value - 2.0).square().mean(), sequential_value
+        )[0]
+        sequential_gradient = mean_component_gradients(
+            (region_gradient, point_gradient)
+        )
+        self.assertTrue(torch.allclose(sequential_gradient, joint_gradient))
+
     def test_run_config_arguments_serialize_optional_path(self) -> None:
         arguments = SimpleNamespace(
             input_list=Path("/tmp/input.txt"),

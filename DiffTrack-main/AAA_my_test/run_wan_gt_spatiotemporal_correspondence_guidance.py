@@ -1151,6 +1151,31 @@ def normalize_guidance_gradient(
     }
 
 
+def correspondence_component_modes(loss_mode: str) -> tuple[str, ...]:
+    """Return independently evaluated loss components for a guidance mode.
+
+    Region and point losses can each fit on a 48 GiB device, while retaining
+    both QK graphs in one Combined forward can exceed that peak.  Evaluating
+    the two deterministic forwards at the same latent and averaging their
+    gradients is mathematically identical to differentiating their mean.
+    """
+    if loss_mode == "combined":
+        return ("region", "point")
+    if loss_mode in {"region", "point"}:
+        return (loss_mode,)
+    raise ValueError(loss_mode)
+
+
+def mean_component_gradients(gradients: Iterable[torch.Tensor]) -> torch.Tensor:
+    items = tuple(gradient.detach() for gradient in gradients)
+    if not items:
+        raise ValueError("at least one component gradient is required")
+    result = items[0].clone()
+    for gradient in items[1:]:
+        result.add_(gradient)
+    return result.div_(float(len(items)))
+
+
 def guided_generate(
     pipe: Any,
     collector: CorrespondenceLossCollector | None,
@@ -1194,39 +1219,58 @@ def guided_generate(
                 int(latent_leaf.shape[3] // patch[1]),
                 int(latent_leaf.shape[4] // patch[2]),
             )
-            collector.reset_step(grid)
-            collector.active = True
+            original_loss_mode = collector.loss_mode
+            component_gradients: list[torch.Tensor] = []
+            component_loss_values: dict[str, float] = {}
+            component_head_events: list[int] = []
+            forward_term_count = 0
+            noise_pos = None
             try:
-                with torch.enable_grad():
-                    noise_pos = pipe.model_fn(
-                        **models,
-                        **inputs_shared,
-                        **inputs_posi,
-                        timestep=timestep,
-                        use_gradient_checkpointing=bool(use_gradient_checkpointing),
-                    )
-                    loss = collector.total_loss()
-                    forward_head_events = collector.head_events
-                    forward_term_count = collector.term_count
-                    # Non-reentrant checkpointing must execute the identical hook
-                    # operations during recomputation. It will append disposable
-                    # duplicate losses, but the gradient is taken only from `loss`.
-                    gradient = torch.autograd.grad(loss, latent_leaf, only_inputs=True)[0]
+                for component_mode in correspondence_component_modes(original_loss_mode):
+                    collector.loss_mode = component_mode
+                    collector.reset_step(grid)
+                    collector.active = True
+                    try:
+                        with torch.enable_grad():
+                            component_noise = pipe.model_fn(
+                                **models,
+                                **inputs_shared,
+                                **inputs_posi,
+                                timestep=timestep,
+                                use_gradient_checkpointing=bool(use_gradient_checkpointing),
+                            )
+                            loss = collector.total_loss()
+                            component_head_events.append(collector.head_events)
+                            forward_term_count += collector.term_count
+                            # Non-reentrant checkpointing must execute identical hook
+                            # operations during recomputation. Disposable duplicate
+                            # side losses are cleared before the next component.
+                            component_gradient = torch.autograd.grad(
+                                loss, latent_leaf, only_inputs=True
+                            )[0]
+                    finally:
+                        collector.active = False
+                    if noise_pos is None:
+                        noise_pos = component_noise.detach()
+                    component_gradients.append(component_gradient.detach())
+                    component_loss_values[component_mode] = float(loss.detach().cpu())
+                    collector.losses.clear()
+                    del component_noise, component_gradient, loss
             finally:
                 collector.active = False
-            gradient = gradient.detach()
+                collector.loss_mode = original_loss_mode
+                collector.losses.clear()
+            if noise_pos is None:
+                raise RuntimeError("guided forward produced no noise prediction")
+            gradient = mean_component_gradients(component_gradients)
+            forward_head_events = component_head_events[0]
             gradient[:, :, 0:1] = 0  # the conditioned first latent is immutable
-            noise_pos = noise_pos.detach()
             normalized_gradient, gradient_audit = normalize_guidance_gradient(
                 gradient, noise_pos, gradient_normalization, max_gradient_rms_ratio
             )
             sigma = float(pipe.scheduler.sigmas[step])
-            loss_value = float(loss.detach().cpu())
-            # Checkpoint recomputation appends duplicate side-loss tensors. They
-            # are not part of the selected scalar and must not retain a graph
-            # during the unconditional forward.
-            collector.losses.clear()
-            del loss
+            loss_value = float(sum(component_loss_values.values()) / len(component_loss_values))
+            del component_gradients, gradient
         else:
             inputs_shared["latents"] = latents
             with torch.no_grad():
@@ -1236,6 +1280,7 @@ def guided_generate(
             normalized_gradient = torch.zeros_like(noise_pos)
             sigma = float(pipe.scheduler.sigmas[step])
             loss_value = math.nan
+            component_loss_values = {}
             gradient_audit = {
                 "raw_gradient_rms": 0.0,
                 "noise_prediction_rms": float(noise_pos.float().square().mean().sqrt().cpu()),
@@ -1263,6 +1308,7 @@ def guided_generate(
                 "sigma": sigma,
                 "guided": guided_step,
                 "loss": loss_value,
+                "component_losses": component_loss_values,
                 "selected_head_events": forward_head_events if guided_step else 0,
                 "correspondence_terms": forward_term_count if guided_step else 0,
                 **gradient_audit,
