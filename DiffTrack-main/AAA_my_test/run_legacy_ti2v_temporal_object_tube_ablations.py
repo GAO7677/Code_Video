@@ -10,6 +10,7 @@ import re
 import sys
 import traceback
 from pathlib import Path
+from typing import Callable
 
 import imageio.v3 as iio
 import numpy as np
@@ -469,27 +470,56 @@ def apply_temporal_directional_ablation(
     heads: tuple[int, ...] | list[int],
     num_heads: int,
     groups: list[tuple[torch.Tensor, torch.Tensor]],
+    dose_recorder: Callable[
+        [torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], None
+    ]
+    | None = None,
 ) -> tuple[int, int, int]:
     """Subtract exact post-softmax A@V contributions for directional token groups."""
     output_heads = AttentionMatrixAblator._head_view(output, num_heads)
+    original_heads = output_heads.clone() if dose_recorder is not None else output_heads
     source_heads = AttentionMatrixAblator._head_view(v, num_heads)
     selected_v = torch.zeros_like(v)
     selected_heads = AttentionMatrixAblator._head_view(selected_v, num_heads)
+    removed_heads = torch.zeros_like(output_heads) if dose_recorder is not None else None
+    removed_mass = torch.zeros_like(output_heads) if dose_recorder is not None else None
+    dose_target_rows: list[torch.Tensor] = []
     affected_rows = 0
     zeroed_entries_per_head = 0
+    auxiliary_calls = 0
     for target_rows, source_rows in groups:
         selected_heads.zero_()
         for head in heads:
             selected_heads[:, source_rows, head, :] = source_heads[:, source_rows, head, :]
         contribution = original(q[:, target_rows, :], k, selected_v)
+        auxiliary_calls += 1
         contribution_heads = AttentionMatrixAblator._head_view(contribution, num_heads)
+        if dose_recorder is not None:
+            assert removed_heads is not None and removed_mass is not None
+            removed_heads[:, target_rows] = contribution_heads
+            selected_heads.zero_()
+            for head in heads:
+                selected_heads[:, source_rows, head, :] = 1
+            mass = original(q[:, target_rows, :], k, selected_v)
+            auxiliary_calls += 1
+            removed_mass[:, target_rows] = AttentionMatrixAblator._head_view(
+                mass, num_heads
+            )
+            dose_target_rows.append(target_rows)
         for head in heads:
             output_heads[:, target_rows, head, :] = (
                 output_heads[:, target_rows, head, :] - contribution_heads[:, :, head, :]
             )
         affected_rows += int(target_rows.numel())
         zeroed_entries_per_head += int(target_rows.numel() * source_rows.numel())
-    return len(groups), affected_rows, zeroed_entries_per_head
+    if dose_recorder is not None:
+        if not dose_target_rows:
+            raise RuntimeError("temporal dose recording received no affected query rows")
+        assert removed_heads is not None and removed_mass is not None
+        dose_recorder(
+            torch.cat(dose_target_rows), removed_heads, original_heads, removed_mass
+        )
+    return auxiliary_calls, affected_rows, zeroed_entries_per_head
 
 
 class TemporalObjectTubeAblator(AttentionMatrixAblator):
@@ -559,8 +589,28 @@ class TemporalObjectTubeAblator(AttentionMatrixAblator):
             q.device,
         )
         output = original(q, k, v)
+        dose_recorder = None
+        if self.record_dose:
+            dose_recorder = lambda target_rows, removed, original_output, mass: (
+                self._record_removed_dose(
+                    block,
+                    heads,
+                    target_rows,
+                    removed,
+                    original_output,
+                    mass,
+                )
+            )
         auxiliary_calls, affected_rows, zeroed_entries = apply_temporal_directional_ablation(
-            output, q, k, v, original, heads, num_heads, groups
+            output,
+            q,
+            k,
+            v,
+            original,
+            heads,
+            num_heads,
+            groups,
+            dose_recorder=dose_recorder,
         )
         if self.temporal_zeroed_entries_per_head is None:
             self.temporal_zeroed_entries_per_head = zeroed_entries
@@ -580,6 +630,14 @@ class TemporalObjectTubeAblator(AttentionMatrixAblator):
             len(row) for row in (self.query_token_indices_by_latent_frame or [])
         ]
         if self.mask_mode in TEMPORAL_DIRECTIONAL_MODES:
+            if self.record_dose:
+                expected_dose_events = len(self.entries) * 40 * 2
+                if int(result["dose_finite_events"]) != expected_dose_events:
+                    raise RuntimeError(
+                        "temporal directional dose coverage mismatch: "
+                        f"recorded {result['dose_finite_events']}, "
+                        f"expected {expected_dose_events}"
+                    )
             result["temporal_directional_spec"] = TEMPORAL_DIRECTIONAL_SPECS[self.mask_mode]
             result["temporal_zeroed_entries_per_head"] = self.temporal_zeroed_entries_per_head
             result["temporal_auxiliary_attention_calls"] = (

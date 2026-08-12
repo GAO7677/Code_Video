@@ -30,6 +30,25 @@ class SAM2TrackOutput:
 
 
 @dataclass
+class SAM2TrackedPointTubeOutput:
+    """Per-anchor masks built from tracked points with an audited fallback.
+
+    ``direct_masks_ahw`` are independent SAM2 image-predictor results prompted
+    by valid CoTracker points at the same anchor.  ``neighbor_masks_ahw`` are
+    deliberately computed even when a direct result exists so the two prompt
+    paths can be compared.  ``final_masks_ahw`` selects direct first and uses
+    neighbor propagation only when direct prompting is unavailable or empty.
+    """
+
+    direct_masks_ahw: np.ndarray
+    neighbor_masks_ahw: np.ndarray
+    final_masks_ahw: np.ndarray
+    direct_prompt_counts_a: np.ndarray
+    neighbor_source_anchor_a: np.ndarray
+    final_source_a: np.ndarray
+
+
+@dataclass
 class DetectionPromptOutput:
     boxes_xyxy: np.ndarray
     scores: np.ndarray
@@ -626,6 +645,233 @@ class SAM2MotionTracker:
             return np.zeros((0, 2), dtype=np.float32), np.zeros((0,), dtype=np.int32)
         labels = np.ones((points.shape[0],), dtype=np.int32)
         return points.astype(np.float32), labels
+
+    @staticmethod
+    def _valid_tracked_points(
+        points_n2: np.ndarray,
+        visibility_n: np.ndarray,
+        *,
+        width: int,
+        height: int,
+    ) -> np.ndarray:
+        points = np.asarray(points_n2, dtype=np.float32)
+        visibility = np.asarray(visibility_n, dtype=bool)
+        if points.ndim != 2 or points.shape[1] != 2:
+            raise ValueError(f"expected points [N,2], got {points.shape}")
+        if visibility.shape != (points.shape[0],):
+            raise ValueError(
+                f"visibility/point mismatch: {visibility.shape} vs {points.shape}"
+            )
+        valid = (
+            visibility
+            & np.isfinite(points).all(axis=1)
+            & (points[:, 0] >= 0.0)
+            & (points[:, 0] < float(width))
+            & (points[:, 1] >= 0.0)
+            & (points[:, 1] < float(height))
+        )
+        return points[valid].astype(np.float32)
+
+    def _segment_frame_from_points(
+        self,
+        frame_chw_01: np.ndarray,
+        points_n2: np.ndarray,
+    ) -> np.ndarray | None:
+        """Run independent point-prompted SAM2 and choose a point-consistent mask."""
+        points = np.asarray(points_n2, dtype=np.float32)
+        if points.shape[0] <= 0:
+            return None
+        image_predictor = self._build_image_predictor()
+        image_predictor.set_image(_frame_to_rgb_uint8(frame_chw_01))
+        labels = np.ones((points.shape[0],), dtype=np.int32)
+        masks, scores, _ = image_predictor.predict(
+            point_coords=points,
+            point_labels=labels,
+            box=None,
+            multimask_output=True,
+        )
+        masks = np.asarray(masks)
+        if masks.ndim == 4:
+            masks = masks.squeeze(1)
+        if masks.ndim == 2:
+            masks = masks[None]
+        if masks.ndim != 3 or masks.shape[0] <= 0:
+            return None
+        scores = np.asarray(scores, dtype=np.float32).reshape(-1)
+        height, width = masks.shape[-2:]
+        point_x = np.clip(np.rint(points[:, 0]).astype(np.int64), 0, width - 1)
+        point_y = np.clip(np.rint(points[:, 1]).astype(np.int64), 0, height - 1)
+        ranking: list[tuple[float, int]] = []
+        for index, raw_mask in enumerate(masks):
+            mask = np.asarray(raw_mask > 0, dtype=np.uint8)
+            if not mask.any():
+                continue
+            containment = float(mask[point_y, point_x].mean())
+            model_score = float(scores[index]) if index < len(scores) else 0.0
+            # Point containment dominates the model's mask-quality estimate.
+            ranking.append((4.0 * containment + model_score, index))
+        if not ranking:
+            return None
+        _, best_index = max(ranking)
+        best = np.asarray(masks[best_index] > 0, dtype=np.uint8)
+        if float(best[point_y, point_x].mean()) < 0.5:
+            return None
+        return best
+
+    @staticmethod
+    def _mask_from_propagation_output(
+        out_obj_ids,
+        out_mask_logits: torch.Tensor,
+        *,
+        obj_id: int,
+    ) -> np.ndarray | None:
+        ids = [int(value) for value in out_obj_ids]
+        if int(obj_id) not in ids:
+            return None
+        object_index = ids.index(int(obj_id))
+        mask = (
+            (out_mask_logits[object_index] > 0.0)
+            .detach()
+            .cpu()
+            .numpy()
+            .squeeze()
+            .astype(np.uint8)
+        )
+        return mask if mask.any() else None
+
+    def segment_tracked_point_tube(
+        self,
+        frames_tchw_01: np.ndarray,
+        anchor_frame_indices: np.ndarray,
+        tracks_tn2: np.ndarray,
+        visibility_tn: np.ndarray,
+    ) -> SAM2TrackedPointTubeOutput:
+        """Build direct, neighboring-propagation, and final masks at anchors.
+
+        Direct masks always win.  A neighboring mask is used in the final tube
+        only if the same-frame CoTracker prompt is unavailable or SAM2 returns
+        an empty result.  Candidate propagation is nevertheless computed for
+        direct frames so downstream visualizations can compare both paths.
+        """
+        frames = np.asarray(frames_tchw_01, dtype=np.float32)
+        anchors = np.asarray(anchor_frame_indices, dtype=np.int64)
+        tracks = np.asarray(tracks_tn2, dtype=np.float32)
+        visibility = np.asarray(visibility_tn, dtype=bool)
+        if frames.ndim != 4 or frames.shape[1] != 3:
+            raise ValueError(f"expected frames [T,3,H,W], got {frames.shape}")
+        if tracks.ndim != 3 or tracks.shape[2] != 2:
+            raise ValueError(f"expected tracks [T,N,2] or [A,N,2], got {tracks.shape}")
+        if visibility.shape != tracks.shape[:2]:
+            raise ValueError(
+                f"visibility/track mismatch: {visibility.shape} vs {tracks.shape}"
+            )
+        if anchors.ndim != 1 or len(anchors) <= 0:
+            raise ValueError("anchor_frame_indices must be a non-empty vector")
+        if np.any(anchors < 0) or np.any(anchors >= frames.shape[0]):
+            raise ValueError(f"anchor indices out of range: {anchors.tolist()}")
+        if tracks.shape[0] == frames.shape[0]:
+            track_rows = anchors
+        elif tracks.shape[0] == len(anchors):
+            track_rows = np.arange(len(anchors), dtype=np.int64)
+        else:
+            raise ValueError(
+                "tracked-point time axis must match either all source frames "
+                f"({frames.shape[0]}) or anchors ({len(anchors)}), got {tracks.shape[0]}"
+            )
+
+        _, _, height, width = frames.shape
+        direct = np.zeros((len(anchors), height, width), dtype=np.uint8)
+        neighbor = np.zeros_like(direct)
+        prompt_counts = np.zeros((len(anchors),), dtype=np.int16)
+        neighbor_sources = np.full((len(anchors),), -1, dtype=np.int16)
+
+        with torch.inference_mode():
+            for anchor_index, frame_index in enumerate(anchors):
+                track_row = int(track_rows[anchor_index])
+                points = self._valid_tracked_points(
+                    tracks[track_row],
+                    visibility[track_row],
+                    width=width,
+                    height=height,
+                )
+                prompt_counts[anchor_index] = int(len(points))
+                mask = self._segment_frame_from_points(
+                    frames[int(frame_index)], points
+                )
+                if mask is not None:
+                    direct[anchor_index] = mask
+
+        direct_indices = np.flatnonzero(direct.reshape(len(anchors), -1).any(axis=1))
+        if len(direct_indices):
+            predictor = self._build()
+            with tempfile.TemporaryDirectory(prefix="sam2_tracked_points_") as tmp_dir:
+                frame_dir = Path(tmp_dir)
+                _save_frames_to_dir(frames, frame_dir)
+                state = predictor.init_state(
+                    video_path=str(frame_dir),
+                    offload_video_to_cpu=True,
+                    async_loading_frames=False,
+                )
+                with torch.inference_mode():
+                    for target_anchor, target_frame in enumerate(anchors):
+                        # Exclude the target itself: this is intentionally a
+                        # neighboring-frame propagation candidate, not a copy.
+                        candidates = [
+                            int(source_anchor)
+                            for source_anchor in direct_indices
+                            if int(source_anchor) != int(target_anchor)
+                        ]
+                        candidates.sort(
+                            key=lambda source_anchor: (
+                                abs(int(anchors[source_anchor]) - int(target_frame)),
+                                int(anchors[source_anchor]) > int(target_frame),
+                            )
+                        )
+                        for source_anchor in candidates:
+                            source_frame = int(anchors[source_anchor])
+                            predictor.reset_state(state)
+                            predictor.add_new_mask(
+                                inference_state=state,
+                                frame_idx=source_frame,
+                                obj_id=1,
+                                mask=direct[source_anchor],
+                            )
+                            reverse = int(target_frame) < source_frame
+                            max_frames = abs(int(target_frame) - source_frame) + 1
+                            propagated = None
+                            for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(
+                                state,
+                                start_frame_idx=source_frame,
+                                max_frame_num_to_track=max_frames,
+                                reverse=reverse,
+                            ):
+                                if int(out_frame_idx) != int(target_frame):
+                                    continue
+                                propagated = self._mask_from_propagation_output(
+                                    out_obj_ids, out_mask_logits, obj_id=1
+                                )
+                                break
+                            if propagated is not None:
+                                neighbor[target_anchor] = propagated
+                                neighbor_sources[target_anchor] = int(source_anchor)
+                                break
+
+        direct_ok = direct.reshape(len(anchors), -1).any(axis=1)
+        neighbor_ok = neighbor.reshape(len(anchors), -1).any(axis=1)
+        final = direct.copy()
+        use_neighbor = ~direct_ok & neighbor_ok
+        final[use_neighbor] = neighbor[use_neighbor]
+        final_source = np.full((len(anchors),), 2, dtype=np.uint8)
+        final_source[neighbor_ok] = 1
+        final_source[direct_ok] = 0
+        return SAM2TrackedPointTubeOutput(
+            direct_masks_ahw=direct,
+            neighbor_masks_ahw=neighbor,
+            final_masks_ahw=final,
+            direct_prompt_counts_a=prompt_counts,
+            neighbor_source_anchor_a=neighbor_sources,
+            final_source_a=final_source,
+        )
 
     def _propagate_segment(
         self,

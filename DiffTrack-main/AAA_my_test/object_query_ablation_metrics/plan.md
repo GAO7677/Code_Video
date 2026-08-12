@@ -2,7 +2,7 @@
 
 ## 0. 文档状态
 
-- 状态：**Gate 0、Stage 0、Stage 1 已完成；等待进入 Stage 2/3 的确认**。
+- 状态：**Gate 0、Stage 0–3 已完成；Stage 3 最终 discovery 报告已冻结**。
 - Gate 0 后先执行只读清单审计和 query-time ranking validation；尚未启动新的大规模消融视频矩阵。
 - 目标：在新的 `latest3350` PCK head 排名下，区分 `R→R`、`C→R`、`R→C` 三类 self-attention 信息流更主要地影响对象轨迹、对象外观，还是对象外区域，并比较 Top100、Bottom100、随机匹配 100 heads 与 All720。
 - 结论边界：`R` 是由追踪点构成的**稀疏 object-token tube**，不是完整对象 mask；因此结论首先针对该 tube 表示，不能直接外推成“完整对象区域的全部信息流”。
@@ -266,10 +266,11 @@ Random100-M2 和 All720-M3：视频均可完整解码为 49 帧（704×1280）�
 
 筛查输出：每个 primary metric 的 case-cluster effect、95% CI、case/object/seed 分层图、Top/Bottom/Random/All720 倍数对比和原始效应，不只给全局平均。
 
-实际冻结矩阵（2026-08-11）：10 cases、每个 seed 共 33 targets、3 discovery seeds，
-`33 × 3 seeds × 4 head groups × 3 flows = 1188` 个任务；即 30 个 case-seed
-samples 展开后共 1188 个任务。GPU2/3 的两个分片已启动，输出写入
-`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage3_discovery_videos/`。
+实际完成结果（2026-08-12）：10 cases、每个 seed 共 33 targets、3 discovery seeds，
+`33 × 3 seeds × 4 head groups × 3 flows = 1188` 个任务全部生成。29/30 个 case-seed
+具有同 seed Baseline，Fast/Trajectory/Survival 各完成 1152 条；唯一缺失 reference 的
+`crop_top60px / seed 47326` 共 36 条不进入 outcome 统计。最终报告：
+`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage3_final_analysis/STAGE3_FINAL_REPORT.md`。
 
 ### Stage 4 — latent-video 时间方向分解
 

@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Oracle GT-tube correspondence guidance for legacy Wan2.2 TI2V.
 
-This is an inference-time diagnostic, not training.  GroundingDINO + SAM2 and
-CoTracker are run on each simulator/source video to freeze a 13-latent object
-tube.  During each conditional Wan forward, latest3350 Top100 self-attention
-heads contribute a cross-time correspondence loss.  Only the current noisy
-latent receives gradients; every model parameter remains frozen.
+This is an inference-time diagnostic, not training.  GroundingDINO + SAM2
+initialize object points, CoTracker transports those points through the source
+video, and per-anchor SAM2 point prompts recover a 13-latent object mask tube.
+A neighboring-frame SAM2 propagation is always saved for audit, but is applied
+only when the same-frame tracked-point prompt is unavailable or empty.  During
+each conditional Wan forward, latest3350 Top100 self-attention heads contribute
+a cross-time correspondence loss.  Only the current noisy latent receives
+gradients; every model parameter remains frozen.
 
 Stages are intentionally separable because SAM2/CoTracker and gradient-enabled
 Wan inference have different memory profiles:
 
-  prepare   source video -> SAM2 masks + CoTracker point tubes
+  prepare   source video -> CoTracker points -> direct/fallback/final SAM2 tubes
   generate  baseline/region/point guided videos
   evaluate  generated videos -> GT-relative trajectory metrics
   all       prepare, generate, then evaluate (models are released in between)
@@ -76,7 +79,7 @@ DEFAULT_RANKING = Path(
 )
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/wan_gt_spatiotemporal_correspondence_guidance/"
-    "latest3350_top100_v1"
+    "latest3350_top100_cotracker_sam2_v2"
 )
 OBJECT_PHRASE_CACHE_ROOTS = (
     Path("/data/gaoya/agent-data/cache/wan22_ti2v_legacy_firstlatent_regions_704x1280"),
@@ -92,7 +95,7 @@ OBJECT_PHRASE_CACHE_ROOTS = (
 SEGMENTATION_PROMPT_CACHE_ROOTS = (
     Path("/data/gaoya/agent-data/cache/wan_dit_s_motion_sam2_regions"),
 )
-PROTOCOL = "wan_gt_spatiotemporal_correspondence_guidance_v1"
+PROTOCOL = "wan_gt_spatiotemporal_correspondence_guidance_v2"
 HEIGHT = 704
 WIDTH = 1280
 PIXEL_FRAMES = 49
@@ -389,6 +392,7 @@ def prepare_case(
     device: str,
     points_per_object: int,
     moving_threshold_d0: float,
+    tube_mask_strategy: str,
     overwrite: bool,
 ) -> None:
     case = json_path.stem
@@ -523,13 +527,80 @@ def prepare_case(
         del cotracker
         gc.collect()
         torch.cuda.empty_cache()
+    tracks = np.asarray(tracks, dtype=np.float32)
+    visibility = np.asarray(visibility, dtype=bool)
+    in_bounds = (
+        np.isfinite(tracks).all(axis=-1)
+        & (tracks[..., 0] >= 0.0)
+        & (tracks[..., 0] < float(WIDTH))
+        & (tracks[..., 1] >= 0.0)
+        & (tracks[..., 1] < float(HEIGHT))
+    )
+    visibility &= in_bounds
     anchors = source_anchors(frame_count)
     tracks_anchor = tracks[anchors]
     visibility_anchor = visibility[anchors]
     raw_masks = np.stack(
         [np.asarray(track.masks_thw, dtype=np.uint8) for track in sample.object_tracks]
     )
-    masks_anchor = raw_masks[:, anchors]
+    legacy_masks_anchor = raw_masks[:, anchors]
+    object_count = len(phrases)
+    if tube_mask_strategy == "cotracker_prompted_sam2":
+        print(
+            f"[prepare] {case}: CoTracker points -> per-anchor SAM2 direct masks; "
+            "neighbor propagation is audit-only unless direct fails",
+            flush=True,
+        )
+        hybrid_provider = build_provider(device, points_per_object)
+        try:
+            point_prompted = [
+                hybrid_provider.tracker.segment_tracked_point_tube(
+                    frames_tchw_01,
+                    anchors,
+                    tracks[:, int(start) : int(end)],
+                    visibility[:, int(start) : int(end)],
+                )
+                for start, end in zip(starts, ends)
+            ]
+        finally:
+            del hybrid_provider
+            gc.collect()
+            torch.cuda.empty_cache()
+        direct_masks_anchor = np.stack(
+            [result.direct_masks_ahw for result in point_prompted]
+        ).astype(np.uint8)
+        neighbor_masks_anchor = np.stack(
+            [result.neighbor_masks_ahw for result in point_prompted]
+        ).astype(np.uint8)
+        masks_anchor = np.stack(
+            [result.final_masks_ahw for result in point_prompted]
+        ).astype(np.uint8)
+        direct_prompt_counts = np.stack(
+            [result.direct_prompt_counts_a for result in point_prompted]
+        ).astype(np.int16)
+        neighbor_source_anchor = np.stack(
+            [result.neighbor_source_anchor_a for result in point_prompted]
+        ).astype(np.int16)
+        final_mask_source = np.stack(
+            [result.final_source_a for result in point_prompted]
+        ).astype(np.uint8)
+    elif tube_mask_strategy == "legacy_sam2_propagation":
+        masks_anchor = legacy_masks_anchor.astype(np.uint8)
+        direct_masks_anchor = legacy_masks_anchor.astype(np.uint8)
+        neighbor_masks_anchor = np.zeros_like(direct_masks_anchor)
+        direct_prompt_counts = np.zeros(
+            (object_count, len(anchors)), dtype=np.int16
+        )
+        neighbor_source_anchor = np.full(
+            (object_count, len(anchors)), -1, dtype=np.int16
+        )
+        final_mask_source = np.where(
+            masks_anchor.reshape(object_count, len(anchors), -1).any(axis=2),
+            0,
+            2,
+        ).astype(np.uint8)
+    else:
+        raise ValueError(f"unknown tube mask strategy: {tube_mask_strategy}")
     scores = motion_scores_d0(
         tracks_anchor,
         np.asarray(starts),
@@ -545,6 +616,12 @@ def prepare_case(
         output / "tube.npz",
         anchor_source_frames=anchors,
         masks_othw=masks_anchor.astype(np.uint8),
+        direct_masks_othw=direct_masks_anchor.astype(np.uint8),
+        neighbor_masks_othw=neighbor_masks_anchor.astype(np.uint8),
+        legacy_masks_othw=legacy_masks_anchor.astype(np.uint8),
+        direct_prompt_counts_ot=direct_prompt_counts,
+        neighbor_source_anchor_ot=neighbor_source_anchor,
+        final_mask_source_ot=final_mask_source,
         tracks_tn2=tracks_anchor.astype(np.float32),
         visibility_tn=visibility_anchor.astype(np.uint8),
         query_points_n2=query_points.astype(np.float32),
@@ -569,7 +646,19 @@ def prepare_case(
         ),
         "anchor_source_frames": anchors.tolist(),
         "latent_anchor_indices": list(range(LATENT_FRAMES)),
-        "source_processing": "GroundingDINO -> SAM2 masks; first-mask points -> CoTracker",
+        "source_processing": (
+            "GroundingDINO/SAM2 initialization -> CoTracker points -> independent "
+            "per-anchor SAM2 point prompts; nearest neighboring direct mask is "
+            "propagated for audit and used only when direct is unavailable/empty"
+            if tube_mask_strategy == "cotracker_prompted_sam2"
+            else "GroundingDINO -> full-video SAM2 propagation; first-mask points -> CoTracker"
+        ),
+        "tube_mask_strategy": tube_mask_strategy,
+        "final_mask_source_codes": {
+            "0": "direct CoTracker points prompted SAM2 at the same anchor",
+            "1": "neighboring direct mask propagated by SAM2 fallback",
+            "2": "missing direct and fallback mask",
+        },
         "object_prompt_source": prompt_source,
         "objects": [
             {
@@ -582,14 +671,28 @@ def prepare_case(
                 "anchor_visibility_rate": float(
                     visibility_anchor[:, int(start) : int(end)].mean()
                 ),
+                "direct_prompt_counts": direct_prompt_counts[object_index].astype(int).tolist(),
+                "direct_mask_frames": np.flatnonzero(
+                    direct_masks_anchor[object_index].reshape(len(anchors), -1).any(axis=1)
+                ).astype(int).tolist(),
+                "fallback_candidate_frames": np.flatnonzero(
+                    neighbor_masks_anchor[object_index].reshape(len(anchors), -1).any(axis=1)
+                ).astype(int).tolist(),
+                "fallback_applied_frames": np.flatnonzero(
+                    final_mask_source[object_index] == 1
+                ).astype(int).tolist(),
+                "missing_final_frames": np.flatnonzero(
+                    final_mask_source[object_index] == 2
+                ).astype(int).tolist(),
+                "neighbor_source_anchor": neighbor_source_anchor[object_index].astype(int).tolist(),
             }
-            for name, phrase, start, end, score, is_moving in zip(
+            for object_index, (name, phrase, start, end, score, is_moving) in enumerate(zip(
                 names, phrases, starts, ends, scores, moving
-            )
+            ))
         ],
         "moving_threshold_d0": float(moving_threshold_d0),
         "uses_gt_instance_masks": False,
-        "oracle_information": "future source-video SAM2 and CoTracker trajectories",
+        "oracle_information": "future source-video CoTracker trajectories and point-prompted SAM2 masks",
     }
     atomic_write_json(output / "manifest.json", manifest)
     atomic_write_json(
@@ -1460,6 +1563,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--case-keys", nargs="*", default=None)
     parser.add_argument("--points-per-object", type=int, default=8)
     parser.add_argument("--moving-threshold-d0", type=float, default=0.05)
+    parser.add_argument(
+        "--tube-mask-strategy",
+        choices=("cotracker_prompted_sam2", "legacy_sam2_propagation"),
+        default="cotracker_prompted_sam2",
+        help=(
+            "Build each latent mask directly from same-frame CoTracker point prompts; "
+            "neighbor propagation remains an audited fallback"
+        ),
+    )
     parser.add_argument("--loss-modes", nargs="+", choices=("region", "point", "combined"), default=("region", "point"))
     parser.add_argument("--guidance-scale", type=float, default=0.10)
     parser.add_argument("--guidance-start", type=int, default=0)
@@ -1504,6 +1616,7 @@ def dry_run_report(args: argparse.Namespace, paths: list[Path]) -> None:
         "input_list_total_unique": len(deduplicated_json_paths(args.input_list)),
         "worker_case_count": len(paths),
         "worker_cases": [path.stem for path in paths],
+        "tube_mask_strategy": args.tube_mask_strategy,
         "loss_modes": list(args.loss_modes),
         "head_ranking": str(args.head_ranking),
         "selected_head_count": 100,
@@ -1563,6 +1676,7 @@ def main() -> None:
                     args.device,
                     args.points_per_object,
                     args.moving_threshold_d0,
+                    args.tube_mask_strategy,
                     args.overwrite,
                 )
             except Exception:

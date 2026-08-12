@@ -653,11 +653,12 @@ def markdown(report: dict[str, Any]) -> str:
         "",
         f"Snapshot: `{report['generated_at_utc']}`",
         "",
-        f"- Generated videos with dose: **{report['coverage']['dose_records']} / 1188**.",
-        f"- Fast records: **{report['coverage']['fast_records']}**; trajectory records: **{report['coverage']['trajectory_records']}**; survival records: **{report['coverage']['survival_records']}**.",
+        f"- Generated videos with dose: **{report['coverage']['dose_records']} / {report['coverage']['expected_generated_records']}**.",
+        f"- Baseline-eligible outcome records: **{report['coverage']['fast_records']} / {report['coverage']['expected_outcome_records']}** Fast; **{report['coverage']['trajectory_records']} / {report['coverage']['expected_outcome_records']}** trajectory; **{report['coverage']['survival_records']} / {report['coverage']['expected_outcome_records']}** survival.",
+        f"- Reference-ineligible records: **{report['coverage']['reference_ineligible_records']}** (`crop_top60px / seed 47326`, no same-seed Baseline).",
         f"- Strict four-scope trajectory/survival units: **{report['coverage']['trajectory_scope_units']}**, from **{report['coverage']['trajectory_scope_cases']} cases**.",
         "",
-        "> Interim discovery analysis. Case is the highest independent unit. Seeds and objects are averaged within case before cases receive equal weight. CIs are case-bootstrap descriptive intervals; no interim significance decision or BH-FDR claim is made.",
+        "> Complete Stage-3 discovery description for all Baseline-eligible outcomes. Case is the highest independent unit. Seeds and objects are averaged within case before cases receive equal weight. CIs here are descriptive; exact tests and BH-FDR decisions are in `../stage3_final_analysis/STAGE3_FINAL_REPORT.md`.",
         "",
         "## Metric interpretation",
         "",
@@ -736,7 +737,7 @@ def markdown(report: dict[str, Any]) -> str:
         "- All720 outcome values are total 720-head intervention effects. All720 dose values remain per-head means and must not be read as total dose.",
         "- Mask Absence only detects an empty SAM2 mask. Disappearance additionally includes identity and implausible-area failures, so the two should not be conflated.",
         "- Outside-object MAE is a pixel proxy. Other-object Center-ADE is the direct cross-object trajectory metric.",
-        "- Current cases overlap exploratory/ranking inspection and the 1188 matrix is incomplete; conclusions require the complete matrix and held-out confirmation.",
+        "- The 1188 generation matrix and all 1152 Baseline-eligible outcome records are complete. Cases still overlap exploratory/ranking inspection, so mechanism claims require held-out confirmation.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -807,9 +808,19 @@ def main() -> None:
                             rng,
                         )
                     )
+    matrix_complete = (
+        len(records["dose"]) == 1188
+        and len(records["fast"]) == 1152
+        and len(records["trajectory"]) == 1152
+        and len(records["survival"]) == 1152
+    )
     report = {
         "schema_version": 1,
-        "status": "interim_descriptive_incomplete_matrix",
+        "status": (
+            "complete_stage3_discovery_baseline_eligible_outcomes"
+            if matrix_complete
+            else "interim_descriptive_incomplete_matrix"
+        ),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "bootstrap": {
             "highest_independent_unit": "case",
@@ -817,6 +828,9 @@ def main() -> None:
             "seed": args.bootstrap_seed,
         },
         "coverage": {
+            "expected_generated_records": 1188,
+            "expected_outcome_records": 1152,
+            "reference_ineligible_records": 36,
             "dose_records": len(records["dose"]),
             "fast_records": len(records["fast"]),
             "trajectory_records": len(records["trajectory"]),

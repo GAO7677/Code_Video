@@ -363,8 +363,9 @@ def f(value: Any, digits: int = 5) -> str:
 
 
 def markdown(report: dict[str, Any]) -> str:
+    complete = report["record_count"] == report["expected_record_count"] and not report["failures"]
     lines = [
-        "# Stage 3 Attention-Dose Interim Analysis",
+        "# Stage 3 Attention-Dose Analysis",
         "",
         f"Snapshot: `{report['generated_at_utc']}`.",
         "",
@@ -373,7 +374,11 @@ def markdown(report: dict[str, Any]) -> str:
         f"- Strict three-flow paired units: **{report['strict_flow_pair_count']}**; cases: **{report['strict_flow_case_count']}**.",
         f"- Invalid/missing dose artifacts: **{len(report['failures'])}**.",
         "",
-        "> Interim descriptive analysis only. Generation is incomplete, so no significance decision, BH-FDR result, early stopping, or confirmatory claim is made.",
+        (
+            "> The 1188-record dose matrix is complete. Dose is an intervention exposure, not an outcome; outcome tests and BH-FDR are in `../stage3_final_analysis/STAGE3_FINAL_REPORT.md`."
+            if complete
+            else "> Interim descriptive analysis only. Generation is incomplete, so no significance decision, BH-FDR result, early stopping, or confirmatory claim is made."
+        ),
         "",
         "## What dose means",
         "",
@@ -424,7 +429,7 @@ def markdown(report: dict[str, Any]) -> str:
         "",
         "- Dose is recorded along each ablated generation path. Later steps already contain upstream effects of that intervention, so M1-dose and M2-dose from different videos are not complementary Baseline quantities.",
         "- Knockout establishes necessity under this intervention, not semantic sufficiency. Assigning 'motion' or 'appearance' to a flow requires outcome metrics and, later, Baseline-message probes/rescue.",
-        "- Current data are exploratory and incomplete; do not select winners or stop generation from this snapshot.",
+        "- These data remain exploratory because cases overlap ranking/inspection; completeness does not make them held-out confirmation.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -444,7 +449,11 @@ def main() -> None:
     report = {
         "schema_version": 1,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "status": "interim_descriptive_incomplete_matrix",
+        "status": (
+            "complete_stage3_discovery_dose_matrix"
+            if len(records) == 1188 and not failures
+            else "interim_descriptive_incomplete_matrix"
+        ),
         "input_root": str(args.input_root),
         "record_count": len(records),
         "expected_record_count": 1188,

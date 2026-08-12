@@ -478,6 +478,28 @@ class MetricsHandler(viewer.Handler):
                 raise FileNotFoundError("unknown GT-STC source-region filmstrip")
             viewer.send_file_with_range(self, filmstrip, "image/jpeg")
             return
+        if path == "/api/gt-stc-guidance-preflight/cotracker-comparison":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            comparison = gt_stc_guidance_dashboard.cotracker_comparison(
+                params.get("case", [""])[0]
+            )
+            if comparison is None or not comparison.is_file():
+                raise FileNotFoundError("unknown GT-STC SAM2/CoTracker comparison")
+            viewer.send_file_with_range(self, comparison, "image/jpeg")
+            return
+        if path == "/api/gt-stc-guidance-preflight/hybrid-comparison":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            comparison = gt_stc_guidance_dashboard.hybrid_comparison(
+                params.get("case", [""])[0]
+            )
+            if comparison is None or not comparison.is_file():
+                raise FileNotFoundError("unknown GT-STC CoTracker/SAM2 hybrid comparison")
+            viewer.send_file_with_range(self, comparison, "image/jpeg")
+            return
         if path == "/api/object-query-information-flow-validation/catalog":
             payload = json.dumps(
                 information_flow_validation_dashboard.catalog(),
