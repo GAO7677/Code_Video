@@ -377,7 +377,15 @@ def main() -> None:
 
     seed_entries: list[dict[str, Any]] = []
     for seed_dir in discover_seed_dirs(root):
-        candidates = collect_candidates(seed_dir, {"top100", "bottom100", "all720"})
+        candidates = collect_candidates(
+            seed_dir,
+            {
+                "top100",
+                "bottom100",
+                "random100_layer_matched_draw0",
+                "all720",
+            },
+        )
         if not candidates:
             continue
         case = str(candidates[0]["case"])

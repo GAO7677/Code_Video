@@ -469,8 +469,12 @@ def save_checkpoint_bundle(pack, save_file=None):
 
 def load_training_state(resume_file):
     resume_file = resume_file.resolve()
+    # Training-state checkpoints are created locally by this script and include
+    # Python/NumPy RNG objects in addition to tensors.  PyTorch's restricted
+    # weights-only loader cannot deserialize those objects, so use full loading
+    # here.  Model-only checkpoints continue to use the restricted load path.
     state = torch.load(
-        resume_file, map_location="cpu", weights_only=True, mmap=True
+        resume_file, map_location="cpu", weights_only=False, mmap=True
     )
     if state.get("format") != "xssc_training_state_v1":
         raise ValueError(f"Not an xSSC training-state checkpoint: {resume_file}")

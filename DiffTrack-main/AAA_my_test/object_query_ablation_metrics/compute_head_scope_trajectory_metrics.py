@@ -181,13 +181,47 @@ def load_track_cache(
         return None
 
 
+def resolve_frozen_baseline_inputs(seed_dir: Path) -> tuple[Path, Path]:
+    """Resolve the frozen track bundle locally or from candidate manifests.
+
+    Newer Stage-3 outputs reuse the immutable track bundle from the earlier
+    temporal-tube experiment and record its absolute path in every manifest,
+    instead of copying the bundle into each large result directory.
+    """
+    local_tracks = seed_dir / "frozen_baseline_tracks" / "tracks.npz"
+    local_manifest = seed_dir / "frozen_baseline_tracks" / "manifest.json"
+    if local_tracks.is_file() and local_manifest.is_file():
+        return local_tracks.resolve(), local_manifest.resolve()
+
+    referenced: set[Path] = set()
+    for candidate_manifest in sorted(seed_dir.glob("*/manifest.json")):
+        try:
+            payload = json.loads(candidate_manifest.read_text(encoding="utf-8"))
+            raw_path = str(payload.get("tracks_npz") or "").strip()
+            if raw_path:
+                referenced.add(Path(raw_path).expanduser().resolve())
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+    if not referenced:
+        raise FileNotFoundError("missing local or manifest-referenced frozen Baseline tracks")
+    if len(referenced) != 1:
+        raise RuntimeError(
+            "candidate manifests reference multiple frozen track bundles: "
+            + ", ".join(str(path) for path in sorted(referenced))
+        )
+    tracks_path = next(iter(referenced))
+    manifest_path = tracks_path.parent / "manifest.json"
+    if not tracks_path.is_file() or not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"missing referenced frozen Baseline tracks or manifest: {tracks_path}"
+        )
+    return tracks_path, manifest_path.resolve()
+
+
 def validate_frozen_baseline_inputs(seed_dir: Path) -> tuple[bool, str]:
     """Validate the variable-object frozen query/track bundle used downstream."""
-    frozen_path = seed_dir / "frozen_baseline_tracks" / "tracks.npz"
-    manifest_path = seed_dir / "frozen_baseline_tracks" / "manifest.json"
-    if not frozen_path.is_file() or not manifest_path.is_file():
-        return False, "missing frozen Baseline tracks or manifest"
     try:
+        frozen_path, manifest_path = resolve_frozen_baseline_inputs(seed_dir)
         with np.load(frozen_path, allow_pickle=False) as arrays:
             tracks = arrays["tracks"]
             visibility = arrays["visibility"]
@@ -550,7 +584,7 @@ def main() -> None:
 
     baseline_path = locate_baseline(case, seed)
     baseline_signature = file_signature(baseline_path)
-    frozen_path = seed_dir / "frozen_baseline_tracks" / "tracks.npz"
+    frozen_path, frozen_manifest_path = resolve_frozen_baseline_inputs(seed_dir)
     frozen_valid, frozen_reason = validate_frozen_baseline_inputs(seed_dir)
     if not frozen_valid:
         raise RuntimeError(f"invalid frozen baseline inputs: {frozen_reason}")
@@ -574,9 +608,7 @@ def main() -> None:
         for name, start, end in zip(region_names, starts, ends, strict=True)
     }
     frozen_manifest = json.loads(
-        (seed_dir / "frozen_baseline_tracks" / "manifest.json").read_text(
-            encoding="utf-8"
-        )
+        frozen_manifest_path.read_text(encoding="utf-8")
     )
     region_cache = Path(str(frozen_manifest["query_cache_dir"])) / "regions.npz"
     with np.load(region_cache, allow_pickle=False) as arrays:

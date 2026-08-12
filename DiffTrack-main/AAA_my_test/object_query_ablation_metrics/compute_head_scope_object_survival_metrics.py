@@ -43,6 +43,7 @@ from AAA_my_test.object_query_ablation_metrics.compute_head_scope_trajectory_met
     atomic_npz,
     load_video_frames,
     locate_baseline,
+    resolve_frozen_baseline_inputs,
     rounded,
     signature_text,
 )
@@ -540,7 +541,7 @@ def main() -> None:
     baseline_path = locate_baseline(case, seed)
     baseline_signature = file_signature(baseline_path)
 
-    frozen_path = seed_dir / "frozen_baseline_tracks" / "tracks.npz"
+    frozen_path, frozen_manifest_path = resolve_frozen_baseline_inputs(seed_dir)
     with np.load(frozen_path, allow_pickle=False) as arrays:
         baseline_tracks = arrays["tracks"].astype(np.float32)
         baseline_visibility = arrays["visibility"].astype(bool)
@@ -553,9 +554,7 @@ def main() -> None:
         for name, start, end in zip(object_names, starts, ends, strict=True)
     }
     frozen_manifest = json.loads(
-        (seed_dir / "frozen_baseline_tracks" / "manifest.json").read_text(
-            encoding="utf-8"
-        )
+        frozen_manifest_path.read_text(encoding="utf-8")
     )
     region_cache = Path(str(frozen_manifest["query_cache_dir"])) / "regions.npz"
     with np.load(region_cache, allow_pickle=False) as arrays:
