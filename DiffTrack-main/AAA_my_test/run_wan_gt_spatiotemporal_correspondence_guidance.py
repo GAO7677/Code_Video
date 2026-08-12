@@ -714,6 +714,23 @@ def target_specs(tube: FrozenTube) -> list[GuidanceTarget]:
     return targets
 
 
+def selected_target_specs(
+    tube: FrozenTube, target_names: tuple[str, ...] | None
+) -> list[GuidanceTarget]:
+    targets = target_specs(tube)
+    if not target_names:
+        return targets
+    requested = set(target_names)
+    available = {target.name for target in targets}
+    unknown = requested - available
+    if unknown:
+        raise ValueError(
+            f"unknown target names for {tube.case}: {sorted(unknown)}; "
+            f"available={sorted(available)}"
+        )
+    return [target for target in targets if target.name in requested]
+
+
 def validate_latest3350_top100(path: Path) -> list[dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     entries = list(payload.get("entries") or [])
@@ -743,10 +760,7 @@ def selected_object_arrays(
 def masks_to_token_rows(masks_thw: np.ndarray, token_hw: tuple[int, int]) -> list[torch.Tensor]:
     masks = torch.from_numpy(np.asarray(masks_thw, dtype=np.float32)).unsqueeze(1)
     down = F.adaptive_max_pool2d(masks, token_hw).squeeze(1) > 0
-    rows = [torch.nonzero(frame.flatten(), as_tuple=False).flatten() for frame in down]
-    if any(not row.numel() for row in rows):
-        raise RuntimeError("GT SAM2 tube contains an empty latent-frame token region")
-    return rows
+    return [torch.nonzero(frame.flatten(), as_tuple=False).flatten() for frame in down]
 
 
 def points_to_token_rows(
@@ -778,11 +792,15 @@ def region_correspondence_loss(
     terms: list[torch.Tensor] = []
     for query_time in range(time_count):
         query_rows = rows_by_time[query_time].to(q.device)
+        if not query_rows.numel():
+            continue
         query_vectors = q[:, query_time, query_rows].float()
         for key_time in range(time_count):
             if key_time == query_time:
                 continue
             target_rows = rows_by_time[key_time].to(q.device)
+            if not target_rows.numel():
+                continue
             logits = torch.einsum(
                 "bqhd,bkhd->bhqk", query_vectors, k[:, key_time].float()
             ) / scale
@@ -1243,6 +1261,124 @@ def guided_generate(
     return frames, audit
 
 
+def guidance_sanity_check(
+    pipe: Any,
+    collector: CorrespondenceLossCollector,
+    prompt: str,
+    negative_prompt: str,
+    input_image: Image.Image,
+    seed: int,
+    guidance_scale: float,
+    gradient_normalization: str,
+    max_gradient_rms_ratio: float,
+    use_gradient_checkpointing: bool,
+) -> dict[str, Any]:
+    """Audit one real Wan step before committing to full guided generation."""
+    freeze_model_parameters(pipe)
+    inputs_shared, inputs_posi, _ = prepare_wan_inputs(
+        pipe, prompt, negative_prompt, input_image, seed, 5.0, 40, 5.0
+    )
+    pipe.load_models_to_device(pipe.in_iteration_models)
+    models = {name: getattr(pipe, name) for name in pipe.in_iteration_models}
+    scheduler_timestep = pipe.scheduler.timesteps[0]
+    timestep = scheduler_timestep.unsqueeze(0).to(
+        dtype=pipe.torch_dtype, device=pipe.device
+    )
+    latents = inputs_shared["latents"].detach()
+    latent_leaf = latents.requires_grad_(True)
+    inputs_shared["latents"] = latent_leaf
+    patch = tuple(int(value) for value in models["dit"].patch_size)
+    grid = (
+        int(latent_leaf.shape[2] // patch[0]),
+        int(latent_leaf.shape[3] // patch[1]),
+        int(latent_leaf.shape[4] // patch[2]),
+    )
+    collector.reset_step(grid)
+    collector.active = True
+    try:
+        with torch.enable_grad():
+            noise_pos = pipe.model_fn(
+                **models,
+                **inputs_shared,
+                **inputs_posi,
+                timestep=timestep,
+                use_gradient_checkpointing=bool(use_gradient_checkpointing),
+            )
+            loss = collector.total_loss()
+            forward_head_events = collector.head_events
+            forward_term_count = collector.term_count
+            gradient = torch.autograd.grad(loss, latent_leaf, only_inputs=True)[0]
+    finally:
+        collector.active = False
+
+    gradient = gradient.detach()
+    first_latent_raw_gradient_rms = float(
+        gradient[:, :, 0:1].float().square().mean().sqrt().cpu()
+    )
+    gradient[:, :, 0:1] = 0
+    noise_pos = noise_pos.detach()
+    normalized_gradient, gradient_audit = normalize_guidance_gradient(
+        gradient, noise_pos, gradient_normalization, max_gradient_rms_ratio
+    )
+    sigma = float(pipe.scheduler.sigmas[0])
+    next_sigma = float(pipe.scheduler.sigmas[1])
+    delta_sigma = next_sigma - sigma
+    guidance_delta = (
+        delta_sigma * float(guidance_scale) * sigma * normalized_gradient.float()
+    )
+    directional_derivative = float(
+        (gradient.float() * guidance_delta).sum().detach().cpu()
+    )
+    model_gradient_tensors = sum(
+        int(parameter.grad is not None) for parameter in pipe.parameters()
+    )
+    finite = all(
+        math.isfinite(value)
+        for value in (
+            float(loss.detach().cpu()),
+            directional_derivative,
+            *gradient_audit.values(),
+        )
+    ) and bool(torch.isfinite(guidance_delta).all())
+    passed = (
+        finite
+        and forward_head_events == 100
+        and forward_term_count > 0
+        and delta_sigma < 0
+        and directional_derivative < 0
+        and model_gradient_tensors == 0
+        and not bool(gradient[:, :, 0:1].any())
+    )
+    report = {
+        "passed": bool(passed),
+        "loss": float(loss.detach().cpu()),
+        "selected_head_events": int(forward_head_events),
+        "correspondence_terms": int(forward_term_count),
+        "sigma": sigma,
+        "next_sigma": next_sigma,
+        "delta_sigma": delta_sigma,
+        "guidance_scale": float(guidance_scale),
+        "guidance_update_rms": float(
+            guidance_delta.square().mean().sqrt().detach().cpu()
+        ),
+        "gradient_dot_actual_guidance_delta": directional_derivative,
+        "first_latent_raw_gradient_rms": first_latent_raw_gradient_rms,
+        "first_latent_guidance_forced_zero": not bool(
+            gradient[:, :, 0:1].any()
+        ),
+        "model_gradient_tensors": int(model_gradient_tensors),
+        **gradient_audit,
+    }
+    collector.losses.clear()
+    del loss, gradient, normalized_gradient, guidance_delta, noise_pos
+    del latent_leaf, latents, inputs_shared, inputs_posi
+    gc.collect()
+    torch.cuda.empty_cache()
+    if not passed:
+        raise RuntimeError(f"guidance sanity check failed: {report}")
+    return report
+
+
 def resolve_condition_image(payload: dict[str, Any], source_frames: np.ndarray) -> Image.Image:
     input_image = payload.get("input_image")
     if input_image and Path(str(input_image)).expanduser().is_file():
@@ -1270,6 +1406,82 @@ def variant_dir(output_root: Path, case: str, seed: int, variant: str) -> Path:
     return output_root / "generations" / case / f"seed_{seed:05d}" / variant
 
 
+def sanity_check_case(
+    pipe_wrapper: Any,
+    json_path: Path,
+    tube: FrozenTube,
+    entries: list[dict[str, Any]],
+    output_root: Path,
+    seed: int,
+    loss_modes: tuple[str, ...],
+    target_names: tuple[str, ...] | None,
+    guidance_scale: float,
+    gaussian_sigma_tokens: float,
+    gradient_normalization: str,
+    max_gradient_rms_ratio: float,
+    use_gradient_checkpointing: bool,
+) -> None:
+    payload = load_payload(json_path)
+    source_frames = read_source_prefix(tube.source_video)
+    input_image = resolve_condition_image(payload, source_frames)
+    report_root = output_root / "sanity" / tube.case / f"seed_{seed:05d}"
+    for target in selected_target_specs(tube, target_names):
+        target_masks, target_tracks, target_visibility = selected_object_arrays(
+            tube, target
+        )
+        for loss_mode in loss_modes:
+            collector = CorrespondenceLossCollector(
+                pipe_wrapper.pipe,
+                entries,
+                loss_mode,
+                target_masks,
+                target_tracks,
+                target_visibility,
+                (tube.pixel_height, tube.pixel_width),
+                gaussian_sigma_tokens,
+            )
+            collector.install()
+            try:
+                report = guidance_sanity_check(
+                    pipe_wrapper.pipe,
+                    collector,
+                    str(payload["input_caption"]),
+                    str(build_args(seed).negative_prompt),
+                    input_image,
+                    seed,
+                    guidance_scale,
+                    gradient_normalization,
+                    max_gradient_rms_ratio,
+                    use_gradient_checkpointing,
+                )
+            finally:
+                collector.remove()
+            report.update(
+                {
+                    "protocol": PROTOCOL,
+                    "case": tube.case,
+                    "seed": int(seed),
+                    "target": target.name,
+                    "target_object_indices": list(target.object_indices),
+                    "loss_mode": loss_mode,
+                    "mask_valid_anchor_count": int(
+                        target_masks.reshape(LATENT_FRAMES, -1).any(axis=1).sum()
+                    ),
+                    "point_visible_anchor_count": int(
+                        target_visibility.any(axis=1).sum()
+                    ),
+                }
+            )
+            report_path = report_root / f"{loss_mode}__{target.name}.json"
+            atomic_write_json(report_path, report)
+            print(
+                f"[sanity] pass {tube.case}/{loss_mode}/{target.name}: "
+                f"loss={report['loss']:.6f} "
+                f"grad_dot_delta={report['gradient_dot_actual_guidance_delta']:.6e}",
+                flush=True,
+            )
+
+
 def generate_case(
     pipe_wrapper: Any,
     json_path: Path,
@@ -1279,6 +1491,7 @@ def generate_case(
     output_root: Path,
     seed: int,
     loss_modes: tuple[str, ...],
+    target_names: tuple[str, ...] | None,
     guidance_scale: float,
     guidance_start: int,
     guidance_end: int,
@@ -1295,7 +1508,7 @@ def generate_case(
     tasks: list[tuple[str, GuidanceTarget | None]] = []
     if include_baseline:
         tasks.append(("baseline", None))
-    for target in target_specs(tube):
+    for target in selected_target_specs(tube, target_names):
         tasks.extend((loss_mode, target) for loss_mode in loss_modes)
     for loss_mode, target in tasks:
         variant = variant_name(loss_mode, target, guidance_scale)
@@ -1398,12 +1611,24 @@ def trajectory_metrics(
     generated_anchors = LATENT_PIXEL_ANCHORS
     candidate = candidate_tracks[generated_anchors][:, point_indices]
     reference = tube.tracks_tn2[:, point_indices]
-    valid = (
-        candidate_visibility[generated_anchors][:, point_indices]
-        & tube.visibility_tn[:, point_indices]
-    )
+    candidate_visible = candidate_visibility[generated_anchors][:, point_indices]
+    reference_visible = tube.visibility_tn[:, point_indices].astype(bool)
     error = np.linalg.norm(candidate - reference, axis=-1)
-    finite = valid & np.isfinite(error)
+    finite = candidate_visible & reference_visible & np.isfinite(error)
+
+    # F00 is the fixed TI2V condition image and its latent gradient is forced to
+    # zero.  It is therefore not a predicted trajectory sample and must never
+    # make a failed future track look perfect merely because F00 matches GT.
+    future_finite = finite[1:]
+    future_error = error[1:]
+    future_reference = reference_visible[1:] & np.isfinite(reference[1:]).all(axis=-1)
+    min_points_per_anchor = min(4, len(point_indices))
+    reference_anchor_valid = future_reference.sum(axis=1) >= min_points_per_anchor
+    common_anchor_valid = future_finite.sum(axis=1) >= min_points_per_anchor
+    reference_anchor_count = int(reference_anchor_valid.sum())
+    common_anchor_count = int((common_anchor_valid & reference_anchor_valid).sum())
+    anchor_coverage = common_anchor_count / max(reference_anchor_count, 1)
+    quality_pass = common_anchor_count >= 4 and anchor_coverage >= 0.8
     first_mask = np.logical_or.reduce(
         tube.masks_othw[list(target.object_indices), 0], axis=0
     )
@@ -1416,19 +1641,59 @@ def trajectory_metrics(
         if len(yx)
         else 1.0
     )
-    visible_error = error[finite]
-    final_valid = finite[-1]
+    visible_error = future_error[future_finite]
+    final_valid = future_finite[-1]
+    final_usable = int(final_valid.sum()) >= min_points_per_anchor
+    raw_ade_px = float(visible_error.mean()) if len(visible_error) else None
+    raw_fde_px = (
+        float(future_error[-1, final_valid].mean()) if final_usable else None
+    )
+    raw_pck_10 = (
+        float((visible_error <= 0.10 * diagonal).mean())
+        if len(visible_error)
+        else None
+    )
+    raw_pck_20 = (
+        float((visible_error <= 0.20 * diagonal).mean())
+        if len(visible_error)
+        else None
+    )
     return {
         "target": target.name,
         "point_count": int(len(point_indices)),
-        "valid_comparisons": int(finite.sum()),
-        "visibility_rate": float(finite.mean()),
-        "ade_px": float(visible_error.mean()) if len(visible_error) else None,
-        "ade_d0": float(visible_error.mean() / diagonal) if len(visible_error) else None,
-        "fde_px": float(error[-1, final_valid].mean()) if final_valid.any() else None,
-        "fde_d0": float(error[-1, final_valid].mean() / diagonal) if final_valid.any() else None,
-        "pck_10pct_d0": float((visible_error <= 0.10 * diagonal).mean()) if len(visible_error) else None,
-        "pck_20pct_d0": float((visible_error <= 0.20 * diagonal).mean()) if len(visible_error) else None,
+        "condition_frame_valid_comparisons": int(finite[0].sum()),
+        "valid_comparisons": int(future_finite.sum()),
+        "visibility_rate": float(future_finite.mean()),
+        "future_reference_visible_comparisons": int(future_reference.sum()),
+        "future_common_point_coverage": float(
+            future_finite.sum() / max(int(future_reference.sum()), 1)
+        ),
+        "future_reference_anchor_count": reference_anchor_count,
+        "future_common_anchor_count": common_anchor_count,
+        "future_common_anchor_coverage": float(anchor_coverage),
+        "future_track_loss_score_0_100": float(100.0 * (1.0 - anchor_coverage)),
+        "quality_pass": bool(quality_pass),
+        "quality_gate": "future common anchors >= 4 and coverage >= 0.8; F00 excluded",
+        "ade_px": raw_ade_px if quality_pass else None,
+        "ade_d0": (
+            float(raw_ade_px / diagonal)
+            if quality_pass and raw_ade_px is not None
+            else None
+        ),
+        "fde_px": raw_fde_px if quality_pass else None,
+        "fde_d0": (
+            float(raw_fde_px / diagonal)
+            if quality_pass and raw_fde_px is not None
+            else None
+        ),
+        "pck_10pct_d0": raw_pck_10 if quality_pass else None,
+        "pck_20pct_d0": raw_pck_20 if quality_pass else None,
+        "raw_ade_px": raw_ade_px,
+        "raw_ade_d0": float(raw_ade_px / diagonal) if raw_ade_px is not None else None,
+        "raw_fde_px": raw_fde_px,
+        "raw_fde_d0": float(raw_fde_px / diagonal) if raw_fde_px is not None else None,
+        "raw_pck_10pct_d0": raw_pck_10,
+        "raw_pck_20pct_d0": raw_pck_20,
         "d0_px": float(diagonal),
     }
 
@@ -1523,9 +1788,25 @@ def summarize_case_metrics(generation_root: Path, case: str) -> None:
                 {
                     "variant": variant,
                     "metric_target": target,
+                    "baseline_quality_pass": bool(reference.get("quality_pass", False)),
+                    "variant_quality_pass": bool(row.get("quality_pass", False)),
+                    "baseline_future_track_loss_score_0_100": reference.get(
+                        "future_track_loss_score_0_100"
+                    ),
+                    "variant_future_track_loss_score_0_100": row.get(
+                        "future_track_loss_score_0_100"
+                    ),
+                    "delta_future_track_loss_score_0_100": (
+                        float(row["future_track_loss_score_0_100"])
+                        - float(reference["future_track_loss_score_0_100"])
+                        if row.get("future_track_loss_score_0_100") is not None
+                        and reference.get("future_track_loss_score_0_100") is not None
+                        else None
+                    ),
                     **delta,
                     "interpretation": (
-                        "negative ADE/FDE delta and positive PCK delta mean closer to source GT"
+                        "ADE/FDE/PCK deltas are emitted only after both future-track "
+                        "quality gates pass; positive Track Loss delta means worse observability"
                     ),
                 }
             )
@@ -1552,7 +1833,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument("--stage", choices=("prepare", "generate", "evaluate", "all"), default="all")
+    parser.add_argument(
+        "--stage",
+        choices=("prepare", "sanity", "generate", "evaluate", "all"),
+        default="all",
+    )
     parser.add_argument("--input-list", type=Path, default=DEFAULT_INPUT_LIST)
     parser.add_argument("--head-ranking", type=Path, default=DEFAULT_RANKING)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
@@ -1561,6 +1846,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--worker-id", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--case-keys", nargs="*", default=None)
+    parser.add_argument(
+        "--target-names",
+        nargs="*",
+        default=None,
+        help="Optional exact guidance targets such as object_A or moving_union",
+    )
     parser.add_argument("--points-per-object", type=int, default=8)
     parser.add_argument("--moving-threshold-d0", type=float, default=0.05)
     parser.add_argument(
@@ -1581,6 +1872,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-gradient-rms-ratio", type=float, default=1.0)
     parser.add_argument("--no-gradient-checkpointing", action="store_true")
     parser.add_argument("--no-baseline", action="store_true")
+    parser.add_argument(
+        "--baseline-only",
+        action="store_true",
+        help="Generate only the unguided Baseline; ignore loss modes and targets",
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -1595,6 +1891,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("guidance-scale must be non-negative")
     if args.gaussian_sigma_tokens <= 0:
         raise ValueError("gaussian-sigma-tokens must be positive")
+    if args.baseline_only and args.no_baseline:
+        raise ValueError("--baseline-only and --no-baseline are mutually exclusive")
     if args.device in {"cuda:4", "4"}:
         raise ValueError("workspace policy forbids GPU 4")
 
@@ -1618,6 +1916,8 @@ def dry_run_report(args: argparse.Namespace, paths: list[Path]) -> None:
         "worker_cases": [path.stem for path in paths],
         "tube_mask_strategy": args.tube_mask_strategy,
         "loss_modes": list(args.loss_modes),
+        "baseline_only": bool(args.baseline_only),
+        "target_names": list(args.target_names or []),
         "head_ranking": str(args.head_ranking),
         "selected_head_count": 100,
         "denoising_steps": 40,
@@ -1686,6 +1986,31 @@ def main() -> None:
                 (error_dir / "error.txt").write_text(error, encoding="utf-8")
                 print(error, flush=True)
                 raise
+    if args.stage in {"sanity", "all"}:
+        missing = [path.stem for path in paths if not (tube_dir(output_root, path.stem) / "complete.json").is_file()]
+        if missing:
+            raise RuntimeError(f"prepare stage is incomplete for: {missing}")
+        pipeline = build_pipeline(args.seed)
+        try:
+            for json_path in paths:
+                tube = load_frozen_tube(output_root, json_path.stem)
+                sanity_check_case(
+                    pipeline,
+                    json_path,
+                    tube,
+                    entries,
+                    output_root,
+                    args.seed,
+                    () if args.baseline_only else tuple(args.loss_modes),
+                    tuple(args.target_names) if args.target_names else None,
+                    args.guidance_scale,
+                    args.gaussian_sigma_tokens,
+                    args.gradient_normalization,
+                    args.max_gradient_rms_ratio,
+                    not args.no_gradient_checkpointing,
+                )
+        finally:
+            release_pipeline(pipeline)
     if args.stage in {"generate", "all"}:
         missing = [path.stem for path in paths if not (tube_dir(output_root, path.stem) / "complete.json").is_file()]
         if missing:
@@ -1702,7 +2027,8 @@ def main() -> None:
                     args.head_ranking.expanduser().resolve(),
                     output_root,
                     args.seed,
-                    tuple(args.loss_modes),
+                    () if args.baseline_only else tuple(args.loss_modes),
+                    tuple(args.target_names) if args.target_names else None,
                     args.guidance_scale,
                     args.guidance_start,
                     args.guidance_end,

@@ -10,6 +10,8 @@ from AAA_my_test.run_legacy_ti2v_temporal_object_tube_ablations import (
     TEMPORAL_DIRECTIONAL_MODES,
     TemporalObjectTubeAblator,
     apply_temporal_directional_ablation,
+    implementation_metadata,
+    implementation_provenance,
     temporal_directional_groups,
 )
 
@@ -25,6 +27,24 @@ def reference_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> to
 
 
 class TemporalDirectionalAblationTest(unittest.TestCase):
+    def test_implementation_provenance_covers_runner_and_base_ablator(self) -> None:
+        provenance = implementation_provenance()
+        self.assertEqual(len(provenance["files_sha256"]), 2)
+        self.assertEqual(len(provenance["combined_sha256"]), 64)
+        self.assertTrue(
+            any(
+                path.endswith(
+                    "run_legacy_ti2v_firstlatent_physiciq67_attention_zero_ablations.py"
+                )
+                for path in provenance["files_sha256"]
+            )
+        )
+        metadata = implementation_metadata()
+        self.assertEqual(
+            metadata["code_hash"],
+            metadata["implementation_provenance"]["combined_sha256"],
+        )
+
     def setUp(self) -> None:
         self.tokens_by_time = [[0], [2], [4]]
         self.frame_token_count = 2
@@ -175,6 +195,16 @@ class TemporalDirectionalAblationTest(unittest.TestCase):
                     places=5,
                 )
                 self.assertAlmostEqual(
+                    float(instance.dose_attention_mass_query_sum[0, 0, 0, 1]),
+                    expected_mass * int(target_rows.numel()),
+                    places=5,
+                )
+                self.assertAlmostEqual(
+                    float(instance.dose_removed_value_norm_query_sum[0, 0, 0, 1]),
+                    expected_removed * int(target_rows.numel()),
+                    places=5,
+                )
+                self.assertAlmostEqual(
                     float(instance.dose_original_output_norm[0, 0, 0, 1]),
                     expected_original,
                     places=5,
@@ -203,6 +233,27 @@ class TemporalDirectionalAblationTest(unittest.TestCase):
         instance.modified_head_events = 80
         with self.assertRaisesRegex(RuntimeError, "dose coverage mismatch"):
             instance.audit()
+
+    def test_temporal_mode_rejects_unclassified_nonvideo_tokens(self) -> None:
+        instance = TemporalObjectTubeAblator(
+            pipe=object(),
+            entries=[{"block": 0, "head": 1}],
+            query_points=np.asarray([[0.0, 0.0]], dtype=np.float32),
+            region_slices={},
+            pixel_hw=(1, 2),
+            target_scope="all_objects",
+            mask_mode="self_future",
+            region=None,
+            tracks=np.zeros((3, 1, 2), dtype=np.float32),
+            anchor_frames=np.arange(3, dtype=np.int64),
+        )
+        instance.active = True
+        instance.current_grid = (3, 1, 2)
+        q = torch.randn(1, 7, 256)
+        k = torch.randn(1, 7, 256)
+        v = torch.randn(1, 7, 256)
+        with self.assertRaisesRegex(RuntimeError, "special/reference tokens"):
+            instance._attention(q, k, v, reference_attention, block=0)
 
 
 if __name__ == "__main__":

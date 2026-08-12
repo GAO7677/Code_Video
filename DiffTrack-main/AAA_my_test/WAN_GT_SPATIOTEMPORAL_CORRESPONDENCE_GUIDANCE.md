@@ -20,11 +20,12 @@
 
 对 source video 执行：
 
-1. caption physical noun phrases → GroundingDINO boxes；
-2. SAM2 从首帧 box 向整个 source prefix 传播 object masks；
-3. 每个首帧 object mask 内确定性采样 8 个点；
-4. CoTracker 从首帧跟踪这些点；
-5. 取 source pixel frames `F00,F04,…,F48`，得到 13 个 mask/point tube：
+1. caption physical noun phrases → GroundingDINO boxes，并用 SAM2 得到首帧 object masks；
+2. 每个首帧 object mask 内确定性采样 8 个点；
+3. CoTracker 从首帧跟踪这些点；
+4. 在 `F00,F04,…,F48` 各 anchor，用该帧可见 CoTracker points 直接提示 SAM2；
+5. 只有当前 anchor 无有效 point/mask 时，才使用最近相邻 direct mask 的 SAM2 传播结果作为 fallback；direct、fallback candidate、最终来源均写入 tube manifest；
+6. 得到 13 个 mask/point tube：
 
 \[
 R^*=(R_0^*,R_1^*,\ldots,R_{12}^*).
@@ -93,20 +94,21 @@ x_{s-1}=x_s+(\sigma_{s-1}-\sigma_s)v_s^{guided}.
 
 输出根目录默认是：
 
-`/data/gaoya/agent-data/outputs/wan_gt_spatiotemporal_correspondence_guidance/latest3350_top100_v1`
+`/data/gaoya/agent-data/outputs/wan_gt_spatiotemporal_correspondence_guidance/latest3350_top100_cotracker_sam2_v2`
 
 每个生成 variant 的目录包含：
 
 - `generated.mp4`；
 - `manifest.json`：精确 loss、target、head、梯度、每步 loss/gradient audit；
-- `trajectory_metrics.json`：生成视频相对 source GT 的 ADE/FDE、PCK@10/20%D0、可见率；
+- `trajectory_metrics.json`：生成视频相对 source GT 的 ADE/FDE、PCK@10/20%D0、未来帧可见率和 Track Loss；
 - case/seed 根目录的 `comparison_to_baseline.json`：guided minus baseline。
 
 主要成功标准：
 
-- `delta_ADE < 0`、`delta_FDE < 0`；
-- `delta_PCK > 0`；
-- 可见率不能明显下降，否则“轨迹改善”可能只是困难帧被跟踪门控删除。
+- F00 是固定条件帧，所有轨迹统计都从 F04 开始，禁止让 F00 的零误差伪造改善；
+- 每个对象至少有 4 个 future common anchors，且相对 source 可追踪 anchors 的 coverage 至少为 0.8，才报告 ADE/FDE/PCK；
+- 通过双方质量门后，`delta_ADE < 0`、`delta_FDE < 0`、`delta_PCK > 0`；
+- 所有视频无论是否通过门控，都报告 `Future Track Loss = 100 × (1 − common-anchor coverage)`；Track Loss 上升表示更不可追踪，不能解释成轨迹改善。
 
 Baseline 仍需和现有 legacy baseline 做像素 hash/数值 parity spot-check；单元测试只能证明 loss 方向和 scheduler 符号，不能替代一次 GPU smoke test。
 
@@ -132,9 +134,17 @@ CUDA_VISIBLE_DEVICES=0 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 
 CUDA_VISIBLE_DEVICES=0 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
   AAA_my_test/run_wan_gt_spatiotemporal_correspondence_guidance.py \
+  --stage sanity --device cuda:0 \
+  --case-keys 0613pybullet_sample_001460_w002 \
+  --target-names object_A \
+  --loss-modes region point combined --guidance-scale 0.1
+
+CUDA_VISIBLE_DEVICES=0 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  AAA_my_test/run_wan_gt_spatiotemporal_correspondence_guidance.py \
   --stage generate --device cuda:0 \
   --case-keys 0613pybullet_sample_001460_w002 \
-  --loss-modes region point --guidance-scale 0.1
+  --target-names object_A \
+  --loss-modes region point combined --guidance-scale 0.1
 
 CUDA_VISIBLE_DEVICES=0 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
   AAA_my_test/run_wan_gt_spatiotemporal_correspondence_guidance.py \
@@ -152,4 +162,4 @@ cd /home/gaoya/Code_Video/DiffTrack-main
   AAA_my_test.test_wan_gt_spatiotemporal_correspondence_guidance
 ```
 
-覆盖：列表去重、13-anchor 策略、region/point 正负样例、梯度有限性、RMS 归一化、FlowMatch 符号、non-reentrant checkpoint 的 side-loss 反传行为。
+覆盖：列表去重、13-anchor 策略、缺失 mask anchor、region/point 正负样例、梯度有限性、RMS 归一化、FlowMatch 符号、future-only 轨迹质量门、non-reentrant checkpoint 的 side-loss 反传行为。

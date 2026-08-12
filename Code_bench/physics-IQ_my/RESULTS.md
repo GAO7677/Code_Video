@@ -1,6 +1,6 @@
 # Physics-IQ-Verified 评测结果登记
 
-最后更新：2026-08-11 UTC
+最后更新：2026-08-12 UTC
 
 本文档是本项目 Physics-IQ-Verified 评测结果的唯一登记入口。新增评测方案时必须先在本文档登记，生成和官方评分完成后必须补充最终进度、分数与产物路径。不得覆盖、删除或静默修改历史结果的含义。
 
@@ -81,6 +81,7 @@
 | 状态 | 模型与 Run | 协议 | 视频数 | Verified | Original | 严格可比 |
 |---|---|---:|---:|---:|---:|---|
 | 已完成 | xSSC Full-SA no-object step-2000 | P0 | 198/198 | **33.8024** | 35.65 | 是 |
+| 已完成 | xSSC Full-SA no-object xSSC-loss DINOv3 MOVi-C step-500 | P0 | 198/198 | **33.2976** | 34.45 | 是 |
 | 已完成 | PhysRVG 旧版 BPP | P1 | 198/198 | 28.7738 | 26.92 | 否 |
 | 已完成 | PhysRVG 旧版 OP | P2 | 198/198 | 29.5964 | 27.73 | 否 |
 | 已完成 | Wan2.2-TI2V-5B OP last-frame baseline | P3 | 198/198 | 28.1540 | 26.43 | 否 |
@@ -122,6 +123,62 @@ Run ID：
 | Spatiotemporal view | 49.6522 |
 | Weighted spatial view | 23.9549 |
 | MSE view | 29.8545 |
+
+## xSSC Full-SA no-object xSSC-loss DINOv3 MOVi-C step-500
+
+状态：已完成。生成、后处理和官方评分于 `2026-08-12 11:38:51 UTC` 完成。
+
+Run ID：
+
+`full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01`
+
+Checkpoint：
+
+`/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_no_object_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints/step-000500`
+
+Checkpoint SHA256：
+
+`2c970f718bcf788ea17901af7d2fd041ecbe4064ce8fa49c8377f980e1223866`
+
+生成入口与脚本：
+
+- 原模型 shell 入口：`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/run_infer_from_experiment.sh`
+- 实际底层模型入口：`infer_xssc_object_self_attn_lora.py`。原 shell 将帧数写死为49、context写死为8，不能直接满足P0；benchmark适配器不修改原代码，而是调用同一底层入口并显式传入P0参数。
+- 本次配置：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/feature_loss_step000500_physicsiq_verified_gpu67_remote.env`
+- 本次启动脚本：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/run_feature_loss_step000500_physicsiq_verified_gpu67_remote.sh`
+- 通用SSH启动器：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/launch_xssc_experiment_verified_ssh118.sh`
+- 通用双卡worker：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/run_xssc_experiment_verified_gpu67_remote_worker.sh`
+- 输入路径映射与协议校验：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/prepare_verified_remote_inputs.py`
+- 189帧转120帧后处理：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/prepare_verified_outputs.py`
+
+评测协议：`P0`，与 `xSSC Full-SA no-object step-2000` 相同。
+
+- 198个take-1 case，BPP Prompt，完整72帧、24 FPS、3秒V2V条件。
+- 512x896，40步，Guidance 5，run_01 seed 42。
+- GPU 6和GPU 7各处理99个case；每个case使用相同seed 42。
+- 模型原始输出189帧、24 FPS；完整保存raw，并去掉前69帧，提交后120帧、24 FPS、5秒视频。
+- 使用官方 `physiq/run_physics_iq.py`、`descriptions/best_practice/descriptions_base.csv` 和 `--score-type verified` 聚合方式。
+- 官方评测入口、聚合入口和BPP CSV的SHA256均与本文档P0登记值一致。
+
+SSH 118上的结果产物：
+
+- 189帧 raw：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/raw/full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01`
+- 120帧 submission：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/generated_videos_5s/full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01`
+- Metrics：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physics-IQ-benchmark-verified/results/full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01_metrics.json`
+- 官方 CSV：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physics-IQ-benchmark-verified/results/full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01.csv`
+- 汇总 CSV：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01_verified_summary.csv`
+- 日志：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/logs/full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01`
+
+子指标：
+
+| 指标 | 数值 x100 |
+|---|---:|
+| Physics-IQ Verified | 33.2976 |
+| Spatial view | 30.4234 |
+| Spatiotemporal view | 50.4199 |
+| Weighted spatial view | 23.0123 |
+| MSE view | 29.3349 |
+| Physics-IQ Original | 34.45 |
 
 ## PhysRVG 旧版 BPP
 
@@ -166,38 +223,6 @@ SSH 118上的结果产物：
 ## 运行中与未完成方案
 
 本节中的方案在官方评分完成前没有可报告的 Physics-IQ-Verified 分数。
-
-### xSSC Full-SA no-object xSSC-loss DINOv3 MOVi-C step-500
-
-状态：已配置，计划在 SSH 118 的 GPU 6、7 上运行；GPU 被占用时由 tmux 等待，不抢占其他任务。
-
-Checkpoint：
-
-`/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_no_object_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints/step-000500`
-
-生成入口与脚本：
-
-- 原模型 shell 入口：`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/run_infer_from_experiment.sh`
-- 实际底层模型入口：`infer_xssc_object_self_attn_lora.py`。原 shell 将帧数写死为49、context写死为8，不能直接满足P0；benchmark适配器不修改原代码，而是调用同一底层入口并显式传入P0参数。
-- 本次配置：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/feature_loss_step000500_physicsiq_verified_gpu67_remote.env`
-- 本次启动脚本：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/run_feature_loss_step000500_physicsiq_verified_gpu67_remote.sh`
-- 通用SSH启动器：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/launch_xssc_experiment_verified_ssh118.sh`
-- 通用双卡worker：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/xSSC/run_xssc_experiment_verified_gpu67_remote_worker.sh`
-
-评测协议：`P0`，与 `xSSC Full-SA no-object step-2000` 相同。
-
-- 198个take-1 case，BPP Prompt，完整72帧、24 FPS、3秒V2V条件。
-- 512x896，40步，run_01 seed 42。
-- 模型原始输出189帧、24 FPS；保存完整raw，并去掉前69帧，提交后120帧、24 FPS、5秒视频。
-- 使用官方 `physiq/run_physics_iq.py`、`descriptions/best_practice/descriptions_base.csv` 和 verified 聚合方式；官方入口及BPP CSV哈希已与P0本机版本核对一致。
-
-计划产物（SSH 118）：
-
-- tmux：`physicsiq_verified_xssc_feature_loss_step000500_gpu67`
-- 189帧 raw：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/raw/full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01`
-- 120帧 submission：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/generated_videos_5s/full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01`
-- Metrics目录：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physics-IQ-benchmark-verified/results`
-- 日志：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/logs/full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01`
 
 | 最近状态 | 模型与 Run | 协议 | 进度 | 分数 |
 |---|---|---:|---:|---|

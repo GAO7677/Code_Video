@@ -81,11 +81,18 @@ JPEG overlay 还包含三个额外混杂因素：
 
 ### 4. 后续验证协议
 
+HYP-001 现在是 Stage 4 的 **secondary question**；Stage 4 的主对比是各时间方向相对
+Baseline 的介入效应，而不是“谁最像 All-time”。执行规格以
+[`plan.md`](plan.md) 和 [`experiment_spec_stage4_temporal_v1.json`](experiment_spec_stage4_temporal_v1.json)
+为准；本节只定义 HYP-001 需要的额外配对分析。
+
 #### 实验单位与配对
 
 - 基本单位：`case × seed × Object target × M ID × head scope`。
 - 每个单位必须同时存在 All-time、Past、Same、Future，且使用相同 seed、checkpoint、prompt/source、推理步数和 CFG 配置。
-- Object A、Object B 分层报告；M1、M2、M3 分层报告；Top100、Bottom100、All720 分层报告，不能只给总体平均。
+- 每个 case 的所有 single-object target 与 `all_objects` 分层报告；M1/M2/M3 分层报告。
+- Top100、Bottom100、Random100-layer-matched-draw0 是完整 pilot scope；All720 只作强干预 sentinel，不进入 head-specific 主结论。
+- 旧 directional 视频若没有 `temporal_direction_v2_dose` 的完整 dose 和联合代码指纹，只能用于视觉历史对照。
 
 #### 主指标
 

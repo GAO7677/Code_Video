@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import json
 import re
 import sys
@@ -123,6 +124,47 @@ TEMPORAL_DIRECTIONAL_SPECS = {
 TEMPORAL_DIRECTIONAL_MODES = tuple(TEMPORAL_DIRECTIONAL_SPECS)
 MASK_MODES = MATRIX_MASKS + ("literal_kv_zero",) + TEMPORAL_DIRECTIONAL_MODES
 PROTOCOL = "attention_matrix_ablation_temporal_object_tube_v1"
+TEMPORAL_DIRECTIONAL_PROTOCOL = "attention_matrix_ablation_temporal_direction_v2_dose"
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def implementation_provenance() -> dict[str, object]:
+    """Fingerprint both the temporal runner and its inherited ablation implementation."""
+    implementation_paths = (
+        Path(__file__).resolve(),
+        ROOT
+        / "AAA_my_test"
+        / "run_legacy_ti2v_firstlatent_physiciq67_attention_zero_ablations.py",
+    )
+    files = {
+        str(path): sha256_file(path)
+        for path in implementation_paths
+    }
+    digest = hashlib.sha256()
+    for path, file_hash in sorted(files.items()):
+        digest.update(path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_hash.encode("ascii"))
+        digest.update(b"\0")
+    return {
+        "combined_sha256": digest.hexdigest(),
+        "files_sha256": files,
+    }
+
+
+def implementation_metadata() -> dict[str, object]:
+    provenance = implementation_provenance()
+    return {
+        "code_hash": provenance["combined_sha256"],
+        "implementation_provenance": provenance,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -581,7 +623,16 @@ class TemporalObjectTubeAblator(AttentionMatrixAblator):
         self._rows(q.device)
         if not self.query_token_indices_by_latent_frame:
             raise RuntimeError("temporal object tube rows were not resolved")
-        _, height, width = self.current_grid
+        time, height, width = self.current_grid
+        expected_video_tokens = time * height * width
+        actual_token_counts = (int(q.shape[1]), int(k.shape[1]), int(v.shape[1]))
+        if actual_token_counts != (expected_video_tokens,) * 3:
+            raise RuntimeError(
+                "temporal C partition is defined only over the latent-video grid, but "
+                f"Q/K/V token counts are {actual_token_counts} and grid size is "
+                f"{expected_video_tokens}; special/reference tokens must be classified "
+                "explicitly before this intervention can run"
+            )
         groups = temporal_directional_groups(
             self.query_token_indices_by_latent_frame,
             height * width,
@@ -714,10 +765,11 @@ def process(
         **task,
         "variant_id": temporal_variant_id(task),
         "protocol": (
-            "attention_matrix_ablation_temporal_direction_v1"
+            TEMPORAL_DIRECTIONAL_PROTOCOL
             if str(task["mask_mode"]) in TEMPORAL_DIRECTIONAL_MODES
             else PROTOCOL
         ),
+        **implementation_metadata(),
         "attention_definition": "A=softmax(QK^T/sqrt(d)); Y=A@V",
         "selected_token_definition": (
             "union of sparse object points tracked on the seed-matched baseline and "
@@ -725,7 +777,10 @@ def process(
         ),
         "matrix_partition": {
             "R": "frozen all-latent object token tube",
-            "C": "all tokens outside the selected temporal tube",
+            "C": (
+                "all latent-video grid tokens outside R; runtime requires Q/K/V token "
+                "count == T*H*W, so no unclassified special/reference/text token is admitted"
+            ),
             "S": "A[R,R]",
             "I": "A[R,C] (C K/V -> R queries)",
             "O": "A[C,R] (R K/V -> C queries)",
@@ -768,6 +823,7 @@ def process(
         "head_scope": head_scope,
         "selected_head_count": len(entries),
         "head_ranking_snapshot": str(head_ranking_path),
+        "head_ranking_sha256": sha256_file(head_ranking_path),
         "denoising_steps": list(range(40)),
         "cfg_branches": ["conditional", "unconditional"],
         "audit": audit,
@@ -777,13 +833,20 @@ def process(
                 "attention_mass": (
                     "mean over removed source attention probability for affected query rows"
                 ),
+                "attention_mass_query_sum": (
+                    "attention_mass multiplied by the affected target-query count"
+                ),
                 "removed_value_norm": (
                     "mean L2 norm of the exact removed sum_k A_qk V_k per affected query"
+                ),
+                "removed_value_norm_query_sum": (
+                    "sum across affected queries of each query's removed-contribution L2 norm"
                 ),
                 "original_output_norm": (
                     "mean L2 norm of the original selected-head attention output on the same queries"
                 ),
                 "removed_to_output_ratio": "removed_value_norm / original_output_norm",
+                "target_query_count": "number of affected query rows",
                 "axes": ["denoising_step", "cfg_call", "block", "head"],
                 "cfg_call_order": ["conditional_first_call", "unconditional_second_call"],
             }

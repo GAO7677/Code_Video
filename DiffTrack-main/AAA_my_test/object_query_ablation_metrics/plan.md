@@ -2,8 +2,8 @@
 
 ## 0. 文档状态
 
-- 状态：**Gate 0、Stage 0–3 已完成；Stage 3 最终 discovery 报告已冻结**。
-- Gate 0 后先执行只读清单审计和 query-time ranking validation；尚未启动新的大规模消融视频矩阵。
+- 状态：**Gate 0、Stage 0–3 已完成；Stage 3 最终 discovery 报告已冻结；Stage 4 尚未启动**。
+- 下一步不是直接提交时间消融矩阵，而是先通过 Stage 4.0 的 directional-dose、token-universe、指标 smoke 和 inventory 门槛。
 - 目标：在新的 `latest3350` PCK head 排名下，区分 `R→R`、`C→R`、`R→C` 三类 self-attention 信息流更主要地影响对象轨迹、对象外观，还是对象外区域，并比较 Top100、Bottom100、随机匹配 100 heads 与 All720。
 - 结论边界：`R` 是由追踪点构成的**稀疏 object-token tube**，不是完整对象 mask；因此结论首先针对该 tube 表示，不能直接外推成“完整对象区域的全部信息流”。
 
@@ -43,7 +43,8 @@ Y'_{q,h}=Y_{q,h}-\sum_{k\in B(q)}A_{qk,h}V_{k,h}.
 
 `C→C` 始终保留。M1/M2/M3 是**方向性边消融**，不能被写成“删除对象 token 本身”。
 
-执行前还要冻结 token universe：`C` 必须定义为同一 self-attention 序列中 `R` 以外的明确 token 集；若序列中存在 special/reference/text token，必须逐类列出是否属于 `C`，不能静默混入。
+Stage 4 的 token universe 已明确冻结：`C` 是同一个 latent-video `T×H×W` 网格中 `R` 之外的 token。运行时必须满足
+`Q/K/V token count = T×H×W`；若存在 special/reference/text token，当前实现直接停止，不能静默混入 `C`。
 
 ### 1.2 latent-video 时间分解
 
@@ -274,17 +275,127 @@ Random100-M2 和 All720-M3：视频均可完整解码为 49 帧（704×1280）�
 
 ### Stage 4 — latent-video 时间方向分解
 
-在有单对象和多对象交互的代表集上运行 M1/M2/M3 × Same/Future/Past；All-time 从 Stage 3 复用。
+#### 4.0 目的与结论边界
 
-候选代表集（Gate 0 后冻结）：
+Stage 4 要回答的不是“Top100 是否重要”——Stage 3 已经完成该筛查——而是把每类信息流沿 latent-video
+时间轴拆开，判断其作用主要来自：
 
-- `0613pybullet_sample_001460_w002`；
-- `0613pybullet_sample_000331_w001`；
-- PhysicIQ ball-and-block motion-to-end case。
+| 时间模式 | 被删除的边 | 主要诊断问题 |
+|---|---|---|
+| Same | `t_k=t_q` | 同帧结构、身份或局部交互是否重要 |
+| Future | `t_k<t_q` | 历史 K/V 是否向未来 Query 传播状态 |
+| Past | `t_k>t_q` | 生成是否依赖未来 latent 对过去 Query 的双向上下文 |
 
-按先前对象清单估算为 11 targets/seed。若 3 seeds、Top/Bottom/All720、3 flows、4 time modes：共 `1188` cells，其中与 Stage 3 重合的 All-time cells复用，预计新增 `891`；最终以 Stage 0 inventory 为准。
+分别对 M1/M2/M3 解释：M1 检查对象自身状态何时维持，M2 检查环境/其他对象约束何时进入对象，
+M3 检查对象状态何时传播到对象外。由于 Wan latent-video self-attention 可以双向访问整段序列，
+`Past` 不是“物理未来真的导致过去”，而是**反时间方向的模型上下文对照**。
 
-分析重点：Future vs Past 的方向选择性、Same 的局部结构效应，以及这些差异能否在控制 `m_V` 后保留。
+Stage 4 仍然是 discovery/pilot。它最多说明某类已删除 contribution 在某一时间方向上对输出是必要的；
+仅凭 knockout 不能直接识别 message 的完整语义，也不能把 vs Baseline 的变化写成相对 GT 的物理退化。
+
+#### 4.1 Stage 4.0 — 执行前硬门槛
+
+在提交任何 GPU 大矩阵前，必须全部通过：
+
+1. Same/Future/Past 两两不相交，且 contribution 的**向量和**等于 All-time；三段 norm 不要求相加等于 All-time norm。
+2. 9 个 `M1/M2/M3 × Same/Future/Past` 模式均记录有限的 `attention_mass`、`removed_value_norm`、
+   `original_output_norm`、ratio、affected-query count，以及 query-summed dose。
+3. 每个选中 physical head 必须恰好记录 `40 denoising steps × 2 CFG branches` 个 dose 事件；不完整直接失败。
+4. `Q/K/V token count = T×H×W`；发现未分类 special/reference/text token 直接失败。
+5. 一个 case × 一个 seed × 一个 single-object target 完成真实 GPU smoke：视频 49 帧可解码，manifest、dose、
+   Fast/Trajectory/Survival 以及 center-aligned LPIPS/shape 全链路可读取。
+6. inventory 按 case、seed、target、head hash、flow、time mode、protocol、temporal runner +
+   base ablator 联合代码指纹和 dose 完整性重新判断复用；
+   旧 directional 视频若没有有效 dose，只能作视觉历史对照，不能进入 Stage 4 主分析。
+
+任何一项失败，停止 Stage 4A，不允许用缺失 dose 的输出先做机制结论。
+
+当前预检状态（2026-08-12）：CPU 代数、9 个 directional exact-dose、dose coverage hard-fail 和
+token-universe hard-fail 测试已经通过；实现协议升级为
+`attention_matrix_ablation_temporal_direction_v2_dose`。真实 GPU smoke 与 LPIPS/shape 全链路尚未执行，
+因此 Stage 4.0 **尚未 PASS**。
+
+#### 4.2 Stage 4A — 三 case 机制 pilot
+
+冻结代表集：
+
+| Case | objects | targets/seed | 角色 |
+|---|---:|---:|---|
+| `0613pybullet_sample_001460_w002` | 2 | 3 | 已有历史时间消融观察；用于复核和实现连续性 |
+| `0613pybullet_sample_000331_w001` | 2 | 3 | 外部 PyBullet 多对象对照 |
+| `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed-ball-and-block-fall_motion_to_end` | 4 | 5 | 多对象/交互复杂度对照 |
+
+每 seed 合计 11 targets，seeds 固定为 discovery `13248, 47326, 90094`。single-object 和 all-objects
+必须分层报告：single-object 的 `C` 包含其他对象和背景，all-objects 的 `C` 主要是对象外区域，二者语义不同。
+
+Head scope：
+
+- Top100、Bottom100、Random100-layer-matched-draw0 全量运行；Random100 是排除 layer 分布和“任意删除
+  100 heads”效应的必要对照。
+- All720 只在 `0613pybullet_sample_001460_w002 / seed 47326` 的 3 targets 上作强干预 sentinel，
+  不进入 head-specific 主对比。Stage 3 的 All720 轨迹门控失败率已达 M1 51.0%、M2 47.9%、M3 36.5%。
+
+最大新增预算（inventory 无可复用 directional dose 时）：
+
+| 部分 | cells |
+|---|---:|
+| 11 targets/seed（3 cases 合计）× 3 seeds × 3 head scopes × 3 flows × 3 directions | 891 |
+| `001460` 缺失的 3 targets × 3 seeds × 3 head scopes × 3 flows All-time | 81 |
+| All720 sentinel：3 targets × 1 seed × 3 flows × 3 directions | 27 |
+| 最大新增总数 | 999 |
+
+`000331` 和 ball-and-block 的 All-time Top/Bottom/Random 可从 Stage 3 候选中审计复用；`001460` 不在
+Stage 3 的 10-case 矩阵中，不能默认已有可复用 All-time。最终任务数只采用 Stage 4 inventory 结果。
+
+Stage 4 inventory（2026-08-12）已核实：1215 个所需 cells 中可复用 All-time 216 个，必须新生成/重跑
+999 个，恰好为 directional 891、`001460` All-time 81、All720 sentinel 27。旧目录中 261 个 cells
+只有可视视频但不满足主分析复用条件；其中 directional 均缺 v2 dose/provenance。报告位于
+`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage4_preflight_inventory/`。
+
+3 个 case 只用于机制 pilot，不进行“总体显著”宣称。case 是最高独立单位；即使三个 case 方向完全一致，
+双侧 exact sign-flip 的最小 p 值也只有 0.25，增加 seed 不能替代增加独立 case。
+
+#### 4.3 冻结主对比与指标
+
+主 reference 是同 case、同 seed Baseline。对每个 directional mode 先计算其自身相对 Baseline 的效应；
+“哪个方向最像 All-time”降为 secondary，因为生成网络非线性，通常不满足
+`Effect(All)=Effect(Same)+Effect(Future)+Effect(Past)`。
+
+| ID | 冻结主问题 | 主 outcome | Guardrail / 条件 |
+|---|---|---|---|
+| T1 | Top100-M1 的 Future 是否强于 Past | Target Center-ADE / D0 的 `Future−Past` | Track Loss、Disappearance；只在通过门控轨迹上算 ADE |
+| T2 | 交互 case 中 Top100-M2 的 Future 是否强于 Past | GT contact-time / post-contact velocity change；无合格 GT 时降级为 Baseline-relative velocity | 必须先审计 simulator GT 资格，禁止拿缺失 GT 的 case 填 0 |
+| T3 | single-object Top100-M3 的 Future 是否强于 Past | Other-object Center-ADE / D0 的 `Future−Past` | other-object track coverage；all-objects 不混入该主对比 |
+
+Same 相对 `0.5×(Future+Past)`、Center-FDE/PCK/velocity、DINO/shape/LPIPS、Outside-object LPIPS
+和 All-time 相似度均为 secondary/diagnostic。center-aligned LPIPS 只有在 Stage 4.0 smoke 全链路通过后才可报告；
+在此之前不能继续用 frozen-ROI MAE 冒充“纯外观”。
+
+#### 4.4 剂量控制与允许的解释
+
+每个 directional variant 同时报告：
+
+- 每 affected Query 的平均 removed attention mass / removed AV norm；
+- affected-query count；
+- query-summed attention mass / removed-norm；
+- removed/output norm ratio；
+- step、CFG、layer/head 分层分布。
+
+先报告原始 `Future−Past` outcome，再检查对应 dose 差异和支持区间。只有 Future/Past 的 dose 有共同支持时，
+才进行 case-cluster 分层/回归敏感性分析；若支持区间不重叠，只能说“某方向删除的 contribution 更多且输出变化更大”，
+不能说“每单位该方向信息更关键”。禁止用 outcome 或 norm 简单相除作为唯一剂量校正。
+
+#### 4.5 Stage 4B — 扩展 case 后的统计验证
+
+Stage 4A 完成后，用 case-level paired `Future−Past` 差异估计方差，并在**不读取 confirmation 结果**的前提下冻结：
+
+1. 每个主对比的最小有意义效应 MDE；
+2. 经主检验 family 校正后的 alpha；
+3. power≥0.8 所需独立 case 数；
+4. interaction/non-interaction 与 single/multi-object 分层比例。
+
+少于 8 个独立 cases 一律保持 pilot；8 只是下限，不是自动充分样本量。Stage 4B 才使用未参与页面挑选的
+held-out cases/seeds。若可用 case 数达不到 power 需求，明确停止在 exploratory，不追加样本直到显著。
 
 ### Stage 5 — M2/M3 双向边界交互（2×2）
 
@@ -359,8 +470,9 @@ Random100-M2 和 All720-M3：视频均可完整解码为 49 帧（704×1280）�
   1. Top100 − Bottom100；
   2. Top100 − layer-matched Random100；
   3. M1 vs M2 vs M3 的信息类型差；
-  4. Future − Past；
-  5. M3 对 other-object ADE 的方向性对比。
+  4. Stage 4 T1：Top100-M1 `Future − Past` 的 Target Center-ADE / D0；
+  5. Stage 4 T2：交互 case 中 Top100-M2 `Future − Past` 的 GT contact/post-contact velocity；
+  6. Stage 4 T3：single-object Top100-M3 `Future − Past` 的 Other-object Center-ADE / D0。
 - 多重比较对预注册 primary family 使用 BH-FDR；secondary/exploratory 只报告 effect size、CI 与校正后的 q-value，不以单个 p<0.05 下结论。
 - 倍数只在分母远离 0 且方向一致时报告；同时必须展示绝对差和 CI。分母接近 0 时标为不稳定，不制造巨大倍数。
 - 若 confirmatory held-out case 数太少，结果明确标记 pilot/exploratory，不包装成总体规律。
@@ -392,17 +504,23 @@ Random100-M2 和 All720-M3：视频均可完整解码为 49 帧（704×1280）�
 5. survival failure 激增但未能区分模型崩坏与目标效应；
 6. 指标缺失被静默填值；
 7. confirmatory 数据与 ranking/探索集发生泄漏。
+8. directional dose 任一 selected head 未覆盖完整 `40×2` 事件，或出现 NaN/Inf；
+9. `Q/K/V token count != T×H×W`，说明存在尚未分类的非视频 token；
+10. Stage 4 center-aligned LPIPS/shape smoke 未通过却仍被列为外观主证据；
+11. 仅 3-case Stage 4A pilot 被用于显著性或总体机制宣称。
 
 遇到硬停止条件，只完成诊断报告，不继续消耗大规模 GPU。
 
 ---
 
-## 8. Gate 0 待用户确认的问题
+## 8. 已确认选择与下一道人工 Gate
 
-1. **Random100 预算**：建议“1 个 layer-matched Random100 跑完整 discovery，另外 2 个随机 draw 只跑代表子集做稳健性检查”；是否接受？若 3 个都全量，按 33 targets × 3 seeds 的暂估会从 1188 增至 1782 个候选视频。
-2. **Seed 划分**：建议 discovery=`13248, 47326, 90094`，confirmation=`32466, 35075, 68613`。其中 `47326` 已被多次观察，只作为 exploratory；是否接受？
-3. **Held-out cases**：latest3350 构建数据可能与现有 case 重叠。建议先从 PhysicIQ67/PyBullet 建立完全未参与 ranking/页面挑选的候选池，覆盖单对象、多对象和碰撞，再用 pilot 方差与目标 MDE 决定最终 case 数；少于约 8 个独立 cases 默认只作 pilot。候选 cases 由我筛选，还是由你指定？
-4. **Probe/rescue 范围**：建议 message probe 纳入本轮、放在因果筛查之后；activation rescue 只对最强少数结果作为第二阶段。是否接受？
-5. **ranking 稳定阈值**：建议 Stage 1 在看结果前冻结 Top100 Jaccard/Spearman 的通过阈值；我可以先根据 anchor 数和 bootstrap 噪声做 null calibration，再提交阈值供你确认。是否接受这种定阈值方式？
+Gate 0 的 Random100、seed split、held-out 策略、probe/rescue 范围和 ranking 稳定阈值已经确认并执行，
+不再作为“待确认问题”重复列出。原始冻结选择保存在 `experiment_spec_latest3350.json`，不得覆盖。
 
-收到以上确认后，先只执行 **Stage 0 inventory + Stage 1 ranking validation** 并回报，再决定是否进入 GPU 密集的 Stage 2/3。
+Stage 4 的增补冻结在 `experiment_spec_stage4_temporal_v1.json`。下一次人工确认发生在：
+
+1. Stage 4.0 CPU、真实 GPU smoke、LPIPS/shape 和 inventory 全部通过之后、启动 Stage 4A 之前；
+2. Stage 4A 完成并给出方差/MDE/power 曲线之后、选择 Stage 4B case 数之前。
+
+截至本文当前版本，不自动启动 Stage 4A GPU 矩阵。

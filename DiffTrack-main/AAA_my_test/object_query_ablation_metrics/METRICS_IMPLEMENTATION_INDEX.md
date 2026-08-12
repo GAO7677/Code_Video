@@ -26,6 +26,26 @@
 | `M(t)` | SAM2 对象 mask |
 | `u(t,x)` | 相邻帧 RAFT 光流 |
 
+### Directional attention dose（Stage 4 必需审计量）
+
+这些量描述“精确删掉了多少 attention contribution”，不是生成结果质量指标。实现为
+`run_legacy_ti2v_temporal_object_tube_ablations.py::apply_temporal_directional_ablation()` 与
+`AttentionMatrixAblator._record_removed_dose()`，存入每个 variant 的 `dose_metrics.npz`。
+
+| dose 字段 | 精确计算 | 用途／限制 |
+|---|---|---|
+| `dose_attention_mass` | 对受影响 Query 求 `sum_(k in removed set) A_qk`，再对 Query 取平均 | 每 Query 删除的注意力概率质量；不表示语义重要性 |
+| `dose_removed_value_norm` | 对每个受影响 Query 计算 `norm(sum_k A_qk V_k)`，再取平均 | 精确被减去的 A@V 向量效应；不能由 attention mass 代替 |
+| `dose_original_output_norm` | 同一 Query 上干预前 `norm(sum_k A_qk V_k)` 的平均 | 是 removed/output ratio 的分母 |
+| `dose_removed_to_output_ratio` | `removed_value_norm / original_output_norm` | 表示删除 contribution 相对原 head 输出的大小；分母近 0 时需审计 |
+| `dose_target_query_count` | 本次事件中实际受影响的 Query 行数 | Same/Future/Past 受影响 Query 数不同，不可忽略 |
+| `dose_attention_mass_query_sum` | `dose_attention_mass × dose_target_query_count` | 将每 Query 强度还原为当次事件的 Query-summed dose |
+| `dose_removed_value_norm_query_sum` | `sum_q norm(sum_k A_qk V_k)` | removed norm 的 Query-summed dose；注意它不等于 `norm(sum_q sum_k A_qkV_k)` |
+
+Directional 协议是 `attention_matrix_ablation_temporal_direction_v2_dose`。每个选中
+physical head 必须有 `40 denoising steps × 2 CFG branches = 80` 个有限 dose 事件；
+少于 80 时实现直接报错，该视频不得进入 Stage 4 主分析。
+
 ## 2. Complete benchmark：25 个指标族
 
 优先级是实验解释优先级，不是官方排名。`P0` 首先解释物理/因果效应，`P3` 主要用于 sanity check。

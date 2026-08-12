@@ -212,7 +212,13 @@ class AttentionMatrixAblator:
         self.query_token_indices: list[int] | None = None
         dose_shape = (40, 2, 30, 24)
         self.dose_attention_mass = np.full(dose_shape, np.nan, dtype=np.float32)
+        self.dose_attention_mass_query_sum = np.full(
+            dose_shape, np.nan, dtype=np.float32
+        )
         self.dose_removed_value_norm = np.full(dose_shape, np.nan, dtype=np.float32)
+        self.dose_removed_value_norm_query_sum = np.full(
+            dose_shape, np.nan, dtype=np.float32
+        )
         self.dose_original_output_norm = np.full(dose_shape, np.nan, dtype=np.float32)
         self.dose_removed_to_output_ratio = np.full(dose_shape, np.nan, dtype=np.float32)
         self.dose_target_query_count = np.zeros(dose_shape, dtype=np.int32)
@@ -337,7 +343,13 @@ class AttentionMatrixAblator:
         values = torch.stack((mass_mean, removed_norm, original_norm, ratio)).cpu().numpy()
         index = (self.current_step, self.current_cfg_call, block)
         self.dose_attention_mass[index][list(heads)] = values[0]
+        self.dose_attention_mass_query_sum[index][list(heads)] = (
+            values[0] * int(target_rows.numel())
+        )
         self.dose_removed_value_norm[index][list(heads)] = values[1]
+        self.dose_removed_value_norm_query_sum[index][list(heads)] = (
+            values[1] * int(target_rows.numel())
+        )
         self.dose_original_output_norm[index][list(heads)] = values[2]
         self.dose_removed_to_output_ratio[index][list(heads)] = values[3]
         self.dose_target_query_count[index][list(heads)] = int(target_rows.numel())
@@ -347,7 +359,9 @@ class AttentionMatrixAblator:
             return {}
         return {
             "attention_mass": self.dose_attention_mass,
+            "attention_mass_query_sum": self.dose_attention_mass_query_sum,
             "removed_value_norm": self.dose_removed_value_norm,
+            "removed_value_norm_query_sum": self.dose_removed_value_norm_query_sum,
             "original_output_norm": self.dose_original_output_norm,
             "removed_to_output_ratio": self.dose_removed_to_output_ratio,
             "target_query_count": self.dose_target_query_count,

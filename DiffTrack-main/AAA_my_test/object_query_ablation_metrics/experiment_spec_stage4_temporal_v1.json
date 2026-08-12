@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "experiment_id": "object_query_information_flow_latest3350_stage4_temporal_v1",
+  "status": "frozen_preflight_pending_gpu_smoke_and_human_launch_gate",
+  "parent_spec": "experiment_spec_latest3350.json",
+  "objective": "Determine whether M1 R-to-R, M2 C-to-R, and M3 R-to-C intervention effects are selective for same-time, history-to-future, or future-to-past latent-video attention edges, while auditing removed contribution dose.",
+  "non_goals": [
+    "Stage 4A does not provide confirmatory population inference with only three cases.",
+    "Baseline-relative change is not automatically physical error relative to simulator GT.",
+    "Knockout necessity does not by itself identify the complete semantic content of a message.",
+    "All720 is not a head-specificity comparison and is used only as a destructive sentinel."
+  ],
+  "intervention": {
+    "operator": "post_softmax_value_contribution_subtraction_without_renormalization",
+    "flows": {
+      "M1": "sum A[R_query,R_key]V[R_key]",
+      "M2": "sum A[R_query,C_key]V[C_key]",
+      "M3": "sum A[C_query,R_key]V[R_key]"
+    },
+    "latent_time_modes": {
+      "same": "t_key == t_query",
+      "future": "t_key < t_query; historical K/V to later Query",
+      "past": "t_key > t_query; later K/V to earlier Query reverse-direction control",
+      "all_time": "union of same, future, and past; reused only after strict inventory"
+    },
+    "denoising": "all 40 scheduler steps",
+    "cfg_branches": [
+      "conditional",
+      "unconditional"
+    ]
+  },
+  "token_universe": {
+    "R": "frozen sparse object-token tube tracked on the seed-matched Baseline at 13 latent-video anchors",
+    "C": "all latent-video T*H*W grid tokens outside R",
+    "runtime_invariant": "Q/K/V token count must equal T*H*W",
+    "unclassified_special_reference_text_tokens": "hard_stop"
+  },
+  "head_scopes": {
+    "definition_file": "/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/head_scopes_latest3350_with_random100.json",
+    "ranking_tag": "s039r3350",
+    "stage4a_full": [
+      "top100",
+      "bottom100",
+      "random100_layer_matched_draw0"
+    ],
+    "all720_sentinel": {
+      "case": "0613pybullet_sample_001460_w002",
+      "seed": 47326,
+      "targets": "all three available targets",
+      "flows": [
+        "M1",
+        "M2",
+        "M3"
+      ],
+      "time_modes": [
+        "same",
+        "future",
+        "past"
+      ],
+      "interpretation": "strong-intervention sanity only"
+    }
+  },
+  "stage4a_pilot": {
+    "cases": [
+      {
+        "case": "0613pybullet_sample_001460_w002",
+        "object_count": 2,
+        "targets_per_seed": 3
+      },
+      {
+        "case": "0613pybullet_sample_000331_w001",
+        "object_count": 2,
+        "targets_per_seed": 3
+      },
+      {
+        "case": "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed-ball-and-block-fall_motion_to_end",
+        "object_count": 4,
+        "targets_per_seed": 5
+      }
+    ],
+    "seeds": [
+      13248,
+      47326,
+      90094
+    ],
+    "target_count_per_seed": 11,
+    "directional_full_cells": 891,
+    "missing_001460_all_time_upper_bound_cells": 81,
+    "all720_sentinel_cells": 27,
+    "maximum_new_cells_before_inventory_reuse": 999,
+    "statistical_label": "mechanism_pilot_descriptive_only",
+    "two_sided_exact_sign_flip_minimum_p_with_three_cases": 0.25
+  },
+  "primary_contrasts": [
+    {
+      "id": "T1",
+      "cohort": "all Stage4 cases with valid target trajectories",
+      "setting": "top100 M1 single-object and all-objects reported separately",
+      "contrast": "future minus past",
+      "metric": "target_center_ADE_over_D0",
+      "guardrails": [
+        "track_loss",
+        "disappearance"
+      ]
+    },
+    {
+      "id": "T2",
+      "cohort": "pre-audited simulator-GT interaction cases",
+      "setting": "top100 M2 single-object",
+      "contrast": "future minus past",
+      "metric": "GT contact-time and post-contact velocity error change",
+      "fallback_if_gt_ineligible": "baseline-relative velocity is diagnostic, not a substitute GT primary"
+    },
+    {
+      "id": "T3",
+      "cohort": "single-object interventions with a trackable other object",
+      "setting": "top100 M3",
+      "contrast": "future minus past",
+      "metric": "other-object_center_ADE_over_D0",
+      "guardrails": [
+        "other-object track coverage"
+      ]
+    }
+  ],
+  "secondary_diagnostics": [
+    "same minus mean(future,past)",
+    "center_FDE",
+    "PCK and velocity metrics",
+    "DINO identity and aligned shape",
+    "center-aligned object LPIPS after smoke validation",
+    "outside-object LPIPS",
+    "pairwise similarity to all-time",
+    "raw attention maps over all query-time anchors"
+  ],
+  "dose": {
+    "required_per_step_cfg_block_head": [
+      "attention_mass",
+      "attention_mass_query_sum",
+      "removed_value_norm",
+      "removed_value_norm_query_sum",
+      "original_output_norm",
+      "removed_to_output_ratio",
+      "target_query_count"
+    ],
+    "expected_finite_events_per_selected_head": 80,
+    "primary_normalization": "per affected Query mean",
+    "total_dose_diagnostic": "query-summed dose plus affected-query count",
+    "sensitivity_rule": "dose-adjusted analysis is allowed only inside common dose support; never use simple effect/dose division as the only correction"
+  },
+  "provenance": {
+    "directional_protocol": "attention_matrix_ablation_temporal_direction_v2_dose",
+    "required_joint_code_fingerprint": [
+      "run_legacy_ti2v_temporal_object_tube_ablations.py",
+      "run_legacy_ti2v_firstlatent_physiciq67_attention_zero_ablations.py"
+    ],
+    "head_ranking_sha256_required": true
+  },
+  "stage4_0_hard_gates": [
+    "same/future/past are disjoint and their removed contribution vectors sum to all-time",
+    "all nine directional modes pass exact CPU dose tests",
+    "directional dose coverage is finite for every selected head at all 40x2 calls",
+    "latent-video token universe runtime invariant passes",
+    "one real GPU smoke produces a decodable 49-frame video and complete manifest/dose with joint code provenance",
+    "Fast, Trajectory, Survival, center-aligned LPIPS, and shape smoke outputs are readable",
+    "inventory finds no conflicting experimental key and marks missing-dose legacy directional videos ineligible for the primary analysis"
+  ],
+  "stage4b": {
+    "status": "not_frozen_until_stage4a_variance_and_mde_review",
+    "minimum_case_floor": 8,
+    "power_target": 0.8,
+    "case_count_rule": "derive from case-level paired Future-Past variance, user-approved MDE, and corrected primary-family alpha",
+    "confirmation_seeds": [
+      32466,
+      35075,
+      68613
+    ],
+    "stopping_rule": "fixed case count; no adding cases until significance"
+  },
+  "artifact_root": "/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1",
+  "forbidden_gpus": [
+    4
+  ],
+  "auto_launch_gpu_matrix": false
+}

@@ -8,12 +8,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
 import torch.utils.checkpoint
 
 from AAA_my_test.run_wan_gt_spatiotemporal_correspondence_guidance import (
+    GuidanceTarget,
     cached_object_prompt_spec,
     cached_object_phrases,
     cached_segmentation_prompt_spec,
@@ -23,6 +25,7 @@ from AAA_my_test.run_wan_gt_spatiotemporal_correspondence_guidance import (
     point_correspondence_loss,
     region_correspondence_loss,
     source_anchors,
+    trajectory_metrics,
 )
 
 
@@ -155,6 +158,20 @@ class CorrespondenceGuidanceTests(unittest.TestCase):
         gradient = torch.autograd.grad(good, q_good)[0]
         self.assertTrue(torch.isfinite(gradient).all())
 
+    def test_region_loss_skips_missing_mask_anchors(self) -> None:
+        masks = np.zeros((3, 4, 4), dtype=np.uint8)
+        masks[0, :2, :2] = 1
+        masks[2, 2:, 2:] = 1
+        rows = masks_to_token_rows(masks, (2, 2))
+        self.assertEqual([row.tolist() for row in rows], [[0], [], [3]])
+
+        q = torch.randn((1, 12, 1, 2), requires_grad=True)
+        k = torch.randn((1, 12, 1, 2), requires_grad=True)
+        loss, terms = region_correspondence_loss(q, k, rows, (2, 2))
+        self.assertEqual(terms, 2)  # only 0 -> 2 and 2 -> 0 remain valid
+        gradient = torch.autograd.grad(loss, q)[0]
+        self.assertTrue(torch.isfinite(gradient).all())
+
     def test_point_loss_rewards_gaussian_correspondence(self) -> None:
         q_good, k_good = qk_for_two_frame_match(True)
         q_bad, k_bad = qk_for_two_frame_match(False)
@@ -187,6 +204,39 @@ class CorrespondenceGuidanceTests(unittest.TestCase):
         delta_sigma = -0.1
         updated = x + delta_sigma * gradient
         self.assertLess(float(updated.square()), float(x.square()))
+
+    def test_trajectory_metrics_exclude_condition_frame_and_gate_track_loss(self) -> None:
+        point_count = 4
+        reference = np.zeros((13, point_count, 2), dtype=np.float32)
+        candidate = np.zeros((49, point_count, 2), dtype=np.float32)
+        candidate[np.arange(13) * 4, :, 0] = np.r_[0.0, np.full(12, 2.0)][:, None]
+        masks = np.zeros((1, 13, 10, 10), dtype=np.uint8)
+        masks[:, :, 2:6, 2:6] = 1
+        tube = SimpleNamespace(
+            tracks_tn2=reference,
+            visibility_tn=np.ones((13, point_count), dtype=bool),
+            masks_othw=masks,
+            point_starts=np.asarray([0]),
+            point_ends=np.asarray([point_count]),
+        )
+        target = GuidanceTarget("object_A", (0,))
+
+        lost_visibility = np.zeros((49, point_count), dtype=bool)
+        lost_visibility[0] = True
+        lost = trajectory_metrics(candidate, lost_visibility, tube, target)
+        self.assertFalse(lost["quality_pass"])
+        self.assertEqual(lost["future_common_anchor_count"], 0)
+        self.assertEqual(lost["future_track_loss_score_0_100"], 100.0)
+        self.assertIsNone(lost["ade_px"])
+        self.assertIsNone(lost["pck_10pct_d0"])
+
+        full_visibility = np.zeros((49, point_count), dtype=bool)
+        full_visibility[np.arange(13) * 4] = True
+        tracked = trajectory_metrics(candidate, full_visibility, tube, target)
+        self.assertTrue(tracked["quality_pass"])
+        self.assertEqual(tracked["future_common_anchor_count"], 12)
+        self.assertAlmostEqual(tracked["ade_px"], 2.0)
+        self.assertAlmostEqual(tracked["raw_ade_px"], 2.0)
 
     def test_side_loss_survives_nonreentrant_checkpoint(self) -> None:
         side_losses: list[torch.Tensor] = []
