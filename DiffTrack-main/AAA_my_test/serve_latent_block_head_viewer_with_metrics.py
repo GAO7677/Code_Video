@@ -412,8 +412,11 @@ UNLISTED_PORTAL_CARD = r'''
 INFORMATION_FLOW_VALIDATION_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-information-flow-validation?v=1"><div><span>42 / LATEST3350 VALIDATION</span><h2>Object Query 信息流验证</h2><p>执行计划 Stage 1–3 的实时入口：Query-time 排名稳定性、实现审计，以及 10 cases × 3 seeds 的 M1/M2/M3 × Top/Bottom/Random/All720 生成与 dose。</p></div><span class="go">打开信息流验证页</span></a>
 '''
+GT_STC_PREFLIGHT_PORTAL_CARD = r'''
+<a class="card new" href="/gt-stc-guidance-preflight?v=1"><div><span>43 / GT-STC PREFLIGHT</span><h2>GT Tube 引导错误预检</h2><p>逐 case 审计 13 个 latent 时刻的 SAM2 region 与 CoTracker 可见性，区分已复现报错、未来必报错、运行中和待运行。</p></div><span class="go">打开 GT Tube 诊断页</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -421,6 +424,7 @@ from AAA_my_test import serve_attention_noise_metrics as combined_metrics
 from AAA_my_test.object_query_ablation_metrics import dashboard as object_query_metrics_dashboard
 from AAA_my_test.object_query_ablation_metrics import head_scope_comparison
 from AAA_my_test.object_query_ablation_metrics import information_flow_validation_dashboard
+from AAA_my_test import gt_stc_guidance_dashboard
 
 
 class MetricsHandler(viewer.Handler):
@@ -437,6 +441,42 @@ class MetricsHandler(viewer.Handler):
                 information_flow_validation_dashboard.page().encode("utf-8"),
                 "text/html; charset=utf-8",
             )
+            return
+        if path == "/gt-stc-guidance-preflight":
+            self.send_payload(
+                gt_stc_guidance_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/gt-stc-guidance-preflight/catalog":
+            payload = json.dumps(
+                gt_stc_guidance_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/gt-stc-guidance-preflight/log":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            log_path = gt_stc_guidance_dashboard.log_file(
+                params.get("name", [""])[0]
+            )
+            if log_path is None:
+                raise FileNotFoundError("unknown GT-STC guidance log")
+            viewer.send_file_with_range(self, log_path, "text/plain; charset=utf-8")
+            return
+        if path == "/api/gt-stc-guidance-preflight/filmstrip":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            filmstrip = gt_stc_guidance_dashboard.region_filmstrip(
+                params.get("case", [""])[0]
+            )
+            if filmstrip is None or not filmstrip.is_file():
+                raise FileNotFoundError("unknown GT-STC source-region filmstrip")
+            viewer.send_file_with_range(self, filmstrip, "image/jpeg")
             return
         if path == "/api/object-query-information-flow-validation/catalog":
             payload = json.dumps(
