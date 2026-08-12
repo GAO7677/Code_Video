@@ -54,7 +54,12 @@ M123_MODES = (
     "outgoing_future",
     "outgoing_past",
 )
-HEAD_SCOPES = ("top100", "bottom100", "all720")
+HEAD_SCOPES = (
+    "top100",
+    "bottom100",
+    "random100_layer_matched_draw0",
+    "all720",
+)
 CATEGORY_DEFINITIONS = {
     "global_appearance": {
         "name": "全局外观影响",
@@ -217,9 +222,15 @@ def collect_candidates(seed_dir: Path, scopes: set[str]) -> list[dict[str, Any]]
                 "head_count": int(
                     manifest.get("selected_head_count")
                     or len(manifest.get("selected_entries") or [])
-                    or {"top100": 100, "bottom100": 100, "all720": 720}[scope]
+                    or {
+                        "top100": 100,
+                        "bottom100": 100,
+                        "random100_layer_matched_draw0": 100,
+                        "all720": 720,
+                    }[scope]
                 ),
                 "ranking_tag": str(manifest.get("ranking_tag") or ""),
+                "tracks_npz": str(manifest.get("tracks_npz") or ""),
                 "path": str(video_path.resolve()),
                 "manifest_path": str(manifest_path.resolve()),
                 "video_signature": file_signature(video_path),
@@ -514,6 +525,18 @@ def compute_seed(
         return output, 0
 
     track_path = seed_dir / "frozen_baseline_tracks" / "tracks.npz"
+    if not track_path.is_file():
+        external_tracks = {
+            Path(str(row["tracks_npz"])).expanduser().resolve()
+            for row in candidates
+            if str(row.get("tracks_npz") or "")
+        }
+        if len(external_tracks) == 1:
+            track_path = next(iter(external_tracks))
+        elif len(external_tracks) > 1:
+            raise RuntimeError(
+                f"mixed external frozen tracks under {seed_dir}: {sorted(map(str, external_tracks))}"
+            )
     if not track_path.is_file():
         raise FileNotFoundError(track_path)
     rois, roi_audit = load_rois(
