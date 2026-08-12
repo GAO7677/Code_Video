@@ -36,8 +36,18 @@ def _target_metric(path: Path, target: str) -> dict[str, Any] | None:
     return None
 
 
-def _variant(case: str, target: str, mode: str) -> dict[str, Any]:
-    name = "baseline" if mode == "baseline" else f"{mode}__{target}__lambda0p1"
+def _float_tag(value: float) -> str:
+    return f"{float(value):g}".replace("-", "m").replace(".", "p")
+
+
+def _variant(
+    case: str, target: str, mode: str, guidance_lambda: float = 0.1
+) -> dict[str, Any]:
+    name = (
+        "baseline"
+        if mode == "baseline"
+        else f"{mode}__{target}__lambda{_float_tag(guidance_lambda)}"
+    )
     directory = ROOT / "generations" / case / f"seed_{SEED:05d}" / name
     video = directory / "generated.mp4"
     metric_path = directory / "trajectory_metrics.json"
@@ -50,7 +60,12 @@ def _variant(case: str, target: str, mode: str) -> dict[str, Any]:
     return {
         "name": name,
         "mode": mode,
-        "label": "Baseline" if mode == "baseline" else MODE_LABELS[mode],
+        "lambda": None if mode == "baseline" else guidance_lambda,
+        "label": (
+            "Baseline"
+            if mode == "baseline"
+            else f"{MODE_LABELS[mode]} · λ{guidance_lambda:g}"
+        ),
         "complete": complete,
         "video_ready": complete,
         "metric_ready": metric is not None,
@@ -64,7 +79,11 @@ def _representatives(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for case_row in cases:
         for target_row in case_row["targets"]:
             for variant in target_row["variants"]:
-                if variant["mode"] not in MODES or not variant["metric_ready"]:
+                if (
+                    variant["mode"] not in MODES
+                    or variant["lambda"] != 0.1
+                    or not variant["metric_ready"]
+                ):
                     continue
                 rows.append(
                     {
@@ -85,14 +104,26 @@ def _representatives(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if row["quality_pass"] and row["delta_ade_d0"] is not None
         ]
         trackable = [row for row in mode_rows if row["delta_track_loss"] is not None]
-        choices = (
-            ("最大轨迹改善", min(gated, key=lambda row: row["delta_ade_d0"]) if gated else None),
-            ("最大轨迹恶化", max(gated, key=lambda row: row["delta_ade_d0"]) if gated else None),
+        trajectory_choices = (
+            [("唯一可评估轨迹", gated[0])]
+            if len(gated) == 1
+            else [
+                (
+                    "最大轨迹改善",
+                    min(gated, key=lambda row: row["delta_ade_d0"]) if gated else None,
+                ),
+                (
+                    "最大轨迹恶化",
+                    max(gated, key=lambda row: row["delta_ade_d0"]) if gated else None,
+                ),
+            ]
+        )
+        choices = trajectory_choices + [
             (
                 "最大可追踪性损失",
                 max(trackable, key=lambda row: row["delta_track_loss"]) if trackable else None,
-            ),
-        )
+            )
+        ]
         for category, row in choices:
             if row is not None:
                 selected.append({"category": category, **row})
@@ -102,9 +133,17 @@ def _representatives(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def catalog() -> dict[str, Any]:
     screening_path = ROOT / "screening" / f"seed_{SEED:05d}" / "baseline_eligibility.json"
     screening = _json(screening_path)
+    final_report = _json(
+        ROOT / "final_analysis" / f"seed_{SEED:05d}" / "frozen_validation_report.json"
+    )
+    trigger_modes = {
+        str(mode) for mode in final_report.get("trigger_modes", []) if mode in MODES
+    }
     cases = []
     guided_complete = 0
     guided_metrics = 0
+    sensitivity_complete = 0
+    sensitivity_metrics = 0
     for job in screening.get("eligible_jobs", []):
         case = str(job["case"])
         tube_manifest = _json(ROOT / "gt_tubes" / case / "manifest.json")
@@ -112,9 +151,18 @@ def catalog() -> dict[str, Any]:
         for target in job["targets"]:
             target = str(target)
             variants = [_variant(case, target, "baseline")]
-            variants.extend(_variant(case, target, mode) for mode in MODES)
-            guided_complete += sum(row["complete"] for row in variants[1:])
-            guided_metrics += sum(row["metric_ready"] for row in variants[1:])
+            for mode in MODES:
+                if mode in trigger_modes:
+                    variants.append(_variant(case, target, mode, 0.05))
+                variants.append(_variant(case, target, mode, 0.1))
+                if mode in trigger_modes:
+                    variants.append(_variant(case, target, mode, 0.2))
+            primary = [row for row in variants[1:] if row["lambda"] == 0.1]
+            guided_complete += sum(row["complete"] for row in primary)
+            guided_metrics += sum(row["metric_ready"] for row in primary)
+            sensitivity = [row for row in variants[1:] if row["lambda"] != 0.1]
+            sensitivity_complete += sum(row["complete"] for row in sensitivity)
+            sensitivity_metrics += sum(row["metric_ready"] for row in sensitivity)
             baseline_metric = variants[0]["metric"] or {}
             for variant in variants[1:]:
                 metric = variant["metric"] or {}
@@ -139,10 +187,10 @@ def catalog() -> dict[str, Any]:
                 "targets": targets,
             }
         )
-    final_report = _json(
-        ROOT / "final_analysis" / f"seed_{SEED:05d}" / "frozen_validation_report.json"
-    )
     total = int(screening.get("eligible_target_count", 0)) * len(MODES)
+    sensitivity_total = (
+        int(screening.get("eligible_target_count", 0)) * len(trigger_modes) * 2
+    )
     return {
         "protocol": "wan_gt_guidance_frozen_validation_v1",
         "seed": SEED,
@@ -153,11 +201,14 @@ def catalog() -> dict[str, Any]:
         "guided_total": total,
         "guided_complete": guided_complete,
         "guided_metrics": guided_metrics,
+        "sensitivity_total": sensitivity_total,
+        "sensitivity_complete": sensitivity_complete,
+        "sensitivity_metrics": sensitivity_metrics,
         "cases": cases,
         "representatives": _representatives(cases),
         "final_report_ready": bool(final_report),
         "final_aggregate": final_report.get("aggregate", []),
-        "trigger_modes": final_report.get("trigger_modes", []),
+        "trigger_modes": sorted(trigger_modes),
         "definitions": [
             {
                 "metric": "Future ADE / D0",
@@ -203,8 +254,17 @@ def asset(kind: str, case: str, target: str = "", variant: str = "") -> Path | N
         return source if source.is_file() else None
     if kind != "generated" or target not in jobs[case]:
         return None
-    allowed = {"baseline"} | {
-        f"{mode}__{target}__lambda0p1" for mode in MODES
+    final_report = _json(
+        ROOT / "final_analysis" / f"seed_{SEED:05d}" / "frozen_validation_report.json"
+    )
+    trigger_modes = {
+        str(mode) for mode in final_report.get("trigger_modes", []) if mode in MODES
+    }
+    allowed = {"baseline"} | {f"{mode}__{target}__lambda0p1" for mode in MODES}
+    allowed |= {
+        f"{mode}__{target}__lambda{_float_tag(guidance_lambda)}"
+        for mode in trigger_modes
+        for guidance_lambda in (0.05, 0.2)
     }
     if variant not in allowed:
         return None
@@ -224,7 +284,7 @@ function metric(v){const m=v.metric||{},gate=m.quality_pass===true;return `<div 
 function video(src,label,v){return `<article class="card">${src?`<video controls muted playsinline preload="none" data-src="${src}"></video>`:`<div class="empty">${v?.complete?'METRICS PENDING':'QUEUED / RUNNING'}</div>`}<div class="caption"><b>${E(label)}</b>${v?metric(v):'<div class="metrics"><span>Source GT tube</span></div>'}</div></article>`}
 function render(){const c=D.cases.find(x=>x.case===$('case').value)||D.cases[0];if(!c){$('gallery').innerHTML='<p>Baseline screen 尚未完成。</p>';return}const opts=c.targets.map(t=>`<option>${E(t.name)}</option>`).join('');if($('target').dataset.case!==c.case){$('target').innerHTML=opts;$('target').dataset.case=c.case}const t=c.targets.find(x=>x.name===$('target').value)||c.targets[0],q=x=>encodeURIComponent(x);let cards=video(`${api}/asset?kind=source&case=${q(c.case)}`,'Source GT',null);for(const v of t.variants){const src=v.video_ready?`${api}/asset?kind=generated&case=${q(c.case)}&target=${q(t.name)}&variant=${q(v.name)}`:'';cards+=video(src,v.label,v)}$('gallery').innerHTML=`<div class="case-title"><h2>${E(c.case)} · ${E(t.name)}</h2><span class="mono">seed ${D.seed}</span></div><div class="grid">${cards}</div>`;lazy()}
 function reps(){$('representatives').innerHTML=(D.representatives||[]).map(x=>`<tr><td><b>${E(x.mode)}</b></td><td>${E(x.category)}</td><td>${E(x.case)}<br><span class="mono">${E(x.target)}</span></td><td>${F(x.delta_ade_d0)}</td><td>${F(x.delta_track_loss,1)}</td><td><button class="jump" data-case="${E(x.case)}" data-target="${E(x.target)}">跳转</button></td></tr>`).join('')||'<tr><td colspan="6" class="pending">轨迹指标完成后自动生成。</td></tr>';document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>{$('case').value=b.dataset.case;$('target').dataset.case='';render();$('target').value=b.dataset.target;render();$('paired').scrollIntoView({behavior:'smooth'})})}
-function summary(){const p=D.guided_total?Math.round(100*D.guided_complete/D.guided_total):0;$('summary').innerHTML=`<div class="stat"><span class="mono">Source audit</span><b>${D.case_count}/20</b><small>完成 tube 的 case</small></div><div class="stat"><span class="mono">Frozen screen</span><b>${D.eligible_target_count}</b><small>${D.eligible_case_count} cases 的 eligible targets</small></div><div class="stat"><span class="mono">Guided generation</span><b>${D.guided_complete}/${D.guided_total}</b><small>${p}% · Region/Point/Combined</small></div><div class="stat"><span class="mono">Trajectory metrics</span><b>${D.guided_metrics}/${D.guided_total}</b><small>CoTracker future-only</small></div>`;$('defs').innerHTML=D.definitions.map(x=>`<tr><td><b>${E(x.metric)}</b></td><td>${E(x.calculation)}</td><td>${E(x.direction)}</td></tr>`).join('');$('aggregate').innerHTML=D.final_report_ready?D.final_aggregate.filter(x=>x.lambda===.1).map(x=>`<div class="agg"><b>${E(x.mode)} · λ0.1</b><span>ΔADE/D0 ${F(x.case_balanced_mean_delta_ade_d0)} · ΔTrack Loss ${F(x.case_balanced_mean_delta_track_loss,1)} · 改善 cases ${x.improved_case_count}</span></div>`).join(''):'<p class="pending">完整三模式指标尚未齐全；汇总将在最后一个评估完成后自动出现。</p>';reps()}
+function summary(){const p=D.guided_total?Math.round(100*D.guided_complete/D.guided_total):0,s=D.sensitivity_total?`${D.sensitivity_complete}/${D.sensitivity_total}`:'未触发';$('summary').innerHTML=`<div class="stat"><span class="mono">Source audit</span><b>${D.case_count}/20</b><small>完成 tube 的 case</small></div><div class="stat"><span class="mono">Frozen screen</span><b>${D.eligible_target_count}</b><small>${D.eligible_case_count} cases 的 eligible targets</small></div><div class="stat"><span class="mono">Primary λ0.1</span><b>${D.guided_complete}/${D.guided_total}</b><small>${p}% · Region/Point/Combined</small></div><div class="stat"><span class="mono">Primary metrics</span><b>${D.guided_metrics}/${D.guided_total}</b><small>CoTracker future-only</small></div><div class="stat"><span class="mono">Conditional sensitivity</span><b>${s}</b><small>${D.trigger_modes.length?E(D.trigger_modes.join(' + '))+' · λ0.05/0.2':'冻结触发尚未满足/判定'}</small></div>`;$('defs').innerHTML=D.definitions.map(x=>`<tr><td><b>${E(x.metric)}</b></td><td>${E(x.calculation)}</td><td>${E(x.direction)}</td></tr>`).join('');$('aggregate').innerHTML=D.final_report_ready?D.final_aggregate.map(x=>`<div class="agg"><b>${E(x.mode)} · λ${x.lambda}</b><span>完成 ${x.completed_target_count}/${x.eligible_target_count} · gated ${x.guided_target_gate_pass_count} · ΔADE/D0 ${F(x.case_balanced_mean_delta_ade_d0)} · ΔTrack Loss ${F(x.case_balanced_mean_delta_track_loss,1)} · 改善 cases ${x.improved_case_count}</span></div>`).join(''):'<p class="pending">完整三模式指标尚未齐全；汇总将在最后一个评估完成后自动出现。</p>';reps()}
 async function load(){D=await fetch(api+'/catalog?x='+Date.now()).then(r=>r.json());const old=$('case').value;$('case').innerHTML=D.cases.map(c=>`<option>${E(c.case)}</option>`).join('');if(D.cases.some(c=>c.case===old))$('case').value=old;summary();render();$('updated').textContent=new Date().toLocaleTimeString()}
 $('case').onchange=render;$('target').onchange=render;$('refresh').onclick=load;$('replay').onclick=()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})});load();setInterval(load,30000);
 </script></body></html>'''
