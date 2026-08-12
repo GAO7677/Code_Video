@@ -731,6 +731,37 @@ def selected_target_specs(
     return [target for target in targets if target.name in requested]
 
 
+def load_target_map(path: Path) -> dict[str, tuple[str, ...]]:
+    """Load a frozen case -> target-name map from screening JSON."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if "eligible_jobs" in payload:
+        rows = payload["eligible_jobs"]
+        mapping = {
+            str(row["case"]): tuple(str(value) for value in row["targets"])
+            for row in rows
+        }
+    else:
+        mapping = {
+            str(case): tuple(str(value) for value in targets)
+            for case, targets in payload.items()
+        }
+    if any(not targets for targets in mapping.values()):
+        raise ValueError(f"target map contains an empty target list: {path}")
+    return mapping
+
+
+def target_names_for_case(
+    case: str,
+    global_target_names: tuple[str, ...] | None,
+    target_map: dict[str, tuple[str, ...]] | None,
+) -> tuple[str, ...] | None:
+    if target_map is not None:
+        if case not in target_map:
+            raise ValueError(f"target map has no registered targets for case: {case}")
+        return target_map[case]
+    return global_target_names
+
+
 def validate_latest3350_top100(path: Path) -> list[dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     entries = list(payload.get("entries") or [])
@@ -1852,6 +1883,15 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional exact guidance targets such as object_A or moving_union",
     )
+    parser.add_argument(
+        "--target-map",
+        type=Path,
+        default=None,
+        help=(
+            "Frozen JSON case-to-target mapping; accepts the screening report's "
+            "eligible_jobs schema"
+        ),
+    )
     parser.add_argument("--points-per-object", type=int, default=8)
     parser.add_argument("--moving-threshold-d0", type=float, default=0.05)
     parser.add_argument(
@@ -1893,6 +1933,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("gaussian-sigma-tokens must be positive")
     if args.baseline_only and args.no_baseline:
         raise ValueError("--baseline-only and --no-baseline are mutually exclusive")
+    if args.target_map is not None and args.target_names:
+        raise ValueError("--target-map and --target-names are mutually exclusive")
     if args.device in {"cuda:4", "4"}:
         raise ValueError("workspace policy forbids GPU 4")
 
@@ -1900,6 +1942,10 @@ def validate_args(args: argparse.Namespace) -> None:
 def selected_cases(args: argparse.Namespace) -> list[Path]:
     paths = deduplicated_json_paths(args.input_list.expanduser().resolve())
     selected = set(args.case_keys or [])
+    if args.target_map is not None:
+        target_map = load_target_map(args.target_map.expanduser().resolve())
+        selected_from_map = set(target_map)
+        selected = selected & selected_from_map if selected else selected_from_map
     unknown = selected - {path.stem for path in paths}
     if unknown:
         raise ValueError(f"unknown case keys: {sorted(unknown)}")
@@ -1929,6 +1975,14 @@ def dry_run_report(args: argparse.Namespace, paths: list[Path]) -> None:
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
+def serializable_arguments(args: argparse.Namespace) -> dict[str, Any]:
+    """Return CLI arguments with filesystem paths normalized for run_config JSON."""
+    return {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in vars(args).items()
+    }
+
+
 def release_pipeline(wrapper: Any) -> None:
     if wrapper is None:
         return
@@ -1947,6 +2001,11 @@ def main() -> None:
     if not paths:
         raise RuntimeError("this worker has no selected cases")
     entries = validate_latest3350_top100(args.head_ranking.expanduser().resolve())
+    target_map = (
+        load_target_map(args.target_map.expanduser().resolve())
+        if args.target_map is not None
+        else None
+    )
     if args.dry_run:
         dry_run_report(args, paths)
         return
@@ -1960,11 +2019,7 @@ def main() -> None:
             "deduplicated_case_count": len(deduplicated_json_paths(args.input_list)),
             "head_ranking": str(args.head_ranking),
             "selected_heads": entries,
-            "arguments": vars(args) | {
-                "input_list": str(args.input_list),
-                "head_ranking": str(args.head_ranking),
-                "output_root": str(args.output_root),
-            },
+            "arguments": serializable_arguments(args),
         },
     )
     if args.stage in {"prepare", "all"}:
@@ -2002,7 +2057,11 @@ def main() -> None:
                     output_root,
                     args.seed,
                     () if args.baseline_only else tuple(args.loss_modes),
-                    tuple(args.target_names) if args.target_names else None,
+                    target_names_for_case(
+                        tube.case,
+                        tuple(args.target_names) if args.target_names else None,
+                        target_map,
+                    ),
                     args.guidance_scale,
                     args.gaussian_sigma_tokens,
                     args.gradient_normalization,
@@ -2028,7 +2087,11 @@ def main() -> None:
                     output_root,
                     args.seed,
                     () if args.baseline_only else tuple(args.loss_modes),
-                    tuple(args.target_names) if args.target_names else None,
+                    target_names_for_case(
+                        tube.case,
+                        tuple(args.target_names) if args.target_names else None,
+                        target_map,
+                    ),
                     args.guidance_scale,
                     args.guidance_start,
                     args.guidance_end,

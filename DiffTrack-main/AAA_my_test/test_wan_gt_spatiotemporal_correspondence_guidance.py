@@ -21,12 +21,16 @@ from AAA_my_test.run_wan_gt_spatiotemporal_correspondence_guidance import (
     cached_segmentation_prompt_spec,
     deduplicated_json_paths,
     masks_to_token_rows,
+    load_target_map,
     normalize_guidance_gradient,
     point_correspondence_loss,
     region_correspondence_loss,
+    serializable_arguments,
     source_anchors,
+    target_names_for_case,
     trajectory_metrics,
 )
+from AAA_my_test.analyze_wan_gt_guidance_frozen_validation import analyze
 
 
 def qk_for_two_frame_match(correct: bool) -> tuple[torch.Tensor, torch.Tensor]:
@@ -47,6 +51,103 @@ def qk_for_two_frame_match(correct: bool) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 class CorrespondenceGuidanceTests(unittest.TestCase):
+    def test_run_config_arguments_serialize_optional_path(self) -> None:
+        arguments = SimpleNamespace(
+            input_list=Path("/tmp/input.txt"),
+            head_ranking=Path("/tmp/ranking.json"),
+            output_root=Path("/tmp/output"),
+            target_map=Path("/tmp/eligibility.json"),
+            ordinary_value=3,
+        )
+        payload = serializable_arguments(arguments)
+        self.assertEqual(payload["target_map"], "/tmp/eligibility.json")
+        json.dumps(payload)
+
+    def test_frozen_analysis_keeps_gate_failures_out_of_ade_success(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            screen = root / "screening" / "seed_47326"
+            screen.mkdir(parents=True)
+            eligible_rows = [
+                {"case": case, "target": "object_A", "eligible": True}
+                for case in ("case_a", "case_b")
+            ]
+            (screen / "baseline_eligibility.json").write_text(
+                json.dumps(
+                    {
+                        "eligible_case_count": 2,
+                        "eligible_target_count": 2,
+                        "targets": eligible_rows,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def write_metric(case: str, variant: str, row: dict) -> None:
+                output = root / "generations" / case / "seed_47326" / variant
+                output.mkdir(parents=True)
+                (output / "trajectory_metrics.json").write_text(
+                    json.dumps({"metrics": [{"target": "object_A", **row}]}),
+                    encoding="utf-8",
+                )
+
+            baseline = {
+                "quality_pass": True,
+                "ade_d0": 1.0,
+                "fde_d0": 1.0,
+                "pck_10pct_d0": 0.2,
+                "future_track_loss_score_0_100": 0.0,
+            }
+            improved = {
+                "quality_pass": True,
+                "ade_d0": 0.8,
+                "fde_d0": 0.9,
+                "pck_10pct_d0": 0.3,
+                "future_track_loss_score_0_100": 0.0,
+            }
+            failed = {
+                "quality_pass": False,
+                "ade_d0": None,
+                "fde_d0": None,
+                "pck_10pct_d0": None,
+                "future_track_loss_score_0_100": 100.0,
+            }
+            for case in ("case_a", "case_b"):
+                write_metric(case, "baseline", baseline)
+                write_metric(case, "region__object_A__lambda0p1", improved)
+                write_metric(case, "point__object_A__lambda0p1", failed)
+
+            report = analyze(root, 47326, (0.1,))
+            self.assertEqual(report["trigger_modes"], ["region"])
+            point = next(
+                row
+                for row in report["aggregate"]
+                if row["mode"] == "point" and row["lambda"] == 0.1
+            )
+            self.assertEqual(point["fully_evaluable_case_count"], 0)
+            self.assertEqual(point["case_balanced_mean_delta_track_loss"], 100.0)
+
+    def test_screening_target_map_is_case_specific(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "eligibility.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "eligible_jobs": [
+                            {"case": "case_a", "targets": ["object_A"]},
+                            {"case": "case_b", "targets": ["object_B", "moving_union"]},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            mapping = load_target_map(path)
+            self.assertEqual(mapping["case_a"], ("object_A",))
+            self.assertEqual(
+                target_names_for_case("case_b", None, mapping),
+                ("object_B", "moving_union"),
+            )
+
     def test_cached_segmentation_prompt_spec_scales_boxes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
