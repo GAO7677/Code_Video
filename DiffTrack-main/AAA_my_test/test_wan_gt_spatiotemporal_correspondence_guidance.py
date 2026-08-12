@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,7 +14,11 @@ import torch
 import torch.utils.checkpoint
 
 from AAA_my_test.run_wan_gt_spatiotemporal_correspondence_guidance import (
+    cached_object_prompt_spec,
+    cached_object_phrases,
+    cached_segmentation_prompt_spec,
     deduplicated_json_paths,
+    masks_to_token_rows,
     normalize_guidance_gradient,
     point_correspondence_loss,
     region_correspondence_loss,
@@ -39,6 +44,87 @@ def qk_for_two_frame_match(correct: bool) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 class CorrespondenceGuidanceTests(unittest.TestCase):
+    def test_cached_segmentation_prompt_spec_scales_boxes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            case_dir = root / "case_a"
+            case_dir.mkdir()
+            (case_dir / "regions.json").write_text(
+                json.dumps(
+                    {
+                        "height": 100,
+                        "width": 200,
+                        "query_context_frame": 7,
+                        "selected_annotations": [
+                            {
+                                "region_name": "ball_0",
+                                "bbox_xywh": [10, 20, 30, 40],
+                                "predicted_iou": 0.9,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            phrases, boxes, scores, frame_index, source = (
+                cached_segmentation_prompt_spec(
+                    "case_a", (root,), target_hw=(200, 400)
+                )
+            )
+            self.assertEqual(phrases, ["ball_0"])
+            np.testing.assert_allclose(boxes, [[20, 40, 80, 120]])
+            np.testing.assert_allclose(scores, [0.9])
+            self.assertEqual(frame_index, 7)
+            self.assertEqual(source, case_dir / "regions.json")
+
+    def test_cached_object_prompt_spec_loads_validated_boxes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            case_dir = root / "case_a"
+            case_dir.mkdir()
+            (case_dir / "regions.json").write_text(
+                json.dumps(
+                    {
+                        "object_phrases": ["table", "ball"],
+                        "grounding_debug": {
+                            "object_prompt_boxes_xyxy": [
+                                [0.0, 2.0, 8.0, 9.0],
+                                [4.0, 0.0, 6.0, 2.0],
+                            ],
+                            "object_scores": [0.8, 0.6],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            phrases, boxes, scores, source = cached_object_prompt_spec(
+                "case_a", (root,)
+            )
+            self.assertEqual(phrases, ["table", "ball"])
+            np.testing.assert_allclose(boxes, [[0, 2, 8, 9], [4, 0, 6, 2]])
+            np.testing.assert_allclose(scores, [0.8, 0.6])
+            self.assertEqual(source, case_dir / "regions.json")
+
+    def test_mask_tube_maps_to_flat_token_rows(self) -> None:
+        masks = np.zeros((2, 4, 4), dtype=np.uint8)
+        masks[0, :2, :2] = 1
+        masks[1, 2:, 2:] = 1
+        rows = masks_to_token_rows(masks, (2, 2))
+        self.assertEqual([row.tolist() for row in rows], [[0], [3]])
+
+    def test_cached_object_phrases_preserve_duplicate_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            case_dir = root / "case_a"
+            case_dir.mkdir()
+            (case_dir / "regions.json").write_text(
+                json.dumps({"object_phrases": ["sphere", "cylinder", "cylinder"]}),
+                encoding="utf-8",
+            )
+            phrases, source = cached_object_phrases("case_a", (root,))
+            self.assertEqual(phrases, ["sphere", "cylinder", "cylinder"])
+            self.assertEqual(source, case_dir / "regions.json")
+
     def test_source_anchor_policy(self) -> None:
         np.testing.assert_array_equal(source_anchors(49), np.arange(13) * 4)
         anchors = source_anchors(30)

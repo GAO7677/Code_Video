@@ -1,7 +1,8 @@
-"""Train Wan Full-SA LoRA with a frozen xSSC future-slot feature loss.
+"""Train Wan self-attention LoRA with a frozen xSSC future-slot feature loss.
 
-This keeps the existing Wan2.2 + merged OpenVid LoRA, no-object, Full-SA
-training path intact.  The only additional objective is computed as follows:
+This keeps the existing Wan2.2 + merged OpenVid LoRA no-object training path
+intact for Full-SA or T-head adaptation.  The only additional objective is
+computed as follows:
 
     DiT v prediction -> reconstructed latent x0 -> frozen Tiny VAE ->
     frozen xSSC slots -> future-frame cosine distance to GT xSSC slots.
@@ -38,10 +39,11 @@ from vjepa_loss_project.train_xssc_object_self_attn_lora_vjepa_loss import (
 
 
 VALID_XSSC_LOSS_BACKENDS = ("dinov3_movic", "official_dinov2")
+VALID_XSSC_LOSS_ADAPTATION_MODES = ("full_sa", "t_head")
 
 
 class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
-    """Existing no-object Full-SA module plus differentiable frozen-xSSC loss."""
+    """No-object self-attention module plus differentiable frozen-xSSC loss."""
 
     require_object_branch_disabled = True
 
@@ -71,8 +73,12 @@ class XSSCFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
         super().__init__(*args, **kwargs)
         if self.require_object_branch_disabled and self.enable_object_branch:
             raise ValueError("xSSC feature-loss experiments require no-object mode")
-        if self.self_attn_adaptation_mode != "full_sa":
-            raise ValueError("xSSC feature-loss experiments require Full-SA adaptation")
+        if self.self_attn_adaptation_mode not in VALID_XSSC_LOSS_ADAPTATION_MODES:
+            raise ValueError(
+                "xSSC feature-loss experiments require one of "
+                f"{VALID_XSSC_LOSS_ADAPTATION_MODES}, got "
+                f"{self.self_attn_adaptation_mode!r}"
+            )
 
         self.xssc_loss_backend = str(xssc_loss_backend)
         self.xssc_loss_weight = float(xssc_loss_weight)

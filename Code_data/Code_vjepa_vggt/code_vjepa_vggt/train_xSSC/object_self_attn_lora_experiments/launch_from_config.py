@@ -240,8 +240,12 @@ def validate_config(config: dict, config_dir: Path) -> dict:
             )
 
     if xssc_loss_enabled:
-        if mode != "full_sa":
-            raise ValueError("xssc_loss requires adaptation.mode=full_sa")
+        if mode != "full_sa" and not (
+            mode == "t_head" and not enable_object_branch
+        ):
+            raise ValueError(
+                "xssc_loss requires Full-SA, or T-head with the object branch disabled"
+            )
         if enable_object_branch:
             slot_dedup = require(config, "conditioning.slot_dedup")
             if str(require(slot_dedup, "mode")) not in {"mask", "merge"}:

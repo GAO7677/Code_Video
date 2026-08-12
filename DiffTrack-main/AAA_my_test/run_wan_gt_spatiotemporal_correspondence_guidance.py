@@ -26,6 +26,7 @@ import sys
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Iterable
 
 import imageio.v3 as iio
@@ -47,10 +48,16 @@ from code_vjepa_vggt.AAAinfer.utils.wanti2v_runtime import (  # noqa: E402
     save_video_np,
 )
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8  # noqa: E402
+from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (  # noqa: E402
+    DetectedObjectTrack,
+)
 from AAA_my_test.precompute_legacy_ti2v_firstlatent_physiciq67_regions import (  # noqa: E402
     filter_overlapping_query_tracks,
 )
-from AAA_my_test.precompute_toydataset_sam2_regions import build_provider  # noqa: E402
+from AAA_my_test.precompute_toydataset_sam2_regions import (  # noqa: E402
+    build_provider,
+    detect_and_track_objects,
+)
 from AAA_my_test.run_legacy_ti2v_firstlatent_pck_worker import (  # noqa: E402
     build_args,
     load_cotracker,
@@ -70,6 +77,20 @@ DEFAULT_RANKING = Path(
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/wan_gt_spatiotemporal_correspondence_guidance/"
     "latest3350_top100_v1"
+)
+OBJECT_PHRASE_CACHE_ROOTS = (
+    Path("/data/gaoya/agent-data/cache/wan22_ti2v_legacy_firstlatent_regions_704x1280"),
+    Path(
+        "/data/gaoya/agent-data/cache/"
+        "wan22_ti2v_legacy_firstlatent_physiciq67_regions_704x1280"
+    ),
+    Path(
+        "/data/gaoya/agent-data/cache/"
+        "wan22_ti2v_legacy_attention_zero_seed47326_regions_704x1280"
+    ),
+)
+SEGMENTATION_PROMPT_CACHE_ROOTS = (
+    Path("/data/gaoya/agent-data/cache/wan_dit_s_motion_sam2_regions"),
 )
 PROTOCOL = "wan_gt_spatiotemporal_correspondence_guidance_v1"
 HEIGHT = 704
@@ -120,6 +141,142 @@ def atomic_npz(path: Path, **arrays: Any) -> None:
     with temporary.open("wb") as handle:
         np.savez_compressed(handle, **arrays)
     temporary.replace(path)
+
+
+def cached_object_prompt_spec(
+    case: str, cache_roots: Iterable[Path] = OBJECT_PHRASE_CACHE_ROOTS
+) -> tuple[list[str], np.ndarray | None, np.ndarray | None, Path | None]:
+    """Load validated phrases and optional first-frame prompt boxes, not tracks."""
+    for cache_root in cache_roots:
+        metadata_path = Path(cache_root) / case / "regions.json"
+        if not metadata_path.is_file():
+            continue
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        phrases = [
+            str(value).strip()
+            for value in payload.get("object_phrases", [])
+            if str(value).strip()
+        ]
+        if not phrases:
+            phrases = [
+                str(region.get("region_phrase") or "").strip()
+                for region in payload.get("regions", [])
+                if region.get("region_type") == "object"
+                and str(region.get("region_phrase") or "").strip()
+            ]
+        if not phrases:
+            continue
+        debug = dict(payload.get("grounding_debug") or {})
+        boxes = np.asarray(debug.get("object_prompt_boxes_xyxy") or [], dtype=np.float32)
+        scores = np.asarray(debug.get("object_scores") or [], dtype=np.float32)
+        if boxes.shape != (len(phrases), 4):
+            boxes = None
+            scores = None
+        else:
+            if scores.shape != (len(phrases),):
+                scores = np.ones((len(phrases),), dtype=np.float32)
+        return phrases, boxes, scores, metadata_path
+    return [], None, None, None
+
+
+def cached_object_phrases(
+    case: str, cache_roots: Iterable[Path] = OBJECT_PHRASE_CACHE_ROOTS
+) -> tuple[list[str], Path | None]:
+    """Compatibility wrapper returning only semantic prompts and provenance."""
+    phrases, _, _, metadata_path = cached_object_prompt_spec(case, cache_roots)
+    return phrases, metadata_path
+
+
+def cached_segmentation_prompt_spec(
+    case: str,
+    cache_roots: Iterable[Path] = SEGMENTATION_PROMPT_CACHE_ROOTS,
+    target_hw: tuple[int, int] = (HEIGHT, WIDTH),
+) -> tuple[list[str], np.ndarray | None, np.ndarray | None, int, Path | None]:
+    """Load validated segmentation-derived boxes for a fresh full-video SAM2 run."""
+    target_height, target_width = (int(value) for value in target_hw)
+    for cache_root in cache_roots:
+        metadata_path = Path(cache_root) / case / "regions.json"
+        if not metadata_path.is_file():
+            continue
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        source_height = int(payload.get("height") or 0)
+        source_width = int(payload.get("width") or 0)
+        annotations = list(payload.get("selected_annotations") or [])
+        if source_height <= 0 or source_width <= 0 or not annotations:
+            continue
+        phrases: list[str] = []
+        boxes: list[list[float]] = []
+        scores: list[float] = []
+        scale_x = target_width / source_width
+        scale_y = target_height / source_height
+        for index, annotation in enumerate(annotations):
+            bbox = annotation.get("bbox_xywh")
+            if not isinstance(bbox, list) or len(bbox) != 4:
+                continue
+            x, y, width, height = (float(value) for value in bbox)
+            if width <= 0 or height <= 0:
+                continue
+            phrases.append(str(annotation.get("region_name") or f"object_{index:02d}"))
+            boxes.append(
+                [
+                    x * scale_x,
+                    y * scale_y,
+                    (x + width) * scale_x,
+                    (y + height) * scale_y,
+                ]
+            )
+            scores.append(float(annotation.get("predicted_iou") or 1.0))
+        if phrases:
+            return (
+                phrases,
+                np.asarray(boxes, dtype=np.float32),
+                np.asarray(scores, dtype=np.float32),
+                int(payload.get("query_context_frame") or 0),
+                metadata_path,
+            )
+    return [], None, None, 0, None
+
+
+def track_objects_from_prompt_boxes(
+    provider: Any,
+    frames_tchw_01: np.ndarray,
+    phrases: list[str],
+    boxes_xyxy: np.ndarray,
+    scores: np.ndarray,
+    prompt_frame_idx: int = 0,
+) -> SimpleNamespace:
+    """Re-run SAM2 over the current full source video from validated frame-0 boxes."""
+    tracks = []
+    for phrase, box, score in zip(phrases, boxes_xyxy, scores):
+        sam_output = provider.tracker.track(
+            frames_tchw_01,
+            prompt_frame_idx=int(prompt_frame_idx),
+            prompt_box_xyxy=np.asarray(box, dtype=np.float32),
+            caption="",
+        )
+        masks = np.asarray(sam_output.masks_thw, dtype=np.uint8)
+        if not masks.any():
+            raise RuntimeError(f"SAM2 produced an empty cached-box track for {phrase!r}")
+        tracks.append(
+            DetectedObjectTrack(
+                box_prompt_xyxy=np.asarray(box, dtype=np.float32),
+                masks_thw=masks,
+                boxes_t4=np.asarray(sam_output.boxes_t4, dtype=np.float32),
+                score=float(score),
+                phrase=str(phrase),
+                source_phrase=str(phrase),
+            )
+        )
+    return SimpleNamespace(
+        object_tracks=tracks,
+        debug={
+            "mode": "validated_frame0_boxes_then_full_source_sam2",
+            "object_phrases": list(phrases),
+            "object_prompt_boxes_xyxy": np.asarray(boxes_xyxy).tolist(),
+            "object_scores": np.asarray(scores).tolist(),
+            "prompt_frame_idx": int(prompt_frame_idx),
+        },
+    )
 
 
 def deduplicated_json_paths(input_list: Path) -> list[Path]:
@@ -250,14 +407,80 @@ def prepare_case(
     frames_tchw_01 = frames.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
 
     provider = build_provider(device, points_per_object)
-    sample = provider.build_sample(
-        frames_tchw_01=frames_tchw_01,
-        caption=str(payload["input_caption"]),
-        image_hw=(HEIGHT, WIDTH),
-    )
-    sample = filter_overlapping_query_tracks(
-        sample, query_frame=0, min_pixels=points_per_object
-    )
+    prompt_phrases, prompt_boxes, prompt_scores, phrase_cache = cached_object_prompt_spec(case)
+    if prompt_phrases:
+        print(
+            f"[prepare] {case}: explicit object prompts={prompt_phrases} "
+            f"from {phrase_cache}",
+            flush=True,
+        )
+        try:
+            sample = detect_and_track_objects(provider, frames_tchw_01, prompt_phrases)
+            prompt_source = f"validated phrases, fresh GroundingDINO boxes: {phrase_cache}"
+        except RuntimeError as error:
+            if (
+                "could not assign distinct GroundingDINO boxes" not in str(error)
+                or prompt_boxes is None
+                or prompt_scores is None
+            ):
+                raise
+            print(
+                f"[prepare] {case}: strict fresh box assignment failed; "
+                f"re-running full-source SAM2 from validated frame-0 boxes",
+                flush=True,
+            )
+            sample = track_objects_from_prompt_boxes(
+                provider,
+                frames_tchw_01,
+                prompt_phrases,
+                prompt_boxes,
+                prompt_scores,
+            )
+            prompt_source = f"validated phrases and frame-0 boxes: {phrase_cache}"
+    else:
+        sample = provider.build_sample(
+            frames_tchw_01=frames_tchw_01,
+            caption=str(payload["input_caption"]),
+            image_hw=(HEIGHT, WIDTH),
+        )
+        prompt_source = "automatic physical noun phrases from input_caption"
+    try:
+        sample = filter_overlapping_query_tracks(
+            sample, query_frame=0, min_pixels=points_per_object
+        )
+    except RuntimeError as error:
+        if "automatic grounding produced no distinct object tracks" not in str(error):
+            raise
+        (
+            segmentation_phrases,
+            segmentation_boxes,
+            segmentation_scores,
+            segmentation_frame,
+            segmentation_cache,
+        ) = cached_segmentation_prompt_spec(case)
+        if segmentation_boxes is None or segmentation_scores is None:
+            raise
+        print(
+            f"[prepare] {case}: automatic tracks were not distinct; "
+            f"re-running full-source SAM2 from validated segmentation boxes "
+            f"at source frame {segmentation_frame}",
+            flush=True,
+        )
+        sample = track_objects_from_prompt_boxes(
+            provider,
+            frames_tchw_01,
+            segmentation_phrases,
+            segmentation_boxes,
+            segmentation_scores,
+            prompt_frame_idx=segmentation_frame,
+        )
+        sample = filter_overlapping_query_tracks(
+            sample, query_frame=0, min_pixels=points_per_object
+        )
+        prompt_source = (
+            "validated segmentation boxes followed by fresh full-source SAM2: "
+            f"{segmentation_cache}"
+        )
     phrases = [
         str(track.source_phrase or track.phrase or f"object_{index:02d}")
         for index, track in enumerate(sample.object_tracks)
@@ -347,6 +570,7 @@ def prepare_case(
         "anchor_source_frames": anchors.tolist(),
         "latent_anchor_indices": list(range(LATENT_FRAMES)),
         "source_processing": "GroundingDINO -> SAM2 masks; first-mask points -> CoTracker",
+        "object_prompt_source": prompt_source,
         "objects": [
             {
                 "name": name,
@@ -372,6 +596,7 @@ def prepare_case(
         output / "complete.json",
         {"case": case, "object_count": len(names), "moving_count": int(moving.sum())},
     )
+    (output / "error.txt").unlink(missing_ok=True)
     print(
         f"[prepare] complete {case}: objects={len(names)} moving={int(moving.sum())}",
         flush=True,
@@ -415,7 +640,7 @@ def selected_object_arrays(
 def masks_to_token_rows(masks_thw: np.ndarray, token_hw: tuple[int, int]) -> list[torch.Tensor]:
     masks = torch.from_numpy(np.asarray(masks_thw, dtype=np.float32)).unsqueeze(1)
     down = F.adaptive_max_pool2d(masks, token_hw).squeeze(1) > 0
-    rows = [torch.flatnonzero(frame.flatten(), as_tuple=False) for frame in down]
+    rows = [torch.nonzero(frame.flatten(), as_tuple=False).flatten() for frame in down]
     if any(not row.numel() for row in rows):
         raise RuntimeError("GT SAM2 tube contains an empty latent-frame token region")
     return rows

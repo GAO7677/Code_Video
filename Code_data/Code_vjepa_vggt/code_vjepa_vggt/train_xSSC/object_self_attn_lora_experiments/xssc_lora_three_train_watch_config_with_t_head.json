@@ -300,6 +300,14 @@
       ]
     },
     {
+      "key": "t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000",
+      "label": "PCKhead(S39/3350) + No-Object + xSSC Loss (DINOv3 MOVi-C 50k)",
+      "color": "#CC79A7",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints"
+      ]
+    },
+    {
       "key": "full_sa_physrvg_dit",
       "label": "Full-SA + Object (PhysRVG DiT)",
       "color": "#17BECF",
