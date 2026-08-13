@@ -48,6 +48,7 @@ DEFAULT_MODEL_CONFIG = ROOT / (
     "rsfq2_r-ytvis_hq-vjepa2_1_vitl16-ar10f-slot512-"
     "resume14000-clip2-bs64.py"
 )
+DEFAULT_YTVIS_DATA_CONFIG = DEFAULT_MODEL_CONFIG
 DEFAULT_MODEL_CHECKPOINT = Path(
     "/data/gaoya/agent-data/checkpoints/"
     "xssc_vjepa2_1_video_noncausal_ytvis_hq_10f_ar_bs64_"
@@ -61,6 +62,10 @@ DEFAULT_MOVIC_DATA_CONFIG = ROOT / (
     "transfer16000-clip2.py"
 )
 DEFAULT_TEST5 = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
+DEFAULT_TEST5_AMG_METADATA = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "xssc_slot_overlay_test5_all_amgbox_fullvideo_compare/metadata.json"
+)
 DEFAULT_OUTPUT = Path(
     "/data/gaoya/agent-data/outputs/"
     "vjepa_xssc_latest_complete_step16000_val5_test5"
@@ -72,10 +77,16 @@ IMAGENET_STD = torch.tensor([58.395, 57.12, 57.375]).view(1, 1, 3, 1, 1)
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--model-config", type=Path, default=DEFAULT_MODEL_CONFIG)
+    parser.add_argument(
+        "--ytvis-data-config", type=Path, default=DEFAULT_YTVIS_DATA_CONFIG
+    )
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_MODEL_CHECKPOINT)
     parser.add_argument("--movic-data-config", type=Path, default=DEFAULT_MOVIC_DATA_CONFIG)
     parser.add_argument("--data-dir", type=Path, default=Path("/data/gaoya/dataset"))
     parser.add_argument("--test5-file", type=Path, default=DEFAULT_TEST5)
+    parser.add_argument(
+        "--test5-amg-metadata", type=Path, default=DEFAULT_TEST5_AMG_METADATA
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--ytvis-cases", type=int, default=5)
     parser.add_argument("--movic-cases", type=int, default=5)
@@ -96,6 +107,11 @@ def parse_args():
     parser.add_argument("--alpha", type=float, default=0.55)
     parser.add_argument("--quality", type=int, default=88)
     parser.add_argument("--sheet-columns", type=int, default=4)
+    parser.add_argument(
+        "--checkpoint-scope",
+        default="YTVIS clip2 branch",
+        help="Human-readable checkpoint lineage shown in the report.",
+    )
     return parser.parse_args()
 
 
@@ -187,20 +203,85 @@ def resize_frame(frame, target):
     )
 
 
-def decode_external_video(path, buckets):
+def center_crop_to_ratio(frame, target_height, target_width):
+    height, width = frame.shape[:2]
+    target_ratio = target_width / target_height
+    if width / height > target_ratio:
+        crop_width = max(1, round(height * target_ratio))
+        left = (width - crop_width) // 2
+        return frame[:, left : left + crop_width]
+    crop_height = max(1, round(width / target_ratio))
+    top = (height - crop_height) // 2
+    return frame[top : top + crop_height]
+
+
+def decode_external_video(path, cfg):
     frames = []
     raw_shape = None
     target = None
+    buckets = getattr(cfg, "aspect_ratio_buckets", None)
+    fixed_size = tuple(getattr(cfg, "resolut0", (256, 256)))
     for frame in iio.imiter(path, plugin="pyav"):
         frame = np.asarray(frame)[..., :3]
         if raw_shape is None:
             raw_shape = list(frame.shape)
-            target = choose_aspect_ratio_bucket(frame.shape[0], frame.shape[1], buckets)
+            target = (
+                choose_aspect_ratio_bucket(frame.shape[0], frame.shape[1], buckets)
+                if buckets
+                else fixed_size
+            )
+        if not buckets:
+            frame = center_crop_to_ratio(frame, target[0], target[1])
         frames.append(resize_frame(frame, target))
     if not frames:
         raise RuntimeError(f"no decoded frames: {path}")
     metadata = iio.immeta(path, plugin="pyav")
     return np.stack(frames).astype(np.uint8), raw_shape, list(target), metadata
+
+
+def condition_from_gt_segment(segment, num_slots):
+    if segment is None:
+        raise ValueError("bbox-conditioned checkpoint requires GT segment on val data")
+    masks = segment[0].detach().cpu().numpy().astype(bool)
+    if masks.ndim != 4:
+        raise ValueError(f"expected segment [T,H,W,N], got {masks.shape}")
+    time_steps, height, width, channels = masks.shape
+    condition = np.zeros((1, time_steps, num_slots, 4), dtype=np.float32)
+    foreground_slots = min(max(0, channels - 1), num_slots)
+    for time_index in range(time_steps):
+        for slot_index in range(foreground_slots):
+            ys, xs = np.where(masks[time_index, :, :, slot_index + 1])
+            if not len(xs):
+                continue
+            condition[0, time_index, slot_index] = (
+                xs.min() / width,
+                ys.min() / height,
+                (xs.max() + 1) / width,
+                (ys.max() + 1) / height,
+            )
+    return torch.from_numpy(condition)
+
+
+def load_test5_amg_conditions(metadata_file, num_slots):
+    payload = json.loads(metadata_file.read_text())
+    conditions = {}
+    details = {}
+    for case in payload.get("cases", []):
+        source = str(Path(case["source_key"]).resolve())
+        if source in conditions:
+            continue
+        boxes_xywh = case.get("amg", {}).get("selected_boxes_xywh", [])[:num_slots]
+        boxes = np.zeros((1, 1, num_slots, 4), dtype=np.float32)
+        for index, (x, y, width, height) in enumerate(boxes_xywh):
+            boxes[0, 0, index] = (
+                x / 256.0,
+                y / 256.0,
+                (x + width) / 256.0,
+                (y + height) / 256.0,
+            )
+        conditions[source] = torch.from_numpy(boxes)
+        details[source] = case.get("amg", {})
+    return conditions, details
 
 
 def normalize_slot_vectors(values):
@@ -220,15 +301,25 @@ def align_chunk_slots(previous, current, labels, slotz):
 
 
 @torch.inference_mode()
-def infer_window(model, frames, device, amp_dtype):
+def infer_window(model, frames, condition, device, amp_dtype):
     original_count = len(frames)
     if original_count < 2:
         frames = np.concatenate([frames, frames[-1:]], axis=0)
     if len(frames) % 2:
         frames = np.concatenate([frames, frames[-1:]], axis=0)
     video = normalize_frames(frames)
+    batch = {"video": video.to(device)}
+    if condition is not None:
+        expected_tubelets = len(frames) // 2
+        if condition.shape[1] == 1:
+            condition = condition.expand(-1, expected_tubelets, -1, -1)
+        if condition.shape[1] != expected_tubelets:
+            raise ValueError(
+                f"condition has {condition.shape[1]} steps, expected {expected_tubelets}"
+            )
+        batch["bbox"] = condition.to(device)
     with torch.autocast("cuda", dtype=amp_dtype):
-        output = model(batch={"video": video.to(device)})
+        output = model(batch=batch)
     attention = output["attentd"][0].detach().float().cpu()
     slotz = output["slotz"][0].detach().float().cpu().numpy()
     labels = attention.argmax(dim=1).to(torch.uint8).numpy()
@@ -240,9 +331,11 @@ def infer_window(model, frames, device, amp_dtype):
     return labels, slotz, list(attention.shape), original_count
 
 
-def infer_sequence(model, frames, device, amp_dtype, window_frames):
+def infer_sequence(model, frames, condition, device, amp_dtype, window_frames):
     if window_frames <= 0 or len(frames) <= window_frames:
-        labels, slotz, shape, _ = infer_window(model, frames, device, amp_dtype)
+        labels, slotz, shape, _ = infer_window(
+            model, frames, condition, device, amp_dtype
+        )
         labels_frame = np.repeat(labels, 2, axis=0)[: len(frames)]
         return labels, labels_frame, [shape], []
     if window_frames < 2:
@@ -257,8 +350,15 @@ def infer_sequence(model, frames, device, amp_dtype, window_frames):
     previous_slotz = None
     for start in range(0, len(frames), window_frames):
         chunk = frames[start : start + window_frames]
+        chunk_condition = condition
+        if condition is not None and condition.shape[1] > 1:
+            tubelet_start = start // 2
+            tubelet_count = (len(chunk) + 1) // 2
+            chunk_condition = condition[
+                :, tubelet_start : tubelet_start + tubelet_count
+            ]
         labels, slotz, shape, original_count = infer_window(
-            model, chunk, device, amp_dtype
+            model, chunk, chunk_condition, device, amp_dtype
         )
         if previous_slotz is not None:
             labels, slotz, mapping = align_chunk_slots(
@@ -399,15 +499,18 @@ def build_html(report):
     title = html.escape(report["title"])
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>
 *{{box-sizing:border-box}}:root{{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--line:#30363d;--ink:#e6edf3;--muted:#8b949e;--cyan:#58c7da;--orange:#e9a23b}}body{{margin:0;background:linear-gradient(180deg,#111923 0,#0d1117 320px);color:var(--ink);font:14px system-ui,sans-serif}}header{{position:sticky;top:0;z-index:5;background:rgba(13,17,23,.97);border-bottom:1px solid var(--line)}}.bar{{max-width:2200px;margin:auto;padding:11px 18px;display:flex;gap:9px;align-items:center;flex-wrap:wrap}}h1{{font-size:18px;margin:0 auto 0 0}}button,select,input{{height:36px;border:1px solid #46515c;border-radius:6px;background:#1d252e;color:var(--ink);font:inherit}}button{{padding:0 12px;cursor:pointer}}select{{padding:0 10px;max-width:min(780px,72vw)}}#slider{{min-width:220px;flex:0 1 380px;accent-color:var(--cyan)}}main{{max-width:2200px;margin:auto;padding:18px}}.notice{{padding:12px 14px;margin-bottom:14px;border-left:4px solid var(--orange);background:#201b13;color:#d7c4a6;line-height:1.5}}.summary{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}}.stat,.card{{border:1px solid var(--line);background:rgba(22,27,34,.94);border-radius:8px}}.stat{{padding:12px}}.stat b{{display:block;margin-top:4px;color:#fff}}.case-meta{{display:flex;gap:14px;overflow:auto;white-space:nowrap;color:var(--muted);padding:0 2px 12px}}.case-meta strong{{color:var(--ink)}}.timeline{{display:grid;grid-template-columns:repeat(var(--frames),minmax(3px,1fr));gap:2px;height:9px;margin:0 0 14px}}.timeline i{{background:#293440;border-radius:1px}}.timeline i:nth-child(2n){{background:#3c5965}}.timeline i.active{{background:var(--orange)}}.sheet{{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:#050607}}.inspector{{display:none;grid-template-columns:repeat(var(--panels),minmax(260px,1fr));gap:12px}}.inspector figure{{margin:0}}.inspector img{{display:block;width:100%;height:min(62vh,720px);object-fit:contain;background:#050607;border:1px solid var(--line);border-radius:8px}}figcaption{{padding:7px 2px;color:#aeb8c2}}.foot{{color:var(--muted);line-height:1.55;margin-top:14px}}code{{color:#79c0ff;overflow-wrap:anywhere}}@media(max-width:900px){{.summary{{grid-template-columns:repeat(2,1fr)}}.inspector{{grid-template-columns:1fr}}}}@media(max-width:560px){{.summary{{grid-template-columns:1fr}}select{{max-width:100%}}}}
-</style></head><body><header><div class="bar"><h1>{title}</h1><button onclick="location.href='../'">项目总览</button><select id="source"><option value="">全部来源</option><option value="ytvis_hq_val">YTVIS val</option><option value="movi_c_val">MOVi-C val</option><option value="test5">test_5</option></select><button id="prev">‹</button><select id="case"></select><button id="next">›</button><button id="view">逐帧查看</button><input id="slider" type="range" min="0" value="0"><span id="counter"></span></div></header><main><div class="notice">最新完整 checkpoint 是 YTVIS clip2 step-16000；当前 MOVi-C 训练尚未产生新的落盘 checkpoint。本页不会把进程内未保存更新标为最新权重。</div><section class="summary"><div class="stat">Checkpoint<b>step-16000</b></div><div class="stat">验证抽样<b>YTVIS 5 + MOVi-C 5</b></div><div class="stat">test_5<b>20 个唯一 source</b></div><div class="stat">长视频策略<b>连续 10 帧窗口 · 不丢帧</b></div></section><div id="meta" class="case-meta"></div><div id="timeline" class="timeline"></div><a id="sheetLink" target="_blank"><img id="sheet" class="sheet"></a><section id="inspector" class="inspector"></section><p class="foot">页面只展示静态视频帧图像，不使用视频播放器。val 的 GT 是训练数据管线中与 V-JEPA tubelet 对齐的实例 mask；ARI-FG 和 mean-best-overlap 是这 5 例的诊断值，不冒充完整验证集官方指标。test_5 没有 GT。跨窗口颜色用相邻窗口 slot embedding 的 Hungarian 匹配对齐，仅用于视觉连续性。</p></main><script>
+</style></head><body><header><div class="bar"><h1>{title}</h1><button onclick="location.href='../'">项目总览</button><select id="source"><option value="">全部来源</option><option value="ytvis_hq_val">YTVIS val</option><option value="movi_c_val">MOVi-C val</option><option value="test5">test_5</option></select><button id="prev">‹</button><select id="case"></select><button id="next">›</button><button id="view">逐帧查看</button><input id="slider" type="range" min="0" value="0"><span id="counter"></span></div></header><main><div class="notice">本页使用完整落盘 checkpoint：{html.escape(report['checkpoint_scope'])} step-{report['latest_complete_step']}。不会把尚未保存的进程内更新标为最新权重。</div><section class="summary"><div class="stat">Checkpoint<b>step-{report['latest_complete_step']}</b></div><div class="stat">验证抽样<b>YTVIS {len(report['ytvis_indices'])} + MOVi-C {len(report['movic_indices'])}</b></div><div class="stat">test_5<b>{report['test5_unique_sources']} 个唯一 source</b></div><div class="stat">长视频策略<b>连续 10 帧窗口 · 不丢帧</b></div></section><div id="meta" class="case-meta"></div><div id="timeline" class="timeline"></div><a id="sheetLink" target="_blank"><img id="sheet" class="sheet"></a><section id="inspector" class="inspector"></section><p class="foot">页面只展示静态视频帧图像，不使用视频播放器。val 的 GT 是训练数据管线中与 V-JEPA tubelet 对齐的实例 mask；ARI-FG 和 mean-best-overlap 是这 5 例的诊断值，不冒充完整验证集官方指标。test_5 没有 GT。跨窗口颜色用相邻窗口 slot embedding 的 Hungarian 匹配对齐，仅用于视觉连续性。</p></main><script>
 const D={payload},source=document.getElementById('source'),sel=document.getElementById('case'),slider=document.getElementById('slider'),counter=document.getElementById('counter'),meta=document.getElementById('meta'),timeline=document.getElementById('timeline'),sheet=document.getElementById('sheet'),sheetLink=document.getElementById('sheetLink'),inspector=document.getElementById('inspector');let frame=0,mode='sheet',visible=[];function esc(s){{return String(s).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]))}}function pat(p,i){{return p.replace('{{frame}}',String(i).padStart(4,'0'))}}function current(){{return D.cases[Number(sel.value)]}}function fmt(v){{return v===null||v===undefined?'—':Number(v).toFixed(4)}}function fillCases(){{const prior=current()?.case_id;visible=D.cases.map((c,i)=>[c,i]).filter(([c])=>!source.value||c.source===source.value);sel.innerHTML='';visible.forEach(([c,i])=>{{const o=document.createElement('option');o.value=i;o.textContent=`${{String(i+1).padStart(2,'0')}} | ${{c.source}} | ${{c.case_id}}`;if(c.case_id===prior)o.selected=true;sel.appendChild(o)}});render()}}function updateFrame(){{const c=current();frame=Math.max(0,Math.min(frame,c.frames-1));slider.value=frame;counter.textContent=`${{frame+1}} / ${{c.frames}}`;timeline.querySelectorAll('i').forEach((x,i)=>x.classList.toggle('active',i===frame));inspector.querySelectorAll('img').forEach(x=>x.src=pat(x.dataset.pattern,frame))}}function render(){{const c=current();if(!c)return;frame=0;slider.max=c.frames-1;meta.innerHTML=`<strong>${{esc(c.source)}}</strong><span>${{esc(c.source_key)}}</span><span>${{c.frames}} frames</span><span>${{c.tubelets}} tubelets</span><span>ARI-FG ${{fmt(c.metrics.ari_fg_diagnostic)}}</span><span>mBO ${{fmt(c.metrics.mean_best_overlap_diagnostic)}}</span>`;timeline.style.setProperty('--frames',c.frames);timeline.innerHTML=Array.from({{length:c.frames}},()=>'<i></i>').join('');sheet.src=c.assets.contact_sheet;sheetLink.href=c.assets.contact_sheet;const panels=[['模型输入',c.assets.original_pattern],['Predicted slots',c.assets.prediction_pattern]];if(c.assets.gt_pattern)panels.push(['GT instances',c.assets.gt_pattern]);inspector.style.setProperty('--panels',panels.length);inspector.innerHTML=panels.map(([label,p])=>`<figure><img data-pattern="${{p}}"><figcaption>${{label}}</figcaption></figure>`).join('');updateFrame()}}function setMode(next){{mode=next;sheetLink.style.display=mode==='sheet'?'block':'none';inspector.style.display=mode==='frame'?'grid':'none';slider.style.visibility=mode==='frame'?'visible':'hidden';counter.style.visibility=mode==='frame'?'visible':'hidden';document.getElementById('view').textContent=mode==='sheet'?'逐帧查看':'查看拼接图';updateFrame()}}source.onchange=fillCases;sel.onchange=render;slider.oninput=()=>{{frame=Number(slider.value);updateFrame()}};document.getElementById('prev').onclick=()=>{{sel.selectedIndex=(sel.selectedIndex-1+sel.options.length)%sel.options.length;render()}};document.getElementById('next').onclick=()=>{{sel.selectedIndex=(sel.selectedIndex+1)%sel.options.length;render()}};document.getElementById('view').onclick=()=>setMode(mode==='sheet'?'frame':'sheet');document.addEventListener('keydown',e=>{{if(mode==='frame'&&e.key==='ArrowLeft'){{frame--;updateFrame()}}if(mode==='frame'&&e.key==='ArrowRight'){{frame++;updateFrame()}}}});fillCases();setMode('sheet');
 </script></body></html>'''
 
 
-def process_case(case, frames, gt_tubelet, model, cfg, device, args, window_frames):
+def process_case(
+    case, frames, gt_tubelet, condition, model, cfg, device, args, window_frames
+):
     predicted_tubelet, predicted_frame, attention_shapes, alignments = infer_sequence(
         model,
         frames,
+        condition,
         device,
         getattr(torch, cfg.amp_dtype),
         window_frames,
@@ -456,16 +559,29 @@ def main():
         args.model_config.resolve(), args.checkpoint.resolve(), device
     )
     model_metadata = checkpoint_load_summary(load_report)
-    if model_metadata["source_optimizer_step"] != 16000:
-        raise RuntimeError(f"expected step-16000, got {model_metadata}")
+    checkpoint_step = model_metadata["source_optimizer_step"]
+    if not isinstance(checkpoint_step, int):
+        raise RuntimeError(f"checkpoint has no integer optimizer step: {model_metadata}")
 
     ytvis = build_val_source(
-        args.model_config.resolve(), args.data_dir, "ytvis_hq_val", args.ytvis_cases, args.seed
+        args.ytvis_data_config.resolve(),
+        args.data_dir,
+        "ytvis_hq_val",
+        args.ytvis_cases,
+        args.seed,
     )
     movic = build_val_source(
         args.movic_data_config.resolve(), args.data_dir, "movi_c_val", args.movic_cases, args.seed + 7
     )
     rendered = []
+    uses_bbox_condition = "condit" in cfg.model_imap
+    num_slots = int(getattr(cfg, "max_num", 0))
+    test5_conditions = {}
+    test5_condition_details = {}
+    if uses_bbox_condition:
+        test5_conditions, test5_condition_details = load_test5_amg_conditions(
+            args.test5_amg_metadata.resolve(), num_slots
+        )
     total_cases = args.ytvis_cases + args.movic_cases
     test5_cases = load_unique_test5(args.test5_file.resolve(), args.test5_cases)
     total_cases += len(test5_cases)
@@ -476,6 +592,11 @@ def main():
             batch = source["collate"]([source["dataset"][index]])
             frames = decode_dataset_rgb(batch["video"])
             gt = segment_to_labels(batch.get("segment"))
+            condition = (
+                condition_from_gt_segment(batch.get("segment"), num_slots)
+                if uses_bbox_condition
+                else None
+            )
             case = {
                 "source": source["source"],
                 "case_id": f"{source['source']}_{index:06d}",
@@ -485,16 +606,31 @@ def main():
                 "input_policy": "official validation transform; one complete forward",
             }
             rendered.append(
-                process_case(case, frames, gt, model, cfg, device, args, window_frames=0)
+                process_case(
+                    case,
+                    frames,
+                    gt,
+                    condition,
+                    model,
+                    cfg,
+                    device,
+                    args,
+                    window_frames=0,
+                )
             )
             completed += 1
             print(f"[case] {completed}/{total_cases} {case['case_id']}", flush=True)
 
-    buckets = [tuple(values) for values in cfg.aspect_ratio_buckets]
     for case in test5_cases:
         frames, raw_shape, bucket, video_metadata = decode_external_video(
-            Path(case["source_key"]), buckets
+            Path(case["source_key"]), cfg
         )
+        resolved_source = str(Path(case["source_key"]).resolve())
+        condition = test5_conditions.get(resolved_source)
+        if uses_bbox_condition and condition is None:
+            raise KeyError(
+                f"no cached first-frame SAM2-AMG boxes for {resolved_source}"
+            )
         case.update(
             {
                 "decoded_frame_shape": raw_shape,
@@ -504,6 +640,14 @@ def main():
                     f"all consecutive frames; {args.external_window_frames}-frame "
                     "non-overlapping forwards; no frame sampling"
                 ),
+                "condition_policy": (
+                    "cached filtered first-frame SAM2-AMG pseudo boxes"
+                    if uses_bbox_condition
+                    else "unconditioned"
+                ),
+                "condition_details": test5_condition_details.get(
+                    resolved_source
+                ),
             }
         )
         rendered.append(
@@ -511,6 +655,7 @@ def main():
                 case,
                 frames,
                 None,
+                condition,
                 model,
                 cfg,
                 device,
@@ -522,12 +667,25 @@ def main():
         print(f"[case] {completed}/{total_cases} {case['case_id']}", flush=True)
 
     report = {
-        "title": "V-JEPA xSSC · latest complete checkpoint · val5 + test_5",
+        "title": (
+            f"V-JEPA xSSC · step-{checkpoint_step} · val5 + test_5"
+        ),
         "checkpoint": str(args.checkpoint.resolve()),
         "config": str(args.model_config.resolve()),
         "checkpoint_load": model_metadata,
-        "latest_complete_step": 16000,
-        "checkpoint_scope": "YTVIS clip2 branch before a complete MOVi-C checkpoint exists",
+        "ytvis_data_config": str(args.ytvis_data_config.resolve()),
+        "movic_data_config": str(args.movic_data_config.resolve()),
+        "latest_complete_step": checkpoint_step,
+        "checkpoint_scope": args.checkpoint_scope,
+        "condition_mode": (
+            "GT-instance boxes on val; cached filtered first-frame SAM2-AMG "
+            "pseudo boxes on test_5"
+            if uses_bbox_condition
+            else "unconditioned slot initialization"
+        ),
+        "test5_amg_metadata": (
+            str(args.test5_amg_metadata.resolve()) if uses_bbox_condition else None
+        ),
         "temporal_mode": cfg.temporal_mode,
         "tubelet_size": 2,
         "train_raw_frames": cfg.raw_clip_frames,

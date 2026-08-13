@@ -357,8 +357,6 @@ def load_live_physiciq_manifests(
             step=step,
         )
         result_root = Path(phys["output_root"]).resolve() / name
-        if count_paired_result_cases(result_root) == 0:
-            continue
         method = methods.get(method_key, {})
         live.append(
             {
@@ -1344,6 +1342,11 @@ MERGED_METHODS = [
         "key": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
         "label": "Full-SA + Object + Slot-Dedup (xSSC-50k) + xSSC Loss (DINOv3 MOVi-C 50k)",
         "color": "#D55E00",
+    },
+    {
+        "key": "t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000",
+        "label": "PCKhead(S39/3350) + No-Object + xSSC Loss (DINOv3 MOVi-C 50k)",
+        "color": "#CC79A7",
     },
     {"key": "s_head59", "label": "S-head59 + Object", "color": "#2CA02C"},
     {"key": "t_head70", "label": "T-head70 + Object", "color": "#9467BD"},

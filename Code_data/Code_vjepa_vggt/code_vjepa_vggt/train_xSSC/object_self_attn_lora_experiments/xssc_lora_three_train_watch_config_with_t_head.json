@@ -71,6 +71,7 @@
       "full_sa_no_object_vjepa_loss",
       "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
       "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
+      "t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000",
       "full_sa_physrvg_dit"
     ],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
