@@ -23,6 +23,7 @@ def parse_args():
     parser.add_argument("--results-root", type=Path, required=True)
     parser.add_argument("--metric", default="velocity_nrmse")
     parser.add_argument("--bootstrap-samples", type=int, default=10000)
+    parser.add_argument("--practical-threshold", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=20260813)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
@@ -53,6 +54,17 @@ def values_by_video(run, metric, horizon):
     }
 
 
+def average_seed_values(indexed, keys, metric, horizon):
+    groups = [values_by_video(indexed[key], metric, horizon) for key in keys]
+    common = set(groups[0])
+    for group in groups[1:]:
+        common.intersection_update(group)
+    return {
+        video: float(np.mean([group[video] for group in groups]))
+        for video in sorted(common)
+    }
+
+
 def paired_contrast(left, right, samples, rng):
     common = sorted(set(left).intersection(right))
     if not common:
@@ -65,11 +77,14 @@ def paired_contrast(left, right, samples, rng):
         boot[start : start + count] = differences[indices].mean(axis=1)
     probability_nonpositive = (np.count_nonzero(boot <= 0) + 1) / (samples + 1)
     probability_nonnegative = (np.count_nonzero(boot >= 0) + 1) / (samples + 1)
+    left_mean = float(np.mean([left[index] for index in common]))
+    right_mean = float(np.mean([right[index] for index in common]))
     return {
         "videos": len(common),
-        "left_mean": float(np.mean([left[index] for index in common])),
-        "right_mean": float(np.mean([right[index] for index in common])),
+        "left_mean": left_mean,
+        "right_mean": right_mean,
         "difference": float(differences.mean()),
+        "relative_improvement": (right_mean - left_mean) / max(abs(right_mean), 1e-12),
         "ci95_low": float(np.quantile(boot, 0.025)),
         "ci95_high": float(np.quantile(boot, 0.975)),
         "p_two_sided_bootstrap": float(
@@ -146,9 +161,86 @@ def main():
                                 candidate, baseline, args.bootstrap_samples, rng
                             ),
                         }
+                        row["supports_left_at_threshold"] = (
+                            row["relative_improvement"] >= args.practical_threshold
+                            and row["ci95_high"] < 0
+                        )
+                        row["improvement_below_margin"] = (
+                            row["ci95_low"]
+                            > -args.practical_threshold * abs(row["right_mean"])
+                        )
                         family.append(row)
                     holm_adjust(family)
                     histories.extend(family)
+
+    # Formal seed-mean contrasts average each video's metric across seeds before
+    # videos receive equal weight in the paired bootstrap.
+    all_seeds = sorted({key[3] for key in indexed})
+    for representation in sorted({key[0] for key in indexed}):
+        for context in ("individual", "set"):
+            for horizon in horizons:
+                baseline_keys = [
+                    (representation, 1, context, seed)
+                    for seed in all_seeds
+                    if (representation, 1, context, seed) in indexed
+                ]
+                if not baseline_keys:
+                    continue
+                family = []
+                baseline = average_seed_values(
+                    indexed, baseline_keys, args.metric, horizon
+                )
+                for history in (2, 4):
+                    candidate_keys = [
+                        (representation, history, context, seed)
+                        for seed in all_seeds
+                        if (representation, history, context, seed) in indexed
+                    ]
+                    common_seeds = sorted(
+                        set(key[3] for key in baseline_keys).intersection(
+                            key[3] for key in candidate_keys
+                        )
+                    )
+                    if not common_seeds:
+                        continue
+                    baseline = average_seed_values(
+                        indexed,
+                        [(representation, 1, context, seed) for seed in common_seeds],
+                        args.metric,
+                        horizon,
+                    )
+                    candidate = average_seed_values(
+                        indexed,
+                        [
+                            (representation, history, context, seed)
+                            for seed in common_seeds
+                        ],
+                        args.metric,
+                        horizon,
+                    )
+                    row = {
+                        "contrast_type": "history_seed_mean",
+                        "representation": representation,
+                        "context": context,
+                        "seed": "mean",
+                        "seed_count": len(common_seeds),
+                        "horizon": horizon,
+                        "contrast": f"H{history}-H1",
+                        **paired_contrast(
+                            candidate, baseline, args.bootstrap_samples, rng
+                        ),
+                    }
+                    row["supports_left_at_threshold"] = (
+                        row["relative_improvement"] >= args.practical_threshold
+                        and row["ci95_high"] < 0
+                    )
+                    row["improvement_below_margin"] = (
+                        row["ci95_low"]
+                        > -args.practical_threshold * abs(row["right_mean"])
+                    )
+                    family.append(row)
+                holm_adjust(family)
+                histories.extend(family)
 
     for representation in sorted({key[0] for key in indexed}):
         for history in (1, 2, 4):
@@ -158,24 +250,74 @@ def main():
                 if individual_key not in indexed or set_key not in indexed:
                     continue
                 for horizon in horizons:
-                    contexts.append(
-                        {
-                            "contrast_type": "context",
-                            "representation": representation,
-                            "history": history,
-                            "seed": seed,
-                            "horizon": horizon,
-                            "contrast": "set-individual",
-                            **paired_contrast(
-                                values_by_video(indexed[set_key], args.metric, horizon),
-                                values_by_video(
-                                    indexed[individual_key], args.metric, horizon
-                                ),
-                                args.bootstrap_samples,
-                                rng,
+                    row = {
+                        "contrast_type": "context",
+                        "representation": representation,
+                        "history": history,
+                        "seed": seed,
+                        "horizon": horizon,
+                        "contrast": "set-individual",
+                        **paired_contrast(
+                            values_by_video(indexed[set_key], args.metric, horizon),
+                            values_by_video(
+                                indexed[individual_key], args.metric, horizon
                             ),
-                        }
+                            args.bootstrap_samples,
+                            rng,
+                        ),
+                    }
+                    row["supports_left_at_threshold"] = (
+                        row["relative_improvement"] >= args.practical_threshold
+                        and row["ci95_high"] < 0
                     )
+                    contexts.append(row)
+
+    for representation in sorted({key[0] for key in indexed}):
+        for history in (1, 2, 4):
+            for horizon in horizons:
+                common_seeds = [
+                    seed
+                    for seed in all_seeds
+                    if (representation, history, "individual", seed) in indexed
+                    and (representation, history, "set", seed) in indexed
+                ]
+                if not common_seeds:
+                    continue
+                individual = average_seed_values(
+                    indexed,
+                    [
+                        (representation, history, "individual", seed)
+                        for seed in common_seeds
+                    ],
+                    args.metric,
+                    horizon,
+                )
+                context = average_seed_values(
+                    indexed,
+                    [
+                        (representation, history, "set", seed)
+                        for seed in common_seeds
+                    ],
+                    args.metric,
+                    horizon,
+                )
+                row = {
+                    "contrast_type": "context_seed_mean",
+                    "representation": representation,
+                    "history": history,
+                    "seed": "mean",
+                    "seed_count": len(common_seeds),
+                    "horizon": horizon,
+                    "contrast": "set-individual",
+                    **paired_contrast(
+                        context, individual, args.bootstrap_samples, rng
+                    ),
+                }
+                row["supports_left_at_threshold"] = (
+                    row["relative_improvement"] >= args.practical_threshold
+                    and row["ci95_high"] < 0
+                )
+                contexts.append(row)
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -183,6 +325,7 @@ def main():
         "format": "xssc_stage1_paired_analysis_v1",
         "metric": args.metric,
         "bootstrap_samples": args.bootstrap_samples,
+        "practical_threshold": args.practical_threshold,
         "history_contrasts": histories,
         "context_contrasts": contexts,
     }

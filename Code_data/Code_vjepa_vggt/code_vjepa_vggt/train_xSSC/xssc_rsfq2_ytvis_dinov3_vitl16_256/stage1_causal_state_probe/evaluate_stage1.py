@@ -29,6 +29,7 @@ from stage1_causal_state_probe.models import (  # noqa: E402
     StatePredictor,
     bbox_iou,
     compose_full_state,
+    representation_target,
 )
 
 
@@ -96,12 +97,12 @@ class MetricAccumulator:
         return {key: self.mean(key) for key in sorted(self.sums)}
 
 
-def rollout(model, history, horizon, representation):
+def rollout(model, history, horizon, representation, slot_valid):
     values = [history[:, index] for index in range(history.shape[1])]
     predictions = []
     for _ in range(horizon):
         model_history = torch.stack(values[-model.history :], dim=1)
-        prediction = model(model_history)
+        prediction = model(model_history, slot_valid=slot_valid)
         next_full = compose_full_state(values[-1], prediction, representation)
         values.append(next_full)
         predictions.append(next_full)
@@ -122,6 +123,7 @@ def evaluate_case(
 ):
     raw_slots = record["slots"].float().to(device)
     slots = normalizer.normalize(raw_slots)[None]
+    slot_valid = record["slot_valid"].bool().to(device)[None]
     targets, mapped_valid = gather_object_targets(record, mapping_key)
     targets = {key: value.to(device) for key, value in targets.items()}
     mapped_valid = mapped_valid.to(device)
@@ -132,14 +134,18 @@ def evaluate_case(
         for origin in origins:
             history_value = slots[:, origin - history + 1 : origin + 1]
             predicted = rollout(
-                predictor, history_value, horizon, representation
+                predictor, history_value, horizon, representation, slot_valid
             )[0]
             actual_norm = slots[0, origin + 1 : origin + horizon + 1]
             actual_raw = raw_slots[origin + 1 : origin + horizon + 1]
             predicted_raw = normalizer.denormalize(predicted)
-            latent_error = (predicted - actual_norm).square().mean(dim=-1)
+            predicted_repr = representation_target(predicted, representation)
+            actual_repr = representation_target(actual_norm, representation)
+            predicted_raw_repr = representation_target(predicted_raw, representation)
+            actual_raw_repr = representation_target(actual_raw, representation)
+            latent_error = (predicted_repr - actual_repr).square().mean(dim=-1)
             latent_cosine = 1 - functional.cosine_similarity(
-                predicted_raw, actual_raw, dim=-1
+                predicted_raw_repr, actual_raw_repr, dim=-1
             )
             metrics.add("latent_nmse", latent_error)
             metrics.add("latent_cosine_distance", latent_cosine)

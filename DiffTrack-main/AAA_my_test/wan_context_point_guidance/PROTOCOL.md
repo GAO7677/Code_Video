@@ -12,10 +12,10 @@ This is tested independently in two backends. Raw scores are not compared
 between backends because model weights, context information, and resolution
 differ.
 
-| Backend | Context actually consumed | Guided Query times | Target Key times | Resolution |
+| Backend | Context actually consumed | Observed Query times | Target future Key times | Resolution |
 |---|---|---:|---:|---:|
-| `firstframe_ti2v` | first RGB frame | `R1..R12` | `R0` | 1280×704 |
-| `context8_v2v` | first 8 RGB frames, VAE-compressed to two clean prefix latents | `R2..R12` | `R0,R1` | 896×512 |
+| `firstframe_ti2v` | first RGB frame | `R0` | `R1..R12` | 1280×704 |
+| `context8_v2v` | first 8 RGB frames, VAE-compressed to two clean prefix latents | `R0,R1` | `R2..R12` | 896×512 |
 
 The V2V backend uses checkpoint
 `full_sa_no_object_xssc_loss_dinov3_movic_step50000/.../step-000500` with its
@@ -54,17 +54,63 @@ CoTracker. Frames `F00,F04,...,F48` define 13 point locations. V2V coordinates
 are mapped through the exact 896×512 cover-crop geometry; points outside the
 crop are marked invisible.
 
-For a future tracked point Query, selected-head logits compete over every Wan
-key token in all 13 latent frames:
+For an observed-context tracked point Query, selected-head logits compete over
+every Wan key token in all 13 latent frames:
 
 \[
 \log Z(q)=\log\sum_{k\in\Omega_{0:12}}\exp(q^\top k/\sqrt d).
 \]
 
-The target is a Gaussian around the same tracked point in each visible context
-latent. V2V uses an equal mixture over `R0` and `R1`. Thus the CE penalizes both
-wrong spatial correspondence and failure to read the intended context time;
-there is no per-frame re-softmax.
+The target is an equal mixture of Gaussians around the same tracked point in
+each visible future latent. Thus the CE penalizes wrong spatial correspondence,
+wrong future time allocation, and attention that remains in the context; there
+is no per-frame re-softmax.
+
+## Direction correction: forward-v2
+
+The original `v1` implementation was re-audited on 2026-08-13 and found to use
+
+\[
+Q(R_t,p_t^i) \longrightarrow K(R_{ctx},p_{ctx}^i),
+\]
+
+where `p_t^i` is already the future CoTracker position. That old reverse-v1
+matrix was stopped and retained unchanged under
+`wan_context_point_guidance_head_compare/v1`.
+
+The active `forward_v2` experiment now uses
+
+\[
+Q(R_{ctx},p_{ctx}^i) \longrightarrow K(R_t,p_t^i).
+\]
+
+Here the observed point supplies the Query. For each context Query, Wan logits
+are normalized once over the complete `13×H×W` Key sequence. The target is an
+equal mixture of Gaussians at the same CoTracker point ID over all visible
+future latent times. This is equivalent to averaging the per-future-time
+cross-entropies while retaining Wan's true global attention denominator.
+
+The corrected matrix is written separately under
+`wan_context_point_guidance_head_compare/forward_v2`; no v1 result is reused or
+silently relabelled.
+
+The dashboard therefore displays, for every backend/case/target:
+
+1. the 13-anchor source GT/pseudo-GT CoTracker point trajectory;
+2. arrows for the actually implemented context-Query → future-Key constraint;
+3. arrows for the archived future-Query → context-Key v1 geometry;
+4. the same-backend unguided Baseline output trajectory against source GT.
+
+Item 4 is the **pre-guidance generated output**, not a pre-update attention
+argmax trajectory.  Current runs save scalar pre/post correspondence losses but
+not full QK response maps, so an exact “attention response before constraint”
+trajectory requires an explicit QK-capture rerun and must not be inferred from
+the rendered RGB video.
+
+`launch_dual_gpu3.sh` runs this diagnostic renderer after both generation
+backends finish.  Until a same-backend Baseline exists, its trajectory card is
+kept as `PENDING`; the three source/geometry audit videos are deterministic and
+can be rendered immediately.
 
 ## Direct latent update and equal budget
 

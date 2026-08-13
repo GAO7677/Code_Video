@@ -418,6 +418,9 @@ STAGE4_TEMPORAL_PORTAL_CARD = r'''
 STAGE4_REPRESENTATIVES_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-information-flow-stage4-representatives?v=1"><div><span>46 / STAGE 4 EVIDENCE</span><h2>代表性 Case · 正例与反例</h2><p>精选 M1/M2/M3 的强正例、时间方向反例、Random100 异常、R→C spillover 候选和低影响对照；同组并排 Baseline、Top100、Bottom100、Random100 与实时指标。</p></div><span class="go">打开代表性证据页</span></a>
 '''
+TOP100_M1_GUIDANCE_PORTAL_CARD = r'''
+<a class="card new" href="/top100-m1-guidance-pilot?v=1"><div><span>47 / TRAINING-FREE M1 GUIDANCE</span><h2>Baseline × Top100-M1 Guidance</h2><p>3 个代表 case、seed 47326；每步用 clean−M1 扰动预测构造 λ=0.5 guidance，左右并排查看未干预 Baseline 与生成结果。</p></div><span class="go">打开 M1 Guidance Pilot</span></a>
+'''
 GT_STC_PREFLIGHT_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-guidance-preflight?v=1"><div><span>43 / GT-STC PREFLIGHT</span><h2>GT Tube 引导错误预检</h2><p>逐 case 审计 13 个 latent 时刻的 SAM2 region 与 CoTracker 可见性，区分已复现报错、未来必报错、运行中和待运行。</p></div><span class="go">打开 GT Tube 诊断页</span></a>
 '''
@@ -425,7 +428,7 @@ GT_STC_RESULTS_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-guidance-results?v=2"><div><span>44 / GT-STC + EQUAL-BUDGET HEAD GUIDANCE</span><h2>GT 轨迹潜变量引导结果</h2><p>顶部实时展示 First-frame TI2V / 8-frame V2V 的 Baseline、Top100、Bottom100、Random100 完整任务矩阵，未生成项固定为 Pending；下方保留 Region / Point / Combined 冻结验证。</p></div><span class="go">打开双协议实时结果</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -435,6 +438,7 @@ from AAA_my_test.object_query_ablation_metrics import head_scope_comparison
 from AAA_my_test.object_query_ablation_metrics import information_flow_validation_dashboard
 from AAA_my_test.object_query_ablation_metrics import stage4_representatives_dashboard
 from AAA_my_test.object_query_ablation_metrics import stage4_temporal_dashboard
+from AAA_my_test.object_query_ablation_metrics import top100_m1_guidance_dashboard
 from AAA_my_test import gt_stc_guidance_dashboard
 from AAA_my_test import gt_stc_guidance_results_dashboard
 
@@ -463,6 +467,12 @@ class MetricsHandler(viewer.Handler):
         if path == "/object-query-information-flow-stage4-representatives":
             self.send_payload(
                 stage4_representatives_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/top100-m1-guidance-pilot":
+            self.send_payload(
+                top100_m1_guidance_dashboard.page().encode("utf-8"),
                 "text/html; charset=utf-8",
             )
             return
@@ -577,6 +587,26 @@ class MetricsHandler(viewer.Handler):
                 allow_nan=False,
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/top100-m1-guidance-pilot/catalog":
+            payload = json.dumps(
+                top100_m1_guidance_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/top100-m1-guidance-pilot/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            result = top100_m1_guidance_dashboard.asset(
+                params.get("kind", [""])[0],
+                params.get("case", [""])[0],
+            )
+            if result is None or not result.is_file():
+                raise FileNotFoundError("Top100-M1 guidance pilot asset is not ready")
+            viewer.send_file_with_range(self, result, "video/mp4")
             return
         if path == "/api/object-query-information-flow-stage4/asset":
             from urllib.parse import parse_qs

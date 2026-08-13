@@ -22,6 +22,7 @@ REQUIRED_RECORD_KEYS = {
     "gt_bbox",
     "gt_visibility",
     "object_valid",
+    "slot_valid",
     "prefix_slot_to_object",
     "boundary_slot_to_object",
     "source",
@@ -36,6 +37,8 @@ def validate_record(record: dict) -> None:
         raise ValueError(f"Unexpected slot shape: {record['slots'].shape}")
     if record["slot_attention"].shape[:2] != (NUM_STATES, NUM_SLOTS):
         raise ValueError("Unexpected slot-attention shape")
+    if tuple(record["slot_valid"].shape) != (NUM_SLOTS,):
+        raise ValueError("Unexpected slot-valid shape")
     for key in ("prefix_slot_to_object", "boundary_slot_to_object"):
         if tuple(record[key].shape) != (NUM_SLOTS,):
             raise ValueError(f"Unexpected {key} shape: {record[key].shape}")
@@ -94,7 +97,7 @@ class PredictionWindowDataset(Dataset):
         return {
             "history": record["slots"][origin - self.history + 1 : origin + 1].float(),
             "target": record["slots"][origin + 1].float(),
-            "slot_valid": torch.ones(NUM_SLOTS, dtype=torch.bool),
+            "slot_valid": record["slot_valid"].bool(),
             "trajectory_index": torch.tensor(trajectory_index),
             "origin": torch.tensor(origin),
         }

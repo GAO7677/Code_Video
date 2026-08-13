@@ -193,6 +193,84 @@ def global_context_point_loss(
     return torch.stack(terms).mean()
 
 
+def global_forward_point_loss(
+    q_bshd: torch.Tensor,
+    k_bshd: torch.Tensor,
+    point_rows_tn: torch.Tensor,
+    visibility_tn: torch.Tensor,
+    token_hw: tuple[int, int],
+    context_query_times: tuple[int, ...],
+    future_key_times: tuple[int, ...],
+    sigma_tokens: float,
+) -> torch.Tensor:
+    """Global CE from observed-context point Queries to future point Keys.
+
+    Each context point Query competes over Wan's complete T*H*W key sequence.
+    Its target is an equal mixture of Gaussian neighborhoods around the same
+    CoTracker point at every visible future latent time.
+    """
+    token_height, token_width = (int(value) for value in token_hw)
+    frame_tokens = token_height * token_width
+    time_count, point_count = point_rows_tn.shape
+    if q_bshd.shape[1] != time_count * frame_tokens:
+        raise ValueError(
+            f"token mismatch: q={tuple(q_bshd.shape)}, T/H/W="
+            f"{time_count}/{token_height}/{token_width}"
+        )
+    if q_bshd.shape != k_bshd.shape:
+        raise ValueError("Q and K must have matching selected-head shapes")
+    if not context_query_times or not future_key_times:
+        raise ValueError("context query and future key times must both be non-empty")
+    if set(context_query_times) & set(future_key_times):
+        raise ValueError("context query and future key times must be disjoint")
+    q = q_bshd.view(
+        q_bshd.shape[0], time_count, frame_tokens, q_bshd.shape[2], q_bshd.shape[3]
+    )
+    k = k_bshd.view(
+        k_bshd.shape[0], time_count * frame_tokens, k_bshd.shape[2], k_bshd.shape[3]
+    )
+    rows = point_rows_tn.to(device=q.device, dtype=torch.long)
+    visibility = visibility_tn.to(device=q.device, dtype=torch.bool)
+    point_indices = torch.arange(point_count, device=q.device)
+    scale = math.sqrt(float(q_bshd.shape[-1]))
+    future_counts = torch.stack(
+        [visibility[future_time] for future_time in future_key_times], dim=0
+    ).sum(dim=0)
+    terms: list[torch.Tensor] = []
+    for context_time in context_query_times:
+        valid = visibility[context_time] & (future_counts > 0)
+        if not bool(valid.any()):
+            continue
+        query_vectors = q[:, context_time, rows[context_time], :, :].float()
+        logits = torch.einsum("bnhd,bkhd->bhnk", query_vectors, k.float()) / scale
+        log_normalizer = torch.logsumexp(logits, dim=-1)
+        expected_logit = torch.zeros_like(log_normalizer)
+        for future_time in future_key_times:
+            future_visible = visibility[future_time]
+            if not bool(future_visible.any()):
+                continue
+            target = gaussian_targets(
+                rows[future_time],
+                (token_height, token_width),
+                sigma_tokens,
+                q.device,
+            )
+            start = future_time * frame_tokens
+            stop = start + frame_tokens
+            local_expectation = (
+                logits[..., start:stop] * target[None, None, :, :]
+            ).sum(dim=-1)
+            mixture_weight = (
+                future_visible.float() / future_counts.clamp_min(1).float()
+            )[None, None, :]
+            expected_logit = expected_logit + local_expectation * mixture_weight
+        ce = log_normalizer - expected_logit
+        terms.append(ce[..., point_indices[valid]].mean())
+    if not terms:
+        raise RuntimeError("no visible context-to-future point correspondences")
+    return torch.stack(terms).mean()
+
+
 def fixed_mutable_rms_delta(
     gradient: torch.Tensor,
     context_latent_frames: int,

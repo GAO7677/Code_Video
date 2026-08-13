@@ -77,7 +77,7 @@ def oracle_future_iou(attention, masks, assignments, object_valid):
 
 
 def audit_case(record):
-    slots = record["slots"].float()
+    slots = record["slots"][:, record["slot_valid"].bool()].float()
     static = slots[..., :STATIC_DIM]
     dynamic = slots[..., STATIC_DIM:]
     static_drift = (static[1:] - static[:-1]).square().mean(dim=-1).sqrt()
@@ -144,4 +144,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

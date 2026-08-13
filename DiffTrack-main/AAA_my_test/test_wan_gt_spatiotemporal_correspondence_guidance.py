@@ -94,6 +94,15 @@ class CorrespondenceGuidanceTests(unittest.TestCase):
             complete.mkdir(parents=True)
             (complete / "generated.mp4").write_bytes(b"video")
             (complete / "complete.json").write_text("{}", encoding="utf-8")
+            diagnostic = (
+                dual_root
+                / "diagnostics"
+                / "firstframe_ti2v"
+                / "case_a"
+                / "object_A"
+            )
+            diagnostic.mkdir(parents=True)
+            (diagnostic / "gt_13_anchor_trajectory.mp4").write_bytes(b"diagnostic")
             original_root = gt_stc_guidance_results_dashboard.ROOT
             original_dual_root = gt_stc_guidance_results_dashboard.DUAL_ROOT
             try:
@@ -114,6 +123,20 @@ class CorrespondenceGuidanceTests(unittest.TestCase):
                     variant="../../generated",
                     backend="firstframe_ti2v",
                 )
+                diagnostic_asset = gt_stc_guidance_results_dashboard.asset(
+                    "dual_diagnostic",
+                    "case_a",
+                    target="object_A",
+                    variant="gt_trajectory",
+                    backend="firstframe_ti2v",
+                )
+                rejected_diagnostic = gt_stc_guidance_results_dashboard.asset(
+                    "dual_diagnostic",
+                    "case_a",
+                    target="object_A",
+                    variant="../../gt_trajectory",
+                    backend="firstframe_ti2v",
+                )
             finally:
                 gt_stc_guidance_results_dashboard.ROOT = original_root
                 gt_stc_guidance_results_dashboard.DUAL_ROOT = original_dual_root
@@ -126,6 +149,13 @@ class CorrespondenceGuidanceTests(unittest.TestCase):
             )
             self.assertEqual(asset, complete / "generated.mp4")
             self.assertIsNone(rejected)
+            self.assertEqual(
+                diagnostic_asset, diagnostic / "gt_13_anchor_trajectory.mp4"
+            )
+            self.assertIsNone(rejected_diagnostic)
+            self.assertTrue(
+                dual["cases"][0]["targets"][0]["protocols"][0]["diagnostics"][0]["ready"]
+            )
 
     def test_dashboard_counts_registered_trajectory_overlays(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

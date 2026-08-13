@@ -6,8 +6,20 @@ import torch
 from AAA_my_test.wan_context_point_guidance.protocol_core import (
     fixed_mutable_rms_delta,
     global_context_point_loss,
+    global_forward_point_loss,
     transform_points_stretch_to_cover_crop,
 )
+from AAA_my_test.wan_context_point_guidance.render_constraint_diagnostics import (
+    _select_source_anchors,
+)
+
+
+def test_source_anchor_selection_supports_short_source_clips() -> None:
+    frames = np.arange(30, dtype=np.int64)[:, None]
+    anchors = np.array([0, 2, 5, 7, 10, 12, 14, 17, 19, 22, 24, 27, 29])
+    selected = _select_source_anchors(frames, anchors)
+    assert selected.shape == (13, 1)
+    assert selected[:, 0].tolist() == anchors.tolist()
 
 
 def test_fixed_mutable_rms_delta_equal_budget_and_frozen_context() -> None:
@@ -39,6 +51,57 @@ def test_global_loss_uses_full_time_denominator() -> None:
         q, k, rows, visibility, (2, 2), (2,), (0,), 0.25
     )
     assert float(distracted) > float(base) + 1.0
+
+
+def test_forward_loss_uses_context_query_and_future_key() -> None:
+    q = torch.zeros(1, 3 * 4, 1, 2)
+    k = torch.zeros_like(q)
+    rows = torch.tensor([[0], [1], [3]])
+    visibility = torch.ones(3, 1, dtype=torch.bool)
+    q[:, 0, 0] = torch.tensor([1.0, 0.0])
+    k[:, 11, 0] = torch.tensor([8.0, 0.0])
+    aligned = global_forward_point_loss(
+        q, k, rows, visibility, (2, 2), (0,), (2,), 0.25
+    )
+    q[:, 0, 0] = 0
+    q[:, 11, 0] = torch.tensor([1.0, 0.0])
+    future_query_only = global_forward_point_loss(
+        q, k, rows, visibility, (2, 2), (0,), (2,), 0.25
+    )
+    assert float(aligned) + 1.0 < float(future_query_only)
+
+
+def test_forward_loss_uses_full_spatiotemporal_denominator() -> None:
+    q = torch.zeros(1, 3 * 4, 1, 2)
+    k = torch.zeros_like(q)
+    rows = torch.tensor([[0], [1], [3]])
+    visibility = torch.ones(3, 1, dtype=torch.bool)
+    q[:, 0, 0] = torch.tensor([1.0, 0.0])
+    k[:, 11, 0] = torch.tensor([4.0, 0.0])
+    base = global_forward_point_loss(
+        q, k, rows, visibility, (2, 2), (0,), (2,), 0.25
+    )
+    k[:, 5, 0] = torch.tensor([8.0, 0.0])
+    distracted = global_forward_point_loss(
+        q, k, rows, visibility, (2, 2), (0,), (2,), 0.25
+    )
+    assert float(distracted) > float(base) + 1.0
+
+
+def test_negative_gradient_update_reduces_forward_loss() -> None:
+    q = torch.randn(1, 3 * 4, 1, 3, requires_grad=True)
+    k = torch.randn_like(q)
+    rows = torch.tensor([[0], [1], [2]])
+    visibility = torch.ones(3, 1, dtype=torch.bool)
+    loss = global_forward_point_loss(
+        q, k, rows, visibility, (2, 2), (0, 1), (2,), 0.6
+    )
+    gradient = torch.autograd.grad(loss, q)[0]
+    q_updated = (q.detach() - 1.0e-3 * gradient).requires_grad_(False)
+    updated_loss = global_forward_point_loss(
+        q_updated, k.detach(), rows, visibility, (2, 2), (0, 1), (2,), 0.6
+    )
+    assert float(updated_loss) < float(loss)
 
 
 def test_negative_gradient_update_reduces_global_loss() -> None:

@@ -55,6 +55,7 @@ def calibrate_identity(
     attention: torch.Tensor,
     object_masks: torch.Tensor,
     object_valid: torch.Tensor,
+    slot_valid: torch.Tensor | None = None,
     calibration_states: int = 4,
     mode: str = "prefix_oracle",
     minimum_iou: float = 0.05,
@@ -79,6 +80,10 @@ def calibrate_identity(
         object_masks[time_slice],
         object_valid,
     )
+    if slot_valid is not None:
+        if tuple(slot_valid.shape) != (iou.shape[0],):
+            raise ValueError("slot_valid has the wrong shape")
+        iou[~slot_valid.bool()] = 0
     num_slots, num_objects = iou.shape
     cost = np.full(
         (num_slots, num_objects + num_slots), dummy_cost, dtype=np.float64
@@ -94,6 +99,8 @@ def calibrate_identity(
     mapping = torch.full((num_slots,), -1, dtype=torch.long)
     matched_iou = torch.zeros(num_slots, dtype=torch.float32)
     for row, column in zip(rows.tolist(), columns.tolist()):
+        if slot_valid is not None and not bool(slot_valid[row]):
+            continue
         if column >= num_objects or not bool(object_valid[column]):
             continue
         score = float(iou[row, column])
@@ -144,4 +151,3 @@ def assignment_switch_rate(assignments: torch.Tensor) -> float:
     if not bool(valid.any()):
         return 0.0
     return float((previous[valid] != current[valid]).float().mean())
-

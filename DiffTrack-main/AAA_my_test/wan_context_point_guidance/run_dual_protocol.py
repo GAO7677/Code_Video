@@ -2,12 +2,13 @@
 """Equal-budget point-correspondence guidance for two Wan context protocols.
 
 Protocol A (``firstframe_ti2v``) uses the legacy first-frame TI2V model and
-guides future latent Queries R1..R12 toward the same tracked point at Key R0.
+guides the observed point Query at R0 toward the same tracked point at future
+Keys R1..R12.
 
 Protocol B (``context8_v2v``) loads the requested Full-SA xSSC checkpoint,
 actually encodes eight RGB context frames into clean prefix latents R0,R1, and
-guides future Queries R2..R12 toward an equal mixture of the point Keys at
-R0,R1.  The latest3350 ranking is intentionally transferred unchanged into
+guides observed point Queries R0,R1 toward an equal mixture of the same point
+Keys at R2..R12.  The latest3350 ranking is intentionally transferred unchanged into
 this checkpoint and is therefore a ranking-transfer diagnostic, not a claim
 that these are the checkpoint's native Top100 heads.
 
@@ -50,7 +51,7 @@ for import_root in (DIFFTRACK_ROOT, CODE_ROOT, DIFFSYNTH_ROOT):
 from AAA_my_test import run_wan_gt_spatiotemporal_correspondence_guidance as legacy  # noqa: E402
 from AAA_my_test.wan_context_point_guidance.protocol_core import (  # noqa: E402
     fixed_mutable_rms_delta,
-    global_context_point_loss,
+    global_forward_point_loss,
     load_head_groups,
     points_to_token_rows,
     transform_points_stretch_to_cover_crop,
@@ -63,7 +64,7 @@ from code_vjepa_vggt.utils.video_io import (  # noqa: E402
 )
 
 
-PROTOCOL = "wan_equal_budget_context_point_guidance_v1"
+PROTOCOL = "wan_equal_budget_forward_point_guidance_v2"
 DEFAULT_INPUT_LIST = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
 DEFAULT_RANKING = Path(
     "/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/"
@@ -84,7 +85,7 @@ DEFAULT_CHECKPOINT = Path(
     "checkpoints/step-000500"
 )
 DEFAULT_OUTPUT_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/wan_context_point_guidance_head_compare/v1"
+    "/data/gaoya/agent-data/outputs/wan_context_point_guidance_head_compare/forward_v2"
 )
 NEGATIVE_PROMPT = "模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理"
 HEAD_DIM = 128
@@ -217,7 +218,7 @@ def target_point_arrays(
 
 
 class GlobalPointCollector:
-    """Collect global T*H*W point CE from selected self-attention heads."""
+    """Collect context-Query to future-Key CE from selected attention heads."""
 
     def __init__(
         self,
@@ -299,14 +300,14 @@ class GlobalPointCollector:
         rows = self.point_rows((token_height, token_width))
 
         def compute_loss(q_selected: torch.Tensor, k_selected: torch.Tensor) -> torch.Tensor:
-            return global_context_point_loss(
+            return global_forward_point_loss(
                 q_selected,
                 k_selected,
                 rows,
                 self.visibility_tn,
                 (token_height, token_width),
-                self.query_times,
                 self.key_times,
+                self.query_times,
                 self.sigma_tokens,
             )
 
@@ -317,7 +318,7 @@ class GlobalPointCollector:
         self.losses.append((loss, len(heads)))
         self.head_events += len(heads)
         self.term_count += valid_correspondence_count(
-            self.visibility_tn, self.query_times, self.key_times
+            self.visibility_tn, self.key_times, self.query_times
         ) * len(heads)
         return original(q, k, v)
 
@@ -835,9 +836,10 @@ def task_manifest(
         },
         "loss": {
             "normalization": "one softmax over all T*H*W Wan keys",
-            "target": "same CoTracker point Gaussian at visible context latent(s)",
-            "query_times": list(spec.query_times),
-            "key_times": list(spec.key_times),
+            "direction": "observed-context Query -> future Key",
+            "target": "equal mixture of same-ID CoTracker point Gaussians at visible future latents",
+            "context_query_times": list(spec.key_times),
+            "future_key_times": list(spec.query_times),
             "sigma_tokens": float(args.gaussian_sigma_tokens),
         },
         "cases": [

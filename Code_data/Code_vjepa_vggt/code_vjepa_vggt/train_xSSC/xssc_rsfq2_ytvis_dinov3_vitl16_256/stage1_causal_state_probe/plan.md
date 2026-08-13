@@ -85,6 +85,7 @@ Each cache record stores fixed-shape tensors:
 - GT 2-D image position `[12, 10, 2]`;
 - GT bbox `[12, 10, 4]`;
 - visibility `[12, 10]` and object-valid mask `[10]`;
+- bbox-conditioned slot-valid mask `[11]` (padded zero-condition slots excluded);
 - one prefix-oracle mapping and one boundary-only frozen mapping `[11]`;
 - source split/index/video name and an immutable provenance manifest.
 
@@ -118,11 +119,13 @@ Context settings:
 
 - `individual`: each slot passes through the shared context block as a singleton
   set, so no cross-object information is available.
-- `set`: all 11 slots pass through the same context block together.
+- `set`: all non-padded bbox-conditioned slots pass through the same context
+  block together; zero-condition padded slots are attention-masked.
 
 Both context settings instantiate the exact same modules and parameter count.
-The only difference is tensor grouping. A shuffled-context diagnostic is used
-to distinguish useful object context from generic regularization.
+The only difference is tensor grouping. If the set-context effect is positive,
+a separately labelled shuffled-context diagnostic should be added before making
+a semantic interaction claim; it is not part of the primary factorial matrix.
 
 Predictor architecture:
 
@@ -189,4 +192,3 @@ Stage 2 is not started unless all of the following hold:
 - real-slot frozen probes recover motion quantities above trivial baselines;
 - at least one predictor beats latent copy on held-out videos;
 - history/context conclusions are stable across seeds and video-level bootstrap.
-

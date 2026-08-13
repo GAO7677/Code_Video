@@ -38,6 +38,7 @@ def main():
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     evaluations = []
+    probe_ceilings = []
     audit = None
     causality = None
     for json_file in sorted(args.results_root.resolve().rglob("*.json")):
@@ -63,6 +64,14 @@ def main():
                 )
         elif payload.get("format") == "xssc_stage1_representation_audit_v1":
             audit = payload
+        elif payload.get("format") == "xssc_stage1_gt_probe_ceiling_v1":
+            probe_ceilings.append(
+                {
+                    "representation": payload["representation"],
+                    "mapping": payload["mapping"],
+                    **payload["metrics"],
+                }
+            )
         elif "records" in payload and "passed" in payload and "atol" in payload:
             causality = payload
 
@@ -88,6 +97,13 @@ def main():
                 ["representation", "H", "context", "seed", "horizon", "velocity_nrmse", "center_ade", "center_fde", "bbox_iou", "presence_f1"],
                 evaluations,
             )
+            + "</section>"
+        )
+    if probe_ceilings:
+        headers = sorted(set().union(*(row.keys() for row in probe_ceilings)))
+        sections.append(
+            "<section><h2>Frozen GT-probe ceiling on real slots</h2>"
+            + table(headers, probe_ceilings)
             + "</section>"
         )
     if args.case_gallery is not None:

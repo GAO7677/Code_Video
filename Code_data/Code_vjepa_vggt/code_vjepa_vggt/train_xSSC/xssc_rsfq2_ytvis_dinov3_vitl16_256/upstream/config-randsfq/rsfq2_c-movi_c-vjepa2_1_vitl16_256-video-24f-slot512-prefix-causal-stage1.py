@@ -39,6 +39,7 @@ dataset_t["transform0"]["size"] = raw_clip_frames
 # The official validation split is used for selection.  Test remains untouched
 # until the frozen Stage-1 audit.
 dataset_v["split"] = "validation"
+val_subset_size = 250
 
 # Model-only branch from the completed noncausal MOVi-C representation.  The
 # external frozen V-JEPA weights are restored independently.
@@ -86,4 +87,3 @@ stage1_scope = (
 )
 
 del _base, _Path, _importlib_cfg
-

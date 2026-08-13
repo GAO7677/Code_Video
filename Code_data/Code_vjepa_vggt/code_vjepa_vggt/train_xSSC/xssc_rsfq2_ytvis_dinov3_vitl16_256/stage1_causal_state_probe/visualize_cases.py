@@ -125,7 +125,7 @@ def contact_sheet(rgb, record, mapping_key):
 
 
 def plot_drift(record, path):
-    slots = record["slots"].float()
+    slots = record["slots"][:, record["slot_valid"].bool()].float()
     static = (slots[1:, :, :STATIC_DIM] - slots[:-1, :, :STATIC_DIM]).square().mean(-1).sqrt()
     dynamic = (slots[1:, :, STATIC_DIM:] - slots[:-1, :, STATIC_DIM:]).square().mean(-1).sqrt()
     x = np.arange(1, slots.shape[0])
@@ -195,4 +195,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

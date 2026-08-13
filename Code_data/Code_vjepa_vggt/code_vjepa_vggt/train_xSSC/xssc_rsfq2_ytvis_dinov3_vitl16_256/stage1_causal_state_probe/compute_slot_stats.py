@@ -36,7 +36,10 @@ def main():
     total_square = torch.zeros(SLOT_DIM, dtype=torch.float64)
     count = 0
     for index in range(len(dataset)):
-        value = dataset[index]["slots"].double().reshape(-1, SLOT_DIM)
+        record = dataset[index]
+        value = record["slots"][:, record["slot_valid"]].double().reshape(
+            -1, SLOT_DIM
+        )
         total += value.sum(dim=0)
         total_square += value.square().sum(dim=0)
         count += value.shape[0]
@@ -58,4 +61,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

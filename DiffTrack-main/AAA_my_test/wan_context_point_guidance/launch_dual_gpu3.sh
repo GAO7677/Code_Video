@@ -4,9 +4,10 @@ set -euo pipefail
 GPU_ID="${GPU_ID:-3}"
 MAX_USED_MIB="${MAX_USED_MIB:-8000}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/wan_context_point_guidance_head_compare/v1}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/wan_context_point_guidance_head_compare/forward_v2}"
 PYTHON="${PYTHON:-/home/gaoya/miniconda3/envs/wan-cu128/bin/python}"
 SCRIPT=/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/wan_context_point_guidance/run_dual_protocol.py
+DIAGNOSTIC_SCRIPT=/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/wan_context_point_guidance/render_constraint_diagnostics.py
 LOG_DIR="${OUTPUT_ROOT}/logs"
 LOG_PATH="${LOG_DIR}/dual_gpu${GPU_ID}.log"
 
@@ -45,4 +46,9 @@ run_backend() {
 
 run_backend firstframe_ti2v
 run_backend context8_v2v
+echo "[diagnostic] $(date -u +%FT%TZ) rendering all 13-anchor constraint audits"
+"${PYTHON}" -u "${DIAGNOSTIC_SCRIPT}" \
+  --backend all \
+  --device cuda:0 \
+  --output-root "${OUTPUT_ROOT}"
 echo "[complete] $(date -u +%FT%TZ) both protocols finished"

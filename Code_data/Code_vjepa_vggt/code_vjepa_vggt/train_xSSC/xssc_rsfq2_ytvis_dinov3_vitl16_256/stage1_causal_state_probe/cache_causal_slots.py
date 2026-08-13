@@ -212,11 +212,14 @@ def main():
         gt_bbox = pad_objects(sample["bbox"][:, :num_objects])
         object_valid = torch.zeros(NUM_OBJECTS, dtype=torch.bool)
         object_valid[:num_objects] = True
+        slot_valid = torch.zeros(NUM_SLOTS, dtype=torch.bool)
+        slot_valid[:num_objects] = True
 
         prefix = calibrate_identity(
             attention,
             gt_mask,
             object_valid,
+            slot_valid=slot_valid,
             calibration_states=CALIBRATION_STATES,
             mode="prefix_oracle",
         )
@@ -224,6 +227,7 @@ def main():
             attention,
             gt_mask,
             object_valid,
+            slot_valid=slot_valid,
             calibration_states=CALIBRATION_STATES,
             mode="boundary_frozen",
         )
@@ -237,6 +241,7 @@ def main():
             "gt_bbox": gt_bbox.float(),
             "gt_visibility": gt_visibility.long(),
             "object_valid": object_valid,
+            "slot_valid": slot_valid,
             "prefix_slot_to_object": prefix.slot_to_object,
             "boundary_slot_to_object": boundary.slot_to_object,
             "source": {

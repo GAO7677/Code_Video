@@ -5,8 +5,8 @@ For every registered case/target/backend this produces three auditable 13-frame
 videos:
 
 1. source GT/pseudo-GT CoTracker point trajectory;
-2. the currently implemented reverse constraint, Q(R_t, p_t) -> K(R_ctx, p_ctx);
-3. the intended forward motion lookup, Q(R_ctx, p_ctx) -> K(R_t, p_t).
+2. the modified forward constraint, Q(R_ctx, p_ctx) -> K(R_t, p_t);
+3. the previous reverse constraint, Q(R_t, p_t) -> K(R_ctx, p_ctx).
 
 When the same-backend Baseline exists, the script also runs CoTracker once and
 renders its output trajectory against the source reference.  Missing Baselines
@@ -80,20 +80,30 @@ def _target_indices(tube: legacy.FrozenTube, target: str) -> np.ndarray:
     )
 
 
+def _select_source_anchors(frames: np.ndarray, anchors: np.ndarray) -> np.ndarray:
+    anchors = np.asarray(anchors, dtype=np.int64)
+    if anchors.shape != (13,):
+        raise RuntimeError(f"expected 13 frozen source anchors, got {anchors.shape}")
+    if anchors.min() < 0 or anchors.max() >= len(frames):
+        raise RuntimeError(
+            f"source anchors {anchors.tolist()} exceed {len(frames)} decoded frames"
+        )
+    return np.asarray(frames)[anchors]
+
+
 def _source_frames(tube: legacy.FrozenTube, backend: str) -> np.ndarray:
     spec = BACKENDS[backend]
     frames = np.asarray(iio.imread(tube.source_video))[:49, ..., :3]
-    if len(frames) != 49:
-        raise RuntimeError(f"expected 49 source frames: {tube.source_video}")
     if backend == "firstframe_ti2v":
-        return legacy.resize_frames(frames, spec.height, spec.width)
+        resized = legacy.resize_frames(frames, spec.height, spec.width)
+        return _select_source_anchors(resized, tube.anchor_source_frames)
     tensor = preprocess_video_rgb_uint8(
         frames,
         (spec.height, spec.width),
         resize_mode="cover_crop",
         cover_crop_hw=(spec.height, spec.width),
     )
-    return (
+    resized = (
         ((tensor.permute(1, 2, 3, 0).float() + 1.0) * 127.5)
         .round()
         .clamp(0, 255)
@@ -101,6 +111,7 @@ def _source_frames(tube: legacy.FrozenTube, backend: str) -> np.ndarray:
         .cpu()
         .numpy()
     )
+    return _select_source_anchors(resized, tube.anchor_source_frames)
 
 
 def _centers(
@@ -167,17 +178,29 @@ def _arrow(
 
 
 def _banner(
-    draw: ImageDraw.ImageDraw, title: str, subtitle: str, anchor: int
+    draw: ImageDraw.ImageDraw,
+    title: str,
+    subtitle: str,
+    anchor: int,
+    canvas_width: int,
+    frame_label: str,
 ) -> None:
-    draw.rounded_rectangle((16, 14, 870, 102), radius=12, fill=INK, outline=(74, 105, 128), width=2)
+    right = canvas_width - 16
+    draw.rounded_rectangle((16, 14, right, 102), radius=12, fill=INK, outline=(74, 105, 128), width=2)
     draw.text((32, 25), title, fill=WHITE, font=_font(22, True))
     draw.text((32, 61), subtitle, fill=MUTED, font=_font(15))
-    draw.text((760, 29), f"R{anchor:02d} / F{anchor * 4:02d}", fill=WHITE, font=_font(18, True))
+    draw.text(
+        (canvas_width - 132, 66),
+        f"R{anchor:02d} · {frame_label}",
+        fill=WHITE,
+        font=_font(16, True),
+    )
 
 
 def _gt_frame(
     frame: np.ndarray,
     anchor: int,
+    source_frame: int,
     tracks: np.ndarray,
     visibility: np.ndarray,
     indices: np.ndarray,
@@ -195,6 +218,8 @@ def _gt_frame(
         f"{target} | 13-anchor GT / pseudo-GT point trajectory",
         "CoTracker identity i is preserved across R0...R12",
         anchor,
+        frame.shape[1],
+        f"SRC F{source_frame:02d}",
     )
     return np.asarray(image)
 
@@ -202,6 +227,7 @@ def _gt_frame(
 def _constraint_frame(
     frame: np.ndarray,
     anchor: int,
+    source_frame: int,
     tracks: np.ndarray,
     visibility: np.ndarray,
     indices: np.ndarray,
@@ -225,12 +251,14 @@ def _constraint_frame(
             end = context[point_index] if reverse else future[point_index]
             _arrow(draw, tuple(map(float, start)), tuple(map(float, end)), MAGENTA if reverse else GREEN)
     if reverse:
-        title = f"{target} | CURRENT implemented constraint"
+        title = f"{target} | PREVIOUS reverse constraint (archived)"
         subtitle = f"Q(R{anchor}, p{anchor}^i) -> K({','.join(f'R{k}' for k in key_times)}, p_ctx^i); future position is placed on the Query side"
     else:
-        title = f"{target} | INTENDED forward motion lookup"
+        title = f"{target} | CURRENT forward motion lookup"
         subtitle = f"Q({','.join(f'R{k}' for k in key_times)}, p_ctx^i) -> K(R{anchor}, p{anchor}^i); attention response itself locates the future point"
-    _banner(draw, title, subtitle, anchor)
+    _banner(
+        draw, title, subtitle, anchor, frame.shape[1], f"SRC F{source_frame:02d}"
+    )
     return np.asarray(image)
 
 
@@ -272,6 +300,8 @@ def _baseline_frame(
         f"{target} | BEFORE guidance: same-backend Baseline output",
         "cyan = source GT/pseudo-GT; amber = generated Baseline CoTracker trajectory",
         anchor,
+        frame.shape[1],
+        f"GEN F{int(LATENT_ANCHORS[anchor]):02d}",
     )
     return np.asarray(image)
 
@@ -351,18 +381,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     indices = _target_indices(tube, target)
                     output = args.output_root / "diagnostics" / backend / case / target
                     _encode(
-                        [_gt_frame(source_frames[pixel], anchor, tracks, visibility, indices, target) for anchor, pixel in enumerate(LATENT_ANCHORS)],
+                        [_gt_frame(source_frames[anchor], anchor, int(tube.anchor_source_frames[anchor]), tracks, visibility, indices, target) for anchor in range(13)],
                         output / "gt_13_anchor_trajectory.mp4",
                         args.overwrite,
                     )
                     _encode(
-                        [_constraint_frame(source_frames[pixel], anchor, tracks, visibility, indices, spec.key_times, target, True) for anchor, pixel in enumerate(LATENT_ANCHORS)],
-                        output / "current_reverse_constraint.mp4",
+                        [_constraint_frame(source_frames[anchor], anchor, int(tube.anchor_source_frames[anchor]), tracks, visibility, indices, spec.key_times, target, False) for anchor in range(13)],
+                        output / "current_forward_constraint.mp4",
                         args.overwrite,
                     )
                     _encode(
-                        [_constraint_frame(source_frames[pixel], anchor, tracks, visibility, indices, spec.key_times, target, False) for anchor, pixel in enumerate(LATENT_ANCHORS)],
-                        output / "intended_forward_constraint.mp4",
+                        [_constraint_frame(source_frames[anchor], anchor, int(tube.anchor_source_frames[anchor]), tracks, visibility, indices, spec.key_times, target, True) for anchor in range(13)],
+                        output / "previous_reverse_constraint.mp4",
                         args.overwrite,
                     )
                     baseline = (
@@ -390,8 +420,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             "target": target,
                             "geometry": geometry,
                             "gt_ready": (output / "gt_13_anchor_trajectory.mp4").is_file(),
-                            "current_constraint_ready": (output / "current_reverse_constraint.mp4").is_file(),
-                            "intended_constraint_ready": (output / "intended_forward_constraint.mp4").is_file(),
+                            "current_constraint_ready": (output / "current_forward_constraint.mp4").is_file(),
+                            "previous_constraint_ready": (output / "previous_reverse_constraint.mp4").is_file(),
                             "baseline_trajectory_ready": baseline_output.is_file(),
                         }
                     )
@@ -402,8 +432,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-    report = {"protocol": "wan_context_point_constraint_diagnostics_v1", "rows": rows}
     path = args.output_root / "diagnostics" / "manifest.json"
+    if args.case and path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8")).get("rows", [])
+        except (OSError, json.JSONDecodeError, TypeError):
+            existing = []
+        current_keys = {
+            (row["backend"], row["case"], row["target"]) for row in rows
+        }
+        rows = [
+            row
+            for row in existing
+            if (row.get("backend"), row.get("case"), row.get("target"))
+            not in current_keys
+        ] + rows
+    rows.sort(key=lambda row: (row["backend"], row["case"], row["target"]))
+    report = {"protocol": "wan_context_point_constraint_diagnostics_v1", "rows": rows}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return report
