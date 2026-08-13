@@ -83,6 +83,11 @@ def _video_frame_count(video: Path | None) -> int | None:
     return value if value > 0 else None
 
 
+def source_video_asset() -> Path | None:
+    """Return the fixed source MP4 for the comparison page."""
+    return _source_video()
+
+
 def _directory(method: str, group: str, direction: str) -> Path | None:
     if method not in {"latent", "direct"}:
         return None
@@ -126,6 +131,62 @@ def _delta(value: Any, baseline: Any) -> float | None:
     return float(value) - float(baseline)
 
 
+def _correspondence_summary(
+    method: str, audit: list[dict[str, Any]], enabled: bool
+) -> dict[str, Any]:
+    if not enabled:
+        return {
+            "loss_name": None,
+            "correspondence_pre": None,
+            "correspondence_post": None,
+            "correspondence_change": None,
+            "correspondence_reduction_pct": None,
+            "correspondence_decrease_rate": None,
+            "correspondence_steps": 0,
+        }
+    before_key, after_key, loss_name = (
+        ("pre_update_loss", "post_update_loss", "Latent correspondence loss")
+        if method == "latent"
+        else (
+            "mean_target_ce_before",
+            "mean_target_ce_after",
+            "Attention target cross-entropy",
+        )
+    )
+    pairs = [
+        (float(row[before_key]), float(row[after_key]))
+        for row in audit
+        if isinstance(row.get(before_key), (int, float))
+        and isinstance(row.get(after_key), (int, float))
+    ]
+    if not pairs:
+        return {
+            "loss_name": loss_name,
+            "correspondence_pre": None,
+            "correspondence_post": None,
+            "correspondence_change": None,
+            "correspondence_reduction_pct": None,
+            "correspondence_decrease_rate": None,
+            "correspondence_steps": 0,
+        }
+    before = sum(left for left, _ in pairs) / len(pairs)
+    after = sum(right for _, right in pairs) / len(pairs)
+    return {
+        "loss_name": loss_name,
+        "correspondence_pre": before,
+        "correspondence_post": after,
+        "correspondence_change": after - before,
+        "correspondence_reduction_pct": (
+            100.0 * (before - after) / before if before != 0 else None
+        ),
+        "correspondence_decrease_rate": (
+            sum(int(after_value < before_value) for before_value, after_value in pairs)
+            / len(pairs)
+        ),
+        "correspondence_steps": len(pairs),
+    }
+
+
 def _variant(method: str, group: str, direction: str) -> dict[str, Any]:
     directory = _directory(method, group, direction)
     if directory is None:
@@ -152,13 +213,11 @@ def _variant(method: str, group: str, direction: str) -> dict[str, Any]:
     intervention = {
         "latent_update_rms": _mean(audit, "actual_mutable_update_rms"),
         "attention_tv": _mean(audit, "mean_actual_tv"),
-        "correspondence_change": (
-            _mean(audit, "loss_change")
-            if method == "latent"
-            else _mean(audit, "mean_target_ce_change")
-        ),
         "av_delta_rms": _mean(audit, "mean_av_delta_rms"),
     }
+    intervention.update(
+        _correspondence_summary(method, audit, enabled=group != "baseline")
+    )
     return {
         "method": method,
         "group": group,
@@ -239,6 +298,13 @@ def catalog() -> dict[str, Any]:
             "attention_total": sum(
                 len(row["attention"]) for row in all_variants
             ),
+            "correspondence_ready": sum(
+                int(row["intervention"]["correspondence_steps"] > 0)
+                for row in all_variants
+            ),
+            "correspondence_total": sum(
+                int(row["group"] != "baseline") for row in all_variants
+            ),
         },
         "mechanisms": [
             {
@@ -257,6 +323,16 @@ def catalog() -> dict[str, Any]:
             },
         ],
         "definitions": [
+            {
+                "metric": "旧实验 GT correspondence loss",
+                "calculation": "每个 guided denoising step 对 GT point correspondence 计算 loss；latent 更新后重新前向，再比较 before→after。页面报告 40 个 step 的等权平均。",
+                "direction": "越小越好；下降率越大表示单次 latent 更新更直接地满足内部 GT 对应约束。",
+            },
+            {
+                "metric": "新实验 GT target cross-entropy",
+                "calculation": "对被直接修改的 selected attention query rows，计算 GT target distribution 的平均交叉熵 before→after；页面报告 40 个 step 的等权平均。",
+                "direction": "越小越好；与旧 loss 聚合口径不同，只比较各自下降率，不直接比较绝对数值。",
+            },
             {
                 "metric": "GT Center-ADE / D0",
                 "calculation": "所有未来共同可见 CoTracker 点相对 source GT 的逐帧平均距离，再除以首帧对象尺度 D0。",
@@ -280,7 +356,8 @@ def catalog() -> dict[str, Any]:
         ],
         "caveat": (
             "两种预算处于不同坐标系：latent RMS 0.01 与 attention TV 0.10 "
-            "不能直接比较数值大小；页面比较的是最终轨迹结果与 head-group 排序。"
+            "不能直接比较数值大小；两种内部 correspondence loss 的聚合尺度也不同，"
+            "跨方法只比较相对下降率与最终 GT 轨迹结果。"
         ),
     }
 
@@ -427,6 +504,8 @@ def asset(
     video = directory / "generated.mp4"
     if not (_ready(directory / "complete.json") and _ready(video)):
         return None
+    if kind == "video":
+        return video
     if kind == "contact_sheet":
         try:
             return _ensure_contact_sheet(
@@ -479,21 +558,24 @@ def page() -> str:
 <style>
 :root{--ink:#17232d;--paper:#edf1ef;--panel:#f8faf8;--rule:#bdc8c5;--latent:#255f91;--direct:#df6b3d;--good:#177d6c;--bad:#b54646;--quiet:#60726f;--shadow:0 16px 38px #162d3420}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:linear-gradient(90deg,#dce4e1 1px,transparent 1px),var(--paper);background-size:42px 100%;font:15px/1.5 "Avenir Next","Segoe UI",sans-serif}a{color:var(--latent)}button,select,input{font:inherit}header{padding:30px clamp(18px,5vw,76px) 26px;border-bottom:1px solid var(--rule);background:#f2f5f3ee}.eyebrow,.mono{font:700 11px/1.3 "SFMono-Regular",Consolas,monospace;letter-spacing:.11em;text-transform:uppercase}.eyebrow{color:var(--direct);margin-top:17px}h1{max-width:1080px;margin:7px 0 12px;font:800 clamp(38px,6vw,78px)/.93 "Arial Narrow","Avenir Next Condensed",sans-serif;letter-spacing:-.045em}.lead{max-width:940px;color:#40534f;font-size:17px}.thesis{display:grid;grid-template-columns:1fr 1fr;max-width:980px;margin-top:23px;border:1px solid var(--rule);background:var(--panel);box-shadow:var(--shadow)}.thesis div{padding:15px 17px;border-top:6px solid var(--latent)}.thesis div+div{border-left:1px solid var(--rule);border-top-color:var(--direct)}.thesis b{display:block;font:750 18px "Arial Narrow",sans-serif}.thesis code{font:12px/1.6 "SFMono-Regular",monospace;color:var(--quiet)}main{max-width:1880px;margin:auto;padding:24px clamp(14px,4vw,62px) 78px}.section{margin-top:18px;padding:19px;border:1px solid var(--rule);background:var(--panel);box-shadow:var(--shadow)}.section h2{margin:0;font:750 28px "Arial Narrow",sans-serif}.summary{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px}.stat{padding:14px;border-left:5px solid var(--latent);background:#e9f0f4}.stat:nth-child(2){border-color:var(--direct)}.stat b{display:block;font:800 28px "Arial Narrow",sans-serif}.toolbar{display:flex;gap:13px;align-items:end;flex-wrap:wrap;margin:15px 0}.toolbar label{font-weight:700}.toolbar select,.toolbar button{display:block;margin-top:5px;padding:8px 11px;border:1px solid #8fa19c;background:#fff;color:var(--ink)}.toolbar button{cursor:pointer;background:var(--ink);color:#fff}.toolbar input[type=range]{display:block;width:min(560px,76vw);margin-top:9px;accent-color:var(--direct)}.anchor-ruler{display:grid;grid-template-columns:repeat(13,1fr);gap:2px;margin:11px 0 18px}.anchor-ruler i{height:28px;display:grid;place-items:center;border:1px solid #aebdb8;background:#dbe4e1;color:#5a6d68;font:700 9px monospace;font-style:normal}.anchor-ruler i.active{background:var(--ink);color:#fff;border-color:var(--ink);box-shadow:inset 0 -5px var(--direct)}.mechanisms{display:grid;grid-template-columns:1fr 1fr;gap:12px}.mechanism{padding:16px;border-top:6px solid var(--latent);background:#edf3f6}.mechanism.direct{border-color:var(--direct);background:#fbf0eb}.mechanism h3{margin:0;font:750 23px "Arial Narrow",sans-serif}.equation{margin:10px 0;padding:10px;background:#fff;border:1px solid var(--rule);font:13px "SFMono-Regular",monospace}.warning{margin-top:12px;padding:12px 15px;border-left:6px solid #d3a12c;background:#fff7de;color:#645225}.baseline-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px}.lane{margin-top:14px;border:1px solid var(--rule)}.lane-head{display:grid;grid-template-columns:minmax(230px,1fr) 2fr;gap:13px;padding:12px 14px;background:#e8eff3;border-left:7px solid var(--latent)}.lane.direct .lane-head{background:#f8ebe5;border-left-color:var(--direct)}.lane-head h3{margin:0;font:750 21px "Arial Narrow",sans-serif}.lane-head p{margin:3px 0;color:var(--quiet)}.variant-grid{display:grid;grid-template-columns:repeat(3,minmax(270px,1fr));gap:10px;padding:10px}.card{border:1px solid var(--rule);background:#fff;min-width:0}.frame,.pending{width:100%;aspect-ratio:16/9;display:block;background:#152634}.frame{object-fit:cover}.pending{display:grid;place-items:center;padding:20px;color:#f4c57d;text-align:center;font:700 12px "SFMono-Regular",monospace;letter-spacing:.08em}.caption{padding:11px}.caption>b{display:block;font-size:16px}.tag{display:block;color:var(--quiet);font:700 10px monospace;text-transform:uppercase}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin-top:9px;font:11px/1.4 monospace;color:#435651}.good{color:var(--good)}.bad{color:var(--bad)}.attention-shell{padding:17px;background:#142633;color:#e9f2f0;border:1px solid #214254}.attention-shell h2{color:#fff}.attention-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.attention-card{background:#f7faf8;color:var(--ink);border-top:7px solid var(--latent)}.attention-card.direct{border-top-color:var(--direct)}.attention-card img{width:100%;display:block}.attention-note{color:#adc0bc}.definitions{overflow:auto}table{width:100%;min-width:760px;border-collapse:collapse}th,td{padding:10px;text-align:left;vertical-align:top;border-bottom:1px solid #d4ddda}th{color:var(--quiet);font:700 10px monospace;text-transform:uppercase}.footer{margin-top:25px;color:var(--quiet)}button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid #f1a177;outline-offset:2px}@media(max-width:900px){.thesis,.mechanisms,.baseline-grid,.attention-grid{grid-template-columns:1fr}.thesis div+div{border-left:0;border-top:6px solid var(--direct)}.variant-grid{grid-template-columns:repeat(3,80vw);overflow:auto}.lane-head{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}}@media(max-width:560px){h1{font-size:42px}.summary{grid-template-columns:1fr}.section{padding:13px}}@media(prefers-reduced-motion:no-preference){.section{animation:arrive .3s ease both}@keyframes arrive{from{opacity:0;transform:translateY(7px)}}}
 </style><style>
-.contact-legend{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:11px 0 16px;color:var(--quiet)}.contact-legend b{color:var(--ink)}.anchor-key{display:inline-block;width:18px;height:12px;margin-right:6px;border:3px solid var(--direct);vertical-align:-2px}.source-board{border-top:7px solid #213f4a;background:#fff}.sheet-link{display:block;background:#142633;overflow:auto}.sheet{width:100%;height:auto;display:block}.sheet-note{padding:9px 12px;background:#e9efed;color:var(--quiet);font:700 10px/1.5 "SFMono-Regular",monospace;text-transform:uppercase}.variant-grid .sheet{min-width:0}.variant-grid .card{align-self:start}.attention-shell .toolbar input[type=range]{width:min(440px,72vw)}
+.contact-legend{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:11px 0 16px;color:var(--quiet)}.contact-legend b{color:var(--ink)}.anchor-key{display:inline-block;width:18px;height:12px;margin-right:6px;border:3px solid var(--direct);vertical-align:-2px}.source-board{border-top:7px solid #213f4a;background:#fff}.source-player-shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(210px,330px);gap:0;background:#142633;color:#dce8e5}.source-player-shell video{width:100%;aspect-ratio:1280/704;display:block;background:#09131a}.source-player-copy{display:flex;flex-direction:column;justify-content:center;padding:22px;border-left:1px solid #35515e}.source-player-copy b{color:#fff;font:750 22px "Arial Narrow",sans-serif}.source-player-copy span{margin-top:8px;color:#adc0bc}.variant-player{position:relative;background:#09131a}.variant-player video{width:100%;aspect-ratio:1280/704;display:block;background:#09131a}.player-badge{position:absolute;top:8px;left:8px;padding:4px 7px;background:#0d1b22d9;color:#eaf2ef;border-left:4px solid var(--direct);font:700 9px "SFMono-Regular",monospace;letter-spacing:.08em;text-transform:uppercase;pointer-events:none}.lane.latent .player-badge,.baseline-grid .card:first-child .player-badge{border-left-color:var(--latent)}.sheet-link{display:block;background:#142633;overflow:auto;border-top:1px solid #50646b}.sheet{width:100%;height:auto;display:block}.sheet-note{padding:9px 12px;background:#e9efed;color:var(--quiet);font:700 10px/1.5 "SFMono-Regular",monospace;text-transform:uppercase}.variant-grid .sheet{min-width:0}.variant-grid .card{align-self:start}.attention-shell .toolbar input[type=range]{width:min(440px,72vw)}@media(max-width:760px){.source-player-shell{grid-template-columns:1fr}.source-player-copy{border-left:0;border-top:1px solid #35515e}}
+</style><style>
+.lossbox{margin-top:10px;padding:9px 10px;border-left:4px solid var(--latent);background:#edf3f6;font:11px/1.45 "SFMono-Regular",monospace;color:#334b55}.lane.direct .lossbox{border-left-color:var(--direct);background:#fbf0eb}.lossbox b{display:block;margin-bottom:4px;font-size:10px;text-transform:uppercase;letter-spacing:.06em}.lossline{display:grid;grid-template-columns:1fr auto;gap:8px}.lossline+.lossline{margin-top:3px}.baseline-loss{color:var(--quiet);border-left-color:#879792;background:#eef1f0}
 </style></head><body>
-<header><a href="/">← 返回 8092 总入口</a> · <a href="/gt-stc-guidance-results?v=6">原 GT-STC 页面</a><div class="eyebrow">One trajectory · two intervention coordinate systems</div><h1>同一条轨迹，<br>两种施力位置。</h1><p class="lead">固定同一个 case、object、seed 和 latest3350 head groups，比较“用 attention loss 推动 latent”与“直接移动 attention probability”。原视频保留全部原始帧，每个生成结果把完整 49 帧拼成 7×7 静态时序板，便于直接检查轨迹、消失和外观变化。</p><div class="thesis"><div><b>旧实验 · 推动 latent</b><code>x′ₛ = xₛ − η · normalized(∂Lcorr/∂xₛ)</code></div><div><b>新实验 · 改写 attention</b><code>A′ = A + λ(T − A) · O′ = A′V</code></div></div></header>
-<main><div id="summary" class="summary"></div><section class="section"><h2>先对齐实验口径</h2><div id="mechanisms" class="mechanisms"></div><div id="warning" class="warning"></div></section><section class="section"><h2>原视频 · 完整原始帧参考</h2><div class="toolbar"><button id="refresh">刷新落盘状态</button><span id="updated" class="mono">读取中</span></div><div class="contact-legend"><span><b>阅读顺序：</b>从左到右、从上到下，保留 source 的全部原始帧</span><span>原始帧编号不冒充生成 latent anchor</span><span>点击拼图可打开原尺寸</span></div><div id="source"></div></section><section class="section"><h2>两种实验 · 完整 49 帧结果</h2><div class="contact-legend"><span>每张图使用相同的 7×7 帧序 F00–F48</span><span><i class="anchor-key"></i>橙框 = latent anchor（R00–R12）</span><span>先纵向看时序，再横向比较 head group 与施力方式</span></div><h3>各自 Baseline</h3><div id="baselines" class="baseline-grid"></div><div id="lanes"></div></section><section class="section attention-shell"><h2>PRE / POST attention microscope</h2><p class="attention-note">上面的生成结果展示全部 49 帧；这里再选择一个 latent anchor 和 denoising step，读取各自实验的 PRE/POST attention overlay。旧实验固定 Context→Future；新实验方向可切换。</p><div class="toolbar"><label>Latent anchor<input id="anchor" type="range" min="0" max="12" value="12"><span id="anchorText" class="mono"></span></label><label>Head group<select id="group"><option value="top100">Top100</option><option value="bottom100">Bottom100</option><option value="random100">Random100</option></select></label><label>新实验方向<select id="direction"><option value="context_to_future">Context → Future</option><option value="future_to_context">Future → Context</option><option value="bidirectional">Bidirectional</option></select></label><label>Denoising step<select id="step"></select></label></div><div id="ruler" class="anchor-ruler"></div><div id="attention" class="attention-grid"></div></section><section class="section"><h2>指标定义</h2><div class="definitions"><table><thead><tr><th>指标</th><th>计算</th><th>判读</th></tr></thead><tbody id="defs"></tbody></table></div></section><p class="footer">页面每 30 秒重新读取 JSON；尚未完成的视频、CoTracker 指标、拼图或 attention overlay 保留明确 Pending。全页只提供静态帧图像，不嵌入视频播放器。</p></main>
+<header><a href="/">← 返回 8092 总入口</a> · <a href="/gt-stc-guidance-results?v=6">原 GT-STC 页面</a><div class="eyebrow">One trajectory · two intervention coordinate systems</div><h1>同一条轨迹，<br>两种施力位置。</h1><p class="lead">固定同一个 case、object、seed 和 latest3350 head groups，比较“用 attention loss 推动 latent”与“直接移动 attention probability”。原视频和全部生成结果均可连续播放；每个生成结果下方仍保留完整 49 帧 7×7 静态时序板，用于检查轨迹、消失和外观变化。</p><div class="thesis"><div><b>旧实验 · 推动 latent</b><code>x′ₛ = xₛ − η · normalized(∂Lcorr/∂xₛ)</code></div><div><b>新实验 · 改写 attention</b><code>A′ = A + λ(T − A) · O′ = A′V</code></div></div></header>
+<main><div id="summary" class="summary"></div><section class="section"><h2>先对齐实验口径</h2><div id="mechanisms" class="mechanisms"></div><div id="warning" class="warning"></div></section><section class="section"><h2>原视频 · 播放与完整原始帧参考</h2><div class="toolbar"><button id="refresh">刷新落盘状态</button><span id="updated" class="mono">读取中</span></div><div class="contact-legend"><span><b>播放器：</b>用于连续观看和拖动定位</span><span><b>拼图：</b>从左到右、从上到下保留 source 全部原始帧</span><span>原始帧编号不冒充生成 latent anchor</span></div><div id="source"></div></section><section class="section"><h2>两种实验 · 全部生成视频与 49 帧结果</h2><div class="contact-legend"><span>每个槽位先展示可播放生成视频，再展示相同结果的 7×7 帧序 F00–F48</span><span><i class="anchor-key"></i>橙框 = latent anchor（R00–R12）</span><span>播放器只预载 metadata，不自动下载或播放全部正文</span></div><h3>各自 Baseline</h3><div id="baselines" class="baseline-grid"></div><div id="lanes"></div></section><section class="section attention-shell"><h2>PRE / POST attention microscope</h2><p class="attention-note">上面的生成结果展示全部播放器和 49 帧拼图；这里再选择一个 latent anchor 和 denoising step，读取各自实验的 PRE/POST attention overlay。旧实验固定 Context→Future；新实验方向可切换。</p><div class="toolbar"><label>Latent anchor<input id="anchor" type="range" min="0" max="12" value="12"><span id="anchorText" class="mono"></span></label><label>Head group<select id="group"><option value="top100">Top100</option><option value="bottom100">Bottom100</option><option value="random100">Random100</option></select></label><label>新实验方向<select id="direction"><option value="context_to_future">Context → Future</option><option value="future_to_context">Future → Context</option><option value="bidirectional">Bidirectional</option></select></label><label>Denoising step<select id="step"></select></label></div><div id="ruler" class="anchor-ruler"></div><div id="attention" class="attention-grid"></div></section><section class="section"><h2>指标定义</h2><div class="definitions"><table><thead><tr><th>指标</th><th>计算</th><th>判读</th></tr></thead><tbody id="defs"></tbody></table></div></section><p class="footer">页面每 30 秒重新读取 JSON；尚未完成的视频、CoTracker 指标、拼图或 attention overlay 保留明确 Pending。所有已生成槽位均提供视频播放器和静态全帧拼图。</p></main>
 <script>
 const api='/api/gt-stc-guidance-method-comparison',E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),F=(v,n=3)=>v==null?'N/A':Number(v).toFixed(n);let D;const $=id=>document.getElementById(id);
 function asset(kind,row,extra=''){const q=new URLSearchParams({kind,method:row.method,group:row.group,direction:row.direction,latent:$('anchor').value});if(extra)for(const [k,v] of Object.entries(extra))q.set(k,v);return `${api}/asset?${q}`}
 function sourceAsset(){return `${api}/asset?kind=source_contact_sheet`}
 function metric(row){if(!row.metric_ready)return `<div class="metrics"><span class="bad">指标 Pending</span><span>${row.complete?'等待 CoTracker':'等待生成'}</span></div>`;const m=row.metric,d=row.delta||{},good=d.ade_d0!=null&&d.ade_d0<0;return `<div class="metrics"><span>Gate ${m.quality_pass?'PASS':'FAIL'}</span><span>ADE/D0 ${F(m.ade_d0)}</span><span class="${good?'good':'bad'}">ΔADE ${F(d.ade_d0)}</span><span>FDE/D0 ${F(m.fde_d0)}</span><span>ΔFDE ${F(d.fde_d0)}</span><span>PCK10 ${F(m.pck_10pct_d0)}</span><span>TrackLoss ${F(m.future_track_loss_score_0_100,1)}</span></div>`}
-function card(row,methodLabel=''){const url=asset('contact_sheet',row),image=row.frame_ready?`<a class="sheet-link" href="${url}" target="_blank" rel="noopener"><img class="sheet" loading="lazy" src="${url}" alt="${E(row.label)} complete 49-frame contact sheet"></a>`:`<div class="pending">PENDING<br>${row.complete?'CONTACT SHEET':'GENERATION'}</div>`;return `<article class="card">${image}<div class="sheet-note">49 RGB frames · 7×7 · F00–F48</div><div class="caption"><b>${E(row.label)}</b><span class="tag">${E(methodLabel)} · complete temporal board</span>${metric(row)}</div></article>`}
-function sourceCard(){if(!D.source.ready)return `<div class="pending">PENDING · SOURCE VIDEO</div>`;const url=sourceAsset();return `<article class="card source-board"><a class="sheet-link" href="${url}" target="_blank" rel="noopener"><img class="sheet" src="${url}" alt="Source video complete contact sheet"></a><div class="sheet-note">${E(D.source.label)} · all ${D.source.frame_count??'?'} raw frames · 7 columns</div></article>`}
+function corrMetric(row){const v=row.intervention||{};if(row.group==='baseline')return `<div class="lossbox baseline-loss"><b>GT correspondence loss</b>Baseline 不执行 guidance，无内部 before→after loss。</div>`;const good=v.correspondence_change!=null&&v.correspondence_change<0;return `<div class="lossbox"><b>${E(v.loss_name||'GT correspondence loss')}</b><div class="lossline"><span>40-step mean before → after</span><strong>${F(v.correspondence_pre,4)} → ${F(v.correspondence_post,4)}</strong></div><div class="lossline"><span>relative reduction</span><strong class="${good?'good':'bad'}">${F(v.correspondence_reduction_pct,2)}%</strong></div><div class="lossline"><span>decreased steps</span><strong>${F(v.correspondence_decrease_rate==null?null:100*v.correspondence_decrease_rate,1)}% · n=${v.correspondence_steps||0}</strong></div></div>`}
+function card(row,methodLabel=''){if(!row.complete)return `<article class="card"><div class="pending">PENDING<br>GENERATION</div><div class="caption"><b>${E(row.label)}</b><span class="tag">${E(methodLabel)}</span>${corrMetric(row)}${metric(row)}</div></article>`;const sheet=asset('contact_sheet',row),video=asset('video',row);return `<article class="card"><div class="variant-player"><video controls preload="metadata" playsinline loop src="${video}">浏览器不支持 MP4 播放。</video><span class="player-badge">Generated video · 49 frames</span></div><a class="sheet-link" href="${sheet}" target="_blank" rel="noopener"><img class="sheet" loading="lazy" src="${sheet}" alt="${E(row.label)} complete 49-frame contact sheet"></a><div class="sheet-note">49 RGB frames · 7×7 · F00–F48</div><div class="caption"><b>${E(row.label)}</b><span class="tag">${E(methodLabel)} · video + complete temporal board</span>${corrMetric(row)}${metric(row)}</div></article>`}
+function sourceCard(){if(!D.source.ready)return `<div class="pending">PENDING · SOURCE VIDEO</div>`;const url=sourceAsset();return `<article class="card source-board"><div class="source-player-shell"><video controls preload="metadata" playsinline src="${api}/source-video">浏览器不支持 MP4 播放。</video><div class="source-player-copy"><span class="mono">Continuous source</span><b>原视频播放器</b><span>完整 ${D.source.frame_count??'?'} 帧；可播放、暂停、拖动进度。下方拼图用于逐帧总览。</span></div></div><a class="sheet-link" href="${url}" target="_blank" rel="noopener"><img class="sheet" src="${url}" alt="Source video complete contact sheet"></a><div class="sheet-note">${E(D.source.label)} · all ${D.source.frame_count??'?'} raw frames · 7 columns</div></article>`}
 function render(){if(!D)return;const a=Number($('anchor').value);$('anchorText').textContent=` R${String(a).padStart(2,'0')} · F${String(D.anchors[a]).padStart(2,'0')}`;$('ruler').innerHTML=D.anchors.map((f,i)=>`<i class="${i===a?'active':''}">R${String(i).padStart(2,'0')}<br>F${String(f).padStart(2,'0')}</i>`).join('');$('source').innerHTML=sourceCard();$('baselines').innerHTML=D.baselines.map((v,i)=>card(v,i?'Direct baseline':'Latent baseline')).join('');$('lanes').innerHTML=D.lanes.map(l=>`<section class="lane ${l.method}"><div class="lane-head"><div><span class="mono">${E(l.method_label)}</span><h3>${E(l.direction_label)}</h3></div><p>${l.method==='latent'?'固定 latent RMS；attention 通过重新前向间接改变。':'固定 attention TV；直接替换 selected Query/head 的 A·V 输出。'}</p></div><div class="variant-grid">${l.variants.map(v=>card(v,l.method_label)).join('')}</div></section>`).join('');renderAttention()}
 function find(method,group,direction){for(const l of D.lanes)if(l.method===method&&l.direction===direction){return l.variants.find(v=>v.group===group)}return null}
-function attentionCard(row,label,klass=''){const step=Number($('step').value),ready=row&&row.attention.some(x=>x.step===step&&x.ready),image=ready?`<img loading="lazy" src="${asset('attention',row,{step})}" alt="${E(label)} PRE POST attention overlay">`:`<div class="pending">PENDING · STEP ${step}<br>${row&&row.complete?'ATTENTION OVERLAY':'GENERATION'}</div>`;const iv=row?.intervention||{};return `<article class="card attention-card ${klass}">${image}<div class="caption"><b>${E(label)}</b><span class="tag">R${String($('anchor').value).padStart(2,'0')} · step ${step}</span><div class="metrics"><span>latent RMS ${F(iv.latent_update_rms,4)}</span><span>attention TV ${F(iv.attention_tv,4)}</span><span>Δ correspondence ${F(iv.correspondence_change,4)}</span><span>Δ A·V RMS ${F(iv.av_delta_rms,4)}</span></div></div></article>`}
+function attentionCard(row,label,klass=''){const step=Number($('step').value),ready=row&&row.attention.some(x=>x.step===step&&x.ready),image=ready?`<img loading="lazy" src="${asset('attention',row,{step})}" alt="${E(label)} PRE POST attention overlay">`:`<div class="pending">PENDING · STEP ${step}<br>${row&&row.complete?'ATTENTION OVERLAY':'GENERATION'}</div>`;const iv=row?.intervention||{};return `<article class="card attention-card ${klass}">${image}<div class="caption"><b>${E(label)}</b><span class="tag">R${String($('anchor').value).padStart(2,'0')} · step ${step}</span><div class="metrics"><span>latent RMS ${F(iv.latent_update_rms,4)}</span><span>attention TV ${F(iv.attention_tv,4)}</span><span>loss ${F(iv.correspondence_pre,3)} → ${F(iv.correspondence_post,3)}</span><span>loss reduction ${F(iv.correspondence_reduction_pct,2)}%</span><span>Δ A·V RMS ${F(iv.av_delta_rms,4)}</span></div></div></article>`}
 function renderAttention(){if(!D)return;const g=$('group').value,dir=$('direction').value,old=find('latent',g,'context_to_future'),direct=find('direct',g,dir);$('attention').innerHTML=attentionCard(old,`旧 · ${g} · Context→Future`)+attentionCard(direct,`新 · ${g} · ${D.lanes.find(x=>x.method==='direct'&&x.direction===dir).direction_label}`,'direct')}
-async function load(){const keep={anchor:$('anchor').value,group:$('group').value,direction:$('direction').value,step:$('step').value};D=await fetch(`${api}/catalog?x=${Date.now()}`).then(r=>r.json());$('step').innerHTML=D.attention_steps.map(x=>`<option value="${x}">${x}</option>`).join('');for(const [k,v] of Object.entries(keep))if(v&&$(k))$(k).value=v;$('summary').innerHTML=`<div class="stat"><span class="mono">Static outputs</span><b>${D.summary.complete}/${D.summary.planned}</b><small>两个 Baseline + 12 个实验槽</small></div><div class="stat"><span class="mono">Trajectory metrics</span><b>${D.summary.metrics}/${D.summary.planned}</b><small>source-GT CoTracker</small></div><div class="stat"><span class="mono">Attention audits</span><b>${D.summary.attention_ready}/${D.summary.attention_total}</b><small>step 5…40</small></div><div class="stat"><span class="mono">Frozen unit</span><b>1×1×1</b><small>case × object × seed</small></div>`;$('mechanisms').innerHTML=D.mechanisms.map(x=>`<article class="mechanism ${x.method}"><span class="mono">${E(x.method)}</span><h3>${E(x.label)}</h3><div class="equation">${E(x.operator)}</div><b>${E(x.budget)}</b><p>${E(x.meaning)}</p></article>`).join('');$('warning').textContent=D.caveat;$('defs').innerHTML=D.definitions.map(x=>`<tr><td><b>${E(x.metric)}</b></td><td>${E(x.calculation)}</td><td>${E(x.direction)}</td></tr>`).join('');$('updated').textContent=`更新 ${new Date().toLocaleTimeString()}`;render()}
+async function load(){const keep={anchor:$('anchor').value,group:$('group').value,direction:$('direction').value,step:$('step').value};D=await fetch(`${api}/catalog?x=${Date.now()}`).then(r=>r.json());$('step').innerHTML=D.attention_steps.map(x=>`<option value="${x}">${x}</option>`).join('');for(const [k,v] of Object.entries(keep))if(v&&$(k))$(k).value=v;$('summary').innerHTML=`<div class="stat"><span class="mono">Static outputs</span><b>${D.summary.complete}/${D.summary.planned}</b><small>两个 Baseline + 12 个实验槽</small></div><div class="stat"><span class="mono">Trajectory metrics</span><b>${D.summary.metrics}/${D.summary.planned}</b><small>source-GT CoTracker</small></div><div class="stat"><span class="mono">Attention audits</span><b>${D.summary.attention_ready}/${D.summary.attention_total}</b><small>step 5…40</small></div><div class="stat"><span class="mono">GT corr loss</span><b>${D.summary.correspondence_ready}/${D.summary.correspondence_total}</b><small>40 denoising steps / variant</small></div>`;$('mechanisms').innerHTML=D.mechanisms.map(x=>`<article class="mechanism ${x.method}"><span class="mono">${E(x.method)}</span><h3>${E(x.label)}</h3><div class="equation">${E(x.operator)}</div><b>${E(x.budget)}</b><p>${E(x.meaning)}</p></article>`).join('');$('warning').textContent=D.caveat;$('defs').innerHTML=D.definitions.map(x=>`<tr><td><b>${E(x.metric)}</b></td><td>${E(x.calculation)}</td><td>${E(x.direction)}</td></tr>`).join('');$('updated').textContent=`更新 ${new Date().toLocaleTimeString()}`;render()}
 $('anchor').oninput=render;$('group').onchange=renderAttention;$('direction').onchange=renderAttention;$('step').onchange=renderAttention;$('refresh').onclick=load;load();setInterval(load,30000);
 </script></body></html>'''

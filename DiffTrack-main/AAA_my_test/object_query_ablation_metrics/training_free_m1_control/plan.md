@@ -227,11 +227,11 @@ s_{b,t}=r_t^*/(r_{b,t}+\varepsilon).
 
 必须通过：
 
-1. `α=0` 与无 hook Baseline：DiT prediction 必须 `torch.equal`，解码后的 RGB frames 必须 `np.array_equal`；MP4 SHA256 记录但不作失败条件，避免容器 metadata 差异；
-2. `α=-1, branches=both` 与 Stage-3 `self_only`：每 layer/head/step/CFG branch 的 attention output 使用 `rtol=1e-3, atol=1e-3` 比较，最终 decoded RGB MAE 不得超过 `1/255`；
-3. `M_RR + M_RC = Y_R` 数值成立；
+1. `α=0` 与同一代码、同一 GPU/runtime 现场生成的无 hook Baseline：attention output 必须 `torch.equal`，解码后的 RGB frames 必须 `np.array_equal`；历史归档 Baseline 仅报告环境漂移，不作失败条件；
+2. `α=-1, branches=both` 与同一代码、同一 GPU/runtime 现场生成的 Stage-3 `self_only` reference：最终 decoded RGB MAE 不得超过 `1/255`；同时报告与历史 Stage-3 视频的漂移，但不把软件/runtime 漂移误判成公式失败；
+3. `M_RR + M_RC = Y_R` 在 CPU FP32 reference 中以 `rtol=1e-5, atol=1e-6` 作为硬门控；生产 BF16 fused-attention 的三次独立 kernel launch 只记录逐元素 mismatch、全局 relative-L2、最大逐调用 relative-L2 和非有限值，逐元素 `rtol=1e-3, atol=1e-3` 不作为硬门控；
 4. 只修改 manifest 中的 100 个 physical heads；
-5. CPU FP32 contribution decomposition 通过 `rtol=1e-5, atol=1e-6`；覆盖恰好 `100 heads × 40 steps × 2 CFG branches = 8000` 个 soft-scaling head-events；
+5. CPU FP32 contribution decomposition 通过 `rtol=1e-5, atol=1e-6`；实际生成覆盖恰好 `100 heads × 40 steps × 2 CFG branches = 8000` 个 soft-scaling head-events，BF16 residual 不得出现 NaN/Inf；
 6. contrast guidance 每步恰好 clean conditional、M1 conditional、clean unconditional 三次 DiT forward；
 7. runner 接受负 `λ`，但 `λ=0` 直接复用 Baseline；
 8. DiffSynth wrapper 返回 `εc+(λ/CFG)g` 后，pipeline 最终结果严格等于目标公式；
@@ -707,6 +707,17 @@ training_free_m1_control/
 ---
 
 ## 8. 当前正向 guidance pilot 的处理
+
+独立实时可视化入口：
+
+```text
+http://localhost:8092/training-free-m1-control?v=1
+```
+
+页面按选中的 `case×seed` 分成 Soft Scaling 与 Conditional Contrast Guidance
+两行，列固定为 `-1/-0.5/0/+0.5/+1`。只渲染当前选择的十个槽位，视频接近
+视口时才加载；顶部同步显示 TF-0 硬门控和正式 intervention 完成进度。该页面
+只展示已落盘事实，不将 Pending 结果或尚未计算的指标填成数值。
 
 现有页面中的：
 

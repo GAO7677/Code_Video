@@ -63,9 +63,18 @@ def main() -> None:
     soft_root = args.root / "soft_scaling" / CASE / SEED_DIR
     alpha0 = soft_root / "single_object__object_A__m1_all_time__top100__alpha_0"
     alpha_minus1 = soft_root / "single_object__object_A__m1_all_time__top100__alpha_m1"
+    clean_reference = soft_root / "tf0_reference__clean_runtime_baseline"
+    stage3_reference = (
+        soft_root
+        / "tf0_reference__single_object__object_A__stage3_self_only__top100"
+    )
     required = [
         BASELINE,
         STAGE3_KNOCKOUT,
+        clean_reference / "generated.mp4",
+        clean_reference / "manifest.json",
+        stage3_reference / "generated.mp4",
+        stage3_reference / "manifest.json",
         alpha0 / "generated.mp4",
         alpha0 / "manifest.json",
         alpha_minus1 / "generated.mp4",
@@ -78,9 +87,17 @@ def main() -> None:
 
     alpha0_manifest = read_json(alpha0 / "manifest.json")
     alpha_minus1_manifest = read_json(alpha_minus1 / "manifest.json")
+    clean_manifest = read_json(clean_reference / "manifest.json")
+    stage3_reference_manifest = read_json(stage3_reference / "manifest.json")
     stage3_manifest = read_json(STAGE3_KNOCKOUT.parent / "manifest.json")
-    no_op = compare_videos(alpha0 / "generated.mp4", BASELINE)
-    knockout = compare_videos(alpha_minus1 / "generated.mp4", STAGE3_KNOCKOUT)
+    no_op = compare_videos(alpha0 / "generated.mp4", clean_reference / "generated.mp4")
+    knockout = compare_videos(
+        alpha_minus1 / "generated.mp4", stage3_reference / "generated.mp4"
+    )
+    archived_no_op = compare_videos(alpha0 / "generated.mp4", BASELINE)
+    archived_knockout = compare_videos(
+        alpha_minus1 / "generated.mp4", STAGE3_KNOCKOUT
+    )
 
     with np.load(alpha_minus1 / "dose_metrics.npz") as arrays:
         dose_finite_events = int(np.isfinite(arrays["attention_mass"]).sum())
@@ -93,6 +110,10 @@ def main() -> None:
         ),
         "alpha_minus1_video_mae_le_1_over_255": (
             knockout["mae_unit_range"] <= 1.0 / 255.0
+        ),
+        "clean_reference_declared": bool(clean_manifest["audit"]["reference_clean"]),
+        "stage3_reference_head_events_8000": (
+            int(stage3_reference_manifest["audit"]["modified_head_events"]) == 8000
         ),
         "selected_heads_equal_stage3": (
             alpha_minus1_manifest["selected_entries"]
@@ -111,12 +132,19 @@ def main() -> None:
             len(alpha_minus1_manifest["audit"]["query_token_indices_by_latent_frame"])
             == 13
         ),
-        "decomposition_within_atol": (
-            bool(alpha_minus1_manifest["audit"]["decomposition_audited"])
-            and float(
-                alpha_minus1_manifest["audit"]["decomposition_max_abs_error"]
+        "fp32_decomposition_hard_gate": (
+            bool(
+                alpha_minus1_manifest[
+                    "fp32_attention_decomposition_audit"
+                ]["passed"]
             )
-            <= 1e-3
+        ),
+        "bf16_decomposition_residual_finite": (
+            bool(alpha_minus1_manifest["audit"]["decomposition_audited"])
+            and int(
+                alpha_minus1_manifest["audit"]["decomposition_nonfinite_count"]
+            )
+            == 0
         ),
     }
     passed = all(checks.values())
@@ -127,12 +155,25 @@ def main() -> None:
         "checks": checks,
         "alpha0_vs_baseline": no_op,
         "alpha_minus1_vs_stage3_knockout": knockout,
+        "archived_alpha0_vs_baseline_diagnostic_only": archived_no_op,
+        "archived_alpha_minus1_vs_stage3_diagnostic_only": archived_knockout,
+        "bf16_decomposition_diagnostic": {
+            key: alpha_minus1_manifest["audit"][key]
+            for key in (
+                "decomposition_mismatch_count",
+                "decomposition_max_abs_error",
+                "decomposition_max_call_relative_l2_error",
+                "decomposition_global_relative_l2_error",
+            )
+        },
         "dose_finite_events": dose_finite_events,
         "applied_dose_finite_events": applied_finite_events,
     }
     output = args.root / "tf0"
     output.mkdir(parents=True, exist_ok=True)
     report_path = output / ("PASS.json" if passed else "FAIL.json")
+    stale_path = output / ("FAIL.json" if passed else "PASS.json")
+    stale_path.unlink(missing_ok=True)
     report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

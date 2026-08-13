@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${CUDA_VISIBLE_DEVICES:-}" != "1" ]]; then
-  echo "Refusing to run: set CUDA_VISIBLE_DEVICES=1 exactly." >&2
+TF_GPU="${TF_GPU:-1}"
+if [[ "${TF_GPU}" == "4" ]]; then
+  echo "Refusing to run on forbidden GPU 4." >&2
+  exit 2
+fi
+if [[ "${CUDA_VISIBLE_DEVICES:-}" != "${TF_GPU}" ]]; then
+  echo "Refusing to run: set CUDA_VISIBLE_DEVICES=${TF_GPU} exactly." >&2
   exit 2
 fi
 
@@ -23,6 +28,15 @@ export TORCH_HOME="/data/gaoya/agent-data/cache/torch"
 
 cd "${WORK_DIR}"
 
+tf0_failed() {
+  exit_code=$?
+  "${PYTHON_BIN}" "${CONTROL_DIR}/write_tf0_failure.py" \
+    --root "${OUTPUT_ROOT}" \
+    --exit-code "${exit_code}"
+  exit "${exit_code}"
+}
+trap tf0_failed ERR
+
 "${PYTHON_BIN}" -m py_compile \
   "${GUIDANCE_RUNNER}" \
   "${SOFT_RUNNER}" \
@@ -32,7 +46,36 @@ cd "${WORK_DIR}"
   test_top100_m1_perturbed_attention_guidance.py \
   training_free_m1_control/test_m1_soft_scaling.py
 
+rm -f "${OUTPUT_ROOT}/tf0/PASS.json" "${OUTPUT_ROOT}/tf0/FAIL.json"
+
 SMOKE_CASE="0613pybullet_sample_001460_w002"
+"${PYTHON_BIN}" "${SOFT_RUNNER}" \
+  --case "${SMOKE_CASE}" \
+  --seed 47326 \
+  --region object_A \
+  --alpha 0 \
+  --reference-mode clean \
+  --manifest-path "${MANIFEST}" \
+  --head-ranking-path "${RANKING}" \
+  --tracks-root "${TRACKS}" \
+  --output-root "${OUTPUT_ROOT}/soft_scaling" \
+  --device cuda \
+  --overwrite
+
+"${PYTHON_BIN}" "${SOFT_RUNNER}" \
+  --case "${SMOKE_CASE}" \
+  --seed 47326 \
+  --region object_A \
+  --alpha -1 \
+  --reference-mode stage3 \
+  --manifest-path "${MANIFEST}" \
+  --head-ranking-path "${RANKING}" \
+  --tracks-root "${TRACKS}" \
+  --output-root "${OUTPUT_ROOT}/soft_scaling" \
+  --device cuda \
+  --record-dose \
+  --overwrite
+
 for alpha in 0 -1; do
   extra_args=()
   if [[ "${alpha}" == "-1" ]]; then
@@ -48,10 +91,12 @@ for alpha in 0 -1; do
     --tracks-root "${TRACKS}" \
     --output-root "${OUTPUT_ROOT}/soft_scaling" \
     --device cuda \
+    --overwrite \
     "${extra_args[@]}"
 done
 
 "${PYTHON_BIN}" "${CONTROL_DIR}/validate_tf0.py" --root "${OUTPUT_ROOT}"
+trap - ERR
 
 cases=(
   "0613pybullet_sample_001460_w002"
@@ -59,7 +104,7 @@ cases=(
   "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed-ball-and-block-fall_motion_to_end"
 )
 seeds=(47326 42)
-alphas=(-1 -0.5 0.5 1)
+alphas=(-1 -0.5 0 0.5 1)
 lambdas=(-1 -0.5)
 
 for case_name in "${cases[@]}"; do

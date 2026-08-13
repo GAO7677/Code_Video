@@ -434,13 +434,16 @@ GT_STC_RESULTS_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-guidance-results?v=6"><div><span>44 / GT-STC + ATTENTION MICROSCOPE</span><h2>GT 轨迹潜变量引导结果</h2><p>实时展示 context-Query → future-Key 双协议矩阵，并在最终生成 RGB 帧上逐 step 对比 PRE/POST attention 静态 overlay；未生成项固定为 Pending。</p></div><span class="go">打开双协议实时结果</span></a>
 '''
 GT_STC_METHOD_COMPARISON_PORTAL_CARD = r'''
-<a class="card new" href="/gt-stc-guidance-method-comparison?v=2"><div><span>49 / LATENT × DIRECT ATTENTION</span><h2>两种轨迹干预机制对比</h2><p>固定 001460、object A、seed 47326，用 7×7 全 49 帧拼图对比 source、旧 latent guidance 与新 direct attention，并检查轨迹指标和 PRE/POST attention。</p></div><span class="go">打开机制对比台</span></a>
+<a class="card new" href="/gt-stc-guidance-method-comparison?v=5"><div><span>49 / LATENT × DIRECT ATTENTION</span><h2>两种轨迹干预机制对比</h2><p>固定 001460、object A、seed 47326，用全部视频、全帧拼图、GT correspondence loss、轨迹指标和 PRE/POST attention 对比两种干预。</p></div><span class="go">打开机制对比台</span></a>
 '''
 GT_STC_FIRST10_COMPARISON_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-first10-vs-full40?v=1"><div><span>50 / DENOISING WINDOW CONTROL</span><h2>前 10 step vs 全 40 step</h2><p>3 个 0613 case，固定 seed 47326、latest3350 Top100、λ=0.1；Region / Point / Combined 逐组左右对比完整引导与仅高噪声前 10 步引导。</p></div><span class="go">打开去噪窗口对比</span></a>
 '''
+GT_STC_DIRECT_MULTICASE_PORTAL_CARD = r'''
+<a class="card new" href="/gt-stc-direct-attention-multicase?v=1"><div><span>52 / DIRECT ATTENTION MULTICASE</span><h2>5 Case × 3 Seed 配置选择</h2><p>对比 Top100、Bottom100、Random100 的 Context→Future、Future→Context 与双向控制；展示轨迹排行、七项 VBench、全部视频及 Pending 状态。</p></div><span class="go">打开批量配置选择台</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + TRAINING_FREE_M1_CONTROL_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + GT_STC_METHOD_COMPARISON_PORTAL_CARD + GT_STC_FIRST10_COMPARISON_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + TRAINING_FREE_M1_CONTROL_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + GT_STC_METHOD_COMPARISON_PORTAL_CARD + GT_STC_FIRST10_COMPARISON_PORTAL_CARD + GT_STC_DIRECT_MULTICASE_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -454,6 +457,7 @@ from AAA_my_test.object_query_ablation_metrics import top100_m1_guidance_dashboa
 from AAA_my_test.object_query_ablation_metrics import top100_m1_token_communication_dashboard
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import dashboard as training_free_m1_control_dashboard
 from AAA_my_test import gt_stc_guidance_dashboard
+from AAA_my_test import gt_stc_direct_attention_multicase_dashboard
 from AAA_my_test import gt_stc_first10_comparison_dashboard
 from AAA_my_test import gt_stc_guidance_method_comparison_dashboard
 from AAA_my_test import gt_stc_guidance_results_dashboard
@@ -528,6 +532,35 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/gt-stc-direct-attention-multicase":
+            self.send_payload(
+                gt_stc_direct_attention_multicase_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/gt-stc-direct-attention-multicase/catalog":
+            payload = json.dumps(
+                gt_stc_direct_attention_multicase_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/gt-stc-direct-attention-multicase/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            result = gt_stc_direct_attention_multicase_dashboard.asset(
+                params.get("kind", [""])[0],
+                params.get("case", [""])[0],
+                params.get("seed", [""])[0],
+                params.get("config", [""])[0],
+            )
+            if result is None or not result.is_file():
+                self.send_error(404, "direct-attention multicase asset is not ready")
+                return
+            viewer.send_file_with_range(self, result, "video/mp4")
+            return
         if path == "/api/gt-stc-guidance-method-comparison/catalog":
             payload = json.dumps(
                 gt_stc_guidance_method_comparison_dashboard.catalog(),
@@ -535,6 +568,13 @@ class MetricsHandler(viewer.Handler):
                 allow_nan=False,
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/gt-stc-guidance-method-comparison/source-video":
+            result = gt_stc_guidance_method_comparison_dashboard.source_video_asset()
+            if result is None or not result.is_file():
+                self.send_error(404, "guidance comparison source video is not ready")
+                return
+            viewer.send_file_with_range(self, result, "video/mp4")
             return
         if path == "/api/gt-stc-guidance-method-comparison/asset":
             from urllib.parse import parse_qs
@@ -551,7 +591,12 @@ class MetricsHandler(viewer.Handler):
             if result is None or not result.is_file():
                 self.send_error(404, "guidance comparison asset is not ready")
                 return
-            viewer.send_file_with_range(self, result, "image/jpeg")
+            content_type = (
+                "video/mp4"
+                if params.get("kind", [""])[0] == "video"
+                else "image/jpeg"
+            )
+            viewer.send_file_with_range(self, result, content_type)
             return
         if path == "/api/gt-stc-guidance-results/catalog":
             payload = json.dumps(

@@ -5,6 +5,7 @@ import unittest
 import torch
 
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control.run_m1_soft_scaling import (
+    fp32_attention_decomposition_audit,
     soft_scaled_output,
 )
 
@@ -27,6 +28,11 @@ class M1SoftScalingAlgebraTest(unittest.TestCase):
         enhanced = soft_scaled_output(self.original, self.m1, 0.5)
         torch.testing.assert_close(weakened - self.original, -0.5 * self.m1)
         torch.testing.assert_close(enhanced - self.original, 0.5 * self.m1)
+
+    def test_fp32_attention_decomposition_is_strict(self) -> None:
+        audit = fp32_attention_decomposition_audit()
+        self.assertTrue(audit["passed"])
+        self.assertLessEqual(audit["max_abs_error"], 1e-6)
 
 
 if __name__ == "__main__":
