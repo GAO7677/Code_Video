@@ -14,6 +14,7 @@ import numpy as np
 import torch
 import torch.utils.checkpoint
 
+from AAA_my_test import gt_stc_guidance_results_dashboard
 from AAA_my_test.run_wan_gt_spatiotemporal_correspondence_guidance import (
     GuidanceTarget,
     cached_object_prompt_spec,
@@ -33,6 +34,11 @@ from AAA_my_test.run_wan_gt_spatiotemporal_correspondence_guidance import (
     trajectory_metrics,
 )
 from AAA_my_test.analyze_wan_gt_guidance_frozen_validation import analyze
+from AAA_my_test.render_gt_stc_trajectory_overlays import (
+    expand_frozen_anchor_tracks,
+    target_point_indices,
+    trajectory_centers,
+)
 
 
 def qk_for_two_frame_match(correct: bool) -> tuple[torch.Tensor, torch.Tensor]:
@@ -53,6 +59,93 @@ def qk_for_two_frame_match(correct: bool) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 class CorrespondenceGuidanceTests(unittest.TestCase):
+    def test_dashboard_counts_registered_trajectory_overlays(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            screening = root / "screening" / "seed_47326"
+            screening.mkdir(parents=True)
+            (screening / "baseline_eligibility.json").write_text(
+                json.dumps(
+                    {
+                        "case_count": 1,
+                        "eligible_case_count": 1,
+                        "eligible_target_count": 1,
+                        "missing_case_count": 0,
+                        "eligible_jobs": [
+                            {"case": "case_a", "targets": ["object_A"]}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            final = root / "final_analysis" / "seed_47326"
+            final.mkdir(parents=True)
+            (final / "frozen_validation_report.json").write_text(
+                json.dumps({"trigger_modes": ["region", "point"], "aggregate": []}),
+                encoding="utf-8",
+            )
+            tube = root / "gt_tubes" / "case_a"
+            tube.mkdir(parents=True)
+            (tube / "manifest.json").write_text(
+                json.dumps({"source_video": str(root / "source.mp4")}),
+                encoding="utf-8",
+            )
+            original_root = gt_stc_guidance_results_dashboard.ROOT
+            try:
+                gt_stc_guidance_results_dashboard.ROOT = root
+                report = gt_stc_guidance_results_dashboard.catalog()
+            finally:
+                gt_stc_guidance_results_dashboard.ROOT = original_root
+            self.assertEqual(report["trajectory_overlays_total"], 9)
+
+    def test_trajectory_overlay_selects_exact_target_points(self) -> None:
+        tube = {
+            "region_names": np.asarray(["object_A", "object_B"]),
+            "point_starts": np.asarray([0, 3]),
+            "point_ends": np.asarray([3, 7]),
+        }
+        self.assertEqual(
+            target_point_indices(tube, "object_B").tolist(), [3, 4, 5, 6]
+        )
+        with self.assertRaises(KeyError):
+            target_point_indices(tube, "object_C")
+
+    def test_trajectory_overlay_center_respects_visibility_threshold(self) -> None:
+        tracks = np.zeros((3, 4, 2), dtype=np.float32)
+        tracks[0, :, 0] = np.arange(4)
+        tracks[1, :, 0] = np.arange(4) + 10
+        visibility = np.asarray(
+            [
+                [True, True, True, True],
+                [True, True, False, False],
+                [False, False, False, False],
+            ]
+        )
+        centers, valid = trajectory_centers(
+            tracks, visibility, np.arange(4), minimum_visible=4
+        )
+        self.assertEqual(valid.tolist(), [True, False, False])
+        self.assertAlmostEqual(float(centers[0, 0]), 1.5)
+        self.assertTrue(np.isnan(centers[1:]).all())
+
+    def test_trajectory_overlay_preserves_frozen_metric_anchors(self) -> None:
+        tracks = np.zeros((13, 1, 2), dtype=np.float32)
+        tracks[:, 0, 0] = np.arange(13) * 10
+        tracks[:, 0, 1] = np.arange(13) * 2
+        visibility = np.ones((13, 1), dtype=bool)
+        visibility[4, 0] = False
+        expanded, expanded_visibility = expand_frozen_anchor_tracks(
+            tracks, visibility
+        )
+        anchors = np.arange(13) * 4
+        self.assertTrue(np.allclose(expanded[anchors], tracks, equal_nan=True))
+        self.assertEqual(
+            expanded_visibility[anchors, 0].tolist(), visibility[:, 0].tolist()
+        )
+        self.assertFalse(expanded_visibility[15, 0])
+        self.assertFalse(expanded_visibility[17, 0])
+        self.assertAlmostEqual(float(expanded[2, 0, 0]), 5.0)
+
     def test_combined_guidance_uses_sequential_equivalent_gradients(self) -> None:
         self.assertEqual(correspondence_component_modes("region"), ("region",))
         self.assertEqual(

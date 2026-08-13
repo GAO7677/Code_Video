@@ -2,9 +2,10 @@
 """Cache CoTracker trajectories and render GT/candidate overlay videos.
 
 The frozen GT-STC scalar metrics did not persist the raw candidate tracks.
-This post-processing step reruns the same CoTracker entry point, stores its
-full 49-frame output once per source/generated video, and then renders one
-target-specific overlay for every registered dashboard card.
+This post-processing step reruns the same CoTracker entry point, stores the
+native source horizon (up to 49 frames) and full 49-frame generated output
+once per video, and then renders one target-specific overlay for every
+registered dashboard card.
 
 Colors are intentionally stable across every case:
 
@@ -22,11 +23,10 @@ from __future__ import annotations
 import argparse
 import gc
 import json
-import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import imageio.v3 as iio
 import numpy as np
@@ -62,6 +62,7 @@ class TrackTask:
     video: Path
     cache: Path
     resize_to_model: bool = False
+    expected_frames: int = FRAMES
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -127,10 +128,14 @@ def trajectory_centers(
     return centers, valid
 
 
-def load_frames(video: Path, resize_to_model: bool = False) -> np.ndarray:
-    frames = np.asarray(iio.imread(video))[:FRAMES, ..., :3]
-    if len(frames) != FRAMES:
-        raise RuntimeError(f"expected {FRAMES} frames, got {len(frames)}: {video}")
+def load_frames(
+    video: Path, resize_to_model: bool = False, expected_frames: int = FRAMES
+) -> np.ndarray:
+    frames = np.asarray(iio.imread(video))[: int(expected_frames), ..., :3]
+    if len(frames) != int(expected_frames):
+        raise RuntimeError(
+            f"expected {expected_frames} frames, got {len(frames)}: {video}"
+        )
     frames = frames.astype(np.uint8, copy=False)
     return resize_frames(frames) if resize_to_model else frames
 
@@ -146,7 +151,7 @@ def track_cache_valid(task: TrackTask) -> bool:
     except (OSError, KeyError, ValueError):
         return False
     return bool(
-        tracks.shape[0] == FRAMES
+        tracks.shape[0] == task.expected_frames
         and (not task.resize_to_model or (height, width) == (704, 1280))
     )
 
@@ -160,11 +165,11 @@ def save_tracks(
 ) -> None:
     if task.cache.is_file() and not overwrite:
         return
-    frames = load_frames(task.video, task.resize_to_model)
+    frames = load_frames(task.video, task.resize_to_model, task.expected_frames)
     tracks, visibility = run_cotracker(model, frames, query_points, device)
     tracks = np.asarray(tracks, dtype=np.float32)
     visibility = np.asarray(visibility, dtype=bool)
-    if tracks.shape[:2] != visibility.shape or tracks.shape[0] != FRAMES:
+    if tracks.shape[:2] != visibility.shape or tracks.shape[0] != task.expected_frames:
         raise RuntimeError(
             f"invalid CoTracker result for {task.video}: {tracks.shape}, {visibility.shape}"
         )
@@ -303,10 +308,11 @@ def render_overlay(
     ffmpeg: Path,
     overwrite: bool,
     resize_to_model: bool = False,
+    expected_frames: int = FRAMES,
 ) -> None:
     if output.is_file() and output.stat().st_size > 0 and not overwrite:
         return
-    frames = load_frames(video, resize_to_model)
+    frames = load_frames(video, resize_to_model, expected_frames)
     with np.load(gt_track_path, allow_pickle=False) as gt:
         gt_tracks = np.asarray(gt["tracks_tn2"], dtype=np.float32)
         gt_visibility = np.asarray(gt["visibility_tn"], dtype=bool)
@@ -353,6 +359,63 @@ def render_overlay(
     temporary.replace(output)
 
 
+def expand_frozen_anchor_tracks(
+    tracks_an2: np.ndarray,
+    visibility_an: np.ndarray,
+    output_frames: int = FRAMES,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map the exact 13 metric anchors onto the 49-frame generated timeline."""
+    tracks = np.asarray(tracks_an2, dtype=np.float32)
+    visibility = np.asarray(visibility_an, dtype=bool)
+    if tracks.shape[0] != 13 or visibility.shape != tracks.shape[:2]:
+        raise ValueError(f"expected 13-anchor tube, got {tracks.shape}/{visibility.shape}")
+    anchor_frames = np.arange(13, dtype=np.int64) * 4
+    frame_axis = np.arange(output_frames, dtype=np.float32)
+    expanded = np.full((output_frames, tracks.shape[1], 2), np.nan, dtype=np.float32)
+    expanded_visibility = np.zeros((output_frames, tracks.shape[1]), dtype=bool)
+    for point in range(tracks.shape[1]):
+        valid_anchor = visibility[:, point] & np.isfinite(tracks[:, point]).all(axis=-1)
+        valid_indices = np.flatnonzero(valid_anchor)
+        if not len(valid_indices):
+            continue
+        valid_frames = anchor_frames[valid_indices]
+        for coordinate in range(2):
+            expanded[:, point, coordinate] = np.interp(
+                frame_axis,
+                valid_frames.astype(np.float32),
+                tracks[valid_indices, point, coordinate],
+                left=np.nan,
+                right=np.nan,
+            )
+        # In-between frames are visible only when both bracketing metric anchors
+        # are visible. Exact anchors retain their recorded visibility.
+        for anchor in range(13):
+            expanded_visibility[anchor_frames[anchor], point] = valid_anchor[anchor]
+        for anchor in range(12):
+            if valid_anchor[anchor] and valid_anchor[anchor + 1]:
+                start = int(anchor_frames[anchor]) + 1
+                end = int(anchor_frames[anchor + 1])
+                expanded_visibility[start:end, point] = True
+    return expanded, expanded_visibility
+
+
+def frozen_generated_reference(root: Path, case: str) -> Path:
+    output = root / "trajectory_tracks" / case / "frozen_gt_generated_timeline.npz"
+    with np.load(root / "gt_tubes" / case / "tube.npz", allow_pickle=False) as tube:
+        tracks, visibility = expand_frozen_anchor_tracks(
+            tube["tracks_tn2"], tube["visibility_tn"]
+        )
+    atomic_npz(
+        output,
+        tracks_tn2=tracks,
+        visibility_tn=visibility.astype(np.uint8),
+        source="frozen 13-anchor tube linearly mapped to generated F00-F48",
+        frame_height=np.int32(704),
+        frame_width=np.int32(1280),
+    )
+    return output
+
+
 def iter_track_tasks(
     root: Path, seed: int, matrix: dict[tuple[str, str], list[str]]
 ) -> tuple[list[TrackTask], dict[str, Path]]:
@@ -362,12 +425,14 @@ def iter_track_tasks(
         if case not in source_videos:
             manifest = read_json(root / "gt_tubes" / case / "manifest.json")
             source_videos[case] = Path(str(manifest["source_video"]))
+            source_frame_count = min(FRAMES, int(manifest["source_frame_count"]))
             tasks[(case, "source")] = TrackTask(
                 case,
                 "source",
                 source_videos[case],
                 root / "trajectory_tracks" / case / "source.npz",
                 True,
+                source_frame_count,
             )
         for variant in matrix[(case, _target)]:
             key = (case, variant)
@@ -419,12 +484,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         with np.load(root / "gt_tubes" / case / "tube.npz", allow_pickle=False) as tube:
             indices = target_point_indices(dict(tube), target)
         source_task = task_by_key[(case, "source")]
+        generated_gt_reference = frozen_generated_reference(root, case)
         source_output = root / "trajectory_overlays" / case / f"source__{target}.mp4"
         expected_overlay_count += 1
         if source_task.cache.is_file():
             render_overlay(
                 source_videos[case], source_output, target, indices,
                 source_task.cache, None, args.ffmpeg, args.overwrite_overlays, True,
+                source_task.expected_frames,
             )
         overlay_count += int(source_output.is_file() and source_output.stat().st_size > 0)
         for variant in variants:
@@ -436,7 +503,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             if source_task.cache.is_file() and task.cache.is_file():
                 render_overlay(
-                    task.video, output, target, indices, source_task.cache,
+                    task.video, output, target, indices, generated_gt_reference,
                     task.cache, args.ffmpeg, args.overwrite_overlays, False,
                 )
             overlay_count += int(output.is_file() and output.stat().st_size > 0)

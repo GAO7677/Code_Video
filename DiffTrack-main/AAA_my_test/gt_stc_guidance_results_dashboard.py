@@ -218,12 +218,14 @@ def catalog() -> dict[str, Any]:
     sensitivity_total = (
         int(screening.get("eligible_target_count", 0)) * len(trigger_modes) * 2
     )
+    eligible_target_count = int(screening.get("eligible_target_count", 0))
+    overlays_per_target = 2 + len(MODES) + 2 * len(trigger_modes)
     return {
         "protocol": "wan_gt_guidance_frozen_validation_v1",
         "seed": SEED,
         "case_count": int(screening.get("case_count", 0)),
         "eligible_case_count": int(screening.get("eligible_case_count", 0)),
-        "eligible_target_count": int(screening.get("eligible_target_count", 0)),
+        "eligible_target_count": eligible_target_count,
         "missing_case_count": int(screening.get("missing_case_count", 0)),
         "guided_total": total,
         "guided_complete": guided_complete,
@@ -232,8 +234,7 @@ def catalog() -> dict[str, Any]:
         "sensitivity_complete": sensitivity_complete,
         "sensitivity_metrics": sensitivity_metrics,
         "trajectory_overlays_ready": trajectory_overlays_ready,
-        "trajectory_overlays_total": int(screening.get("eligible_target_count", 0))
-        * 9,
+        "trajectory_overlays_total": eligible_target_count * overlays_per_target,
         "cases": cases,
         "representatives": _representatives(cases),
         "final_report_ready": bool(final_report),

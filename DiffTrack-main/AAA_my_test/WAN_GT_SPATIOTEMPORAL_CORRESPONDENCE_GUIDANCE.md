@@ -112,6 +112,18 @@ x_{s-1}=x_s+(\sigma_{s-1}-\sigma_s)v_s^{guided}.
 
 Baseline 仍需和现有 legacy baseline 做像素 hash/数值 parity spot-check；单元测试只能证明 loss 方向和 scheduler 符号，不能替代一次 GPU smoke test。
 
+## 对象轨迹可视化
+
+结果页的“对象轨迹叠加”不是由像素差或 SAM2 mask 中心近似，而是重新调用与指标一致的 CoTracker：
+
+1. 对每个 eligible case 的 source、Baseline 和全部 70 个注册 guidance 视频分别追踪一次全部首帧 object query points；
+2. 原始 `source_video` 在追踪和绘图前严格 resize 到正式 tube 使用的 `1280×704` 坐标系；生成视频已经是该坐标系；
+3. 每个视频的完整 49-frame `tracks_tn2/visibility_tn` 只缓存一次，再按 target 的 `point_start:point_end` 生成 target-specific overlay；
+4. 青色表示 source GT 对应点、质心和累计路径，橙色表示生成视频中的对应轨迹；当前帧少于 `min(4, target point count)` 个 candidate points 可见时标红 `TRACK LOST`；
+5. Source 页面只画青色 GT；Baseline/Region/Point/Combined 则把青色 GT 和橙色 candidate 同时画在生成帧上，因此能直接区分轨迹偏差、对象外观变化和追踪失败。
+
+脚本：`AAA_my_test/render_gt_stc_trajectory_overlays.py`。页面默认显示 overlay，并提供“原始视频”切换；两套视频不会同时加载。
+
 ## 命令
 
 先做无 GPU 任务展开检查：
