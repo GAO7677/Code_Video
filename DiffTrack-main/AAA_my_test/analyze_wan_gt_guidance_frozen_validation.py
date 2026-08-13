@@ -66,6 +66,14 @@ def analyze(root: Path, seed: int, lambdas: tuple[float, ...]) -> dict[str, Any]
     screen_path = root / "screening" / f"seed_{seed:05d}" / "baseline_eligibility.json"
     screen = load_json(screen_path)
     eligible = [row for row in screen["targets"] if row["eligible"]]
+    requested_lambdas = tuple(float(value) for value in lambdas)
+    primary_trigger_modes: list[str] | None = None
+    if any(not math.isclose(value, 0.1) for value in requested_lambdas):
+        # Sensitivity modes are determined exclusively from the frozen primary
+        # analysis.  This prevents never-registered variants from appearing as
+        # misleading 0/N rows in the final report.
+        primary_trigger_modes = list(analyze(root, seed, (0.1,))["trigger_modes"])
+    sensitivity_modes = set(primary_trigger_modes or ())
     records: list[dict[str, Any]] = []
     for row in eligible:
         case, target = str(row["case"]), str(row["target"])
@@ -75,8 +83,13 @@ def analyze(root: Path, seed: int, lambdas: tuple[float, ...]) -> dict[str, Any]
         )
         if baseline is None:
             raise RuntimeError(f"eligible Baseline metric disappeared: {case}/{target}")
-        for guidance_lambda in lambdas:
-            for mode in MODES:
+        for guidance_lambda in requested_lambdas:
+            modes = (
+                MODES
+                if math.isclose(guidance_lambda, 0.1)
+                else tuple(mode for mode in MODES if mode in sensitivity_modes)
+            )
+            for mode in modes:
                 variant = f"{mode}__{target}__lambda{float_tag(guidance_lambda)}"
                 metric_path = generation_root / variant / "trajectory_metrics.json"
                 guided = metric_for_target(metric_path, target)
@@ -172,61 +185,74 @@ def analyze(root: Path, seed: int, lambdas: tuple[float, ...]) -> dict[str, Any]
         )
 
     aggregate_rows: list[dict[str, Any]] = []
-    for guidance_lambda in lambdas:
-        for mode in MODES:
-            rows = [
-                row
-                for row in case_rows
-                if row["lambda"] == guidance_lambda and row["mode"] == mode
-            ]
-            completed = [
-                record
-                for record in records
-                if record["lambda"] == guidance_lambda
-                and record["mode"] == mode
-                and record["complete"]
-            ]
-            evaluable = [row for row in rows if row["mean_delta_ade_d0"] is not None]
-            ade_values = [float(row["mean_delta_ade_d0"]) for row in evaluable]
-            track_values = [
-                float(row["mean_delta_track_loss"])
-                for row in rows
-                if row["mean_delta_track_loss"] is not None
-            ]
-            aggregate_rows.append(
-                {
-                    "mode": mode,
-                    "lambda": guidance_lambda,
-                    "eligible_case_count": len(rows),
-                    "eligible_target_count": len(
-                        [
-                            record
-                            for record in records
-                            if record["lambda"] == guidance_lambda
-                            and record["mode"] == mode
-                        ]
-                    ),
-                    "completed_target_count": len(completed),
-                    "guided_target_gate_pass_count": sum(
-                        bool(record.get("guided_quality_pass")) for record in completed
-                    ),
-                    "fully_evaluable_case_count": len(evaluable),
-                    "case_balanced_mean_delta_ade_d0": mean(ade_values),
-                    "case_bootstrap_95pct_ci_delta_ade_d0": bootstrap_ci(ade_values),
-                    "case_balanced_mean_delta_track_loss": mean(track_values),
-                    "improved_case_count": sum(row["sensitivity_success"] for row in rows),
-                }
-            )
+    registered_pairs = sorted(
+        {(float(record["lambda"]), str(record["mode"])) for record in records}
+    )
+    for guidance_lambda, mode in registered_pairs:
+        rows = [
+            row
+            for row in case_rows
+            if row["lambda"] == guidance_lambda and row["mode"] == mode
+        ]
+        completed = [
+            record
+            for record in records
+            if record["lambda"] == guidance_lambda
+            and record["mode"] == mode
+            and record["complete"]
+        ]
+        evaluable = [row for row in rows if row["mean_delta_ade_d0"] is not None]
+        ade_values = [float(row["mean_delta_ade_d0"]) for row in evaluable]
+        track_values = [
+            float(row["mean_delta_track_loss"])
+            for row in rows
+            if row["mean_delta_track_loss"] is not None
+        ]
+        aggregate_rows.append(
+            {
+                "mode": mode,
+                "lambda": guidance_lambda,
+                "eligible_case_count": len(rows),
+                "eligible_target_count": len(
+                    [
+                        record
+                        for record in records
+                        if record["lambda"] == guidance_lambda
+                        and record["mode"] == mode
+                    ]
+                ),
+                "completed_target_count": len(completed),
+                "guided_target_gate_pass_count": sum(
+                    bool(record.get("guided_quality_pass")) for record in completed
+                ),
+                "fully_evaluable_case_count": len(evaluable),
+                "case_balanced_mean_delta_ade_d0": mean(ade_values),
+                "case_bootstrap_95pct_ci_delta_ade_d0": bootstrap_ci(ade_values),
+                "case_balanced_mean_delta_track_loss": mean(track_values),
+                "improved_case_count": sum(row["sensitivity_success"] for row in rows),
+            }
+        )
 
-    primary = [row for row in aggregate_rows if row["lambda"] == 0.1]
-    trigger_modes = [str(row["mode"]) for row in primary if row["improved_case_count"] >= 2]
+    primary = [row for row in aggregate_rows if math.isclose(row["lambda"], 0.1)]
+    trigger_modes = (
+        [
+            mode
+            for mode in MODES
+            if any(
+                row["mode"] == mode and row["improved_case_count"] >= 2
+                for row in primary
+            )
+        ]
+        if primary
+        else list(primary_trigger_modes or ())
+    )
     return {
         "protocol": "wan_gt_guidance_frozen_validation_v1",
         "seed": seed,
         "screening_report": str(screen_path),
         "eligible_case_count": int(screen["eligible_case_count"]),
         "eligible_target_count": int(screen["eligible_target_count"]),
-        "lambdas": list(lambdas),
+        "lambdas": list(requested_lambdas),
         "case_is_highest_independent_unit": True,
         "missing_ADE_policy": (
             "A case is not ADE-evaluable if any preregistered target fails the guided "

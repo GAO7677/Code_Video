@@ -154,6 +154,24 @@ class CorrespondenceGuidanceTests(unittest.TestCase):
             self.assertEqual(point["fully_evaluable_case_count"], 0)
             self.assertEqual(point["case_balanced_mean_delta_track_loss"], 100.0)
 
+            for case in ("case_a", "case_b"):
+                write_metric(case, "region__object_A__lambda0p05", improved)
+                write_metric(case, "region__object_A__lambda0p2", improved)
+            sensitivity_report = analyze(root, 47326, (0.05, 0.1, 0.2))
+            self.assertEqual(
+                {
+                    (row["lambda"], row["mode"])
+                    for row in sensitivity_report["aggregate"]
+                },
+                {
+                    (0.05, "region"),
+                    (0.1, "region"),
+                    (0.1, "point"),
+                    (0.1, "combined"),
+                    (0.2, "region"),
+                },
+            )
+
     def test_screening_target_map_is_case_specific(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "eligibility.json"

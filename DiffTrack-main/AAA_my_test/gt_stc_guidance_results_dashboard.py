@@ -208,7 +208,7 @@ def catalog() -> dict[str, Any]:
         "representatives": _representatives(cases),
         "final_report_ready": bool(final_report),
         "final_aggregate": final_report.get("aggregate", []),
-        "trigger_modes": sorted(trigger_modes),
+        "trigger_modes": [mode for mode in MODES if mode in trigger_modes],
         "definitions": [
             {
                 "metric": "Future ADE / D0",
