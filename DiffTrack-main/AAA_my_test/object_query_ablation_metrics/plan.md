@@ -537,12 +537,12 @@ Stage 4 的增补冻结在 `experiment_spec_stage4_temporal_v1.json`。下一次
 - 固定 seeds：`13248 / 47326 / 90094`。
 - 每个 case-seed 生成 `Baseline + 3 head groups × 3 directions = 10` 个视频：Top100、Bottom100、layer-matched Random100 分别执行 Context Query→Future Key、Future Query→Context Key、Bidirectional direct-attention control。
 - 总规模：5 cases × 3 seeds × 10 variants = 150 videos；已有焦点单元 10 个结果复用，预计新增 140 个。
-- GPU2 负责 seeds `13248 / 47326`，GPU3 负责 seed `90094`；两者先等待显存占用低于 12 GB，不停止已有任务。GPU4 禁用。
+- GPU2 负责 seeds `13248 / 47326`，空闲的 GPU1 负责 seed `90094`；两者要求显存连续三个 30 秒采样周期低于 12 GB 才启动，不停止已有任务。原 GPU3 等待队列在尚未生成任何结果时撤销。GPU4 禁用。
 - 生成结束后在 GPU2 顺序执行官方 VBench 七项：Subject、Background、Temporal Flickering、Motion Smoothness、Dynamic Degree、Aesthetic、Imaging，共计划 1050 个 video-metric scores。
 - 统计以 case 为最高独立单位：seed 先在 case 内平均，再对 case 等权。主指标是与同 case-seed Baseline 配对的 `ΔGT Center-ADE/D0`。
 - 最优配置只有在 trajectory gate pass rate 不低于 Baseline−5pp，且 VBench Subject、Background、Imaging 均不低于 Baseline−0.02 时才有资格参与；合格配置中 paired ΔADE/D0 最低者胜出。FDE、PCK、Track Loss 和其余 VBench 作为解释/guardrail，不混成任意加权总分。
 - 实时页面：`http://localhost:8092/gt-stc-direct-attention-multicase?v=1`；未完成生成、轨迹或 VBench 项明确显示 Pending。
 - 计算入口：
   - `AAA_my_test/wan_context_point_guidance/launch_direct_attention_multicase_gpu2.sh`
-  - `AAA_my_test/wan_context_point_guidance/launch_direct_attention_multicase_gpu3.sh`
+  - `AAA_my_test/wan_context_point_guidance/launch_direct_attention_multicase_gpu1.sh`
   - `AAA_my_test/wan_context_point_guidance/launch_direct_attention_multicase_vbench_gpu2.sh`

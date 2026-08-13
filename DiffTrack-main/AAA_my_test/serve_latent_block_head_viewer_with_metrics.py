@@ -416,7 +416,7 @@ STAGE4_TEMPORAL_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-information-flow-stage4?v=1"><div><span>45 / STAGE 4 TEMPORAL</span><h2>信息流时间方向验证</h2><p>3 cases × 3 seeds；按 target 展示 M1/M2/M3 × All-time/Same/Future/Past，并排比较 latest3350 Top100、Bottom100、Random100 与 All720。</p></div><span class="go">打开 Stage 4 子页面</span></a>
 '''
 STAGE4_REPRESENTATIVES_PORTAL_CARD = r'''
-<a class="card new" href="/object-query-information-flow-stage4-representatives?v=1"><div><span>46 / STAGE 4 EVIDENCE</span><h2>代表性 Case · 正例与反例</h2><p>精选 M1/M2/M3 的强正例、时间方向反例、Random100 异常、R→C spillover 候选和低影响对照；同组并排 Baseline、Top100、Bottom100、Random100 与实时指标。</p></div><span class="go">打开代表性证据页</span></a>
+<a class="card new" href="/object-query-information-flow-stage4-representatives?v=2"><div><span>46 / STAGE 4 CONTROLLED VIDEOS</span><h2>控制变量代表视频</h2><p>固定 case、seed、object 与 Baseline，分别只改变 Head group、Same/Future/Past 或 M1/M2/M3；展示 6 组支持性案例与反例，并附轨迹、身份、存活和背景指标。</p></div><span class="go">打开控制变量视频页</span></a>
 '''
 TOP100_M1_GUIDANCE_PORTAL_CARD = r'''
 <a class="card new" href="/top100-m1-guidance-pilot?v=3"><div><span>47 / TRAINING-FREE M1/M2/M3 GUIDANCE</span><h2>Baseline × Top100 M1/M2/M3</h2><p>3 cases × seeds {47326,42} × λ {0.5,1}；固定 CFG=5、40 步和 Top100，只替换 guidance 强度与 R→R、C→R、R→C 信息流。</p></div><span class="go">打开受控 Guidance 网格</span></a>

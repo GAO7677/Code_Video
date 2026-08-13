@@ -262,11 +262,11 @@ def catalog() -> dict[str, Any]:
     ]
     states = {
         name: (STATE_ROOT / f"{name}.done").is_file()
-        for name in ("gpu2", "gpu3", "vbench")
+        for name in ("gpu1", "gpu2", "vbench")
     }
     states.update({
         f"{name}_failed": (STATE_ROOT / f"{name}.failed").is_file()
-        for name in ("gpu2", "gpu3", "vbench")
+        for name in ("gpu1", "gpu2", "vbench")
     })
     return {
         "cases": [{"id": case, "label": CASE_LABELS[case], "target": TARGETS[case]} for case in CASES],
@@ -327,4 +327,3 @@ function metric(row){const m=row.metric||{};return `<div class="metrics"><span>G
 function renderVideos(){if(!D)return;const caseId=$('case').value||D.cases[0].id,seed=Number($('seed').value||D.seeds[0]);const rows=D.records.filter(r=>r.case===caseId&&r.seed===seed);$('videos').innerHTML=rows.map(r=>`<article class="video">${r.complete?`<video controls preload="metadata" playsinline loop src="${asset('video',r)}"></video>`:`<div class="placeholder">PENDING · GENERATION</div>`}<div class="copy"><b>${E(D.configs.find(c=>c.id===r.config)?.label)}</b><span>${E(r.case_label)} · seed ${r.seed} · ${E(r.target)}</span>${metric(r)}</div></article>`).join('')}
 async function load(){D=await fetch(`${api}/catalog`,{cache:'no-store'}).then(r=>r.json());if(!$('case').options.length){$('case').innerHTML=D.cases.map(x=>`<option value="${E(x.id)}">${E(x.label)} · ${E(x.target)}</option>`).join('');$('seed').innerHTML=D.seeds.map(x=>`<option value="${x}">${x}</option>`).join('')}render();$('updated').textContent=new Date().toLocaleTimeString()}$('case').addEventListener('change',renderVideos);$('seed').addEventListener('change',renderVideos);$('refresh').addEventListener('click',load);load();setInterval(load,30000);
 </script></body></html>'''
-

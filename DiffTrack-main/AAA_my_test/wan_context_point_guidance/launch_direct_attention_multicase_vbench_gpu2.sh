@@ -21,8 +21,8 @@ on_error() {
 }
 trap on_error ERR
 
-while [[ ! -f "${state_dir}/gpu2.done" || ! -f "${state_dir}/gpu3.done" ]]; do
-  if [[ -f "${state_dir}/gpu2.failed" || -f "${state_dir}/gpu3.failed" ]]; then
+while [[ ! -f "${state_dir}/gpu2.done" || ! -f "${state_dir}/gpu1.done" ]]; do
+  if [[ -f "${state_dir}/gpu2.failed" || -f "${state_dir}/gpu1.failed" ]]; then
     echo "generation shard failed; refusing to run incomplete VBench cohort"
     exit 1
   fi
