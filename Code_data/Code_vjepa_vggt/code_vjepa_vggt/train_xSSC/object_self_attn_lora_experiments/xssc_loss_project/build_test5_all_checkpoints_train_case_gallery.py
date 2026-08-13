@@ -204,7 +204,7 @@ def main() -> None:
 </figure>'''
                 )
             method_sections.append(
-                f'''<details class="method" style="--method-color:{escape(method_entries[0]['color'])}">
+                f'''<details class="method" style="--method-color:{escape(method_entries[0]['color'])}" open>
   <summary><span>{escape(method_entries[0]['method_label'])}</span><b>{ready_for_method}/{len(method_entries)} weights</b></summary>
   <div class="step-grid">{''.join(panels)}</div>
 </details>'''

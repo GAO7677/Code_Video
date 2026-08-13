@@ -442,8 +442,11 @@ GT_STC_FIRST10_COMPARISON_PORTAL_CARD = r'''
 GT_STC_DIRECT_MULTICASE_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-direct-attention-multicase?v=1"><div><span>52 / DIRECT ATTENTION MULTICASE</span><h2>5 Case × 3 Seed 配置选择</h2><p>对比 Top100、Bottom100、Random100 的 Context→Future、Future→Context 与双向控制；展示轨迹排行、七项 VBench、全部视频及 Pending 状态。</p></div><span class="go">打开批量配置选择台</span></a>
 '''
+GT_STC_HYPERPARAM_SEARCH_PORTAL_CARD = r'''
+<a class="card new" href="/gt-stc-hyperparam-search?v=1"><div><span>53 / GT-STC HYPERPARAMETER SEARCH</span><h2>First10 小 λ 轨迹–像素权衡</h2><p>001460 / object A / seed 47326；Region、Point、Combined × λ {0.005,0.01,0.02,0.05}，展示全部视频、CoTracker 轨迹门控和 GT 对象/背景 MSE。</p></div><span class="go">打开超参搜索页</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + TRAINING_FREE_M1_CONTROL_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + GT_STC_METHOD_COMPARISON_PORTAL_CARD + GT_STC_FIRST10_COMPARISON_PORTAL_CARD + GT_STC_DIRECT_MULTICASE_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + TRAINING_FREE_M1_CONTROL_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + GT_STC_METHOD_COMPARISON_PORTAL_CARD + GT_STC_FIRST10_COMPARISON_PORTAL_CARD + GT_STC_DIRECT_MULTICASE_PORTAL_CARD + GT_STC_HYPERPARAM_SEARCH_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -459,6 +462,7 @@ from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import d
 from AAA_my_test import gt_stc_guidance_dashboard
 from AAA_my_test import gt_stc_direct_attention_multicase_dashboard
 from AAA_my_test import gt_stc_first10_comparison_dashboard
+from AAA_my_test import gt_stc_hyperparam_search_dashboard
 from AAA_my_test import gt_stc_guidance_method_comparison_dashboard
 from AAA_my_test import gt_stc_guidance_results_dashboard
 
@@ -526,6 +530,12 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/gt-stc-hyperparam-search":
+            self.send_payload(
+                gt_stc_hyperparam_search_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
         if path == "/gt-stc-guidance-method-comparison":
             self.send_payload(
                 gt_stc_guidance_method_comparison_dashboard.page().encode("utf-8"),
@@ -545,6 +555,26 @@ class MetricsHandler(viewer.Handler):
                 allow_nan=False,
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/gt-stc-hyperparam-search/catalog":
+            payload = json.dumps(
+                gt_stc_hyperparam_search_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/gt-stc-hyperparam-search/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            result = gt_stc_hyperparam_search_dashboard.asset(
+                params.get("variant", [""])[0]
+            )
+            if result is None or not result.is_file():
+                self.send_error(404, "GT-STC hyperparameter-search asset is not ready")
+                return
+            viewer.send_file_with_range(self, result, "video/mp4")
             return
         if path == "/api/gt-stc-direct-attention-multicase/asset":
             from urllib.parse import parse_qs

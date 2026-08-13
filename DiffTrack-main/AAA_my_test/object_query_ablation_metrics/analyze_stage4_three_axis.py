@@ -314,122 +314,156 @@ def grouped_control_rows(
 
 def controlled_markdown(report: dict[str, Any]) -> str:
     coverage = report["coverage"]
+    planned = 999
+    quality_total = sum(int(row["total"]) for row in coverage["quality_gate"])
+    quality_failed = sum(int(row["failed"]) for row in coverage["quality_gate"])
+    quality_passed = quality_total - quality_failed
+
+    def pick(axis: str, metric: str, **filters: str) -> dict[str, Any]:
+        matches = [
+            row["contrast"]
+            for row in report[axis]
+            if row["metric"] == metric
+            and all(row.get(key) == value for key, value in filters.items())
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"Expected one Stage4 contrast for {axis}/{metric}/{filters}, got {len(matches)}"
+            )
+        return matches[0]
+
+    def value(metric: str, axis: str, **filters: str) -> str:
+        row = pick(axis, metric, **filters)
+        ci = row["bootstrap_95_ci"]
+        if metric in {
+            "track_loss",
+            "gate_failure",
+            "identity_failure",
+            "area_failure",
+            "mask_absence",
+            "disappearance",
+            "terminal_missing",
+            "pck10_failure",
+        }:
+            unit = " pp"
+            digits = 2
+        elif metric in {"center_ade", "center_fde", "other_ade"}:
+            unit = " D0"
+            digits = 3
+        elif metric == "velocity":
+            unit = " D0/frame"
+            digits = 3
+        else:
+            unit = ""
+            digits = 3
+        left = fmt(row["left_mean"], digits)
+        right = fmt(row["right_mean"], digits)
+        difference = fmt(row["difference"], digits)
+        low = fmt(ci[0], digits)
+        high = fmt(ci[1], digits)
+        return (
+            f"{left} vs {right}; Δ={difference}{unit}; CI [{low}, {high}]; "
+            f"{row['evidence']}; n={row['case_count']} cases/{row['unit_count']} pairs"
+        )
+
+    dose_filters = {"contrast_label": "Future − Past"}
     lines = [
-        "# Stage 4 控制变量结论",
+        "# Stage 4 结果与控制变量证据审计",
         "",
-        "## 怎么读",
+        "## 1. 当前覆盖与统计单位",
         "",
-        "每一行只改变一个变量，另外两个变量固定：",
+        f"- 计划新生成：**{planned}** 个 variants；当前纳入：**{coverage['records']} / {planned} ({100.0 * coverage['records'] / planned:.2f}%)**；尚缺 **{planned - coverage['records']}**。",
+        f"- 独立统计单位：**{len(coverage['cases'])} 个 case**。共有 **{len(coverage['case_seeds'])} 个嵌套 case-seed**；{coverage['records']} 个视频不是 {coverage['records']} 个独立样本。",
+        f"- 轨迹质量门控：通过 **{quality_passed}/{quality_total}**，失败 **{quality_failed}/{quality_total} ({100.0 * quality_failed / quality_total:.2f}%)**。ADE/FDE/速度只在通过者上计算；Track Loss 与 Disappearance 保留失败结果。",
+        f"- Head coverage：Top100={coverage['scope_counts'].get('top100', 0)}，Bottom100={coverage['scope_counts'].get('bottom100', 0)}，Random100={coverage['scope_counts'].get('random100_layer_matched_draw0', 0)}，All720=0。",
+        "- 聚合顺序：先在同一 case 内平均 object 和 seed，再对 case 等权；每个对比只改变 Head、时间方向、信息流三轴中的一个。",
         "",
-        "- Head实验：固定时间方向和M，只比较 Top100 与 Bottom100。",
-        "- 时间实验：固定Head和M，只比较 Future、Past、Same。",
-        "- 信息流实验：固定Head和时间方向，只比较 M1、M2、M3。",
-        "",
-        f"当前有 **{len(coverage['cases'])}个独立case、{len(coverage['case_seeds'])}个case-seed、{coverage['records']}个视频**。",
-        "`一致变化`仅表示当前3个case方向一致，是pilot证据，不是统计显著；`证据不足`表示case方向混合或可用case不足。",
-        "",
-        "## 指标对应什么影响",
-        "",
-        "| 影响类型 | 指标 | 数值变大表示什么 |",
-        "|---|---|---|",
-        "| 干预强度 | 删除AV总量 | 实际删除的ΣA·V contribution更多；不是输出质量 |",
-        "| 目标轨迹 | ADE、FDE、速度、PCK失败 | 目标对象相对Baseline的轨迹/速度变化更大 |",
-        "| 轨迹破坏 | 跟踪丢失、轨迹门控失败 | 对象无法被可靠追踪的比例更高 |",
-        "| 身份/形状 | 身份失败、面积异常 | 对象更不像Baseline，或面积明显异常 |",
-        "| 对象存活 | 空mask、对象消失、末段消失 | 对象不存在或在视频后段消失得更多 |",
-        "| 背景代理 | 对象外像素 | 对象之外区域的像素变化更大；不等同背景运动 |",
-        "| 跨对象轨迹 | 其他对象ADE | 消融目标A后，其他对象的轨迹变化更大 |",
-        "",
-        "## A. 只改变Head：Top100 vs Bottom100",
-        "",
-        "控制：时间方向、M和case/seed/object相同。",
-        "",
-        "| 固定时间 | 固定M | 删除量 Top vs Bottom | 当前一致变化的输出指标 | 证据不足的指标 |",
-        "|---|---|---|---|---|",
+        "| Case | Seed | 已纳入视频 |",
+        "|---|---:|---:|",
     ]
-    for row in grouped_control_rows(report["head"], ("direction", "flow")):
-        lines.append(
-            f"| {str(row['direction']).title()} | {row['flow']} | {row['dose']} {row['dose_evidence']} | "
-            f"{'；'.join(row['consistent']) or '无'} | {'、'.join(row['insufficient']) or '无'} |"
-        )
+    for row in coverage["records_by_case_seed"]:
+        lines.append(f"| `{row['case']}` | {row['seed']} | {row['records']} |")
 
     lines.extend(
         [
             "",
-            "### Head轴结论",
+            "> 证据等级：`🟡 3/3 同向`只表示三个 pilot case 方向一致，不等于统计显著。n=3 时双侧 exact sign-flip 的最小 p=0.25；当前 CI 是描述性 case-bootstrap CI，不进行 BH-FDR 或总体机制宣称。",
             "",
-            "1. 固定M1和任一时间方向时，Top100删除量都显著高于Bottom100；轨迹、身份和存活指标中，M1-Future最一致。",
-            "2. 固定M2/M3时，Top100删除量反而低于Bottom100；因此不能笼统说Top100比Bottom100重要。",
-            "3. 当前最准确的解释是：Top100偏向R→R通信，Bottom100偏向C→R和R→C通信。",
+            "## 2. 冻结主问题 T1–T3",
             "",
-            "## B. 只改变时间方向：Future vs Past vs Same",
+            "表中均为 Left vs Right；正 Δ 表示 Left 相对同 seed Baseline 的干预效应更大。",
             "",
-            "控制：Head、M和case/seed/object相同。下表列出三组完整两两比较。",
+            "| 主问题 | 指标 | 严格配对结果 | 判定 |",
+            "|---|---|---|---|",
+            f"| T1 · Top100-M1 Future vs Past | Center-ADE | {value('center_ade', 'temporal', scope='top100', flow='M1', **dose_filters)} | **不支持 Future 更强**：均值反而更小，且 case 方向混合。 |",
+            f"| T1 · Top100-M1 Future vs Past | Track Loss | {value('track_loss', 'temporal', scope='top100', flow='M1', **dose_filters)} | 方向混合，不能形成轨迹破坏结论。 |",
+            f"| T1 · Top100-M1 Future vs Past | Disappearance | {value('disappearance', 'temporal', scope='top100', flow='M1', **dose_filters)} | 方向混合，不能形成对象存活结论。 |",
+            f"| T1 · Top100-M1 Future vs Past | 删除 AV 总量 | {value('removed_value_norm_query_sum', 'temporal', scope='top100', flow='M1', **dose_filters)} | Future 删除量在 3/3 cases 更大，但没有转化成稳定 outcome 差异。 |",
+            f"| T2 · Top100-M2 Future vs Past | Velocity Error | {value('velocity', 'temporal', scope='top100', flow='M2', **dose_filters)} | 方向混合；当前不能支持更强物理/轨迹效应。 |",
+            f"| T2 · Top100-M2 Future vs Past | Identity Failure | {value('identity_failure', 'temporal', scope='top100', flow='M2', **dose_filters)} | 三个 case 非负，属于**身份/存活 pilot 信号**；不是 GT 物理证据。 |",
+            f"| T2 · Top100-M2 Future vs Past | Disappearance | {value('disappearance', 'temporal', scope='top100', flow='M2', **dose_filters)} | 三个 case 非负，属于**身份/存活 pilot 信号**。 |",
+            f"| T2 · Top100-M2 Future vs Past | 删除 AV 总量 | {value('removed_value_norm_query_sum', 'temporal', scope='top100', flow='M2', **dose_filters)} | Future 删除量更大，时间方向与 dose 仍混杂。 |",
+            f"| T3 · Top100-M3 Future vs Past | Other-object ADE | {value('other_ade', 'temporal', scope='top100', flow='M3', **dose_filters)} | 方向混合，**不支持稳定跨对象传播**。 |",
+            f"| T3 · Top100-M3 Future vs Past | Outside MAE | {value('outside_static', 'temporal', scope='top100', flow='M3', **dose_filters)} | 方向混合；且像素变化不能等同背景运动。 |",
+            f"| T3 · Top100-M3 Future vs Past | 删除 AV 总量 | {value('removed_value_norm_query_sum', 'temporal', scope='top100', flow='M3', **dose_filters)} | Future 删除量更大，但 cross-object outcome 没有稳定同向。 |",
             "",
-            "| 固定Head | 固定M | 唯一变化 | 删除量 Left vs Right | 当前一致变化的输出指标 | 证据不足的指标 |",
-            "|---|---|---|---|---|---|",
-        ]
-    )
-    for row in grouped_control_rows(
-        report["temporal"], ("scope", "flow", "contrast_label")
-    ):
-        lines.append(
-            f"| {base.SCOPE_LABELS[row['scope']]} | {row['flow']} | {row['contrast_label']} | "
-            f"{row['dose']} {row['dose_evidence']} | {'；'.join(row['consistent']) or '无'} | "
-            f"{'、'.join(row['insufficient']) or '无'} |"
-        )
-
-    lines.extend(
-        [
+            "## 3. 三轴控制变量结论",
             "",
-            "### 时间轴结论",
+            "### 3.1 只改变 Head group",
             "",
-            "1. Future/Past/Same没有跨Head和M都成立的固定强弱顺序。",
-            "2. Top100-M2和Top100-M3中，Future相对Past一致增加身份失败和对象消失；但轨迹/速度或其他对象ADE没有一致变化。",
-            "3. Bottom100-M1中方向相反：Future相对Past的一致变化是身份失败和消失减少。说明时间效应依赖Head group。",
-            "4. 三个方向删除量不等；没有dose matching之前，不能把差异完全归因于时间方向。",
+            "| 固定条件 | Dose | 轨迹/跟踪 | 身份/存活 | 结论 |",
+            "|---|---|---|---|---|",
+            f"| M1-Future，Top100 vs Bottom100 | {value('removed_value_norm_query_sum', 'head', direction='future', flow='M1')} | ADE: {value('center_ade', 'head', direction='future', flow='M1')}<br>Velocity: {value('velocity', 'head', direction='future', flow='M1')}<br>Track Loss: {value('track_loss', 'head', direction='future', flow='M1')} | Identity: {value('identity_failure', 'head', direction='future', flow='M1')}<br>Disappearance: {value('disappearance', 'head', direction='future', flow='M1')} | 当前最稳定的 Top100>Bottom100 组合；但 Top100 dose 约为 Bottom100 的 7.32×，不能归因为单位信息更关键。 |",
+            f"| M2-Same，Top100 vs Bottom100 | {value('removed_value_norm_query_sum', 'head', direction='same', flow='M2')} | Track Loss: {value('track_loss', 'head', direction='same', flow='M2')} | Identity: {value('identity_failure', 'head', direction='same', flow='M2')}<br>Disappearance: {value('disappearance', 'head', direction='same', flow='M2')} | Bottom100 删除量和破坏都更大，反证“Top100 总是更重要”。 |",
             "",
-            "## C. 只改变信息流：M1 vs M2 vs M3",
+            "**Head 轴结论：** latest3350 Top100 对 M1/R→R 更富集；Bottom100 对部分 M2/C→R 更富集。现有结果支持的是**信息流选择性**，不是 Top100 的全局优越性。两组比较均存在强 dose 差异，尚无每单位贡献的因果结论。",
             "",
-            "控制：Head、时间方向和case/seed/object相同。下表列出三组完整两两比较。",
+            "### 3.2 只改变时间方向",
             "",
-            "| 固定Head | 固定时间 | 唯一变化 | 删除量 Left vs Right | 当前一致变化的输出指标 | 证据不足的指标 |",
-            "|---|---|---|---|---|---|",
-        ]
-    )
-    for row in grouped_control_rows(
-        report["flow"], ("scope", "direction", "contrast_label")
-    ):
-        lines.append(
-            f"| {base.SCOPE_LABELS[row['scope']]} | {str(row['direction']).title()} | "
-            f"{row['contrast_label']} | {row['dose']} {row['dose_evidence']} | "
-            f"{'；'.join(row['consistent']) or '无'} | {'、'.join(row['insufficient']) or '无'} |"
-        )
-
-    lines.extend(
-        [
+            "| 固定条件 | Dose · Future vs Past | 轨迹/跟踪 | 身份/存活 | 结论 |",
+            "|---|---|---|---|---|",
+            f"| Top100-M1 | {value('removed_value_norm_query_sum', 'temporal', scope='top100', flow='M1', **dose_filters)} | ADE: {value('center_ade', 'temporal', scope='top100', flow='M1', **dose_filters)}<br>Track: {value('track_loss', 'temporal', scope='top100', flow='M1', **dose_filters)} | Disappearance: {value('disappearance', 'temporal', scope='top100', flow='M1', **dose_filters)} | outcome 方向混合，是“Future 总更重要”的直接反例。 |",
+            f"| Top100-M2 | {value('removed_value_norm_query_sum', 'temporal', scope='top100', flow='M2', **dose_filters)} | Velocity: {value('velocity', 'temporal', scope='top100', flow='M2', **dose_filters)} | Identity: {value('identity_failure', 'temporal', scope='top100', flow='M2', **dose_filters)}<br>Disappearance: {value('disappearance', 'temporal', scope='top100', flow='M2', **dose_filters)} | 只有身份/存活出现初步 Future>Past；轨迹证据不足。 |",
+            f"| Bottom100-M1 | {value('removed_value_norm_query_sum', 'temporal', scope='bottom100', flow='M1', **dose_filters)} | Velocity: {value('velocity', 'temporal', scope='bottom100', flow='M1', **dose_filters)}<br>Track: {value('track_loss', 'temporal', scope='bottom100', flow='M1', **dose_filters)} | Identity: {value('identity_failure', 'temporal', scope='bottom100', flow='M1', **dose_filters)}<br>Disappearance: {value('disappearance', 'temporal', scope='bottom100', flow='M1', **dose_filters)} | 多项反而 Future<Past，说明时间效应依赖 Head×Flow。 |",
             "",
-            "### 信息流轴结论",
+            "**时间轴结论：** 没有跨 Head group 和 M1/M2/M3 都成立的 Future/Past/Same 排序。当前只能报告局部交互；不能把 `Future` 普遍解释为状态传播主通道。",
             "",
-            "1. Top100-Same中，M1相对M2/M3一致增加ROI变化、跟踪丢失、身份失败、对象消失和对象外像素变化；说明M1与对象自身稳定性关系最明确。",
-            "2. Top100-Past中，M1相对M2/M3也一致增加身份失败和对象消失；相对M3还增加ADE。",
-            "3. Top100-Future中，M1虽然均值最大，但M1与M2/M3的多数输出指标在case间方向不一致，所以不能仅凭均值下结论。",
-            "4. Bottom100-Future中，M2相对M1一致增加轨迹、速度、身份、消失和对象外像素变化；Bottom100-Past中M3相对M2更影响身份/存活。",
-            "5. M1/M2/M3的query集合与删除量不同，flow比较仍需结合dose解释。",
+            "### 3.3 只改变信息流 M1/M2/M3",
             "",
-            "## 最简结论",
+            "| 固定条件 | Dose | 轨迹/跟踪 | 身份/存活 | 结论 |",
+            "|---|---|---|---|---|",
+            f"| Top100-Same，M1 vs M2 | {value('removed_value_norm_query_sum', 'flow', scope='top100', direction='same', contrast_label='M1 − M2')} | Track: {value('track_loss', 'flow', scope='top100', direction='same', contrast_label='M1 − M2')} | Identity: {value('identity_failure', 'flow', scope='top100', direction='same', contrast_label='M1 − M2')}<br>Disappearance: {value('disappearance', 'flow', scope='top100', direction='same', contrast_label='M1 − M2')} | M1 对对象身份/存活的关联最稳定；但 M1 dose 约为 M2 的 5.46×。 |",
+            f"| Top100-Same，M1 vs M3 | {value('removed_value_norm_query_sum', 'flow', scope='top100', direction='same', contrast_label='M1 − M3')} | Track: {value('track_loss', 'flow', scope='top100', direction='same', contrast_label='M1 − M3')} | Identity: {value('identity_failure', 'flow', scope='top100', direction='same', contrast_label='M1 − M3')}<br>Disappearance: {value('disappearance', 'flow', scope='top100', direction='same', contrast_label='M1 − M3')} | 同样支持 M1 与对象自身稳定性的关系；仍受 dose 混杂。 |",
+            f"| Bottom100-Future，M1 vs M2 | {value('removed_value_norm_query_sum', 'flow', scope='bottom100', direction='future', contrast_label='M1 − M2')} | ADE: {value('center_ade', 'flow', scope='bottom100', direction='future', contrast_label='M1 − M2')}<br>Velocity: {value('velocity', 'flow', scope='bottom100', direction='future', contrast_label='M1 − M2')}<br>Track: {value('track_loss', 'flow', scope='bottom100', direction='future', contrast_label='M1 − M2')} | Identity: {value('identity_failure', 'flow', scope='bottom100', direction='future', contrast_label='M1 − M2')}<br>Disappearance: {value('disappearance', 'flow', scope='bottom100', direction='future', contrast_label='M1 − M2')} | 负 Δ 表示 M2 更强：Bottom100-Future 的 C→R 对目标轨迹/存活有稳定 pilot 影响；M2 dose 约为 M1 的 5.72×。 |",
             "",
-            "| 问题 | 控制变量后的回答 |",
-            "|---|---|",
-            "| Top100是否总比Bottom100重要？ | 否。Top100主要在M1更强；Bottom100在M2/M3删除量更大。 |",
-            "| 哪个组合最稳定影响对象？ | Top100-M1-Future：轨迹、跟踪、身份、消失均相对Bottom100更强。 |",
-            "| Future是否总比Past重要？ | 否。结果依赖Head和M；Top-M2/M3的身份/消失偏Future，Bottom-M1反而偏Past。 |",
-            "| M1主要影响什么？ | 当前最一致的是对象自身轨迹连续性、身份和存活；纯外观仍缺complete25证据。 |",
-            "| M2主要影响什么？ | Bottom100-Future/Same出现较强目标对象变化，但GT物理交互指标不足，暂不能定义为物理约束输入。 |",
-            "| M3主要影响什么？ | 会影响部分身份/存活指标，但Other-object ADE不稳定，尚不能证明稳定跨对象传播。 |",
-            "| 哪些结论证据不足？ | Future/Past/Same统一排序、纯外观、背景运动、跨对象传播、物理正确性。 |",
+            "**Flow 轴结论：** M1/R→R 与对象自身身份、存活和部分轨迹连续性的关系最清楚；M2/C→R 在 Bottom100-Future 条件下也强烈影响目标轨迹与存活。M3/R→C 的 Other-object ADE 未形成稳定方向，因此当前不能宣称已经证明对象状态向其他对象传播。",
             "",
-            "完整原始数值和cases/paired units见 `STAGE4_THREE_AXIS_FULL_TABLES.md`。",
+            "## 4. 能下与不能下的结论",
+            "",
+            "| 结论 | 当前证据 | 证据状态 |",
+            "|---|---|---|",
+            "| latest3350 Top100 在 M1/R→R 上比 Bottom100 删除更多 contribution，并造成更强对象破坏 | M1-Future 的 dose、ADE、velocity、track、identity、disappearance 均为 3/3 同向 | 🟡 pilot 支持；强 dose 混杂 |",
+            "| Top100 总比 Bottom100 重要 | M2-Same 中 Bottom100 的 dose、track、identity、disappearance 更高 | 🔴 被当前结果反证 |",
+            "| Future 普遍比 Past/Same 重要 | Top100-M1 方向混合；Bottom100-M1 多项 Future<Past | 🔴 不支持 |",
+            "| M1 专门编码对象身份/轨迹 | Top100-Same 下 M1 对身份/存活较强，但其 dose 同时更大 | 🟡 有必要性关联；🔴 尚无语义专属性 |",
+            "| M2 是物理交互输入 | Bottom100-Future 改变目标轨迹/存活，但当前没有合格的完整 GT contact/post-contact 主检验 | 🔴 证据不足 |",
+            "| M3 稳定把对象状态广播给其他对象 | T3 Other-object ADE 与 Outside MAE 均为 case 方向混合 | 🔴 证据不足 |",
+            "| 纯外观变化已有跨 case 结论 | complete25 目前只覆盖同一独立 case 的两个 seed | 🔴 证据不足 |",
+            "| 当前结果具有总体统计显著性 | 只有 3 个独立 case，且 999 矩阵尚未完成 | 🔴 不允许宣称 |",
+            "",
+            "## 5. 后续 Gate",
+            "",
+            "1. 先补齐剩余 315 个 variants，特别是 `000331`、Random100、All-time 和 All720 sentinel，重新冻结 Stage 4A 报告。",
+            "2. 用 Stage 4A 的 case-level 方差和预先给定 MDE 做 power 分析；在选择 Stage 4B case 数前人工确认。",
+            "3. Stage 4B 使用未参与当前页面挑选的 held-out cases；确认性统计以 case 为独立单位。",
+            "4. 若要回答纯外观、背景运动或物理正确性，必须分别补足跨 case complete25、背景运动指标和 simulator GT 交互指标，不能用 ROI/Outside MAE 替代。",
+            "",
+            "## 6. 可追溯入口",
+            "",
+            "- 全部三轴数值：`STAGE4_THREE_AXIS_FULL_TABLES.md`",
+            "- 原始统计 JSON：`three_axis_report.json`",
+            "- 预注册主问题报告：`STAGE4_EXISTING_CASES_ANALYSIS.md` 与 `report.json`",
+            "- 代表性视频：`http://localhost:8092/object-query-information-flow-stage4-representatives?v=2`",
         ]
     )
     return "\n".join(lines)

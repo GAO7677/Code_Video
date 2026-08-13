@@ -2,8 +2,8 @@
 
 ## 0. 文档状态
 
-- 状态：**Gate 0、Stage 0–3 已完成；Stage 3 最终 discovery 报告已冻结；Stage 4 尚未启动**。
-- 下一步不是直接提交时间消融矩阵，而是先通过 Stage 4.0 的 directional-dose、token-universe、指标 smoke 和 inventory 门槛。
+- 状态：**Gate 0、Stage 0–3 已完成；Stage 3 最终 discovery 报告已冻结；Stage 4.0 已通过，Stage 4A 已完成 684/999（68.47%）个计划新结果，仍属未完成的 3-case pilot**。
+- 下一步：先补齐 Stage 4A 剩余 315 个结果并重新冻结统计；随后根据 case-level 方差、MDE 和 power 曲线人工决定是否进入 Stage 4B。当前不得把 Stage 4A 写成总体显著或完整机制证明。
 - 目标：在新的 `latest3350` PCK head 排名下，区分 `R→R`、`C→R`、`R→C` 三类 self-attention 信息流更主要地影响对象轨迹、对象外观，还是对象外区域，并比较 Top100、Bottom100、随机匹配 100 heads 与 All720。
 - 结论边界：`R` 是由追踪点构成的**稀疏 object-token tube**，不是完整对象 mask；因此结论首先针对该 tube 表示，不能直接外推成“完整对象区域的全部信息流”。
 
@@ -15,6 +15,8 @@
 - 待验证假设：`HYPOTHESES_TO_VALIDATE.md`
 - Training-Free M1 control：`training_free_m1_control/plan.md`
 - Training-Free M1 可视化：`http://localhost:8092/training-free-m1-control?v=1`
+- Stage 4 详细证据审计：`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage4_current_analysis/STAGE4_CONTROLLED_VARIABLE_CONCLUSIONS.md`
+- Stage 4 代表性视频：`http://localhost:8092/object-query-information-flow-stage4-representatives?v=2`
 - 一键补指标：`bench_missing.sh`
 
 ---
@@ -312,10 +314,13 @@ Stage 4 仍然是 discovery/pilot。它最多说明某类已删除 contribution 
 
 任何一项失败，停止 Stage 4A，不允许用缺失 dose 的输出先做机制结论。
 
-当前预检状态（2026-08-12）：CPU 代数、9 个 directional exact-dose、dose coverage hard-fail 和
-token-universe hard-fail 测试已经通过；实现协议升级为
-`attention_matrix_ablation_temporal_direction_v2_dose`。真实 GPU smoke 与 LPIPS/shape 全链路尚未执行，
-因此 Stage 4.0 **尚未 PASS**。
+实际预检结果（2026-08-12）：**PASS**。CPU 代数、9 个 directional exact-dose、dose coverage hard-fail、
+token-universe hard-fail 和 inventory 均通过；实现协议升级为
+`attention_matrix_ablation_temporal_direction_v2_dose`。真实 GPU smoke 日志
+`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/logs/stage4_20260812T164906Z/smoke.log`
+明确记录 `[stage4-smoke-pass]`，视频、manifest、dose 与指标链路可读。
+center-aligned complete25 当前只覆盖 `0613pybullet_sample_001460_w002` 的 seeds `13248/47326`；它足以验证
+链路可运行，但只有 **1 个独立 case**，不能支撑跨 case 的纯外观结论。
 
 #### 4.2 Stage 4A — 三 case 机制 pilot
 
@@ -398,6 +403,61 @@ Stage 4A 完成后，用 case-level paired `Future−Past` 差异估计方差，
 
 少于 8 个独立 cases 一律保持 pilot；8 只是下限，不是自动充分样本量。Stage 4B 才使用未参与页面挑选的
 held-out cases/seeds。若可用 case 数达不到 power 需求，明确停止在 exploratory，不追加样本直到显著。
+
+#### 4.6 Stage 4A 当前结果与事实核查（2026-08-13）
+
+以下统计由当前 manifest、exact dose、Fast、Trajectory 和 Survival 报告重新读取生成。case 是最高独立单位；
+seed 和 object 先在 case 内平均，再对 case 等权。95% case-bootstrap CI 只作描述性区间。由于只有 3 个独立
+case，双侧 exact sign-flip 的最小 p 值为 0.25，因此本节不报告显著性或 BH-FDR 结论。
+
+##### 执行与指标覆盖
+
+| 项目 | 已完成 | 计划 | 事实边界 |
+|---|---:|---:|---|
+| 全部新 Stage 4 variants | 684 | 999 | 68.47%；尚缺 315 |
+| Top100 / Bottom100 / Random100 | 243 / 235 / 206 | — | 当前没有 All720 结果 |
+| Same / Future / Past | 228 / 229 / 227 | directional 891 | 当前没有 81 个 All-time 新结果 |
+| M1 / M2 / M3 | 229 / 228 / 227 | — | 三个 flow 接近均衡，但不是完整矩阵 |
+| Fast / exact dose / Survival | 684 / 684 / 684 | 684 个已生成结果 | 已生成结果均有记录 |
+| 轨迹门控通过 / 失败 | 466 / 218 | 684 | ADE/FDE/速度只在 466 个通过者上计算；失败保留在 Track Loss/Disappearance 中 |
+| Other-object ADE 有效 | 521 | 684 | 只在定义成立且可追踪的 single-object 条件中有限 |
+
+当前实际只有 **3 个独立 case、7 个嵌套 case-seed**：`000331` 仅 seed `13248`（46 个结果），
+`001460` 有 seeds `13248/47326/90094`（233 个结果），ball-block 有三个 seeds（405 个结果）。
+684 个视频不能被当成 684 个独立样本。
+
+##### 冻结主问题 T1–T3
+
+| ID | 严格控制变量比较 | 关键证据 | 当前判定 |
+|---|---|---|---|
+| T1 | Top100-M1，Future vs Past | Center-ADE `0.039 vs 0.066 D0`，Δ=`−0.027`，CI `[−0.083, 0.001]`，case 方向混合；Future dose Δ=`+63.503`，3/3 cases 更大 | **不支持 Future 的轨迹效应更强**。删除量更大未稳定转化为 outcome 差异 |
+| T2 | Top100-M2，Future vs Past | Velocity Δ=`−0.004 D0/frame`，CI `[−0.021, 0.009]`，方向混合；Identity Failure Δ=`+5.82 pp`、Disappearance Δ=`+3.64 pp`，3/3 cases 非负；Future dose Δ=`+48.887` | 只支持**身份/存活的 pilot 信号**；不支持 GT 物理或稳定轨迹结论，且受 dose 混杂 |
+| T3 | Top100-M3，Future vs Past | Other-object ADE Δ=`+0.004 D0`，CI `[−0.018, 0.030]`；Outside MAE Δ=`+0.117`，CI `[−0.007, 0.292]`；均为 case 方向混合 | **不支持稳定跨对象传播**；Outside 像素变化也不能解释为背景运动 |
+
+##### 三轴控制变量结论
+
+| 只改变的变量 | 固定条件与比较 | 对哪些指标产生影响 | 可以下的结论 | 主要限制 |
+|---|---|---|---|---|
+| Head group | M1-Future：Top100 vs Bottom100 | dose `7.32×`；ADE Δ=`+0.072 D0`、Velocity Δ=`+0.024 D0/frame`、Track Loss Δ=`+27.97 pp`、Identity Failure Δ=`+23.33 pp`、Disappearance Δ=`+28.27 pp`；均为 3/3 cases 同向 | 当前最稳定的 Top100>Bottom100 组合；latest3350 Top100 对 M1/R→R contribution 更富集 | 强 dose 混杂，不能说每单位信息更关键 |
+| Head group | M2-Same：Top100 vs Bottom100 | Top/Bottom dose=`0.27×`；Track Loss Δ=`−10.35 pp`、Identity Failure Δ=`−16.96 pp`、Disappearance Δ=`−15.12 pp`；3/3 同向 | Bottom100 在该 C→R 条件下更强，反证“Top100 总是更重要” | 同样伴随 dose 差异 |
+| 时间方向 | Top100-M1：Future vs Past | ADE、Track Loss、Disappearance 的 case 方向均混合 | Future 不是普遍更强的状态传播通道 | 只有 3 cases；Future dose 更大 |
+| 时间方向 | Top100-M2：Future vs Past | Identity Failure `+5.82 pp`、Disappearance `+3.64 pp` 为 3/3 非负；Velocity 方向混合 | 仅身份/存活出现初步 Future>Past | 无 GT interaction 主指标；dose 未匹配 |
+| 时间方向 | Bottom100-M1：Future vs Past | Velocity `−0.006 D0/frame`、Track Loss `−6.81 pp`、Identity Failure `−4.07 pp`、Disappearance `−3.84 pp`，3/3 非正 | 多项反而 Future<Past，说明时间效应依赖 Head×Flow | pilot，不能总体外推 |
+| 信息流 | Top100-Same：M1 vs M2/M3 | M1 相比 M2：Track Loss `+13.93 pp`、Identity Failure `+19.32 pp`、Disappearance `+16.99 pp`；相比 M3 也为 3/3 同向 | M1/R→R 与对象自身身份和存活的关系最清楚 | M1 dose 分别约为 M2/M3 的 `5.46×/3.66×`，不能宣称语义专属性 |
+| 信息流 | Bottom100-Future：M1 vs M2 | M2 比 M1 的 ADE 高 `0.021 D0`、Velocity 高 `0.009 D0/frame`、Track Loss 高 `10.64 pp`、Identity Failure 高 `7.63 pp`、Disappearance 高 `6.21 pp`；3/3 同向或非负 | M2/C→R 在该条件下稳定影响目标轨迹和存活 | M2 dose 约为 M1 的 `5.72×`；不能直接称为物理交互编码 |
+
+##### 当前不能下的结论
+
+1. 不能说 Top100 在所有 M1/M2/M3 上都比 Bottom100 重要。
+2. 不能给 Future/Past/Same 一个跨 Head、跨 Flow 的统一强弱排序。
+3. 不能仅凭 knockout 证明 M1/M2/M3 分别“专门编码”身份、物理交互或跨对象广播。
+4. 不能用 frozen-ROI MAE 代替纯外观，也不能用 Outside MAE 代替背景运动；complete25 目前仅有 1 个独立 case。
+5. 不能宣称物理正确性改善/恶化：当前主结果是 vs Baseline 干预效应，T2 的完整 GT contact/post-contact 检验尚不可用。
+6. 不能宣称总体统计显著：矩阵未完成，且 n=3 independent cases 明显不足。
+
+详细、可复现的控制变量证据审计见
+`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage4_current_analysis/STAGE4_CONTROLLED_VARIABLE_CONCLUSIONS.md`；
+完整数值表见同目录 `STAGE4_THREE_AXIS_FULL_TABLES.md`，原始统计见 `three_axis_report.json`。
 
 ### Stage 5 — M2/M3 双向边界交互（2×2）
 
@@ -520,12 +580,13 @@ held-out cases/seeds。若可用 case 数达不到 power 需求，明确停止�
 Gate 0 的 Random100、seed split、held-out 策略、probe/rescue 范围和 ranking 稳定阈值已经确认并执行，
 不再作为“待确认问题”重复列出。原始冻结选择保存在 `experiment_spec_latest3350.json`，不得覆盖。
 
-Stage 4 的增补冻结在 `experiment_spec_stage4_temporal_v1.json`。下一次人工确认发生在：
+Stage 4 的增补冻结在 `experiment_spec_stage4_temporal_v1.json`。Stage 4.0 已通过，Stage 4A 已启动但只完成
+684/999；因此第一道执行前 Gate 已关闭。下一次人工确认只发生在：
 
-1. Stage 4.0 CPU、真实 GPU smoke、LPIPS/shape 和 inventory 全部通过之后、启动 Stage 4A 之前；
-2. Stage 4A 完成并给出方差/MDE/power 曲线之后、选择 Stage 4B case 数之前。
+1. 补齐 Stage 4A、重新冻结完整 3-case 报告并审计缺失值之后；
+2. 给出 case-level 方差、MDE 和 power 曲线之后、选择 Stage 4B 的独立 held-out case 数之前。
 
-截至本文当前版本，不自动启动 Stage 4A GPU 矩阵。
+截至本文当前版本，不自动启动 Stage 4B；当前 3-case 结果只作 pilot/discovery。
 
 ---
 

@@ -2,12 +2,25 @@
 set -euo pipefail
 
 TF_GPU="${TF_GPU:-1}"
+TF_SHARD_COUNT="${TF_SHARD_COUNT:-1}"
+TF_SHARD_INDEX="${TF_SHARD_INDEX:-0}"
+TF_UNIT_INDICES="${TF_UNIT_INDICES:-}"
 if [[ "${TF_GPU}" == "4" ]]; then
   echo "Refusing to run on forbidden GPU 4." >&2
   exit 2
 fi
 if [[ "${CUDA_VISIBLE_DEVICES:-}" != "${TF_GPU}" ]]; then
   echo "Refusing to run: set CUDA_VISIBLE_DEVICES=${TF_GPU} exactly." >&2
+  exit 2
+fi
+if ! [[ "${TF_SHARD_COUNT}" =~ ^[1-9][0-9]*$ ]] ||
+   ! [[ "${TF_SHARD_INDEX}" =~ ^[0-9]+$ ]] ||
+   (( TF_SHARD_INDEX >= TF_SHARD_COUNT )); then
+  echo "Invalid shard: index=${TF_SHARD_INDEX}, count=${TF_SHARD_COUNT}." >&2
+  exit 2
+fi
+if [[ -n "${TF_UNIT_INDICES}" ]] && ! [[ "${TF_UNIT_INDICES}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+  echo "Invalid TF_UNIT_INDICES=${TF_UNIT_INDICES}; expected comma-separated integers." >&2
   exit 2
 fi
 
@@ -46,56 +59,61 @@ trap tf0_failed ERR
   test_top100_m1_perturbed_attention_guidance.py \
   training_free_m1_control/test_m1_soft_scaling.py
 
-rm -f "${OUTPUT_ROOT}/tf0/PASS.json" "${OUTPUT_ROOT}/tf0/FAIL.json"
+if [[ -f "${OUTPUT_ROOT}/tf0/PASS.json" && ! -f "${OUTPUT_ROOT}/tf0/FAIL.json" ]]; then
+  echo "[$(date -u +%FT%TZ)] Reusing completed TF-0 gate."
+  "${PYTHON_BIN}" "${CONTROL_DIR}/validate_tf0.py" --root "${OUTPUT_ROOT}"
+else
+  rm -f "${OUTPUT_ROOT}/tf0/PASS.json" "${OUTPUT_ROOT}/tf0/FAIL.json"
 
-SMOKE_CASE="0613pybullet_sample_001460_w002"
-"${PYTHON_BIN}" "${SOFT_RUNNER}" \
-  --case "${SMOKE_CASE}" \
-  --seed 47326 \
-  --region object_A \
-  --alpha 0 \
-  --reference-mode clean \
-  --manifest-path "${MANIFEST}" \
-  --head-ranking-path "${RANKING}" \
-  --tracks-root "${TRACKS}" \
-  --output-root "${OUTPUT_ROOT}/soft_scaling" \
-  --device cuda \
-  --overwrite
-
-"${PYTHON_BIN}" "${SOFT_RUNNER}" \
-  --case "${SMOKE_CASE}" \
-  --seed 47326 \
-  --region object_A \
-  --alpha -1 \
-  --reference-mode stage3 \
-  --manifest-path "${MANIFEST}" \
-  --head-ranking-path "${RANKING}" \
-  --tracks-root "${TRACKS}" \
-  --output-root "${OUTPUT_ROOT}/soft_scaling" \
-  --device cuda \
-  --record-dose \
-  --overwrite
-
-for alpha in 0 -1; do
-  extra_args=()
-  if [[ "${alpha}" == "-1" ]]; then
-    extra_args+=(--record-dose --audit-decomposition)
-  fi
+  SMOKE_CASE="0613pybullet_sample_001460_w002"
   "${PYTHON_BIN}" "${SOFT_RUNNER}" \
     --case "${SMOKE_CASE}" \
     --seed 47326 \
     --region object_A \
-    --alpha "${alpha}" \
+    --alpha 0 \
+    --reference-mode clean \
     --manifest-path "${MANIFEST}" \
     --head-ranking-path "${RANKING}" \
     --tracks-root "${TRACKS}" \
     --output-root "${OUTPUT_ROOT}/soft_scaling" \
     --device cuda \
-    --overwrite \
-    "${extra_args[@]}"
-done
+    --overwrite
 
-"${PYTHON_BIN}" "${CONTROL_DIR}/validate_tf0.py" --root "${OUTPUT_ROOT}"
+  "${PYTHON_BIN}" "${SOFT_RUNNER}" \
+    --case "${SMOKE_CASE}" \
+    --seed 47326 \
+    --region object_A \
+    --alpha -1 \
+    --reference-mode stage3 \
+    --manifest-path "${MANIFEST}" \
+    --head-ranking-path "${RANKING}" \
+    --tracks-root "${TRACKS}" \
+    --output-root "${OUTPUT_ROOT}/soft_scaling" \
+    --device cuda \
+    --record-dose \
+    --overwrite
+
+  for alpha in 0 -1; do
+    extra_args=()
+    if [[ "${alpha}" == "-1" ]]; then
+      extra_args+=(--record-dose --audit-decomposition)
+    fi
+    "${PYTHON_BIN}" "${SOFT_RUNNER}" \
+      --case "${SMOKE_CASE}" \
+      --seed 47326 \
+      --region object_A \
+      --alpha "${alpha}" \
+      --manifest-path "${MANIFEST}" \
+      --head-ranking-path "${RANKING}" \
+      --tracks-root "${TRACKS}" \
+      --output-root "${OUTPUT_ROOT}/soft_scaling" \
+      --device cuda \
+      --overwrite \
+      "${extra_args[@]}"
+  done
+
+  "${PYTHON_BIN}" "${CONTROL_DIR}/validate_tf0.py" --root "${OUTPUT_ROOT}"
+fi
 trap - ERR
 
 cases=(
@@ -107,8 +125,19 @@ seeds=(47326 42)
 alphas=(-1 -0.5 0 0.5 1)
 lambdas=(-1 -0.5)
 
+unit_index=0
 for case_name in "${cases[@]}"; do
   for seed_value in "${seeds[@]}"; do
+    current_unit_index=${unit_index}
+    unit_index=$((unit_index + 1))
+    if [[ -n "${TF_UNIT_INDICES}" ]]; then
+      if [[ ",${TF_UNIT_INDICES}," != *",${current_unit_index},"* ]]; then
+        continue
+      fi
+    elif (( current_unit_index % TF_SHARD_COUNT != TF_SHARD_INDEX )); then
+        continue
+    fi
+    echo "[$(date -u +%FT%TZ)] shard ${TF_SHARD_INDEX}/${TF_SHARD_COUNT}: ${case_name} seed=${seed_value}"
     for alpha in "${alphas[@]}"; do
       "${PYTHON_BIN}" "${SOFT_RUNNER}" \
         --case "${case_name}" \

@@ -2,9 +2,9 @@
 set -euo pipefail
 
 TF_GPU="${TF_GPU:-1}"
-BLOCKING_SESSION="${TF_BLOCKING_SESSION:-gt_stc_hyperparam_stage1a_gpu12}"
+BLOCKING_SESSION="${TF_BLOCKING_SESSION-gt_stc_hyperparam_stage1a_gpu12}"
 RUNNER="/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/object_query_ablation_metrics/training_free_m1_control/run_tf0_then_tf1_gpu1.sh"
-MAX_USED_MIB=1024
+MAX_USED_MIB="${TF_MAX_USED_MIB:-1024}"
 STABLE_POLLS_REQUIRED=3
 POLL_SECONDS=30
 
