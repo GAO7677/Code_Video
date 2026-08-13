@@ -2,8 +2,8 @@
 
 ## 0. 文档状态
 
-- 状态：**Gate 0、Stage 0–3 已完成；Stage 3 最终 discovery 报告已冻结；Stage 4.0 已通过，Stage 4A 已完成 684/999（68.47%）个计划新结果，仍属未完成的 3-case pilot**。
-- 下一步：先补齐 Stage 4A 剩余 315 个结果并重新冻结统计；随后根据 case-level 方差、MDE 和 power 曲线人工决定是否进入 Stage 4B。当前不得把 Stage 4A 写成总体显著或完整机制证明。
+- 状态：**Gate 0、Stage 0–3 已完成，Stage 3 discovery 报告已冻结；Stage 4 是 latent-video 时间方向 pilot；Stage 5 已按 2026-08-13 确认改为多对象块对角联合消融，尚未实现或启动**。
+- 下一步：先实现并通过 Stage 5 的对象分区、scheduler、窗口代数、no-op 与单对象退化等价性门槛，再由人工确认是否启动矩阵。Stage 5 不再研究 Same/Future/Past，也不再逐对象分别生成，只改变 denoising-step window。
 - 目标：在新的 `latest3350` PCK head 排名下，区分 `R→R`、`C→R`、`R→C` 三类 self-attention 信息流更主要地影响对象轨迹、对象外观，还是对象外区域，并比较 Top100、Bottom100、随机匹配 100 heads 与 All720。
 - 结论边界：`R` 是由追踪点构成的**稀疏 object-token tube**，不是完整对象 mask；因此结论首先针对该 tube 表示，不能直接外推成“完整对象区域的全部信息流”。
 
@@ -17,6 +17,7 @@
 - Training-Free M1 可视化：`http://localhost:8092/training-free-m1-control?v=1`
 - Stage 4 详细证据审计：`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage4_current_analysis/STAGE4_CONTROLLED_VARIABLE_CONCLUSIONS.md`
 - Stage 4 代表性视频：`http://localhost:8092/object-query-information-flow-stage4-representatives?v=2`
+- Stage 5 冻结规格：`experiment_spec_stage5_denoising_v1.json`
 - 一键补指标：`bench_missing.sh`
 
 ---
@@ -459,9 +460,187 @@ case，双侧 exact sign-flip 的最小 p 值为 0.25，因此本节不报告显
 `/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage4_current_analysis/STAGE4_CONTROLLED_VARIABLE_CONCLUSIONS.md`；
 完整数值表见同目录 `STAGE4_THREE_AXIS_FULL_TABLES.md`，原始统计见 `three_axis_report.json`。
 
-### Stage 5 — M2/M3 双向边界交互（2×2）
+### Stage 5 — 多对象块对角联合消融 × denoising-step 窗口定位（规格已修订、未启动）
 
-同一 head group/time setting 下比较：
+#### 5.1 目的与结论边界
+
+Stage 3 逐对象或以对象并集删除全部 40 个去噪 step 上的 M1/M2/M3。Stage 5 改为每个 case-seed 只运行一个**多对象块对角联合目标**，并只改变消融生效的 denoising-step 窗口，回答：
+
+1. M1/M2/M3 的必要性主要出现在哪一段去噪过程；
+2. 这种窗口效应在 Top100 与 Bottom100 间是否不同；
+3. 不同窗口优先影响对象轨迹、身份/存活，还是对象外背景。
+
+本阶段固定 latent-video 轴为 **All-time**，即每个有效 step 内保留所有 `t_q,t_k`；不再引入 Same/Future/Past。结果只能说明某个自然存在的 attention contribution 在某个 denoising window 中的**必要性**，不能单靠 knockout 证明它编码了某个唯一语义，也不能把 denoising step 误写成视频帧。Stage 5 明确保留所有跨对象 `R_i↔R_j (i≠j)` 边，因此也不能用本阶段回答“跨对象通信是否必要”。
+
+#### 5.2 唯一改变的三个实验变量
+
+先冻结每个 case 的互不重叠对象 tube `R_1,...,R_m`，并定义全局背景集合：
+
+\[
+R_{\mathrm{all}}=\bigcup_{i=1}^{m}R_i,\qquad
+C_{\mathrm{bg}}=\Omega\setminus R_{\mathrm{all}}.
+\]
+
+每个 case-seed 只有一个联合 target。三类删除边固定为：
+
+| Flow | 精确删除集合 | 明确保留 | 诊断含义 |
+|---|---|---|---|
+| M1 | `⋃ᵢ (Rᵢ Query × Rᵢ K/V)` | 所有 `Rᵢ↔Rⱼ, i≠j` 与背景边 | 同时删除每个对象内部自通信；不是对象并集上的完整 `R_all→R_all` |
+| M2 | `R_all Query × C_bg K/V` | 所有对象间边 | 只删除全局背景向各对象的输入 |
+| M3 | `C_bg Query × R_all K/V` | 所有对象间边 | 只删除各对象向全局背景的输出 |
+
+因此两对象 case 的 M1 精确为 `R_A→R_A` 与 `R_B→R_B` 同时删除，`R_A↔R_B` 不删除。一个对象的 case 退化为普通 single-object 定义，但仍保留用于实现回归和 case 覆盖；不得把旧 `all_objects` 的对象并集 mask 冒充本定义。
+
+| 变量 | 水平 | 固定项 |
+|---|---|---|
+| Head group | `Top100-latest3350`、`Bottom100-latest3350` | 相同 head 数、同一 ranking 文件；不混入 Random100/All720 |
+| 信息流 | M1 `R→R`、M2 `C→R`、M3 `R→C` | 相同 post-softmax contribution subtraction、无 softmax 重归一化 |
+| Denoising window | W0、W1、W2、W3 | 每窗均 10 steps，窗口外路径不修改；latent-video 时间始终 All-time |
+
+对 step `s`、head `h` 的干预写为：
+
+\[
+Y'_{q,h,s}=Y_{q,h,s}-\mathbf{1}[s\in W_j]
+\sum_{k\in B_M(q)}A_{qk,h,s}V_{k,h,s}.
+\]
+
+其中 `B_M(q)` 由 M1/M2/M3 决定。窗口外必须与未修改路径逐张量一致。
+
+#### 5.3 去噪窗口与 scheduler 审计
+
+主分析采用等 step 数、左闭右开的冻结分区：
+
+| 窗口 | 实际 step index | 修改机会/selected head | 暂时名称 |
+|---|---|---:|---|
+| W0 | `[0,10)`，即 0–9 | `10 steps × 2 CFG calls = 20` | S00–09 |
+| W1 | `[10,20)`，即 10–19 | 20 | S10–19 |
+| W2 | `[20,30)`，即 20–29 | 20 | S20–29 |
+| W3 | `[30,40)`，即 30–39 | 20 | S30–39 |
+| Wall | `[0,40)` | 80 | Stage 5 新块对角 All-time reference；不计入新四窗主检验 |
+
+执行前保存并核验全部 40 个 scheduler index、timestep、sigma、next-sigma 与 Δsigma。只有确认噪声单调方向后，才能把 W0/W3称为“高噪声/低噪声”；在此之前只使用中性 step 标签。若等 step 与等累计 Δsigma 的边界差异明显，等 step 分区仍是主分析，等 Δsigma 仅作为预先标注的 sensitivity analysis，不能看完结果后替换主窗口。
+
+#### 5.4 与 Stage 3 对齐 case/seed、但采用新联合 target 的 discovery cohort
+
+固定 Stage 3 的相同 10 cases 和 3 seeds；target 定义改为每个 case-seed 恰好一个多对象块对角联合目标：
+
+| # | Case | 联合目标内对象数/seed |
+|---:|---|---:|
+| 1 | `0613pybullet_sample_000301_w000` | 1 |
+| 2 | `0613pybullet_sample_000331_w001` | 2 |
+| 3 | `0613pybullet_sample_000336_w001` | 2 |
+| 4 | `0613pybullet_sample_001455_w000` | 2 |
+| 5 | `physicIQ_008_Fluid_Dynamics_0128_perspective-center_trimmed-napkin-soak` | 2 |
+| 6 | `physicIQ_009_Fluid_Dynamics_0131_perspective-center_trimmed-paint-on-glass` | 3 |
+| 7 | `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed` | 2 |
+| 8 | `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed-ball-and-block-fall_motion_to_end` | 4 |
+| 9 | `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed_crop_top60px` | 2 |
+| 10 | `physicIQ_026_Solid_Mechanics_0005_perspective-center_trimmed-ball-behind-rotating-paper` | 4 |
+
+- seeds：`13248 / 47326 / 90094`；
+- 每个 seed：10 个联合 targets；
+- 总计：10 个独立 cases、30 个 case-seeds、30 个联合 target-seed units；
+- 对象级轨迹、身份和存活先分别计算，再同时报告对象宏平均与最差对象；不能把不同大小对象的点直接混池；
+- M3 不存在“未选中对象”，所以 Other-object ADE 不定义。M3 的 primary 改为冻结 `C_bg` 上的 Outside-object LPIPS；背景 RAFT flow disagreement、Outside MAE 与 VBench Background 作为解释/guardrail。
+
+Stage 3 已发现 `crop_top60px / seed 47326` 缺同 seed Baseline。Stage 5 必须先补生成该 Baseline；禁止用其他 seed 代替。由于这 10 cases 已用于 Stage 3 探索和 latest3350 结果审阅，Stage 5 仍是 **discovery**，并不是独立 confirmatory 证据。
+
+#### 5.5 完整生成矩阵与复用边界
+
+| 部分 | 计算 | 数量 |
+|---|---:|---:|
+| 联合目标四窗口 | `30 units × 2 heads × 3 flows × 4 windows` | **720** |
+| 新定义 Wall | `30 units × 2 heads × 3 flows` | **180** |
+| Stage 5 干预视频总数 | 以上两项 | **900** |
+| Baselines | `10 cases × 3 seeds` | 30（已知需补 1 个） |
+
+旧 Stage 3 `all_objects` Wall 删除整个 `R_all→R_all`，包含本阶段明确保留的跨对象边，因而多对象 case **禁止复用**。单对象 `000301` 在新定义下应严格退化成旧 single-object M1/M2/M3；对应 18 个 Wall 候选只有通过真实 GPU 等价性后才可有限复用，其余 Wall 全部重跑。
+
+#### 5.6 预注册假设、主指标与最小有意义效应
+
+Stage 3 的 step-wise dose 分布已被看过，因此以下方向性假设是**受已有数据启发的 discovery hypotheses**：
+
+| Stage 3 All-time 中各四分窗占总 removed dose 的比例（%） | W0 | W1 | W2 | W3 |
+|---|---:|---:|---:|---:|
+| Top100-M1 | 19.61 | 23.94 | 26.51 | 29.93 |
+| Bottom100-M1 | 18.30 | 25.39 | 27.94 | 28.37 |
+| Top100-M2 | 29.09 | 26.07 | 24.33 | 20.50 |
+| Bottom100-M2 | 23.95 | 25.11 | 25.58 | 25.36 |
+| Top100-M3 | 31.79 | 26.63 | 23.29 | 18.30 |
+| Bottom100-M3 | 30.43 | 26.98 | 23.36 | 19.24 |
+
+表中数值由 Stage 3 每个 `dose_metrics.npz` 的 `removed_value_norm` 直接重算：每个 target-seed 先按 40 steps 总量归一化为四窗比例，随后 target/seed 在 case 内平均，最后 10 cases 等权；每行因此合计 100%。但 Stage 3 使用逐对象/对象并集 target，而 Stage 5 使用新的块对角联合 target，所以这些数值**不是 Stage 5 的精确 dose**，只能提供方向性先验。Stage 5 必须在新 mask 下重新采集 passive Baseline dose 后才能解释实际窗口剂量。
+
+| 主假设 | 固定 Head 后只比较 | Primary metric | MDE | 反证/证据不足条件 |
+|---|---|---|---:|---|
+| H5-M1：M1 的晚段必要性更强 | `W3 − W0`，Top、Bottom 各一次 | Identity Failure | 5 pp | case 方向混合，或 CI 仍包含小于 5 pp 的效应 |
+| H5-M2：Top100-M2 的早段必要性更强；Bottom100-M2 是近似平坦的负对照 | `W0 − W3`，Top、Bottom 各一次 | Center-ADE / D0 | 0.05 D0 | Top 的 case 方向混合，或 Head×Window interaction 不支持 Top 的时间梯度区别于 Bottom |
+| H5-M3：M3 的早段背景输出必要性更强 | `W0 − W3`，Top、Bottom 各一次 | Outside-object LPIPS on frozen `C_bg` | 0.02 | eligible cases/coverage 不足、方向混合，或 CI 仍包含小于 0.02 的效应 |
+| Head×Window interaction | `Top 的上述窗口差 − Bottom 的同一窗口差`，每个 M 一次 | 对应 M 的 primary metric | 报原单位 | CI 跨 0 或主要由单一 case 驱动 |
+
+主检验共 9 项：6 个 head 内 W0/W3 planned contrasts + 3 个 Head×Window interactions，统一做 BH-FDR。W1/W2 用于观察曲线形状和单调趋势，属于 secondary diagnostics，不再扩张成所有两两比较。
+
+补充指标必须按问题解释，不能混成一个任意总分：
+
+- M1：对象 DINO、center-aligned LPIPS/Shape IoU、Track Loss、Mask Absence、Disappearance、terminal missing；
+- M2：Center-FDE、velocity vector error、PCK failure；仅在有可靠 GT/contact 标注的交互子集报告 contact/post-contact 指标；
+- M3：冻结 `C_bg` 上的 Outside-object LPIPS 为 primary；背景 RAFT flow disagreement 区分运动变化，Outside MAE 与 VBench Background 作 guardrail。它们仍不能单独证明物理背景运动正确或错误；
+- 所有 M：轨迹 gate failure 和 survival failure 必须全样本保留，ADE/FDE 只在成对通过门控的样本上计算。
+
+#### 5.7 统计单位与严格控制变量比较
+
+1. 先按完全相同的 `(case, seed, joint_target, head, M)` 配对 W0 与 W3；缺一侧则该 contrast 不可用，不填 0。
+2. seed 先在 case 内平均，再对 case 等权；最高独立 `n` 是 case，3 seeds 不能当 3 倍独立样本。对象级 endpoint 先在每个视频内报告宏平均和最差对象，二者不得互换比较。
+3. 对实际 eligible case-level differences 做可枚举的双侧 exact sign-flip test；同时报告 case-cluster bootstrap 95% CI、绝对差、方向一致率和实际 coverage。若 eligible cases `<8`，该项自动降级为 descriptive，不作经 FDR 后的机制证据。
+4. 轨迹使用 hurdle reporting：全部配对报告 gate/track failure，通过门控的配对再报告 ADE/FDE。
+5. Stage 5 只有联合块对角 target，不再设置 single-object/all-objects 两个 strata；M3 Other-object ADE 明确为 N/A。
+6. 不根据中途结果增删 case、seed、窗口或 endpoint；完整矩阵冻结前不发布选择性窗口结论。
+
+样本量限制必须提前承认：复用 Stage 3 得到的独立 `n` 最多为 10，足以做配对 discovery 和估计 case 间异质性，但没有独立数据支撑 confirmatory power。MDE 是“值得关注的最小效应”，不是保证能检出的效应。若 CI 无法排除小于 MDE 的效应，结论写为“证据不足”，不得把 `p>0.05` 写成“两个窗口相同”。
+
+为保证 Top/Bottom、M1/M2/M3 和四个窗口三轴比较完整，最终报告固定生成以下控制变量表；只有第一行中的 9 项 planned contrasts 属于 primary family：
+
+| 问题 | 只改变 | 必须固定 | 报告指标 | 证据等级 |
+|---|---|---|---|---|
+| 哪个去噪窗口最关键 | Window | case/seed/joint-target、Head、M | 对应 M 的 primary + 全部 guardrails | W0/W3 planned contrast 为 primary；W1/W2 曲线为 secondary |
+| Top 与 Bottom 的窗口效应是否不同 | Head | case/seed/joint-target、M、Window | 轨迹、身份/存活、背景影响 | 3 个预注册 Head×Window interactions 为 primary；其余为 secondary |
+| 同一窗口内 M1/M2/M3 影响什么 | M | case/seed/joint-target、Head、Window | 轨迹、外观/身份、背景影响分别列出 | exploratory；不因某个最大均值就宣称通道专属性 |
+| 是否存在 Head×M×Window 三阶差异 | 三轴 interaction | 完整配对 cohort | 同一指标内的 case-level 24-cell profile | descriptive/exploratory；`n≤10` 不支撑复杂模型机制定论 |
+| 单窗相对 All-time 保留多少效应 | Window vs Wall | case/seed/joint-target、Head、M | 原始 outcome 与 survival | secondary；网络非线性，四窗视频效应不能相加，也不报告“占 Wall 百分比”为因果分解 |
+
+每张表都同时给出 `(cases, case-seeds, target pairs, finite pairs, gate failures)`，并列出代表性 case 与反例。不得只给总体均值而隐藏不同 case 的方向。
+
+#### 5.8 Dose 记录与解释限制
+
+每个 active step、CFG call、block、head 保存 removed attention mass、`ΣAV` norm、原输出 norm、ratio、affected query count 和 active-step mask。100-head、10-step 窗口任务的预期修改事件数为 `100×10×2=2,000`。
+
+Dose 是“实际删了多少”的机制诊断，不是结果指标。禁止用 outcome/dose 简单相除来宣称“每单位信息的因果作用”，因为网络是非线性的，而且实际 dose 已受前序干预路径影响。
+
+Stage 5A 必须在未干预 Baseline 路径上做 passive step-wise potential-dose capture，描述每个 `(target, Head, M, Window)` 原本存在的 attention mass、`ΣAV` norm 和 output-ratio；它与 intervention-path applied dose 分栏展示。由此形成两层结论：
+
+1. **Natural-dose necessity（Stage 5A 可回答）**：完整删除该窗口自然存在的 contribution 后，输出改变多少；它同时包含“该窗口本来 contribution 多不多”和“网络对它敏不敏感”。
+2. **Equal-dose sensitivity（Stage 5A 不能回答）**：删除相同 contribution 量时哪个窗口/Head 更敏感。除非另做 dose-matched intervention，否则禁止给出这一结论。
+
+Stage 5B 预注册为条件触发的 discovery follow-up：若某个 primary Head/Window contrast 达到 MDE 且对应 passive potential-dose 比超出 `[0.8,1.25]`，则该 contrast 被明确标为 dose-confounded，并用 Baseline passive dose 预先计算固定 `α≤1`，把两侧目标 `ΣAV` norm 下调到较小一侧后重跑。`α` 在看 Stage 5B outcome 前冻结；不允许放大到 `α>1`。Stage 5B 不并入 Stage 5A 的 9 项 primary family，只用于判断 Stage 5A 方向在近似 matched dose 下是否保留；即便保留，仍不得用简单 outcome/dose 比值作因果归一化。
+
+#### 5.9 实现验证、执行顺序与停止规则
+
+按以下顺序执行，任何硬门槛失败均不得进入下一步：
+
+1. **Stage 5.0 静态/代数测试**：先核验 `R_i` 两两不重叠、`C_bg` 为对象并集的严格补集，以及 M1 mask 只含各对象块对角、M2/M3 均不删除跨对象边；再核验四窗两两不交且并集严格为 0–39、空窗 no-op、窗口外张量不变，且固定 forward input 上四窗 removed contribution 之和等于 Wall。这里只验证张量代数，不假设最终视频效应可加。
+2. **Stage 5.1 scheduler 审计**：冻结 40-step timestep/sigma 数组及 hash，确认所有 task 完全一致。
+3. **Stage 5.2 联合 target 真实 GPU smoke**：一个至少含两个对象的 case-seed 跑完 `2 heads × 3 M × 4 windows=24` 个配置，并验证对象块标签、跨对象边保留、事件数、两条 CFG branch、49 帧视频、manifest/dose/metrics 可读。
+4. **Stage 5.3 语义/Wall smoke**：在固定 attention 张量上逐元素核验 M1 只删除块对角且跨对象边不变；在单对象 `000301` 上核验新 Wall 与旧 single-object All-time 等价。多对象旧 `all_objects` Wall 不得复用。
+5. **Stage 5.4 Baseline inventory**：补齐 30 个同 case、同 seed Baseline，解决已知缺失；重复唯一键/hash 冲突立即停止。
+6. **Stage 5.5 全矩阵**：只运行联合块对角 target；完成后一次性冻结统计报告。
+
+额外硬停止条件：scheduler 顺序或 sigma metadata 不一致；任何 task 修改声明窗口外 step；任一 selected head 的 active events 不是 20 或出现 NaN/Inf；no-op/Wall 等价失败；同 seed Baseline 缺失；配置 hash 冲突；依据 interim outcome 选择窗口。资源仍遵守“不使用 GPU4”，但本方案不预先绑定其他 GPU。
+
+冻结规格：`experiment_spec_stage5_denoising_v1.json`。当前状态为 `revised_joint_block_diagonal_not_launched`；完成代码、测试和 inventory 后必须再次人工确认，才启动 720 个窗口视频与最多 180 个新 Wall。
+
+### Stage 6 — M2/M3 双向边界交互（2×2，顺延）
+
+同一 head group、All-time latent-video setting 和冻结 denoising window 下比较：
 
 | 条件 | C→R | R→C |
 |---|---:|---:|
@@ -470,18 +649,7 @@ case，双侧 exact sign-flip 的最小 p 值为 0.25，因此本节不报告显
 | M3 | 保留 | 删除 |
 | M6 | 删除 | 删除 |
 
-目的：判断输入和输出边的效应是否可加，或是否存在双向耦合。报告 M6 相对 `M2 + M3` 的 interaction contrast，不用肉眼把 M6 解释成两者简单相加。
-
-### Stage 6 — diffusion denoising 阶段定位
-
-这是与 Same/Future/Past 独立的轴。先对 Stage 3/4 中有选择性效应的少量配置运行：
-
-- high-noise window：暂定 steps 0–12；
-- mid：暂定 13–26；
-- low-noise：暂定 27–39；
-- all：0–39。
-
-执行前必须按实际 scheduler 的 timestep/sigma 校验并冻结窗口；禁止预先宣称“早期=轨迹、晚期=外观”。若窗口边界不对应近似等 sigma 区间，则改为按 sigma 分位数切分。
+目的：判断输入和输出边的效应是否可加，或是否存在双向耦合。报告 M6 相对 `M2 + M3` 的 interaction contrast，不用肉眼把 M6 解释成两者简单相加。Stage 6 的具体 denoising window 必须等 Stage 5 完成后再预注册，不能事后挑选效应最大的窗口并称为确认性实验。
 
 ### Stage 7 — 基线 message probe；rescue 为可选后续
 
@@ -534,7 +702,12 @@ case，双侧 exact sign-flip 的最小 p 值为 0.25，因此本节不报告显
   3. M1 vs M2 vs M3 的信息类型差；
   4. Stage 4 T1：Top100-M1 `Future − Past` 的 Target Center-ADE / D0；
   5. Stage 4 T2：交互 case 中 Top100-M2 `Future − Past` 的 GT contact/post-contact velocity；
-  6. Stage 4 T3：single-object Top100-M3 `Future − Past` 的 Other-object Center-ADE / D0。
+  6. Stage 4 T3：single-object Top100-M3 `Future − Past` 的 Other-object Center-ADE / D0；
+  7. Stage 5-M1：Top100、Bottom100 内各自 `W3 − W0` 的 Identity Failure；
+  8. Stage 5-M2：Top100、Bottom100 内各自 `W0 − W3` 的 Center-ADE / D0；
+  9. Stage 5-M3：Top100、Bottom100 内各自 `W0 − W3` 的冻结 `C_bg` Outside-object LPIPS；
+  10. Stage 5 interaction：对 M1/M2/M3 分别检验 `Top100 planned-window contrast − Bottom100 planned-window contrast`。
+- Stage 3、Stage 4 与 Stage 5 属于不同预注册 family，不把跨阶段所有检验混成一个 FDR 池。Stage 5 固定 9 个 primary tests，并在该 family 内做 BH-FDR。
 - 多重比较对预注册 primary family 使用 BH-FDR；secondary/exploratory 只报告 effect size、CI 与校正后的 q-value，不以单个 p<0.05 下结论。
 - 倍数只在分母远离 0 且方向一致时报告；同时必须展示绝对差和 CI。分母接近 0 时标为不稳定，不制造巨大倍数。
 - 若 confirmatory held-out case 数太少，结果明确标记 pilot/exploratory，不包装成总体规律。
@@ -570,6 +743,10 @@ case，双侧 exact sign-flip 的最小 p 值为 0.25，因此本节不报告显
 9. `Q/K/V token count != T×H×W`，说明存在尚未分类的非视频 token；
 10. Stage 4 center-aligned LPIPS/shape smoke 未通过却仍被列为外观主证据；
 11. 仅 3-case Stage 4A pilot 被用于显著性或总体机制宣称。
+12. Stage 5 四窗不构成 0–39 的严格互斥完备分区，或 scheduler/timestep/sigma hash 在 task 间不同；
+13. Stage 5 空窗 no-op、块对角/跨对象边保留语义、单对象退化等价性或 active-event count 任一未通过；
+14. Stage 5 已知缺失的 `crop_top60px / seed 47326` Baseline 未补齐，或被其他 seed 替代；
+15. 根据 Stage 5 interim outcome 临时选择窗口、endpoint、case 或停止时点。
 
 遇到硬停止条件，只完成诊断报告，不继续消耗大规模 GPU。
 
@@ -580,13 +757,16 @@ case，双侧 exact sign-flip 的最小 p 值为 0.25，因此本节不报告显
 Gate 0 的 Random100、seed split、held-out 策略、probe/rescue 范围和 ranking 稳定阈值已经确认并执行，
 不再作为“待确认问题”重复列出。原始冻结选择保存在 `experiment_spec_latest3350.json`，不得覆盖。
 
-Stage 4 的增补冻结在 `experiment_spec_stage4_temporal_v1.json`。Stage 4.0 已通过，Stage 4A 已启动但只完成
-684/999；因此第一道执行前 Gate 已关闭。下一次人工确认只发生在：
+Stage 4 的增补冻结在 `experiment_spec_stage4_temporal_v1.json`；其 3-case 结果始终按 pilot/discovery 解读，不因 Stage 5 启动而升级证据等级。
 
-1. 补齐 Stage 4A、重新冻结完整 3-case 报告并审计缺失值之后；
-2. 给出 case-level 方差、MDE 和 power 曲线之后、选择 Stage 4B 的独立 held-out case 数之前。
+Stage 5 的修订规格冻结在 `experiment_spec_stage5_denoising_v1.json`，状态为 `revised_joint_block_diagonal_not_launched`。进入大矩阵前还有一道人工 Gate，只在以下证据齐全后关闭：
 
-截至本文当前版本，不自动启动 Stage 4B；当前 3-case 结果只作 pilot/discovery。
+1. Stage 5.0–5.3 的对象块分区、跨对象边保留、窗口代数、scheduler、联合 target smoke、no-op 与单对象退化等价性报告全部通过；
+2. 30 个 Baseline inventory 完整，已补 `crop_top60px / seed 47326`；
+3. 720 个窗口视频及最多 180 个新 Wall 的唯一键、预计成本、GPU 排队和失败恢复策略已生成并人工复核；
+4. 分析脚本能从 mock/smoke 数据复现 9 个 primary contrasts、case-level 聚合、coverage 与 BH-FDR。
+
+截至本文当前版本，不自动启动 Stage 5，也不自动从 Stage 5 挑窗口进入 Stage 6。
 
 ---
 

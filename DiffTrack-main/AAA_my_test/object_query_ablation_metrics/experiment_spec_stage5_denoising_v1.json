@@ -1,0 +1,222 @@
+{
+  "schema_version": 2,
+  "experiment_id": "object_query_information_flow_stage5_denoising_v1",
+  "status": "revised_joint_block_diagonal_not_launched",
+  "revision_note": "2026-08-13 user-confirmed replacement of per-object/all-object targets by one joint block-diagonal target per case-seed. No Stage5 run predates this revision.",
+  "objective": "Localize when, along the 40-step denoising trajectory, joint per-object-internal M1 and global-background M2/M3 contributions in latest3350 Top100 and Bottom100 heads are necessary for object trajectory, identity/survival, and background stability.",
+  "scope_boundary": {
+    "latent_video_time": "all_time_only",
+    "excluded_axes": [
+      "same",
+      "future",
+      "past",
+      "random100",
+      "all720",
+      "per_object_generation",
+      "union_R_to_union_R_ablation"
+    ],
+    "target_scope": "one_joint_block_diagonal_target_per_case_seed",
+    "interpretation": "Stage 5 varies denoising step window only; it does not test latent-video temporal direction or cross-object edge necessity."
+  },
+  "intervention": {
+    "operator": "post_softmax_value_contribution_subtraction_without_renormalization",
+    "flows": {
+      "M1": "union_i(R_i_KV_to_R_i_Query)_all_latent_times; preserve every R_i_to_R_j edge for i_not_equal_j",
+      "M2": "C_bg_KV_to_union_i(R_i_Query)_all_latent_times; C_bg=Omega_minus_union_i(R_i)",
+      "M3": "union_i(R_i_KV)_to_C_bg_Query_all_latent_times; C_bg=Omega_minus_union_i(R_i)"
+    },
+    "head_scopes": [
+      "top100",
+      "bottom100"
+    ],
+    "head_ranking": "/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/pck_head_scopes_s039_latest3350.json",
+    "ranking_tag": "s039r3350",
+    "object_partition": {
+      "object_sets": "R_1,...,R_m are mutually exclusive tracked sparse object-token tubes",
+      "all_object_tokens": "R_all=union_i(R_i)",
+      "global_background": "C_bg=Omega\\R_all",
+      "cross_object_guardrail": "all R_i<->R_j edges for i!=j remain unchanged for M1/M2/M3",
+      "single_object_degeneracy": "when m=1, the definitions reduce exactly to the prior single-object M1/M2/M3"
+    }
+  },
+  "denoising_windows": {
+    "primary_partition": "four_equal_step_count_quartiles_left_closed_right_open",
+    "windows": {
+      "W0_S00_09": [0, 10],
+      "W1_S10_19": [10, 20],
+      "W2_S20_29": [20, 30],
+      "W3_S30_39": [30, 40]
+    },
+    "all_time_reference": [0, 40],
+    "naming_guardrail": "Use step-quartile labels until the exact scheduler timestep and sigma arrays are audited. High-noise/low-noise labels are allowed only after monotonicity is verified.",
+    "scheduler_audit": [
+      "save all 40 scheduler indices, timesteps, sigmas, next_sigmas, and delta_sigmas",
+      "verify monotonic denoising order",
+      "verify identical arrays across every task",
+      "report exact sigma range and integrated delta-sigma for every window"
+    ],
+    "sensitivity_analysis": "If equal-step and equal-delta-sigma boundaries differ materially, retain equal-step windows as primary and add equal-delta-sigma windows only as a labeled sensitivity analysis."
+  },
+  "cohort": {
+    "relationship_to_stage3": "exact_same_discovery_cases_and_seeds_but_new_joint_block_diagonal_target_definition",
+    "cases": [
+      {"case": "0613pybullet_sample_000301_w000", "joint_target_objects": 1},
+      {"case": "0613pybullet_sample_000331_w001", "joint_target_objects": 2},
+      {"case": "0613pybullet_sample_000336_w001", "joint_target_objects": 2},
+      {"case": "0613pybullet_sample_001455_w000", "joint_target_objects": 2},
+      {"case": "physicIQ_008_Fluid_Dynamics_0128_perspective-center_trimmed-napkin-soak", "joint_target_objects": 2},
+      {"case": "physicIQ_009_Fluid_Dynamics_0131_perspective-center_trimmed-paint-on-glass", "joint_target_objects": 3},
+      {"case": "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed", "joint_target_objects": 2},
+      {"case": "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed-ball-and-block-fall_motion_to_end", "joint_target_objects": 4},
+      {"case": "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed_crop_top60px", "joint_target_objects": 2},
+      {"case": "physicIQ_026_Solid_Mechanics_0005_perspective-center_trimmed-ball-behind-rotating-paper", "joint_target_objects": 4}
+    ],
+    "seeds": [13248, 47326, 90094],
+    "counts": {
+      "independent_cases": 10,
+      "joint_targets_per_seed": 10,
+      "case_seed_units": 30,
+      "joint_target_seed_units": 30
+    },
+    "analysis_strata": {
+      "primary": "joint_block_diagonal_targets_only",
+      "object_endpoints": "compute per object, then report within-video macro mean and worst object separately",
+      "M3_other_object_ADE": "not_defined_because_every_annotated_object_is_selected",
+      "M3_background_endpoint": "outside_object_LPIPS_on_frozen_C_bg"
+    },
+    "evidence_status": "discovery_only_due_to_overlap_with_stage3_exploration_and_latest3350_ranking_source"
+  },
+  "compute_matrix": {
+    "new_windowed_variants": 720,
+    "formula": "30 joint target-seed units x 2 head scopes x 3 flows x 4 windows",
+    "new_all_time_wall_variants": 180,
+    "total_intervention_variants": 900,
+    "existing_single_object_wall_candidates": 18,
+    "all_time_reuse_condition": "only the one-object case may reuse prior single-object Wall after exact real-GPU equivalence; every multi-object Wall must be rerun because prior all_objects also removed cross-object edges",
+    "baseline_case_seed_units": 30,
+    "known_missing_stage3_baseline": "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed_crop_top60px seed 47326",
+    "baseline_policy": "generate the missing exact baseline before outcome analysis; never substitute another seed"
+  },
+  "hypotheses": {
+    "rationale_from_stage3_dose_percent": {
+      "interpretation": "Historical Stage3 exploratory shares only. Stage3 used per-object/union targets rather than the revised block-diagonal target, so these values motivate tentative directions but are not dose estimates for Stage5. Baseline-path passive dose must be recomputed under the new mask before interpretation.",
+      "top100_M1": [19.61, 23.94, 26.51, 29.93],
+      "bottom100_M1": [18.30, 25.39, 27.94, 28.37],
+      "top100_M2": [29.09, 26.07, 24.33, 20.50],
+      "bottom100_M2": [23.95, 25.11, 25.58, 25.36],
+      "top100_M3": [31.79, 26.63, 23.29, 18.30],
+      "bottom100_M3": [30.43, 26.98, 23.36, 19.24]
+    },
+    "H5_M1": {
+      "if": "M1 R-to-R necessity is concentrated later in denoising",
+      "then": "W3 will change target identity more than W0 for the same head scope",
+      "primary_metric": "identity_failure_percentage",
+      "contrast": "W3_minus_W0",
+      "mde": "5 percentage points",
+      "falsification": "case-level effects are mixed or the interval includes effects smaller than the MDE"
+    },
+    "H5_M2": {
+      "if": "Top100 M2 C-to-R necessity is concentrated earlier in denoising while Bottom100 M2 is approximately flat",
+      "then": "Top100 W0 will change target trajectory more than W3, and its W0-minus-W3 contrast will exceed the Bottom100 negative-control contrast",
+      "primary_metric": "center_ADE_over_D0",
+      "contrast": "W0_minus_W3",
+      "mde": "0.05 D0",
+      "falsification": "Top100 case-level effects are mixed or the Head-by-Window interaction does not distinguish the Top100 gradient from Bottom100"
+    },
+    "H5_M3": {
+      "if": "M3 object-to-global-background necessity is concentrated earlier in denoising",
+      "then": "W0 will change the frozen global-background context more than W3 for the same head scope",
+      "primary_metric": "outside_object_LPIPS_on_frozen_C_bg",
+      "contrast": "W0_minus_W3",
+      "mde": "0.02 LPIPS",
+      "falsification": "eligible-case effects are mixed, coverage is inadequate, or the interval includes effects smaller than 0.02 LPIPS"
+    },
+    "head_by_window_interaction": "For each flow, compare the planned window contrast in Top100 against the same contrast in Bottom100. This tests stage-dependent head-group selectivity rather than a raw Top-vs-Bottom mean."
+  },
+  "primary_test_family": {
+    "tests": 9,
+    "composition": "six within-head planned early/late contrasts plus three Top100-minus-Bottom100 window-interaction contrasts",
+    "multiple_testing": "BH_FDR_across_the_9_tests",
+    "case_level_test": "two_sided_exact_sign_flip_over_the_actual_eligible_case_level_differences",
+    "minimum_cases_for_inferential_label": 8,
+    "interval": "case_cluster_bootstrap_95pct_CI",
+    "middle_windows": "W1/W2 are secondary shape and monotonic-trend diagnostics, not additional primary pairwise tests",
+    "power_boundary": "The maximum independent n is 10 cases. MDEs define practically meaningful effects but are not guaranteed-detectable effects. If uncertainty includes effects smaller than the MDE, report insufficient evidence rather than equivalence."
+  },
+  "metrics": {
+    "M1_primary": "identity_failure_percentage",
+    "M2_primary": "center_ADE_over_D0",
+    "M3_primary": "outside_object_LPIPS_on_frozen_C_bg",
+    "trajectory_secondary": ["center_FDE_over_D0", "velocity_vector_error_over_D0_per_frame", "PCK_failure"],
+    "appearance_secondary": ["center_aligned_object_LPIPS", "DINO_identity_similarity", "center_aligned_shape_IoU", "area_aspect_circularity_error"],
+    "survival_guardrails": ["track_loss", "trajectory_gate_failure", "mask_absence", "disappearance", "terminal_missing"],
+    "outside_secondary": ["background_RAFT_flow_disagreement_on_frozen_C_bg", "outside_pixel_MAE", "VBench_background_consistency"],
+    "quality_guardrails": ["full_frame_SSIM", "full_frame_MAE", "VBench_subject_consistency", "VBench_motion_smoothness", "VBench_dynamic_degree"],
+    "reference": "same_case_same_seed_no_ablation_baseline"
+  },
+  "dose_policy": {
+    "record": [
+      "applied_attention_mass",
+      "applied_removed_value_norm",
+      "applied_removed_value_norm_query_sum",
+      "original_output_norm",
+      "removed_to_output_ratio",
+      "affected_query_count",
+      "active_step_mask"
+    ],
+    "axes": ["denoising_step", "cfg_call", "block", "head"],
+    "active_events_per_selected_head": 20,
+    "interpretation": "The Stage 5A estimand is natural-dose necessity: it combines contribution availability and network sensitivity. Outcome/dose division is forbidden. Realized applied dose is post-treatment-path data and is not a valid sole causal adjustment covariate.",
+    "baseline_path_probe": "Mandatory passive no-op capture of potential attention mass, removed-value norm, and removed/output ratio for every target, head scope, flow, and window; report separately from applied intervention dose.",
+    "matched_dose_followup": {
+      "label": "Stage5B_discovery_sensitivity",
+      "trigger": "A Stage5A primary Head/Window contrast reaches its MDE and its corresponding passive potential-dose ratio lies outside [0.8, 1.25].",
+      "method": "Before observing Stage5B outcomes, freeze alpha <= 1 from the Baseline passive path so both contrast sides are reduced to the smaller potential removed-value norm; never amplify alpha above 1.",
+      "interpretation": "Tests whether the Stage5A direction survives approximate dose matching. It is not part of the nine-test primary family and does not justify outcome/dose division."
+    }
+  },
+  "aggregation_and_missingness": {
+    "highest_independent_unit": "case",
+    "within_case_order": "pair exact case-seed-joint_target cells; compute object endpoints per object and retain macro and worst summaries separately; then average seeds within case and weight cases equally",
+    "trajectory_hurdle": "report gate-failure/track-loss on all pairs and ADE/FDE only on paired gate-pass observations",
+    "missing_policy": "never impute missing trajectories, masks, GT, or failed tracks as zero",
+    "coverage_policy": "report cases, case-seeds, target pairs, gate failures, and finite pairs for every contrast"
+  },
+  "reporting_grid": {
+    "primary": "Within each head and flow, planned W0-vs-W3 contrast on the flow-specific endpoint; plus the corresponding Top100-vs-Bottom100 window interaction.",
+    "secondary": [
+      "W0/W1/W2/W3 curve shape within fixed Head and Flow",
+      "Top100-vs-Bottom100 within fixed Flow and Window across trajectory, identity/survival, and propagation metrics",
+      "M1-vs-M2-vs-M3 within fixed Head and Window across the same metric",
+      "each window vs Wall on raw outcome and survival metrics"
+    ],
+    "exploratory_only": "Head-by-Flow-by-Window 24-cell profiles; maximum independent n is 10 and does not support a strong three-way mechanistic claim.",
+    "required_coverage_columns": ["cases", "case_seeds", "target_pairs", "finite_pairs", "trajectory_gate_failures"],
+    "non_additivity_guardrail": "Do not sum windowed final-video outcomes or express them as a causal percentage of Wall."
+  },
+  "implementation_gates": [
+    "W0/W1/W2/W3 are disjoint and their union is exactly steps 0 through 39",
+    "object tubes R_i are mutually exclusive after tokenization and C_bg is exactly the complement of their union",
+    "M1 deletion mask equals the union of per-object diagonal blocks and contains zero cross-object R_i-to-R_j entries for every i not equal j",
+    "M2 and M3 use only C_bg as context and preserve every cross-object edge",
+    "outside the active window the attention output is identical to the unmodified path for the same forward inputs",
+    "for one fixed forward input the four removed contribution tensors sum to Wall within frozen tolerance; final video effects are not assumed additive",
+    "each 100-head window task has exactly 100 x 10 x 2 = 2000 modified head-step-CFG events",
+    "each selected head has exactly 10 x 2 = 20 active events and zero modified events outside its window",
+    "both CFG branches are covered and recorded separately",
+    "empty-window no-op matches Baseline within deterministic tolerance",
+    "on the one-object case, new-code M1/M2/M3 Wall matches the prior single-object All-time implementation on a real-GPU smoke before its limited reuse",
+    "all videos decode to 49 frames and all manifests, active masks, doses, and metric reports are readable"
+  ],
+  "stopping_rules": [
+    "stop before the matrix if scheduler order or sigma metadata is inconsistent",
+    "stop if object token sets overlap, their union/complement is inconsistent, or any cross-object edge is removed",
+    "stop if no-op or Wall equivalence fails",
+    "stop if any task modifies a step outside its declared window",
+    "stop if exact case-seed Baseline is missing",
+    "stop outcome aggregation if duplicate experiment keys or configuration hashes conflict",
+    "do not stop early or choose windows based on interim outcome values"
+  ],
+  "artifact_root": "/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage5_denoising_blockdiag_v2",
+  "forbidden_gpu": 4
+}

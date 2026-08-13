@@ -740,6 +740,30 @@ http://localhost:8092/training-free-m1-control?v=1
 
 ## 9. Gate 与执行清单
 
+### 9.0 当前 GPU7 自动 Phase-B/D 验证（已确认配置）
+
+本轮不执行 Same/Future/Past，只验证 `all_time` M1 正向直接增强：
+
+- cases：`test_5.txt` 的 20 个唯一 case；
+- seeds：固定 `90094, 68613, 35075, 32466, 13248`；
+- target：每个 case 自动对象顺序中的 `object_A`；
+- heads：`latest3350` Top100；
+- Phase B：`alpha={0.1,0.25}`，作用于 denoising step `0..39`；
+- Phase B 选参：视频生成完成后，分别计算 simulator GT full-frame MSE 与
+  GT-relative CoTracker Center-ADE/D0。seed 先在 case 内平均，两个候选在每项
+  可用指标上按“越小越好”排名，再对 case 等权平均；总排名完全相同时选择
+  较小的 `alpha=0.1`；这些指标不进入 guidance；
+- Phase D：只用 Phase B 选定的单一 alpha，对比 `0..9`、`0..19`、`0..39`；
+  其中 `0..39` 与 Phase B 的同 alpha 计算完全相同，直接软链接复用，不重复生成；
+- Region：只读取既有自动 GroundingDINO/SAM2 source tube 的 F00 点和 F00 mask；
+  source video 的未来轨迹/mask 不进入生成；
+- 生成 tube：由同 case、同 seed 的 clean Baseline 通过 CoTracker 冻结；
+- 执行：GPU7 单队列、tmux、阶段失败即停止、所有阶段断点续跑。
+
+自动阶段：manifest/F00 cache → 缺失 Baseline → frozen Baseline tracks →
+Phase B → 生成后选 alpha → Phase D。预计新增干预视频 `200+200=400`，另有
+100 个 Phase-D full40 条目复用 Phase-B 文件；clean Baseline 只补缺失项。
+
 ### Gate A：允许实现
 
 - [ ] 用户确认本计划中的 branch policy、MDE、pilot case/seed 和三份 Random100。
