@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -46,6 +47,19 @@ def _atomic_npz(path: Path, **arrays: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("wb") as handle:
         np.savez_compressed(handle, **arrays)
+    temporary.replace(path)
+
+
+def _atomic_jpeg(path: Path, image: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.stem + ".tmp.jpg")
+    Image.fromarray(np.asarray(image, dtype=np.uint8)).save(
+        temporary,
+        format="JPEG",
+        quality=91,
+        optimize=True,
+        subsampling=0,
+    )
     temporary.replace(path)
 
 
@@ -166,6 +180,124 @@ def _panel(
 
 def _format_metric(value: float | np.floating[Any], digits: int = 4) -> str:
     return "N/A" if not np.isfinite(value) else f"{float(value):.{digits}f}"
+
+
+def _read_video_frames(path: Path) -> np.ndarray:
+    capture = cv2.VideoCapture(str(path))
+    frames: list[np.ndarray] = []
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    finally:
+        capture.release()
+    if not frames:
+        raise RuntimeError(f"could not decode generated video: {path}")
+    return np.stack(frames, axis=0)
+
+
+def ensure_generated_frame_attention_overlays(
+    generated_video: Path,
+    step_directory: Path,
+) -> Path:
+    """Render 13 static Final-RGB | PRE | POST frame comparisons on demand.
+
+    Attention is still measured at the denoising step stored in ``step_directory``.
+    The final generated RGB frames are only the common visualization canvas.
+    """
+    output_directory = step_directory / "generated_frame_overlays"
+    marker = output_directory / "complete.json"
+    expected = [output_directory / f"R{latent_time:02d}.jpg" for latent_time in range(13)]
+    if marker.is_file() and all(path.is_file() and path.stat().st_size > 0 for path in expected):
+        return output_directory
+
+    raw_path = step_directory / "raw_attention_maps.npz"
+    metrics_path = step_directory / "metrics.json"
+    if not generated_video.is_file() or not raw_path.is_file() or not metrics_path.is_file():
+        raise FileNotFoundError("generated video or attention audit inputs are incomplete")
+
+    report = json.loads(metrics_path.read_text(encoding="utf-8"))
+    frame_metrics = report.get("frames", [])
+    if len(frame_metrics) != 13:
+        raise RuntimeError(f"expected 13 frame metrics, got {len(frame_metrics)}")
+    with np.load(raw_path) as payload:
+        pre_heat = np.asarray(payload["pre_heatmap"], dtype=np.float32)
+        post_heat = np.asarray(payload["post_heatmap"], dtype=np.float32)
+        tracks = np.asarray(payload["tracks_tn2"], dtype=np.float32)
+        visibility = np.asarray(payload["visibility_tn"], dtype=bool)
+        source_indices = np.asarray(payload["source_frame_indices"], dtype=np.int64)
+    if pre_heat.shape[0] != 13 or post_heat.shape != pre_heat.shape:
+        raise RuntimeError(f"invalid PRE/POST attention shapes: {pre_heat.shape}, {post_heat.shape}")
+
+    video_frames = _read_video_frames(generated_video)
+    if int(source_indices.max()) >= len(video_frames):
+        raise RuntimeError(
+            f"anchor F{int(source_indices.max())} exceeds generated video with "
+            f"{len(video_frames)} frames"
+        )
+    output_directory.mkdir(parents=True, exist_ok=True)
+    marker.unlink(missing_ok=True)
+    summary = report.get("summary", {})
+    step_1based = int(summary.get("step_1based", int(step_directory.name.split("_")[-1])))
+
+    for latent_time, frame_index in enumerate(source_indices.tolist()):
+        generated = np.asarray(video_frames[int(frame_index)], dtype=np.uint8)
+        common_scale = max(
+            float(np.quantile(pre_heat[latent_time], 0.995)),
+            float(np.quantile(post_heat[latent_time], 0.995)),
+            1.0e-12,
+        )
+        row = frame_metrics[latent_time]
+        role = str(row.get("role", "future")).upper()
+        points = tracks[latent_time]
+        visible = visibility[latent_time]
+        panels = [
+            _panel(
+                generated,
+                f"FINAL GENERATED · R{latent_time:02d} · {role}",
+                f"RGB F{int(frame_index):02d} · green = target GT/pseudo-GT points",
+                points,
+                visible,
+            ),
+            _panel(
+                _overlay_heat(generated, pre_heat[latent_time], common_scale),
+                f"PRE ATTENTION · STEP {step_1based:02d}",
+                "mass "
+                f"{_format_metric(float(row.get('pre_frame_mass', np.nan)))} · local "
+                f"{_format_metric(float(row.get('pre_localized_mass', np.nan)))} · peak d "
+                f"{_format_metric(float(row.get('pre_peak_distance_tokens', np.nan)), 2)} tok",
+                points,
+                visible,
+            ),
+            _panel(
+                _overlay_heat(generated, post_heat[latent_time], common_scale),
+                f"POST ATTENTION · STEP {step_1based:02d}",
+                "mass "
+                f"{_format_metric(float(row.get('post_frame_mass', np.nan)))} · local "
+                f"{_format_metric(float(row.get('post_localized_mass', np.nan)))} · peak d "
+                f"{_format_metric(float(row.get('post_peak_distance_tokens', np.nan)), 2)} tok",
+                points,
+                visible,
+            ),
+        ]
+        _atomic_jpeg(expected[latent_time], np.concatenate(panels, axis=1))
+
+    _atomic_json(
+        marker,
+        {
+            "layout": "final generated RGB | PRE attention | POST attention",
+            "step_1based": step_1based,
+            "latent_frames": 13,
+            "generated_video": str(generated_video),
+            "attention_semantics": (
+                "attention was measured at the selected denoising step; final RGB is "
+                "used only as a common visualization canvas"
+            ),
+        },
+    )
+    return output_directory
 
 
 def _encode(frames: list[np.ndarray], output: Path, fps: int = 2) -> None:

@@ -118,10 +118,15 @@ denoising numbering. At every captured step the same guided run records:
 - post-guidance predicted clean latent
   `xhat_0 = x'_s - sigma_s * v_CFG(x'_s)` decoded through the frozen VAE.
 
-Each audit video has 13 frames, one per source anchor. Every frame is a
-five-panel `Source | PRE | POST | POST-PRE | predicted-x0` comparison. PRE and
-POST use the same source-frame background and a shared p99.5 display scale
-within that latent time. Display rescaling does not alter the saved raw maps or
+The live microscope now exposes 13 **static frame images** per captured step,
+one per latent anchor. Each image is a three-panel
+`final generated RGB | PRE attention | POST attention` comparison. PRE and POST
+are the attention maps measured at `x_s` and `x'_s`; the final generated RGB
+frame is only their common visualization canvas and must not be interpreted as
+attention recomputed from the final frame. Both overlays share a p99.5 display
+scale within that latent time. The original five-panel audit MP4s remain as
+legacy artifacts for runs that already produced them, but the dashboard no
+longer embeds them. Display rescaling does not alter the saved raw maps or
 metrics. `frame mass` reports the original global-softmax probability assigned
 to that time, `localized mass` measures probability inside the same-ID point's
 2-sigma neighborhood, `peak distance` measures the token distance to the GT
@@ -179,7 +184,7 @@ any claim of generalization requires a held-out cohort.
 ## Live visualization decision
 
 The dual-protocol matrix is integrated into the existing 8092 route
-`/gt-stc-guidance-results?v=5` instead of creating a disconnected page. The
+`/gt-stc-guidance-results?v=6` instead of creating a disconnected page. The
 dashboard reads each backend `task_manifest.json` as the source of planned
 work, so it always renders all 78 slots: Baseline, Top100, Bottom100, and
 Random100 for each selectable case/target in both protocol rows. A slot changes
@@ -190,4 +195,7 @@ seconds, preserving the selected case/target while generation continues.
 
 The page additionally exposes a global step rail for the eight captured
 denoising steps. For each backend it places Top100, Bottom100 and Random100
-side-by-side; unavailable step videos remain explicit `PENDING` cards.
+as separate rows. Every row contains a horizontally scrollable R00--R12 static
+frame strip; the JPEGs are generated on demand from `generated.mp4` and
+`raw_attention_maps.npz`, so already completed runs do not require Wan reruns.
+Unavailable step/frame outputs remain explicit `PENDING` cards.

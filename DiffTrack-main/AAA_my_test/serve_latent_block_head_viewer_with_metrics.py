@@ -428,7 +428,7 @@ GT_STC_PREFLIGHT_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-guidance-preflight?v=1"><div><span>43 / GT-STC PREFLIGHT</span><h2>GT Tube 引导错误预检</h2><p>逐 case 审计 13 个 latent 时刻的 SAM2 region 与 CoTracker 可见性，区分已复现报错、未来必报错、运行中和待运行。</p></div><span class="go">打开 GT Tube 诊断页</span></a>
 '''
 GT_STC_RESULTS_PORTAL_CARD = r'''
-<a class="card new" href="/gt-stc-guidance-results?v=5"><div><span>44 / GT-STC + ATTENTION MICROSCOPE</span><h2>GT 轨迹潜变量引导结果</h2><p>实时展示 context-Query → future-Key 双协议矩阵，并逐 step 对比约束前后 attention、差分和 predicted-x0；未生成项固定为 Pending。</p></div><span class="go">打开双协议实时结果</span></a>
+<a class="card new" href="/gt-stc-guidance-results?v=6"><div><span>44 / GT-STC + ATTENTION MICROSCOPE</span><h2>GT 轨迹潜变量引导结果</h2><p>实时展示 context-Query → future-Key 双协议矩阵，并在最终生成 RGB 帧上逐 step 对比 PRE/POST attention 静态 overlay；未生成项固定为 Pending。</p></div><span class="go">打开双协议实时结果</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + "</section>", 1
@@ -517,11 +517,13 @@ class MetricsHandler(viewer.Handler):
                 variant=params.get("variant", [""])[0],
                 backend=params.get("backend", [""])[0],
                 step=params.get("step", [""])[0],
+                latent=params.get("latent", [""])[0],
             )
             if asset is None or not asset.is_file():
                 self.send_error(404, "GT-STC validation asset is not ready")
                 return
-            viewer.send_file_with_range(self, asset, "video/mp4")
+            content_type = "image/jpeg" if asset.suffix.lower() in {".jpg", ".jpeg"} else "video/mp4"
+            viewer.send_file_with_range(self, asset, content_type)
             return
         if path == "/api/gt-stc-guidance-preflight/catalog":
             payload = json.dumps(

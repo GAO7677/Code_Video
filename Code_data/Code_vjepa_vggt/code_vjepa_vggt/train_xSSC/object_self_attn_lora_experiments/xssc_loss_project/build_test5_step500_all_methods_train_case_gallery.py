@@ -77,6 +77,12 @@ def main() -> None:
     jumps: list[str] = []
     for case_number, case in enumerate(cases, start=1):
         case_id = str(case["case_id"])
+        input_payload = json.loads(
+            Path(case["input_json"]).read_text(encoding="utf-8")
+        )
+        prompt = str(input_payload["input_caption"])
+        if prompt != str(case["prompt"]):
+            raise ValueError(f"Prompt mismatch for {case_id}")
         case_media = media / case_id
         case_media.mkdir(parents=True, exist_ok=True)
         context_link = case_media / "context.mp4"
@@ -130,7 +136,7 @@ def main() -> None:
   <header class="case-head"><div><span class="case-number">CASE {case_number:02d}</span>
   <span class="source source-{escape(case['source'])}">{escape(case['source'])}</span>
   <h2>{escape(case_id)}</h2></div><code>training index {int(case['source_index'])}</code></header>
-  <p class="prompt">{escape(case['prompt'])}</p>
+  <div class="prompt"><span>Inference prompt</span><p>{escape(prompt)}</p></div>
   <div class="grid">{''.join(panels)}</div>
   <details><summary>训练样本溯源</summary><p>{escape(case['original_video_path'])}</p></details>
 </section>'''
@@ -153,10 +159,10 @@ def main() -> None:
 .toolbar{{position:sticky;top:0;z-index:5;padding:10px max(24px,4vw);display:flex;align-items:center;gap:9px;background:rgba(237,242,245,.95);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}}button{{padding:9px 12px;border:1px solid #9b6722;background:var(--amber);color:white;font:700 12px inherit;cursor:pointer}}button:focus,a:focus{{outline:3px solid rgba(49,91,125,.3);outline-offset:2px}}.jumps{{display:flex;gap:6px;overflow-x:auto;margin-left:8px}}.jumps a{{white-space:nowrap;padding:7px 9px;border:1px solid var(--line);background:white;color:var(--blue);font:700 10px ui-monospace,monospace;text-decoration:none}}
 .roster-wrap{{padding:24px max(24px,4vw) 0}}.roster-wrap h2{{margin:0 0 12px;font:600 19px Georgia,serif}}.roster{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0;padding:0;list-style:none}}.roster li{{display:flex;gap:12px;justify-content:space-between;padding:8px 10px;border-left:5px solid var(--method-color);background:rgba(255,255,255,.7);font-size:11px}}.roster strong{{font-family:ui-monospace,monospace;white-space:nowrap}}
 main{{padding:28px max(24px,4vw) 90px}}.case{{scroll-margin-top:72px}}.case+.case{{margin-top:58px;padding-top:46px;border-top:2px solid #aebfc9}}.case-head{{display:flex;align-items:end;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding-bottom:12px}}.case-number{{margin-right:8px;font:800 10px ui-monospace,monospace;letter-spacing:.13em;color:var(--blue)}}h2{{margin:7px 0 0;font:600 21px/1.2 Georgia,serif}}code{{font-size:11px;color:var(--muted)}}
-.source{{display:inline-block;padding:4px 8px;color:white;font:700 10px ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase}}.source-pybullet{{background:var(--py)}}.source-kubric{{background:var(--ku)}}.source-openvid{{background:var(--ov)}}.prompt{{margin:14px 0 18px;max-width:1200px;color:#42586a;line-height:1.5}}
+.source{{display:inline-block;padding:4px 8px;color:white;font:700 10px ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase}}.source-pybullet{{background:var(--py)}}.source-kubric{{background:var(--ku)}}.source-openvid{{background:var(--ov)}}.prompt{{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px;margin:14px 0 18px;padding:11px 13px;max-width:1400px;background:#e4ebef;border-left:5px solid var(--blue)}}.prompt span{{padding-top:2px;color:var(--blue);font:800 10px/1.3 ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase}}.prompt p{{margin:0;color:#344c5e;line-height:1.5}}
 .grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}}figure{{margin:0;background:var(--panel);border:1px solid var(--line);border-top:5px solid var(--method-color);box-shadow:0 6px 18px rgba(38,61,79,.06)}}.video-shell{{aspect-ratio:896/512;display:grid;place-items:center;overflow:hidden;background:#213747}}video{{width:100%;height:100%;object-fit:contain;background:#162735}}figcaption{{min-height:48px;padding:9px 10px;font:700 11px/1.35 ui-monospace,monospace;color:#40576a}}.pending{{width:100%;height:100%;display:grid;place-items:center;background:repeating-linear-gradient(135deg,#253d50,#253d50 9px,#2d485d 9px,#2d485d 18px);color:#dce8ef;font:600 11px ui-monospace,monospace}}
 details{{margin-top:13px;padding-top:10px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}}details p{{overflow-wrap:anywhere}}
-@media(max-width:1100px){{.grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}.roster{{grid-template-columns:repeat(2,minmax(0,1fr))}}.mast{{grid-template-columns:1fr}}}}@media(max-width:650px){{.grid,.roster{{grid-template-columns:1fr}}.toolbar{{align-items:stretch;flex-wrap:wrap}}.jumps{{width:100%;margin-left:0}}.case-head{{align-items:start;flex-direction:column}}}}
+@media(max-width:1100px){{.grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}.roster{{grid-template-columns:repeat(2,minmax(0,1fr))}}.mast{{grid-template-columns:1fr}}}}@media(max-width:650px){{.grid,.roster{{grid-template-columns:1fr}}.toolbar{{align-items:stretch;flex-wrap:wrap}}.jumps{{width:100%;margin-left:0}}.case-head{{align-items:start;flex-direction:column}}.prompt{{grid-template-columns:1fr;gap:5px}}}}
 </style></head><body>
 <header class="mast"><div><div class="eyebrow">test5 average metrics / step-500 checkpoint contact sheet</div><h1>全部 step-500 方案<br>训练集 9-case 横向对照</h1><p>指标表中 18 个具有 step-500 的训练方案；相同训练输入、相同 prompt/negative prompt、seed 42、512×896、49 帧、context 8、40 inference steps、30 FPS，统一在 GPU{int(config['gpu'])} 续跑。</p></div><div class="score"><strong>{total_complete}/162</strong><span>已生成方案 × case</span></div></header>
 <nav class="toolbar"><button id="replay" type="button">整页从头播放</button><button id="pause" type="button">整页暂停</button><div class="jumps">{''.join(jumps)}</div></nav>
