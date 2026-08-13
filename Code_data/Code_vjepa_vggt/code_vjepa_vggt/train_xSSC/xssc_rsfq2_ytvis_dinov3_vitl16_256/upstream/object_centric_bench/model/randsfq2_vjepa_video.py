@@ -9,20 +9,27 @@ from .randsfq2 import RandSFQ2
 class RandSFQ2VJEPAVideo(RandSFQ2):
     """Run xSSC at the temporal resolution returned by a video backbone."""
 
-    def forward(self, input, condit=None):
-        """
-        - input: raw video, shape=(b,t_raw,c,h,w)
-        - condit: tubelet-aligned conditions, shape=(b,t_tubelet,s,c)
+    def _extract_slots(self, input, initial_condit=None):
+        """Encode a video and recurrently aggregate slots without the decoder.
+
+        ``initial_condit`` is deliberately restricted to ``[B,S,C]``.  The
+        slot-only Stage-1 path must not accept a time sequence of future GT
+        conditions.
         """
         b = input.shape[0]
         feature = self.encode_backbone(input).detach()  # (b,t,c,h,w)
         b_feature, t, c, h, w = feature.shape
         if b_feature != b:
             raise RuntimeError(f"Backbone changed batch size: {b} -> {b_feature}")
-        if condit is not None and condit.shape[:2] != (b, t):
+        if initial_condit is not None and initial_condit.ndim != 3:
             raise ValueError(
-                "Conditions must be aligned to V-JEPA tubelets: "
-                f"{tuple(condit.shape[:2])} != {(b, t)}"
+                "Slot-only initial condition must be [B,S,C], got "
+                f"{tuple(initial_condit.shape)}"
+            )
+        if initial_condit is not None and initial_condit.shape[0] != b:
+            raise ValueError(
+                "Initial condition batch does not match video batch: "
+                f"{initial_condit.shape[0]} != {b}"
             )
 
         encode = feature.permute(0, 1, 3, 4, 2).flatten(0, 1)  # (b*t,h,w,c)
@@ -34,7 +41,7 @@ class RandSFQ2VJEPAVideo(RandSFQ2):
         attenta = []
         for i in range(t):
             if i == 0:
-                query_i = self.initializ(b if condit is None else condit[:, 0, :, :])
+                query_i = self.initializ(b if initial_condit is None else initial_condit)
             else:
                 query_i = self.transit(slotz, encode[:, : i + 1, :, :])
 
@@ -51,6 +58,36 @@ class RandSFQ2VJEPAVideo(RandSFQ2):
 
         attenta = pt.stack(attenta, 1)
         attenta = rearrange(attenta, "b t s (h w) -> b t s h w", h=h, w=w)
+        return feature, slotz, attenta
+
+    def extract_slot_trajectory(self, input, initial_condit=None):
+        """Return causal backbone features, slots, and aggregation attention.
+
+        This method never calls the feature-query decoder.  In particular, it
+        cannot expose a predictor or metric to a real future V-JEPA query.
+        """
+        return self._extract_slots(input, initial_condit=initial_condit)
+
+    def forward(self, input, condit=None):
+        """
+        - input: raw video, shape=(b,t_raw,c,h,w)
+        - condit: tubelet-aligned conditions, shape=(b,t_tubelet,s,c)
+        """
+        if condit is not None and condit.ndim != 4:
+            raise ValueError(
+                "Training conditions must be [B,T,S,C], got "
+                f"{tuple(condit.shape)}"
+            )
+        initial_condit = None if condit is None else condit[:, 0, :, :]
+        feature, slotz, attenta = self._extract_slots(
+            input, initial_condit=initial_condit
+        )
+        b, t, c, h, w = feature.shape
+        if condit is not None and condit.shape[:2] != (b, t):
+            raise ValueError(
+                "Conditions must be aligned to V-JEPA tubelets: "
+                f"{tuple(condit.shape[:2])} != {(b, t)}"
+            )
 
         clue = rearrange(feature, "b t c h w -> b t (h w) c")
         # Legacy square checkpoints use the original flat positional embedding.

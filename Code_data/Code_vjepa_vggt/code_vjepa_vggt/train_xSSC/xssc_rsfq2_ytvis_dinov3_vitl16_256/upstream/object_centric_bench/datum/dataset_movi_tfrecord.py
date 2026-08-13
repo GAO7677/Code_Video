@@ -1,8 +1,9 @@
 """Direct PyTorch reader for MOVi TFDS TFRecord shards.
 
 This mirrors :class:`MOVi`'s output contract without requiring TensorFlow at
-training time. Only RGB frames and instance segmentations are decoded; boxes
-are recomputed from the transformed masks, as in the official xSSC reader.
+training time. RGB frames and instance segmentations are always available;
+Stage-1 probes may additionally request the official per-instance state arrays.
+Boxes are recomputed from transformed masks, as in the official xSSC reader.
 """
 
 from pathlib import Path
@@ -97,6 +98,25 @@ def _decode_int64_list(feature):
     return values
 
 
+def _decode_float_list(feature):
+    values = []
+    for field_number, _, float_list in _iter_protobuf_fields(feature):
+        if field_number != 2:
+            continue
+        for number, wire_type, value in _iter_protobuf_fields(float_list):
+            if number != 1:
+                continue
+            if wire_type == 5:
+                values.append(struct.unpack("<f", value)[0])
+            elif wire_type == 2:
+                if len(value) % 4:
+                    raise ValueError("Packed float list is not 4-byte aligned")
+                values.extend(
+                    struct.unpack(f"<{len(value) // 4}f", value)
+                )
+    return values
+
+
 def _extract_example_features(serialized, requested):
     root = next(
         (
@@ -138,6 +158,10 @@ class MOViTFRecord(ptud.Dataset):
     - ``segment``: ``[T, H, W, S]`` bool one-hot masks, including background
       when it remains visible after spatial augmentation.
     - ``bbox``: optional ``[T, S_fg, 4]`` float32 normalized LTRB boxes.
+    - ``position``/``velocity``: optional ``[T,S_fg,3]`` official world state.
+    - ``image_position``: optional ``[T,S_fg,2]`` official image coordinates.
+    - ``visibility``: optional ``[T,S_fg]`` visible-pixel counts.
+    - ``video_name``: optional source identifier string.
 
     The class is map-style, so it works with xSSC's ``DistributedSampler``.
     ``transform0`` is applied to encoded frame lists and should contain only
@@ -154,6 +178,7 @@ class MOViTFRecord(ptud.Dataset):
         base_dir=None,
         require_complete=False,
         index_cache_dir=None,
+        preserve_instance_ids=False,
     ):
         if base_dir is not None:
             data_file = Path(base_dir) / data_file
@@ -162,8 +187,17 @@ class MOViTFRecord(ptud.Dataset):
         self.extra_keys = tuple(extra_keys)
         self.transform0 = transform0
         self.transform = transform
+        self.preserve_instance_ids = bool(preserve_instance_ids)
 
-        supported = {"segment", "bbox"}
+        supported = {
+            "segment",
+            "bbox",
+            "position",
+            "velocity",
+            "image_position",
+            "visibility",
+            "video_name",
+        }
         unknown = set(self.extra_keys).difference(supported)
         if unknown:
             raise ValueError(f"Unsupported extra_keys: {sorted(unknown)}")
@@ -234,6 +268,18 @@ class MOViTFRecord(ptud.Dataset):
         requested = {"video", "metadata/num_instances"}
         if "segment" in self.extra_keys:
             requested.add("segmentations")
+        requested_by_output = {
+            "position": "instances/positions",
+            "velocity": "instances/velocities",
+            "image_position": "instances/image_positions",
+            "visibility": "instances/visibility",
+            "video_name": "metadata/video_name",
+        }
+        requested.update(
+            source_key
+            for output_key, source_key in requested_by_output.items()
+            if output_key in self.extra_keys
+        )
         features = _extract_example_features(serialized, requested)
 
         video_encoded = _decode_bytes_list(features["video"])
@@ -255,6 +301,43 @@ class MOViTFRecord(ptud.Dataset):
             )
             sample1["segment"] = pt.from_numpy(segment)
 
+        num_frames = len(video_encoded)
+
+        def decode_state(output_key, source_key, width):
+            values = _decode_float_list(features[source_key])
+            expected = num_instances * num_frames * width
+            if len(values) != expected:
+                raise ValueError(
+                    f"{source_key} contains {len(values)} floats; expected {expected}"
+                )
+            value = pt.tensor(values, dtype=pt.float32)
+            sample1[output_key] = value.reshape(
+                num_instances, num_frames, width
+            ).transpose(0, 1).contiguous()
+
+        if "position" in self.extra_keys:
+            decode_state("position", "instances/positions", 3)
+        if "velocity" in self.extra_keys:
+            decode_state("velocity", "instances/velocities", 3)
+        if "image_position" in self.extra_keys:
+            decode_state("image_position", "instances/image_positions", 2)
+        if "visibility" in self.extra_keys:
+            values = _decode_int64_list(features["instances/visibility"])
+            expected = num_instances * num_frames
+            if len(values) != expected:
+                raise ValueError(
+                    "instances/visibility contains "
+                    f"{len(values)} values; expected {expected}"
+                )
+            sample1["visibility"] = pt.tensor(values, dtype=pt.int64).reshape(
+                num_instances, num_frames
+            ).transpose(0, 1).contiguous()
+        if "video_name" in self.extra_keys:
+            values = _decode_bytes_list(features["metadata/video_name"])
+            if len(values) != 1:
+                raise ValueError("metadata/video_name must contain one value")
+            sample1["video_name"] = bytes(values[0]).decode("utf-8")
+
         sample2 = self.transform(**sample1)
         if "segment" not in self.extra_keys:
             return sample2
@@ -266,11 +349,12 @@ class MOViTFRecord(ptud.Dataset):
             )
         masks = ptnf.one_hot(segment.long(), num_instances + 1).bool()
         present = masks.any(dim=(0, 1, 2))
-        masks = masks[..., present]
+        if not self.preserve_instance_ids:
+            masks = masks[..., present]
         sample2["segment"] = masks
 
         if "bbox" in self.extra_keys:
-            foreground_start = 1 if present[0] else 0
+            foreground_start = 1 if self.preserve_instance_ids or present[0] else 0
             flattened = rearrange(
                 masks[..., foreground_start:], "t h w s -> h w (t s)"
             )

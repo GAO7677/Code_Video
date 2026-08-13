@@ -107,3 +107,14 @@ Cases are the highest independent unit. Final means must first average targets
 within case and then weight cases equally. This matrix is a discovery test;
 any claim of generalization requires a held-out cohort.
 
+## Live visualization decision
+
+The dual-protocol matrix is integrated into the existing 8092 route
+`/gt-stc-guidance-results?v=2` instead of creating a disconnected page. The
+dashboard reads each backend `task_manifest.json` as the source of planned
+work, so it always renders all 78 slots: Baseline, Top100, Bottom100, and
+Random100 for each selectable case/target in both protocol rows. A slot changes
+from `PENDING` to a lazy-loaded video only after both `generated.mp4` and
+`complete.json` exist; metric fields remain independently pending until
+`trajectory_metrics.json` is present. The catalog is rescanned every 30
+seconds, preserving the selected case/target while generation continues.

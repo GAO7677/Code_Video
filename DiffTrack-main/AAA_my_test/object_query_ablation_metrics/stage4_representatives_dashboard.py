@@ -43,8 +43,9 @@ REPRESENTATIVES: tuple[dict[str, Any], ...] = (
         "title": "M1-future · Top100 的 R→R 跨帧贡献",
         "flow": "删除 t_k < t_q 的 R K/V → R Query，即对象历史状态到未来对象状态的贡献。",
         "claim": (
-            "Top100 消融对 object_C 的局部影响远大于 Bottom100 和 Random100；"
-            "它是当前最清楚的 head-group 分离案例。"
+            "在相同 case、seed=47326、object_C 和 M1-future 下，相比消融 Bottom100，"
+            "消融 Top100 的 Target-local 高 20.588（16.7×）；相比 Random100 高 20.528（16.0×）。"
+            "因此，这个代表例支持 Top100 的 R→R Future contribution 更强。"
         ),
         "evidence": (
             "Target-local：Top100 21.895，Bottom100 1.307，Random100 1.367；"
@@ -67,8 +68,9 @@ REPRESENTATIVES: tuple[dict[str, Any], ...] = (
         "title": "M1-past · Future→Past 也产生强效应",
         "flow": "删除 t_k > t_q 的 R K/V → R Query，作为 M1-future 的反向时间控制。",
         "claim": (
-            "Top100 在 Past 控制中同样强，因此当前证据更像是 R→R 双向时序关联，"
-            "还不是单向因果传播。"
+            "在相同 case、seed=47326、object_C 和 M1-past 下，相比消融 Bottom100，"
+            "消融 Top100 的 Target-local 高 20.851（20.3×）；相比 Random100 高 20.066（11.8×）。"
+            "同时，Top100-M1-past 与 Top100-M1-future 仅相差 0.035，因此该 seed 不支持 Future 明显强于 Past。"
         ),
         "evidence": (
             "Target-local：Top100 21.929，Bottom100 1.078，Random100 1.864；"
@@ -88,7 +90,9 @@ REPRESENTATIVES: tuple[dict[str, Any], ...] = (
         "title": "M1-same · 同帧 R→R 并非 Top100 独占",
         "flow": "只删除 t_k = t_q 的 R K/V → R Query；跨帧 R→R 保留。",
         "claim": (
-            "Top100 与 Bottom100 的对象局部影响几乎相同，说明 Top100 的优势不能推广到所有 M1 设置。"
+            "在相同 case、seed=47326、object_C 和 M1-same 下，相比 Bottom100，"
+            "Top100 的 Target-local 只高 0.047（约 0.2%）；但两者分别是 Random100 的 5.37× 和 5.35×。"
+            "因此，只能说这个 seed 的同帧 M1 中 Top100 与 Bottom100 接近，不能推广为跨 seed 结论。"
         ),
         "evidence": (
             "Target-local：Top100 21.203，Bottom100 21.156，Random100 3.951；"
@@ -108,8 +112,9 @@ REPRESENTATIVES: tuple[dict[str, Any], ...] = (
         "title": "M3-same · 单个 Random100 draw 反而最强",
         "flow": "只删除 t_k = t_q 的 R K/V → C Query，即对象状态向同帧其余 token 的广播。",
         "claim": (
-            "当前 Random100 的影响显著超过 Top100/Bottom100，是必须保留的异常反例，"
-            "防止把一次 ranking 结果过度概括。"
+            "在相同 case、seed=47326、object_C 和 M3-same 下，相比消融 Top100，"
+            "消融这个 Random100 draw 的 Target-local 高 18.560（8.0×）；相比 Bottom100 高 18.524（7.9×）。"
+            "因此，这个 draw 是 Top/Bottom ranking 的明确反例，但不能代表 Random100 总体。"
         ),
         "evidence": (
             "Target-local：Random100 21.209，Top100 2.650，Bottom100 2.686；"
@@ -129,7 +134,10 @@ REPRESENTATIVES: tuple[dict[str, Any], ...] = (
         "title": "M3-future · R→C 的时序与对象外变化",
         "flow": "删除 t_k < t_q 的 R K/V → C Query，即历史对象状态到未来环境/其他 token 的广播。",
         "claim": (
-            "Top100 在时序像素变化和对象外区域变化上均最大，是当前观察 R→C spillover 的首选案例。"
+            "在相同 case、seed=90094、object_C 和 M3-future 下，相比 Bottom100，"
+            "Top100 的 Outside 高 0.284（1.36×）、Temporal pixel 高 2.886（1.69×）；"
+            "相比 Random100，分别高 0.561（2.11×）和 3.829（2.19×）。"
+            "因此，它只是该 seed 下较强的 R→C spillover 候选。"
         ),
         "evidence": (
             "Temporal：Top/Bottom/Random = 7.057/4.171/3.228；"
@@ -152,7 +160,9 @@ REPRESENTATIVES: tuple[dict[str, Any], ...] = (
         "title": "M2-future · 环境输入缺失后的对象变化",
         "flow": "删除 t_k < t_q 的 C K/V → R Query，即历史环境/其他 token 到未来对象状态的输入。",
         "claim": (
-            "三组 heads 都改变了球体所在区域，其中 Bottom100 最强；视频中颜色、纹理和局部结构变化明显。"
+            "在相同 case、seed=13248、object_A 和 M2-future 下，相比消融 Top100，"
+            "消融 Bottom100 的 Target-local 高 3.293（1.40×）；相比 Random100 高 3.321（1.41×）。"
+            "因此，该代表例中 Bottom100 对目标区域的综合改变最大，但不能仅凭该指标判为外观变化。"
         ),
         "evidence": (
             "Target-local：Top100 8.190，Bottom100 11.483，Random100 8.162；"
@@ -171,7 +181,11 @@ REPRESENTATIVES: tuple[dict[str, Any], ...] = (
         "mask_mode": "incoming_same",
         "title": "M2-same · 已执行消融但输出响应很弱",
         "flow": "只删除 t_k = t_q 的 C K/V → R Query。",
-        "claim": "三组 heads 的影响均低且接近，适合作为强效应案例的低响应对照。",
+        "claim": (
+            "在相同 case、seed=13248、object_A 和 M2-same 下，Top100、Bottom100、Random100 的综合影响"
+            "最大只相差 0.013（最大/最小仅 1.02×），且三者都低于 0.60。"
+            "因此，相比本页的强响应代表例，它是该 case/seed 内的低响应对照。"
+        ),
         "evidence": "综合影响 Top/Bottom/Random = 0.586/0.590/0.577；最大值仅 0.590。",
         "caveat": "低像素效应不等于 attention dose 为零；应展开 Stage 4 dose 检查实际删除量。",
         "primary_metric": "impact",
@@ -383,7 +397,7 @@ function fastMetrics(f){return [['Impact',f?.impact],['Target local',f?.target_l
 function details(r){const t=r.trajectory,s=r.survival;if(!t&&!s)return '<div class="pending">Trajectory / survival 指标补算中</div>';let rows=[];if(t)rows.push(['Center-ADE / D0',t.center_ade_d0],['Center-FDE / D0',t.center_fde_d0],['Velocity / D0/frame',t.velocity_error_d0_per_frame],['100×(1−PCK@10%)',t.pck10_error_percent],['Track Loss %',t.track_loss_percent]);if(s)rows.push(['Disappearance %',s.disappearance_percent],['Mask Absence %',s.mask_absence_percent],['Identity Failure %',s.identity_failure_percent],['Area Failure %',s.area_failure_percent],['Terminal Missing %',s.terminal_missing_percent]);return `<details><summary>轨迹与对象存活指标</summary><div class="detail-grid">${rows.map(([k,v])=>`<div><b>${F(v)}</b><br>${k}</div>`).join('')}</div></details>`}
 function videoCard(g,r){if(!r.ready)return `<article class="video-card" data-scope="${esc(r.head_scope)}"><h3>${esc(r.label)}</h3><div class="pending">尚未生成</div></article>`;return `<article class="video-card" data-scope="${esc(r.head_scope)}"><h3>${esc(r.label)}</h3><video controls muted loop playsinline preload="none" data-src="${esc(media('ablation',g,r))}"></video><div class="metrics">${fastMetrics(r.fast)}</div>${details(r)}</article>`}
 function ruler(g){const vals=g.rows.map(r=>Number(r.fast?.[g.primary_metric])).filter(Number.isFinite),max=Math.max(...vals,1e-9);return g.rows.map(r=>{const v=Number(r.fast?.[g.primary_metric]),w=Number.isFinite(v)?Math.max(2,100*v/max):0;return `<div class="ruler-item" data-scope="${esc(r.head_scope)}" style="--width:${w}%"><b>${F(v)}</b><span>${esc(r.label)} · ${esc(g.primary_metric)}</span></div>`}).join('')}
-function group(g,i){const full=`/object-query-information-flow-stage4?${new URLSearchParams({v:'1',case:g.case,seed:String(g.seed),target:`${g.target_scope}::${g.region||''}`})}`;return `<section class="case" id="${esc(g.id)}"><div class="case-head"><div><div class="case-label">${String(i+1).padStart(2,'0')} / ${esc(g.label)}</div><h2>${esc(g.title)}</h2><div class="identity">${esc(g.case)}<br>seed ${g.seed} · ${esc(g.region||'all_objects')}<br>${esc(g.mask_mode)}</div></div><div><p class="flow">${esc(g.flow)}</p><p class="claim">${esc(g.claim)}</p><div class="actions"><button data-replay="${esc(g.id)}">同步重播</button><a href="${esc(full)}">打开完整矩阵</a></div></div><div class="case-analysis"><div class="evidence">${esc(g.evidence)}</div><p class="caveat"><b>证据边界：</b>${esc(g.caveat)}</p></div></div><div class="ruler">${ruler(g)}</div><div class="video-grid"><article class="video-card baseline"><h3>Baseline · no intervention</h3><video controls muted loop playsinline preload="none" data-src="${esc(media('baseline',g))}"></video><div class="pending">共同 reference；所有指标均与它比较</div></article>${g.rows.map(r=>videoCard(g,r)).join('')}</div></section>`}
+function group(g,i){const full=`/object-query-information-flow-stage4?${new URLSearchParams({v:'1',case:g.case,seed:String(g.seed),target:`${g.target_scope}::${g.region||''}`})}`;return `<section class="case" id="${esc(g.id)}"><div class="case-head"><div><div class="case-label">${String(i+1).padStart(2,'0')} / ${esc(g.label)}</div><h2>${esc(g.title)}</h2><div class="identity">${esc(g.case)}<br>seed ${g.seed} · ${esc(g.region||'all_objects')}<br>${esc(g.mask_mode)}</div></div><div><p class="flow">${esc(g.flow)}</p><p class="claim"><b>当前结论（明确比较）：</b>${esc(g.claim)}</p><div class="actions"><button data-replay="${esc(g.id)}">同步重播</button><a href="${esc(full)}">打开完整矩阵</a></div></div><div class="case-analysis"><div class="evidence">${esc(g.evidence)}</div><p class="caveat"><b>证据边界：</b>${esc(g.caveat)}</p></div></div><div class="ruler">${ruler(g)}</div><div class="video-grid"><article class="video-card baseline"><h3>Baseline · no intervention</h3><video controls muted loop playsinline preload="none" data-src="${esc(media('baseline',g))}"></video><div class="pending">共同 reference；所有指标均与它比较</div></article>${g.rows.map(r=>videoCard(g,r)).join('')}</div></section>`}
 async function load(){const d=await fetch(`${api}/catalog?v=${Date.now()}`,{cache:'no-store'}).then(r=>r.json()),s=d.status;$('status').innerHTML=[['生成',`${s.generated}/${s.expected}`],['Fast records',s.fast_records],['Trajectory records',s.trajectory_records],['Survival records',s.survival_records]].map(([k,v])=>`<div class="stat"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');const defs=[['Impact',d.ranking_definition?.direction],['Target local',d.definitions?.target_local?.direction],['Temporal pixel',d.definitions?.temporal_appearance?.direction],['Outside spillover',d.definitions?.outside_spillover?.direction],['Trajectory / survival','ADE/FDE 越大表示轨迹偏移更强；Disappearance 越大表示对象存活更差。']];$('definitions').innerHTML=defs.map(([k,v])=>`<div class="definition"><b>${esc(k)}</b><p>${esc(v)}</p></div>`).join('');$('content').innerHTML=d.groups.map(group).join('');document.querySelectorAll('[data-replay]').forEach(b=>b.onclick=()=>document.querySelectorAll(`#${CSS.escape(b.dataset.replay)} video`).forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));lazy()}
 load().catch(e=>$('content').innerHTML=`<div class="pending">读取失败：${esc(e)}</div>`);
 </script></body></html>'''

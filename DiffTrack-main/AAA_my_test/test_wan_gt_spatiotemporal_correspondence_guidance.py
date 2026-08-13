@@ -59,6 +59,74 @@ def qk_for_two_frame_match(correct: bool) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 class CorrespondenceGuidanceTests(unittest.TestCase):
+    def test_dashboard_dual_protocol_keeps_pending_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy_root = root / "legacy"
+            dual_root = root / "dual"
+            source = root / "source.mp4"
+            source.write_bytes(b"source")
+            tube = legacy_root / "gt_tubes" / "case_a"
+            tube.mkdir(parents=True)
+            (tube / "manifest.json").write_text(
+                json.dumps({"source_video": str(source)}), encoding="utf-8"
+            )
+            manifest = {
+                "total_video_count": 4,
+                "backend": {"context_rgb_frames": 1, "context_latent_frames": 1},
+                "loss": {"query_times": list(range(1, 13)), "key_times": [0]},
+                "cases": [{"case": "case_a", "targets": ["object_A"]}],
+            }
+            for backend in ("firstframe_ti2v", "context8_v2v"):
+                backend_root = dual_root / backend
+                backend_root.mkdir(parents=True)
+                (backend_root / "task_manifest.json").write_text(
+                    json.dumps(manifest), encoding="utf-8"
+                )
+            complete = (
+                dual_root
+                / "firstframe_ti2v"
+                / "generations"
+                / "case_a"
+                / "seed_47326"
+                / "baseline"
+            )
+            complete.mkdir(parents=True)
+            (complete / "generated.mp4").write_bytes(b"video")
+            (complete / "complete.json").write_text("{}", encoding="utf-8")
+            original_root = gt_stc_guidance_results_dashboard.ROOT
+            original_dual_root = gt_stc_guidance_results_dashboard.DUAL_ROOT
+            try:
+                gt_stc_guidance_results_dashboard.ROOT = legacy_root
+                gt_stc_guidance_results_dashboard.DUAL_ROOT = dual_root
+                dual = gt_stc_guidance_results_dashboard._dual_catalog()
+                asset = gt_stc_guidance_results_dashboard.asset(
+                    "dual_generated",
+                    "case_a",
+                    target="object_A",
+                    variant="baseline",
+                    backend="firstframe_ti2v",
+                )
+                rejected = gt_stc_guidance_results_dashboard.asset(
+                    "dual_generated",
+                    "case_a",
+                    target="object_A",
+                    variant="../../generated",
+                    backend="firstframe_ti2v",
+                )
+            finally:
+                gt_stc_guidance_results_dashboard.ROOT = original_root
+                gt_stc_guidance_results_dashboard.DUAL_ROOT = original_dual_root
+            self.assertEqual(dual["planned"], 8)
+            self.assertEqual(dual["complete"], 1)
+            self.assertEqual(len(dual["cases"][0]["targets"][0]["protocols"]), 2)
+            self.assertEqual(
+                len(dual["cases"][0]["targets"][0]["protocols"][0]["variants"]),
+                4,
+            )
+            self.assertEqual(asset, complete / "generated.mp4")
+            self.assertIsNone(rejected)
+
     def test_dashboard_counts_registered_trajectory_overlays(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

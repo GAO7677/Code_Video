@@ -422,7 +422,7 @@ GT_STC_PREFLIGHT_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-guidance-preflight?v=1"><div><span>43 / GT-STC PREFLIGHT</span><h2>GT Tube 引导错误预检</h2><p>逐 case 审计 13 个 latent 时刻的 SAM2 region 与 CoTracker 可见性，区分已复现报错、未来必报错、运行中和待运行。</p></div><span class="go">打开 GT Tube 诊断页</span></a>
 '''
 GT_STC_RESULTS_PORTAL_CARD = r'''
-<a class="card new" href="/gt-stc-guidance-results?v=1"><div><span>44 / GT-STC FROZEN VALIDATION</span><h2>GT Tube 潜变量引导结果</h2><p>20-case source audit 与严格 Baseline screen；按 eligible case 同行比较 Source GT、Baseline、Region、Point、Combined，并展示 future-only 轨迹门控和指标。</p></div><span class="go">打开 GT-STC 验证结果</span></a>
+<a class="card new" href="/gt-stc-guidance-results?v=2"><div><span>44 / GT-STC + EQUAL-BUDGET HEAD GUIDANCE</span><h2>GT 轨迹潜变量引导结果</h2><p>顶部实时展示 First-frame TI2V / 8-frame V2V 的 Baseline、Top100、Bottom100、Random100 完整任务矩阵，未生成项固定为 Pending；下方保留 Region / Point / Combined 冻结验证。</p></div><span class="go">打开双协议实时结果</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + "</section>", 1
@@ -495,9 +495,11 @@ class MetricsHandler(viewer.Handler):
                 case=params.get("case", [""])[0],
                 target=params.get("target", [""])[0],
                 variant=params.get("variant", [""])[0],
+                backend=params.get("backend", [""])[0],
             )
             if asset is None or not asset.is_file():
-                raise FileNotFoundError("GT-STC validation asset is not ready")
+                self.send_error(404, "GT-STC validation asset is not ready")
+                return
             viewer.send_file_with_range(self, asset, "video/mp4")
             return
         if path == "/api/gt-stc-guidance-preflight/catalog":
