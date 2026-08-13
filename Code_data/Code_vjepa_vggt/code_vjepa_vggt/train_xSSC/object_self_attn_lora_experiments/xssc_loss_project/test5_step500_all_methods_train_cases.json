@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "gpu": 7,
+  "step": 500,
+  "inference": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "context_frames": 8,
+    "num_inference_steps": 40,
+    "fps": 30,
+    "seed": 42,
+    "negative_prompt": "模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理"
+  },
+  "cases_manifest": "/data/gaoya/agent-data/outputs/full_sa_no_object_xssc_loss_train_cases/cases.json",
+  "input_list": "/data/gaoya/agent-data/outputs/full_sa_no_object_xssc_loss_train_cases/inputs/cases.txt",
+  "output_root": "/data/gaoya/agent-data/outputs/test5_step500_all_methods_train_cases",
+  "methods": [
+    {
+      "key": "object_only",
+      "label": "Object-only",
+      "color": "#4D4D4D",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/object_only_gpu1_formal/formal_20260729T184553Z/checkpoints/step-000500"
+    },
+    {
+      "key": "full_sa",
+      "label": "Full-SA + Object",
+      "color": "#D62728",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_gpu2_formal/formal_20260729T184553Z/checkpoints/step-000500"
+    },
+    {
+      "key": "full_sa_physrvg_dit",
+      "label": "Full-SA + Object (PhysRVG DiT)",
+      "color": "#17BECF",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_physrvg_dit_gpu12_formal/formal_20260808T142258Z_physrvg_dit/checkpoints/step-000500"
+    },
+    {
+      "key": "full_sa_no_object",
+      "label": "Full-SA + No-Object",
+      "color": "#FF7F0E",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu67_resume_step6/resume_step000006_20260801T165700Z/checkpoints/step-000500"
+    },
+    {
+      "key": "full_sa_no_object_vjepa_loss",
+      "label": "Full-SA + No-Object + V-JEPA Loss",
+      "color": "#009E73",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu01_formal_vjepa_loss/20260805T180305Z/checkpoints/step-000500"
+    },
+    {
+      "key": "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
+      "label": "Full-SA + No-Object + xSSC Loss (DINOv3 MOVi-C 50k)",
+      "color": "#6F4EAD",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_no_object_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints/step-000500",
+      "reuse_result_root": "/data/gaoya/agent-data/outputs/full_sa_no_object_xssc_loss_train_cases/inference/step-000500_steps40_512x896_ctx08_49f"
+    },
+    {
+      "key": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
+      "label": "Full-SA + Object + Slot-Dedup (xSSC-50k) + xSSC Loss (DINOv3 MOVi-C 50k)",
+      "color": "#D55E00",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints/step-000500"
+    },
+    {
+      "key": "t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000",
+      "label": "PCKhead(S39/3350) + No-Object + xSSC Loss (DINOv3 MOVi-C 50k)",
+      "color": "#CC79A7",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints/step-000500"
+    },
+    {
+      "key": "s_head59",
+      "label": "S-head59 + Object",
+      "color": "#2CA02C",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/same_frame_s_head_full59_gpu6_formal/formal_20260729T184553Z/checkpoints/step-000500"
+    },
+    {
+      "key": "t_head70",
+      "label": "T-head70 + Object",
+      "color": "#9467BD",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_gpu7_formal/formal_20260729T184553Z/checkpoints/step-000500"
+    },
+    {
+      "key": "t_head70_no_object",
+      "label": "T-head70 + No-Object",
+      "color": "#E377C2",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_no_object_gpu67_formal/from_scratch_20260803T062822Z/checkpoints/step-000500"
+    },
+    {
+      "key": "t_head100_lora_pck32_no_object",
+      "label": "Motion-head100 (LoRA-PCK32 Top100) + No-Object",
+      "color": "#0072B2",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/lora_pck32_top100_t_head_no_object_gpu67_formal/pck32_top100_from_scratch_20260805T100041Z/checkpoints/step-000500"
+    },
+    {
+      "key": "full_sa_no_object_pybullet100",
+      "label": "Full-SA + No-Object (PyBullet 100%)",
+      "color": "#00A6A6",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_pybullet100_gpu67_1000steps/serial_20260804T115337Z/checkpoints/step-000500"
+    },
+    {
+      "key": "full_sa_no_object_kubric100",
+      "label": "Full-SA + No-Object (Kubric 100%)",
+      "color": "#F28E2B",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_kubric100_gpu67_1000steps/serial_20260804T115337Z/checkpoints/step-000500"
+    },
+    {
+      "key": "t_head70_slot_dedup_merge",
+      "label": "T-head70 + Object + Slot-Dedup",
+      "color": "#17BECF",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_slot_dedup_merge_gpu01/from_scratch_20260802T144443Z/checkpoints/step-000500"
+    },
+    {
+      "key": "slot_dedup_merge",
+      "label": "Full-SA + Object + Slot-Dedup",
+      "color": "#1F77B4",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu67/from_scratch_20260731T083348Z_full_sa_slot_dedup_merge_gpu67/checkpoints/step-000500"
+    },
+    {
+      "key": "slot_dedup_merge_xssc_step050000",
+      "label": "Full-SA + Object + Slot-Dedup (xSSC-50k)",
+      "color": "#8C564B",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_xssc_step050000_gpu67/formal_20260804T045128Z/checkpoints/step-000500"
+    },
+    {
+      "key": "t_head70_slot_dedup_merge_xssc_step050000",
+      "label": "T-head70 + Object + Slot-Dedup (xSSC-50k)",
+      "color": "#00B894",
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_slot_dedup_merge_xssc_step050000_gpu67/formal_20260804T182500Z/checkpoints/step-000500"
+    }
+  ]
+}

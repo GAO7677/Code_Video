@@ -4,7 +4,8 @@ set -euo pipefail
 GPU_ID="${GPU_ID:-3}"
 MAX_USED_MIB="${MAX_USED_MIB:-8000}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/wan_context_point_guidance_head_compare/forward_v2}"
+STABLE_POLLS="${STABLE_POLLS:-3}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/wan_context_point_guidance_head_compare/attention_audit_v3}"
 PYTHON="${PYTHON:-/home/gaoya/miniconda3/envs/wan-cu128/bin/python}"
 SCRIPT=/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/wan_context_point_guidance/run_dual_protocol.py
 DIAGNOSTIC_SCRIPT=/home/gaoya/Code_Video/DiffTrack-main/AAA_my_test/wan_context_point_guidance/render_constraint_diagnostics.py
@@ -18,13 +19,20 @@ fi
 mkdir -p "${LOG_DIR}"
 exec > >(tee -a "${LOG_PATH}") 2>&1
 
-echo "[queue] $(date -u +%FT%TZ) waiting for GPU ${GPU_ID}: memory.used <= ${MAX_USED_MIB} MiB"
+echo "[queue] $(date -u +%FT%TZ) waiting for GPU ${GPU_ID}: memory.used <= ${MAX_USED_MIB} MiB for ${STABLE_POLLS} consecutive polls"
+stable_count=0
 while true; do
   used="$({ nvidia-smi -i "${GPU_ID}" --query-gpu=memory.used --format=csv,noheader,nounits || echo 999999; } | head -n1 | tr -d ' ')"
   if [[ "${used}" =~ ^[0-9]+$ ]] && (( used <= MAX_USED_MIB )); then
-    break
+    stable_count=$((stable_count + 1))
+    echo "[queue] $(date -u +%FT%TZ) GPU ${GPU_ID} used=${used} MiB; stable ${stable_count}/${STABLE_POLLS}"
+    if (( stable_count >= STABLE_POLLS )); then
+      break
+    fi
+  else
+    stable_count=0
+    echo "[queue] $(date -u +%FT%TZ) GPU ${GPU_ID} used=${used} MiB; still waiting"
   fi
-  echo "[queue] $(date -u +%FT%TZ) GPU ${GPU_ID} used=${used} MiB; still waiting"
   sleep "${POLL_SECONDS}"
 done
 

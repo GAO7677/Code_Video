@@ -1,5 +1,12 @@
 # Stage 1: Causal xSSC State Audit
 
+> Active causal-adaptation branch (2026-08-13): model-only fork from the
+> noncausal MOVi-C `step-025000`, physical GPU 0, 24 raw frames / 12 causal
+> states, optimizer steps 25000→35000.  A launch-time capacity probe chooses
+> the largest safe single-GPU microbatch and changes gradient accumulation to
+> keep the effective batch fixed at 384.  Outputs and W&B run are independent
+> from both the source run and the earlier planned step-050000 branch.
+
 ## Scope
 
 Stage 1 answers only three questions:

@@ -22,6 +22,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from build_project_provenance_page import build_project_info_page
+from build_physiciq_physrvg_worst_case_dashboard import (
+    build_dashboard as build_physiciq_physrvg_worst_case_dashboard,
+)
+from build_physiciq_top3_physrvg_all_cases_dashboard import (
+    build_dashboard as build_physiciq_top3_physrvg_all_cases_dashboard,
+)
+from build_physiciq_top3_physrvg_top10_videos import (
+    build_dashboard as build_physiciq_top3_physrvg_top10_videos,
+)
 
 
 METHOD_PLOT_STYLES = {
@@ -2293,6 +2302,32 @@ def build_master_hub(
       <a href="physiciq-average-metrics/solid-mechanics/">39-case 平均指标表</a></div>
       <div class="status">固定子集<strong>{len(solid_mechanics_cases)} cases</strong><small>复用现有视频与指标</small></div>
     </section>"""
+    physrvg_worst_case_entry = ""
+    if phys_cases and (hub_root / "physiciq" / "index.html").is_file():
+        worst_case_root = hub_root / "physiciq-vs-physrvg-worst-cases"
+        build_physiciq_physrvg_worst_case_dashboard(
+            hub_root / "physiciq" / "index.html",
+            worst_case_root,
+        )
+        top3_compare_root = hub_root / "physiciq-top3-vs-physrvg-all-cases"
+        build_physiciq_top3_physrvg_all_cases_dashboard(
+            hub_root / "physiciq" / "index.html",
+            top3_compare_root,
+        )
+        top10_video_root = hub_root / "physiciq-top3-vs-physrvg-top10-videos"
+        build_physiciq_top3_physrvg_top10_videos(
+            hub_root / "physiciq" / "index.html",
+            top10_video_root,
+        )
+        physrvg_worst_case_entry = f"""
+    <section class="entry"><div><h2>PhysicIQ · 相对 PhysRVG 最大劣势 case</h2>
+      <div class="meta">覆盖全部已有方案；按 VideoPhy2 PC raw、Cosmos Reason、Physics-IQ ctx/no ctx
+      的原始分差筛选最大劣势，四路视频同步核查</div>
+      <a href="physiciq-vs-physrvg-worst-cases/">进入回归审计页</a>
+      <a href="physiciq-top3-vs-physrvg-top10-videos/">四指标 Top 10 · 纯视频</a>
+      <a href="physiciq-top3-vs-physrvg-all-cases/">综合 Top 3 × PhysRVG · 67 case</a></div>
+      <div class="status">动态汇总<strong>全部方案</strong><small>PhysRVG OFF / +LoRA 可切换</small></div>
+    </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -2345,6 +2380,7 @@ def build_master_hub(
     {physrvg_physiciq_entry}
     {physiciq_entry}
     {solid_mechanics_entry}
+    {physrvg_worst_case_entry}
     <section class="entry"><div><h2>初始四方案 case 对比</h2>
       <div class="meta">Object-only、Full-SA、S-head59、T-head70 的早期固定 case 对照页面</div>
       <a href="initial-gallery/">查看初始 case</a></div>

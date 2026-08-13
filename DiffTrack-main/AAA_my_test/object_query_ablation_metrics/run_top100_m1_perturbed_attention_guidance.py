@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Training-free Wan guidance from the clean-vs-Top100-M1 prediction difference.
+"""Training-free Wan guidance from a clean-vs-Top100-M1/M2/M3 difference.
 
 The final denoising prediction matches DiffTrack/PAG's CFG equation exactly:
 
-    eps = eps_u + cfg * (eps_c - eps_u) + pag * (eps_c - eps_m1)
+    eps = eps_u + cfg * (eps_c - eps_u) + pag * (eps_c - eps_flow)
 
-``eps_m1`` is computed with the existing audited temporal-object-tube M1
-implementation.  For the selected latest3350 Top100 layer-heads, M1 subtracts
-the exact post-softmax R->R contribution from object-tube query rows without
-renormalizing attention probabilities.
+``eps_flow`` is computed with the existing audited temporal-object-tube
+implementation.  For the selected latest3350 Top100 layer-heads, it subtracts
+one exact post-softmax information-flow contribution without renormalizing
+attention probabilities: M1=R->R, M2=C->R, or M3=R->C.
 
 This runner deliberately lives outside the DiffTrack CogVideoX pipeline.  The
 original processor is CogVideoX-specific; the guidance equation is reused here
@@ -67,15 +67,49 @@ DEFAULT_TRACKS_ROOT = EXPERIMENT_ROOT / "stage4_temporal_v1"
 DEFAULT_OUTPUT_ROOT = EXPERIMENT_ROOT / "training_free_top100_m1_guidance_v1"
 DEFAULT_CASE = "0613pybullet_sample_001460_w002"
 DEFAULT_SEED = 47326
-PROTOCOL = "wan_top100_m1_perturbed_attention_guidance_v1"
+PROTOCOL = "wan_top100_m123_perturbed_attention_guidance_v2"
 
-# These names map directly to the already-audited M1 implementations.  The
-# all-time variant is the Stage-3 M1 intervention: same, past, and future R->R.
-M1_TIME_SCOPES = {
-    "all_time": "self_only",
-    "future": "self_future",
-    "same": "self_same",
-    "past": "self_past",
+# These names map directly to the already-audited Stage-3/4 implementations.
+# ``all_time`` includes same, past, and future temporal source blocks.
+FLOW_TIME_SCOPES = {
+    "m1": {
+        "all_time": "self_only",
+        "future": "self_future",
+        "same": "self_same",
+        "past": "self_past",
+    },
+    "m2": {
+        "all_time": "incoming_only",
+        "future": "incoming_future",
+        "same": "incoming_same",
+        "past": "incoming_past",
+    },
+    "m3": {
+        "all_time": "outgoing_only",
+        "future": "outgoing_future",
+        "same": "outgoing_same",
+        "past": "outgoing_past",
+    },
+}
+FLOW_DEFINITIONS = {
+    "m1": {
+        "label": "M1",
+        "source": "R",
+        "target": "R",
+        "definition": "subtract sum_{k in R} A[R_query,k]V[k] from R query rows",
+    },
+    "m2": {
+        "label": "M2",
+        "source": "C",
+        "target": "R",
+        "definition": "subtract sum_{k in C} A[R_query,k]V[k] from R query rows",
+    },
+    "m3": {
+        "label": "M3",
+        "source": "R",
+        "target": "C",
+        "definition": "subtract sum_{k in R} A[C_query,k]V[k] from C query rows",
+    },
 }
 
 
@@ -111,12 +145,12 @@ def adjusted_conditional_prediction(
     )
 
 
-class Top100M1Guidance:
-    """Run clean+M1 conditional predictions and preserve the normal CFG branch.
+class Top100PerturbedAttentionGuidance:
+    """Run clean+perturbed conditional predictions and preserve normal CFG.
 
     DiffSynth's Legacy Wan pipeline calls ``model_fn`` twice per denoising step:
     conditional first and unconditional second.  This wrapper performs one
-    additional conditional forward with M1 active, then returns an adjusted
+    additional conditional forward with one flow ablation active, then returns an adjusted
     conditional prediction.  The unconditional forward remains unchanged.
     """
 
@@ -134,7 +168,7 @@ class Top100M1Guidance:
                 "this v1 runner requires a finite positive CFG scale different from 1"
             )
         if not math.isfinite(pag_scale) or pag_scale <= 0:
-            raise ValueError("pag_scale must be finite and positive for an M1-guided run")
+            raise ValueError("pag_scale must be finite and positive for a guided run")
         self.pipe = pipe
         self.ablator = ablator
         self.cfg_scale = float(cfg_scale)
@@ -155,7 +189,7 @@ class Top100M1Guidance:
         self._clean_model_fn = self.ablator._original_model_fn
         self._perturbed_model_fn = self.pipe.model_fn
         if self._clean_model_fn is None:
-            raise RuntimeError("M1 ablator did not capture the original model_fn")
+            raise RuntimeError("flow ablator did not capture the original model_fn")
         self.pipe.model_fn = self
         self._installed = True
 
@@ -220,14 +254,14 @@ class Top100M1Guidance:
             value != 1 for value in self.guided_calls_by_step.values()
         ):
             raise RuntimeError(
-                "expected exactly one M1-guided conditional call per step, got "
+                "expected exactly one flow-guided conditional call per step, got "
                 f"{self.guided_calls_by_step}"
             )
         if sorted(self.ablator.model_call_counts) != expected_step_ids or any(
             value != 1 for value in self.ablator.model_call_counts.values()
         ):
             raise RuntimeError(
-                "expected exactly one perturbed M1 forward per step, got "
+                "expected exactly one perturbed flow forward per step, got "
                 f"{self.ablator.model_call_counts}"
             )
         expected_head_events = len(self.ablator.entries) * self.expected_steps
@@ -269,9 +303,12 @@ class Top100M1Guidance:
         }
 
 
+Top100M1Guidance = Top100PerturbedAttentionGuidance
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate one Legacy Wan video with latest3350 Top100 M1 guidance."
+        description="Generate one Legacy Wan video with latest3350 Top100 M1/M2/M3 guidance."
     )
     parser.add_argument("--case", default=DEFAULT_CASE)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
@@ -289,13 +326,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="single-object region; defaults to the first object region in the manifest",
     )
+    parser.add_argument("--flow", choices=tuple(FLOW_TIME_SCOPES), default="m1")
     parser.add_argument(
+        "--time-scope",
         "--m1-time-scope",
-        choices=tuple(M1_TIME_SCOPES),
+        dest="time_scope",
+        choices=tuple(FLOW_TIME_SCOPES["m1"]),
         default="all_time",
         help=(
-            "all_time reproduces Stage-3 M1 (same+future+past); future/same/past "
-            "reuse the corresponding strict temporal M1 variant"
+            "all_time reproduces the Stage-3 flow (same+future+past); "
+            "future/same/past reuse the corresponding strict temporal variant"
         ),
     )
     parser.add_argument("--pag-scale", type=float, default=1.0)
@@ -354,7 +394,7 @@ def output_directory(args: argparse.Namespace, region: str | None) -> Path:
         f"single_object__{target}" if region is not None else "all_objects__all_objects"
     )
     variant += (
-        f"__m1_{args.m1_time_scope}__top100__pag{scale_tag(float(args.pag_scale))}"
+        f"__{args.flow}_{args.time_scope}__top100__pag{scale_tag(float(args.pag_scale))}"
     )
     return args.output_root / args.case / f"seed_{args.seed:05d}" / variant
 
@@ -388,6 +428,8 @@ def main() -> None:
     )
     if len(entries) != 100:
         raise RuntimeError(f"expected latest3350 Top100, got {len(entries)} heads")
+    mask_mode = FLOW_TIME_SCOPES[args.flow][args.time_scope]
+    flow_definition = FLOW_DEFINITIONS[args.flow]
 
     sample = resolve_sample(manifest, args.case, args.seed)
     region = resolve_target(sample, args.target_scope, args.region)
@@ -435,8 +477,12 @@ def main() -> None:
         "tracks_npz": str(track_path),
         "target_scope": args.target_scope,
         "region": region,
-        "m1_time_scope": args.m1_time_scope,
-        "mask_mode": M1_TIME_SCOPES[args.m1_time_scope],
+        "flow": args.flow,
+        "flow_label": flow_definition["label"],
+        "time_scope": args.time_scope,
+        "mask_mode": mask_mode,
+        "source_partition": flow_definition["source"],
+        "target_partition": flow_definition["target"],
         "head_scope": "top100",
         "selected_head_count": len(entries),
         "head_ranking_path": str(args.head_ranking_path),
@@ -464,13 +510,13 @@ def main() -> None:
         region_slices,
         (704, 1280),
         args.target_scope,
-        M1_TIME_SCOPES[args.m1_time_scope],
+        mask_mode,
         region,
         tracks=tracks,
         anchor_frames=anchors,
         record_dose=bool(args.record_dose),
     )
-    guidance = Top100M1Guidance(
+    guidance = Top100PerturbedAttentionGuidance(
         pipe_wrapper.pipe,
         ablator,
         cfg_scale=float(args.cfg_scale),
@@ -514,16 +560,13 @@ def main() -> None:
         "fps": 30,
         "cfg_call_order": ["conditional", "unconditional"],
         "guidance_equation": (
-            "eps_u + cfg*(eps_c-eps_u) + pag*(eps_c-eps_m1)"
+            f"eps_u + cfg*(eps_c-eps_u) + pag*(eps_c-eps_{args.flow})"
         ),
         "conditional_return_equation": (
-            "eps_c + (pag/cfg)*(eps_c-eps_m1)"
+            f"eps_c + (pag/cfg)*(eps_c-eps_{args.flow})"
         ),
-        "m1_definition": (
-            "For selected heads and R query rows, subtract exact post-softmax "
-            "sum_{k in R} A_qk V_k; no attention renormalization."
-        ),
-        "m1_object_partition": (
+        "flow_definition": flow_definition["definition"],
+        "object_partition": (
             "R is the frozen CoTracker object-token tube at 13 latent anchors"
         ),
         "perturbed_branches": ["conditional"],
@@ -542,7 +585,8 @@ def main() -> None:
                 "case": args.case,
                 "seed": args.seed,
                 "region": region,
-                "m1_time_scope": args.m1_time_scope,
+                "flow": args.flow,
+                "time_scope": args.time_scope,
                 "pag_scale": float(args.pag_scale),
                 "modified_head_events": audit["modified_head_events"],
             },

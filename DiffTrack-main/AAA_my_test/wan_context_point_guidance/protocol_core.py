@@ -271,6 +271,134 @@ def global_forward_point_loss(
     return torch.stack(terms).mean()
 
 
+def forward_attention_audit_sums(
+    q_bshd: torch.Tensor,
+    k_bshd: torch.Tensor,
+    point_rows_tn: torch.Tensor,
+    visibility_tn: torch.Tensor,
+    token_hw: tuple[int, int],
+    context_query_times: tuple[int, ...],
+    future_key_times: tuple[int, ...],
+    sigma_tokens: float,
+) -> dict[str, torch.Tensor]:
+    """Summarize the exact global attention used by forward point guidance.
+
+    Returned values are additive sums so captures from different blocks can be
+    combined without giving sparse blocks extra weight.  Heatmaps use the same
+    context-query/head pairs at every time, preserving real cross-time
+    attention mass.  Localization metrics additionally require the tracked
+    point to be visible in the evaluated frame.
+    """
+    token_height, token_width = (int(value) for value in token_hw)
+    frame_tokens = token_height * token_width
+    time_count, point_count = point_rows_tn.shape
+    if q_bshd.shape != k_bshd.shape:
+        raise ValueError("Q and K must have matching selected-head shapes")
+    if q_bshd.shape[1] != time_count * frame_tokens:
+        raise ValueError("Q/K token count does not match T*H*W")
+    if not context_query_times or not future_key_times:
+        raise ValueError("context query and future key times must both be non-empty")
+    if set(context_query_times) & set(future_key_times):
+        raise ValueError("context query and future key times must be disjoint")
+
+    device = q_bshd.device
+    q = q_bshd.detach().view(
+        q_bshd.shape[0], time_count, frame_tokens, q_bshd.shape[2], q_bshd.shape[3]
+    )
+    k = k_bshd.detach().view(
+        k_bshd.shape[0], time_count * frame_tokens, k_bshd.shape[2], k_bshd.shape[3]
+    )
+    rows = point_rows_tn.to(device=device, dtype=torch.long)
+    visibility = visibility_tn.to(device=device, dtype=torch.bool)
+    future_counts = torch.stack(
+        [visibility[future_time] for future_time in future_key_times], dim=0
+    ).sum(dim=0)
+    scale = math.sqrt(float(q_bshd.shape[-1]))
+    heatmap_sum = torch.zeros(
+        (time_count, token_height, token_width), device=device, dtype=torch.float32
+    )
+    heatmap_pair_count = torch.zeros(time_count, device=device, dtype=torch.float32)
+    frame_mass_sum = torch.zeros(time_count, device=device, dtype=torch.float32)
+    localized_mass_sum = torch.zeros(time_count, device=device, dtype=torch.float32)
+    peak_distance_sum = torch.zeros(time_count, device=device, dtype=torch.float32)
+    peak_hit_sum = torch.zeros(time_count, device=device, dtype=torch.float32)
+    metric_pair_count = torch.zeros(time_count, device=device, dtype=torch.float32)
+    radius = max(2.0 * float(sigma_tokens), 1.0)
+    yy, xx = torch.meshgrid(
+        torch.arange(token_height, device=device, dtype=torch.float32),
+        torch.arange(token_width, device=device, dtype=torch.float32),
+        indexing="ij",
+    )
+    flat_xy = torch.stack((xx.flatten(), yy.flatten()), dim=-1)
+
+    for context_time in context_query_times:
+        valid_query = visibility[context_time] & (future_counts > 0)
+        if not bool(valid_query.any()):
+            continue
+        point_ids = torch.nonzero(valid_query, as_tuple=False).flatten()
+        query_vectors = q[:, context_time, rows[context_time, point_ids], :, :].float()
+        logits = torch.einsum("bnhd,bkhd->bhnk", query_vectors, k.float()) / scale
+        probabilities = torch.softmax(logits, dim=-1)
+        batch_count, head_count, selected_count = probabilities.shape[:3]
+        all_pair_count = float(batch_count * head_count * selected_count)
+        for time_index in range(time_count):
+            start = time_index * frame_tokens
+            stop = start + frame_tokens
+            frame_probabilities = probabilities[..., start:stop]
+            heatmap_sum[time_index] += frame_probabilities.sum((0, 1, 2)).view(
+                token_height, token_width
+            )
+            heatmap_pair_count[time_index] += all_pair_count
+            frame_mass_sum[time_index] += frame_probabilities.sum()
+
+            visible_in_frame = visibility[time_index, point_ids]
+            if not bool(visible_in_frame.any()):
+                continue
+            local_probabilities = frame_probabilities[..., visible_in_frame, :]
+            local_point_ids = point_ids[visible_in_frame]
+            local_rows = rows[time_index, local_point_ids]
+            centers = torch.stack(
+                (
+                    (local_rows % token_width).float(),
+                    torch.div(local_rows, token_width, rounding_mode="floor").float(),
+                ),
+                dim=-1,
+            )
+            local_mask = (
+                (centers[:, None, :] - flat_xy[None, :, :]).square().sum(-1)
+                <= radius**2
+            )
+            localized_mass_sum[time_index] += (
+                local_probabilities * local_mask[None, None].float()
+            ).sum()
+            peaks = local_probabilities.argmax(dim=-1)
+            peak_xy = torch.stack(
+                (
+                    (peaks % token_width).float(),
+                    torch.div(peaks, token_width, rounding_mode="floor").float(),
+                ),
+                dim=-1,
+            )
+            distances = (peak_xy - centers[None, None]).square().sum(-1).sqrt()
+            peak_distance_sum[time_index] += distances.sum()
+            peak_hit_sum[time_index] += (distances <= radius).float().sum()
+            metric_pair_count[time_index] += float(
+                batch_count * head_count * int(visible_in_frame.sum())
+            )
+
+    if not bool(heatmap_pair_count.any()):
+        raise RuntimeError("no visible context point Queries for attention audit")
+    return {
+        "heatmap_sum": heatmap_sum,
+        "heatmap_pair_count": heatmap_pair_count,
+        "frame_mass_sum": frame_mass_sum,
+        "localized_mass_sum": localized_mass_sum,
+        "peak_distance_sum": peak_distance_sum,
+        "peak_hit_sum": peak_hit_sum,
+        "metric_pair_count": metric_pair_count,
+    }
+
+
 def fixed_mutable_rms_delta(
     gradient: torch.Tensor,
     context_latent_frames: int,

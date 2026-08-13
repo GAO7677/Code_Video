@@ -66,7 +66,7 @@ each visible future latent. Thus the CE penalizes wrong spatial correspondence,
 wrong future time allocation, and attention that remains in the context; there
 is no per-frame re-softmax.
 
-## Direction correction: forward-v2
+## Direction correction and attention audit: v3
 
 The original `v1` implementation was re-audited on 2026-08-13 and found to use
 
@@ -78,7 +78,8 @@ where `p_t^i` is already the future CoTracker position. That old reverse-v1
 matrix was stopped and retained unchanged under
 `wan_context_point_guidance_head_compare/v1`.
 
-The active `forward_v2` experiment now uses
+The active `attention_audit_v3` experiment retains the corrected forward-v2
+loss and uses
 
 \[
 Q(R_{ctx},p_{ctx}^i) \longrightarrow K(R_t,p_t^i).
@@ -90,9 +91,10 @@ equal mixture of Gaussians at the same CoTracker point ID over all visible
 future latent times. This is equivalent to averaging the per-future-time
 cross-entropies while retaining Wan's true global attention denominator.
 
-The corrected matrix is written separately under
-`wan_context_point_guidance_head_compare/forward_v2`; no v1 result is reused or
-silently relabelled.
+The new matrix is written separately under
+`wan_context_point_guidance_head_compare/attention_audit_v3`; neither v1 nor
+forward-v2 RGB results are reused or silently relabelled because their Q/K
+activations cannot be reconstructed after generation.
 
 The dashboard therefore displays, for every backend/case/target:
 
@@ -102,10 +104,31 @@ The dashboard therefore displays, for every backend/case/target:
 4. the same-backend unguided Baseline output trajectory against source GT.
 
 Item 4 is the **pre-guidance generated output**, not a pre-update attention
-argmax trajectory.  Current runs save scalar pre/post correspondence losses but
-not full QK response maps, so an exact “attention response before constraint”
-trajectory requires an explicit QK-capture rerun and must not be inferred from
-the rendered RGB video.
+argmax trajectory.
+
+### Denoising-step attention microscope
+
+The v3 rerun explicitly captures steps `5,10,15,20,25,30,35,40` using 1-based
+denoising numbering. At every captured step the same guided run records:
+
+- `PRE`: global Wan attention at `x_s`, before the normalized latent update;
+- `POST`: global Wan attention at `x'_s`, after that update and before the
+  scheduler step;
+- `POST-PRE`: signed attention change, red for increase and blue for decrease;
+- post-guidance predicted clean latent
+  `xhat_0 = x'_s - sigma_s * v_CFG(x'_s)` decoded through the frozen VAE.
+
+Each audit video has 13 frames, one per source anchor. Every frame is a
+five-panel `Source | PRE | POST | POST-PRE | predicted-x0` comparison. PRE and
+POST use the same source-frame background and a shared p99.5 display scale
+within that latent time. Display rescaling does not alter the saved raw maps or
+metrics. `frame mass` reports the original global-softmax probability assigned
+to that time, `localized mass` measures probability inside the same-ID point's
+2-sigma neighborhood, `peak distance` measures the token distance to the GT
+point, and `hit rate` reports whether the peak falls inside 2 sigma.
+
+A guided output is marked complete only when its final RGB video and all eight
+attention-audit step directories are complete.
 
 `launch_dual_gpu3.sh` runs this diagnostic renderer after both generation
 backends finish.  Until a same-backend Baseline exists, its trajectory card is
@@ -156,7 +179,7 @@ any claim of generalization requires a held-out cohort.
 ## Live visualization decision
 
 The dual-protocol matrix is integrated into the existing 8092 route
-`/gt-stc-guidance-results?v=2` instead of creating a disconnected page. The
+`/gt-stc-guidance-results?v=5` instead of creating a disconnected page. The
 dashboard reads each backend `task_manifest.json` as the source of planned
 work, so it always renders all 78 slots: Baseline, Top100, Bottom100, and
 Random100 for each selectable case/target in both protocol rows. A slot changes
@@ -164,3 +187,7 @@ from `PENDING` to a lazy-loaded video only after both `generated.mp4` and
 `complete.json` exist; metric fields remain independently pending until
 `trajectory_metrics.json` is present. The catalog is rescanned every 30
 seconds, preserving the selected case/target while generation continues.
+
+The page additionally exposes a global step rail for the eight captured
+denoising steps. For each backend it places Top100, Bottom100 and Random100
+side-by-side; unavailable step videos remain explicit `PENDING` cards.

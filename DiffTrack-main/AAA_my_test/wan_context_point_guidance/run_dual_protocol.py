@@ -49,8 +49,12 @@ for import_root in (DIFFTRACK_ROOT, CODE_ROOT, DIFFSYNTH_ROOT):
         sys.path.insert(0, str(import_root))
 
 from AAA_my_test import run_wan_gt_spatiotemporal_correspondence_guidance as legacy  # noqa: E402
+from AAA_my_test.wan_context_point_guidance.attention_audit_visualization import (  # noqa: E402
+    write_step_attention_audit,
+)
 from AAA_my_test.wan_context_point_guidance.protocol_core import (  # noqa: E402
     fixed_mutable_rms_delta,
+    forward_attention_audit_sums,
     global_forward_point_loss,
     load_head_groups,
     points_to_token_rows,
@@ -64,7 +68,7 @@ from code_vjepa_vggt.utils.video_io import (  # noqa: E402
 )
 
 
-PROTOCOL = "wan_equal_budget_forward_point_guidance_v2"
+PROTOCOL = "wan_equal_budget_forward_point_guidance_attention_audit_v3"
 DEFAULT_INPUT_LIST = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
 DEFAULT_RANKING = Path(
     "/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/"
@@ -85,13 +89,14 @@ DEFAULT_CHECKPOINT = Path(
     "checkpoints/step-000500"
 )
 DEFAULT_OUTPUT_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/wan_context_point_guidance_head_compare/forward_v2"
+    "/data/gaoya/agent-data/outputs/wan_context_point_guidance_head_compare/attention_audit_v3"
 )
 NEGATIVE_PROMPT = "模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理"
 HEAD_DIM = 128
 LATENT_FRAMES = 13
 PIXEL_FRAMES = 49
 LATENT_ANCHORS = np.arange(LATENT_FRAMES, dtype=np.int64) * 4
+DEFAULT_ATTENTION_CAPTURE_STEPS = tuple(range(5, 41, 5))
 
 
 @dataclass(frozen=True)
@@ -159,6 +164,39 @@ def source_geometry(source_video: Path) -> tuple[int, int]:
     if frame.ndim != 3:
         raise RuntimeError(f"invalid source frame shape: {frame.shape}")
     return int(frame.shape[0]), int(frame.shape[1])
+
+
+def source_anchor_frames(
+    tube: legacy.FrozenTube,
+    spec: BackendSpec,
+) -> np.ndarray:
+    """Decode the same 13 source frames in the exact backend pixel geometry."""
+    frames = np.asarray(iio.imread(tube.source_video))[:PIXEL_FRAMES, ..., :3]
+    anchors = np.asarray(tube.anchor_source_frames, dtype=np.int64)
+    if anchors.shape != (LATENT_FRAMES,):
+        raise RuntimeError(f"expected 13 source anchors, got {anchors.shape}")
+    if anchors.min() < 0 or anchors.max() >= len(frames):
+        raise RuntimeError(
+            f"source anchors {anchors.tolist()} exceed {len(frames)} decoded frames"
+        )
+    if spec.name == "firstframe_ti2v":
+        resized = legacy.resize_frames(frames, spec.height, spec.width)
+    else:
+        tensor = preprocess_video_rgb_uint8(
+            frames,
+            (spec.height, spec.width),
+            resize_mode="cover_crop",
+            cover_crop_hw=(spec.height, spec.width),
+        )
+        resized = (
+            ((tensor.permute(1, 2, 3, 0).float() + 1.0) * 127.5)
+            .round()
+            .clamp(0, 255)
+            .byte()
+            .cpu()
+            .numpy()
+        )
+    return np.asarray(resized, dtype=np.uint8)[anchors]
 
 
 def backend_tracks(
@@ -251,6 +289,10 @@ class GlobalPointCollector:
         self.term_count = 0
         self._geometry_cache: dict[tuple[int, int], torch.Tensor] = {}
         self._originals: list[tuple[Any, Any]] = []
+        self._capture_phase: str | None = None
+        self._capture_step: int | None = None
+        self._capture_seen_blocks: set[int] = set()
+        self._capture_sums: dict[str, np.ndarray] = {}
 
     def point_rows(self, token_hw: tuple[int, int]) -> torch.Tensor:
         cached = self._geometry_cache.get(token_hw)
@@ -266,6 +308,96 @@ class GlobalPointCollector:
         self.losses.clear()
         self.head_events = 0
         self.term_count = 0
+
+    def begin_capture(self, step: int, phase: str) -> None:
+        if phase not in {"pre", "post"}:
+            raise ValueError(f"unknown attention capture phase: {phase}")
+        if self.current_grid is None:
+            raise RuntimeError("collector grid is unset")
+        self._capture_phase = phase
+        self._capture_step = int(step)
+        self._capture_seen_blocks.clear()
+        self._capture_sums.clear()
+
+    def _capture_attention(
+        self,
+        q_heads: torch.Tensor,
+        k_heads: torch.Tensor,
+        rows: torch.Tensor,
+        token_hw: tuple[int, int],
+        block: int,
+    ) -> None:
+        if self._capture_phase is None or block in self._capture_seen_blocks:
+            return
+        self._capture_seen_blocks.add(block)
+        with torch.no_grad():
+            values = forward_attention_audit_sums(
+                q_heads,
+                k_heads,
+                rows,
+                self.visibility_tn,
+                token_hw,
+                self.key_times,
+                self.query_times,
+                self.sigma_tokens,
+            )
+        for name, value in values.items():
+            array = value.detach().float().cpu().numpy()
+            if name in self._capture_sums:
+                self._capture_sums[name] += array
+            else:
+                self._capture_sums[name] = array.copy()
+
+    def end_capture(self) -> dict[str, Any]:
+        if self._capture_phase is None or self._capture_step is None:
+            raise RuntimeError("attention capture was not started")
+        if not self._capture_sums:
+            raise RuntimeError("attention capture produced no selected-head values")
+        heat_count = self._capture_sums["heatmap_pair_count"]
+        metric_count = self._capture_sums["metric_pair_count"]
+        heat_denominator = np.maximum(heat_count, 1.0)
+        metric_denominator = np.maximum(metric_count, 1.0)
+        result: dict[str, Any] = {
+            "step_index": int(self._capture_step),
+            "step_1based": int(self._capture_step + 1),
+            "phase": self._capture_phase,
+            "heatmap": (
+                self._capture_sums["heatmap_sum"]
+                / heat_denominator[:, None, None]
+            ).astype(np.float32),
+            "heatmap_pair_count": heat_count.astype(np.int64),
+            "frame_mass": (
+                self._capture_sums["frame_mass_sum"] / heat_denominator
+            ).astype(np.float32),
+            "localized_mass": np.where(
+                metric_count > 0,
+                self._capture_sums["localized_mass_sum"] / metric_denominator,
+                np.nan,
+            ).astype(np.float32),
+            "peak_distance_tokens": np.where(
+                metric_count > 0,
+                self._capture_sums["peak_distance_sum"] / metric_denominator,
+                np.nan,
+            ).astype(np.float32),
+            "peak_hit_rate_2sigma": np.where(
+                metric_count > 0,
+                self._capture_sums["peak_hit_sum"] / metric_denominator,
+                np.nan,
+            ).astype(np.float32),
+            "metric_pair_count": metric_count.astype(np.int64),
+            "captured_blocks": int(len(self._capture_seen_blocks)),
+        }
+        self._capture_phase = None
+        self._capture_step = None
+        self._capture_seen_blocks.clear()
+        self._capture_sums.clear()
+        return result
+
+    def cancel_capture(self) -> None:
+        self._capture_phase = None
+        self._capture_step = None
+        self._capture_seen_blocks.clear()
+        self._capture_sums.clear()
 
     def _attention(
         self,
@@ -298,6 +430,13 @@ class GlobalPointCollector:
             :, :, selected
         ].contiguous()
         rows = self.point_rows((token_height, token_width))
+        self._capture_attention(
+            q_heads,
+            k_heads,
+            rows,
+            (token_height, token_width),
+            block,
+        )
 
         def compute_loss(q_selected: torch.Tensor, k_selected: torch.Tensor) -> torch.Tensor:
             return global_forward_point_loss(
@@ -558,12 +697,16 @@ def direct_update_at_step(
     spec: BackendSpec,
     update_rms: float,
     use_gradient_checkpointing: bool,
-) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any]]:
+    step: int,
+    capture_attention: bool,
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any], dict[str, Any] | None]:
     latents = inputs_shared["latents"].detach()
     latent_leaf = latents.requires_grad_(True)
     inputs_shared["latents"] = latent_leaf
     grid = active_grid(latent_leaf, models["dit"])
     collector.reset(grid)
+    if capture_attention:
+        collector.begin_capture(step, "pre")
     collector.active = True
     try:
         with torch.enable_grad():
@@ -579,8 +722,12 @@ def direct_update_at_step(
             head_events = collector.head_events
             term_count = collector.term_count
             gradient = torch.autograd.grad(pre_loss, latent_leaf, only_inputs=True)[0]
+    except BaseException:
+        collector.cancel_capture()
+        raise
     finally:
         collector.active = False
+    pre_capture = collector.end_capture() if capture_attention else None
     delta, update_audit = fixed_mutable_rms_delta(
         gradient, spec.context_latent_frames, update_rms
     )
@@ -591,6 +738,8 @@ def direct_update_at_step(
     # Reuse the required post-update positive CFG forward to verify that the
     # direct latent step actually decreases the registered correspondence loss.
     collector.reset(grid)
+    if capture_attention:
+        collector.begin_capture(step, "post")
     collector.active = True
     try:
         with torch.no_grad():
@@ -598,9 +747,13 @@ def direct_update_at_step(
                 pipe, models, inputs_shared, inputs_posi, timestep, False
             )
             post_loss = collector.total_loss()
+    except BaseException:
+        collector.cancel_capture()
+        raise
     finally:
         collector.active = False
         collector.losses.clear()
+    post_capture = collector.end_capture() if capture_attention else None
     pre_value = float(pre_loss.detach().cpu())
     post_value = float(post_loss.detach().cpu())
     audit = {
@@ -613,7 +766,12 @@ def direct_update_at_step(
         **update_audit,
     }
     del pre_noise, pre_loss, post_loss, gradient, delta, latent_leaf
-    return updated, post_noise, audit
+    captures = (
+        {"pre": pre_capture, "post": post_capture}
+        if pre_capture is not None and post_capture is not None
+        else None
+    )
+    return updated, post_noise, audit, captures
 
 
 def run_denoising(
@@ -628,12 +786,21 @@ def run_denoising(
     guidance_start: int,
     guidance_end: int,
     use_gradient_checkpointing: bool,
+    attention_capture_steps_1based: tuple[int, ...] = (),
     stop_after_step: int | None = None,
-) -> tuple[np.ndarray | None, list[dict[str, Any]]]:
+) -> tuple[
+    np.ndarray | None,
+    list[dict[str, Any]],
+    dict[int, dict[str, Any]],
+    dict[int, np.ndarray],
+]:
     freeze_pipe(pipe)
     pipe.load_models_to_device(pipe.in_iteration_models)
     models = {name: getattr(pipe, name) for name in pipe.in_iteration_models}
     audit: list[dict[str, Any]] = []
+    attention_captures: dict[int, dict[str, Any]] = {}
+    predicted_x0_latents: dict[int, torch.Tensor] = {}
+    capture_steps = {int(value) for value in attention_capture_steps_1based}
     for step, scheduler_timestep in enumerate(pipe.scheduler.timesteps):
         if (
             scheduler_timestep.item() < 0.875 * 1000
@@ -648,8 +815,9 @@ def run_denoising(
         )
         latents = inputs_shared["latents"].detach()
         guided = collector is not None and guidance_start <= step <= guidance_end
+        capture_attention = guided and (step + 1) in capture_steps
         if guided:
-            latents_for_step, noise_pos, row = direct_update_at_step(
+            latents_for_step, noise_pos, row, capture_row = direct_update_at_step(
                 pipe,
                 models,
                 inputs_shared,
@@ -659,7 +827,11 @@ def run_denoising(
                 spec,
                 update_rms,
                 use_gradient_checkpointing,
+                step,
+                capture_attention,
             )
+            if capture_row is not None:
+                attention_captures[step + 1] = capture_row
         else:
             inputs_shared["latents"] = latents
             with torch.no_grad():
@@ -685,6 +857,16 @@ def run_denoising(
                 pipe, models, inputs_shared, inputs_nega, timestep, False
             )
             noise_cfg = noise_neg + float(cfg_scale) * (noise_pos - noise_neg)
+            if capture_attention:
+                sigma = float(pipe.scheduler.sigmas[step])
+                predicted_x0 = (latents_for_step - sigma * noise_cfg).detach().clone()
+                predicted_x0[:, :, : spec.context_latent_frames] = latents_for_step[
+                    :, :, : spec.context_latent_frames
+                ]
+                predicted_x0_latents[step + 1] = predicted_x0.to(
+                    device="cpu", dtype=torch.float16
+                )
+                del predicted_x0
             inputs_shared["latents"] = pipe.scheduler.step(
                 noise_cfg, scheduler_timestep, latents_for_step
             )
@@ -705,7 +887,7 @@ def run_denoising(
         )
         del noise_pos, noise_neg, noise_cfg
         if stop_after_step is not None and step >= stop_after_step:
-            return None, audit
+            return None, audit, attention_captures, {}
     with torch.no_grad():
         for unit in pipe.post_units:
             inputs_shared, _, _ = pipe.unit_runner(
@@ -720,11 +902,33 @@ def run_denoising(
             tile_stride=(15, 26),
         )
         video = pipe.vae_output_to_video(decoded)
+        predicted_x0_frames: dict[int, np.ndarray] = {}
+        for capture_step, latent_cpu in sorted(predicted_x0_latents.items()):
+            latent = latent_cpu.to(device=pipe.device, dtype=pipe.torch_dtype)
+            predicted_decoded = pipe.vae.decode(
+                latent,
+                device=pipe.device,
+                tiled=True,
+                tile_size=(30, 52),
+                tile_stride=(15, 26),
+            )
+            predicted_video = pipe.vae_output_to_video(predicted_decoded)
+            if len(predicted_video) < PIXEL_FRAMES:
+                raise RuntimeError(
+                    f"predicted-x0 decode returned {len(predicted_video)} frames"
+                )
+            predicted_x0_frames[capture_step] = np.stack(
+                [
+                    np.asarray(predicted_video[int(index)].convert("RGB"), dtype=np.uint8)
+                    for index in LATENT_ANCHORS
+                ]
+            )
+            del latent, predicted_decoded, predicted_video
         pipe.load_models_to_device([])
     frames = np.stack(
         [np.asarray(frame.convert("RGB"), dtype=np.uint8) for frame in video]
     )
-    return frames, audit
+    return frames, audit, attention_captures, predicted_x0_frames
 
 
 def build_context8_model(args: argparse.Namespace) -> tuple[Any, dict[str, Any]]:
@@ -842,6 +1046,21 @@ def task_manifest(
             "future_key_times": list(spec.query_times),
             "sigma_tokens": float(args.gaussian_sigma_tokens),
         },
+        "attention_audit": {
+            "denoising_step_numbering": "1-based",
+            "capture_steps": list(args.attention_capture_steps),
+            "pre": "same guided run at x_s before the normalized latent update",
+            "post": "same guided step after x_s' = x_s - eta*normalized_gradient",
+            "normalization": "Wan global softmax over all 13*H*W Keys",
+            "overlay_background": "the same source/GT frame for Pre and Post",
+            "panels": [
+                "source GT/pseudo-GT",
+                "Pre original attention",
+                "Post constrained attention",
+                "Post-Pre attention",
+                "post-guidance predicted x0",
+            ],
+        },
         "cases": [
             {"case": path.stem, "targets": list(target_map[path.stem])}
             for path in case_paths
@@ -894,7 +1113,7 @@ def run_sanity(
     collector.install()
     try:
         inputs = prepare_backend_inputs(pipe, spec, payload, tube, args.seed, args.cfg_scale)
-        _, audit = run_denoising(
+        _, audit, captures, _ = run_denoising(
             pipe,
             spec,
             *inputs,
@@ -904,6 +1123,7 @@ def run_sanity(
             0,
             0,
             not args.no_gradient_checkpointing,
+            attention_capture_steps_1based=(1,),
             stop_after_step=0,
         )
     finally:
@@ -916,12 +1136,20 @@ def run_sanity(
         "head_group": group_name,
         "geometry": geometry,
         "step": audit[0],
+        "attention_capture": {
+            "captured": 1 in captures,
+            "pre_blocks": int(captures.get(1, {}).get("pre", {}).get("captured_blocks", 0)),
+            "post_blocks": int(captures.get(1, {}).get("post", {}).get("captured_blocks", 0)),
+        },
         "passed": bool(
             audit[0]["loss_decreased"]
             and audit[0]["context_update_abs_max"] == 0.0
             and abs(
                 audit[0]["actual_mutable_update_rms"] - args.latent_update_rms
             ) < 1.0e-5
+            and 1 in captures
+            and captures[1]["pre"]["captured_blocks"] > 0
+            and captures[1]["post"]["captured_blocks"] > 0
         ),
     }
     atomic_json(args.output_root / spec.name / "sanity.json", report)
@@ -942,6 +1170,7 @@ def run_generate(
         tube = legacy.load_frozen_tube(args.tube_root, case_path.stem)
         payload = legacy.load_payload(case_path)
         targets = legacy.selected_target_specs(tube, target_map[tube.case])
+        source_anchors: np.ndarray | None = None
         tasks: list[tuple[str, legacy.GuidanceTarget | None, list[dict[str, Any]] | None]] = []
         if not args.no_baseline:
             tasks.append(("baseline", None, None))
@@ -952,7 +1181,12 @@ def run_generate(
             output = generation_dir(
                 args.output_root, spec, tube.case, args.seed, variant
             )
-            required = (output / "generated.mp4", output / "manifest.json", output / "complete.json")
+            required = [output / "generated.mp4", output / "manifest.json", output / "complete.json"]
+            if target is not None:
+                required.extend(
+                    output / "attention_audit" / f"step_{step:02d}" / "complete.json"
+                    for step in args.attention_capture_steps
+                )
             if all(path.is_file() for path in required) and not args.overwrite:
                 print(f"[generate] skip {spec.name}/{tube.case}/{variant}", flush=True)
                 continue
@@ -974,7 +1208,7 @@ def run_generate(
                 inputs = prepare_backend_inputs(
                     pipe, spec, payload, tube, args.seed, args.cfg_scale
                 )
-                frames, audit = run_denoising(
+                frames, audit, captures, predicted_x0 = run_denoising(
                     pipe,
                     spec,
                     *inputs,
@@ -984,6 +1218,9 @@ def run_generate(
                     args.guidance_start,
                     args.guidance_end,
                     not args.no_gradient_checkpointing,
+                    attention_capture_steps_1based=(
+                        () if target is None else args.attention_capture_steps
+                    ),
                 )
             finally:
                 if collector is not None:
@@ -993,6 +1230,38 @@ def run_generate(
             temporary = output / "generated.tmp.mp4"
             save_video_np(frames, temporary, fps=30)
             temporary.replace(output / "generated.mp4")
+            attention_reports: dict[str, Any] = {}
+            if target is not None:
+                tracks, visibility, _ = target_point_arrays(tube, target, spec)
+                if source_anchors is None:
+                    source_anchors = source_anchor_frames(tube, spec)
+                missing_capture = sorted(
+                    set(args.attention_capture_steps) - set(captures)
+                )
+                missing_prediction = sorted(
+                    set(args.attention_capture_steps) - set(predicted_x0)
+                )
+                if missing_capture or missing_prediction:
+                    raise RuntimeError(
+                        "incomplete attention audit: "
+                        f"capture={missing_capture}, predicted_x0={missing_prediction}"
+                    )
+                for capture_step in args.attention_capture_steps:
+                    step_audit = audit[capture_step - 1]
+                    report = write_step_attention_audit(
+                        output / "attention_audit",
+                        capture_step,
+                        source_anchors,
+                        np.asarray(tube.anchor_source_frames, dtype=np.int64),
+                        tracks,
+                        visibility,
+                        captures[capture_step],
+                        predicted_x0[capture_step],
+                        spec.context_latent_frames,
+                        float(step_audit["pre_update_loss"]),
+                        float(step_audit["post_update_loss"]),
+                    )
+                    attention_reports[str(capture_step)] = report["summary"]
             atomic_json(
                 output / "manifest.json",
                 {
@@ -1023,11 +1292,19 @@ def run_generate(
                         0.0 if target is None else float(args.latent_update_rms)
                     ),
                     "audit": audit,
+                    "attention_audit": {
+                        "capture_steps": (
+                            [] if target is None else list(args.attention_capture_steps)
+                        ),
+                        "step_numbering": "1-based",
+                        "normalization": "global softmax over all 13*H*W Keys",
+                        "summaries": attention_reports,
+                    },
                 },
             )
             atomic_json(output / "complete.json", {"variant": variant})
             print(f"[generate] complete {spec.name}/{tube.case}/{variant}", flush=True)
-            del frames
+            del frames, captures, predicted_x0
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -1228,6 +1505,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--guidance-start", type=int, default=0)
     parser.add_argument("--guidance-end", type=int, default=39)
     parser.add_argument("--gaussian-sigma-tokens", type=float, default=1.5)
+    parser.add_argument(
+        "--attention-capture-steps",
+        nargs="*",
+        type=int,
+        default=DEFAULT_ATTENTION_CAPTURE_STEPS,
+        help="1-based denoising steps for Pre/Post attention and predicted-x0 audit",
+    )
     parser.add_argument("--no-gradient-checkpointing", action="store_true")
     parser.add_argument("--no-baseline", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
@@ -1243,6 +1527,20 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("guidance range must lie in [0,39]")
     if args.latent_update_rms <= 0 or args.gaussian_sigma_tokens <= 0:
         raise ValueError("update RMS and Gaussian sigma must be positive")
+    capture_steps = tuple(sorted(set(args.attention_capture_steps)))
+    if not capture_steps:
+        raise ValueError("at least one attention capture step is required")
+    if capture_steps[0] < 1 or capture_steps[-1] > 40:
+        raise ValueError("attention capture steps must lie in 1..40")
+    outside_guidance = [
+        step
+        for step in capture_steps
+        if not args.guidance_start <= step - 1 <= args.guidance_end
+    ]
+    if outside_guidance:
+        raise ValueError(
+            f"attention capture steps outside the guidance range: {outside_guidance}"
+        )
     for path in (args.input_list, args.head_ranking, args.head_scopes, args.target_map):
         if not path.expanduser().is_file():
             raise FileNotFoundError(path)
@@ -1263,6 +1561,9 @@ def main() -> None:
             "target_map": args.target_map.expanduser().resolve(),
             "checkpoint": args.checkpoint.expanduser().resolve(),
             "output_root": args.output_root.expanduser().resolve(),
+            "attention_capture_steps": tuple(
+                sorted(set(args.attention_capture_steps))
+            ),
         }
     )
     spec = BACKENDS[args.backend]
@@ -1282,6 +1583,8 @@ def main() -> None:
     if args.stage == "evaluate":
         run_evaluate(args, spec, case_paths, target_map)
         return
+    error_path = args.output_root / spec.name / "run_error.txt"
+    error_path.unlink(missing_ok=True)
     owner = None
     try:
         owner, pipe, runtime_info = build_backend(args, spec)
@@ -1293,7 +1596,6 @@ def main() -> None:
             )
     except Exception:
         error = traceback.format_exc()
-        error_path = args.output_root / spec.name / "run_error.txt"
         error_path.write_text(error, encoding="utf-8")
         print(error, flush=True)
         raise
