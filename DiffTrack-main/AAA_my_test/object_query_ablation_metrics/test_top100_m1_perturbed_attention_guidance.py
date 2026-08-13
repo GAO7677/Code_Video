@@ -66,6 +66,28 @@ class GuidanceEquationTest(unittest.TestCase):
 
         torch.testing.assert_close(actual, clean)
 
+    def test_negative_pag_scale_reproduces_signed_guidance_equation(self) -> None:
+        uncond = torch.tensor([1.0, -2.0])
+        clean = torch.tensor([3.0, 4.0])
+        perturbed = torch.tensor([-1.0, 2.0])
+        cfg_scale = 5.0
+        pag_scale = -0.5
+
+        returned_cond = adjusted_conditional_prediction(
+            clean,
+            perturbed,
+            cfg_scale=cfg_scale,
+            pag_scale=pag_scale,
+        )
+        actual = uncond + cfg_scale * (returned_cond - uncond)
+        expected = (
+            uncond
+            + cfg_scale * (clean - uncond)
+            + pag_scale * (clean - perturbed)
+        )
+
+        torch.testing.assert_close(actual, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

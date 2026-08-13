@@ -220,8 +220,6 @@ def ensure_generated_frame_attention_overlays(
 
     report = json.loads(metrics_path.read_text(encoding="utf-8"))
     frame_metrics = report.get("frames", [])
-    if len(frame_metrics) != 13:
-        raise RuntimeError(f"expected 13 frame metrics, got {len(frame_metrics)}")
     with np.load(raw_path) as payload:
         pre_heat = np.asarray(payload["pre_heatmap"], dtype=np.float32)
         post_heat = np.asarray(payload["post_heatmap"], dtype=np.float32)
@@ -230,6 +228,25 @@ def ensure_generated_frame_attention_overlays(
         source_indices = np.asarray(payload["source_frame_indices"], dtype=np.int64)
     if pre_heat.shape[0] != 13 or post_heat.shape != pre_heat.shape:
         raise RuntimeError(f"invalid PRE/POST attention shapes: {pre_heat.shape}, {post_heat.shape}")
+
+    # Direct-attention interventions store the same auditable PRE/POST maps but
+    # do not have latent-guidance-specific per-frame loss summaries.  Derive
+    # the display-only frame mass fields so both mechanisms can use the exact
+    # same static overlay renderer without inventing a second visual grammar.
+    if len(frame_metrics) != 13:
+        direction = str(report.get("summary", {}).get("direction", "direct"))
+        frame_metrics = [
+            {
+                "role": f"{direction} key map",
+                "pre_frame_mass": float(pre_heat[latent_time].sum()),
+                "post_frame_mass": float(post_heat[latent_time].sum()),
+                "pre_localized_mass": np.nan,
+                "post_localized_mass": np.nan,
+                "pre_peak_distance_tokens": np.nan,
+                "post_peak_distance_tokens": np.nan,
+            }
+            for latent_time in range(13)
+        ]
 
     video_frames = _read_video_frames(generated_video)
     if int(source_indices.max()) >= len(video_frames):

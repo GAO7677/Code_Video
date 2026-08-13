@@ -13,6 +13,7 @@
 - 当前实现：`run_legacy_ti2v_temporal_object_tube_ablations.py`
 - 指标实现：`METRICS_IMPLEMENTATION_INDEX.md`
 - 待验证假设：`HYPOTHESES_TO_VALIDATE.md`
+- Training-Free M1 control：`training_free_m1_control/plan.md`
 - 一键补指标：`bench_missing.sh`
 
 ---

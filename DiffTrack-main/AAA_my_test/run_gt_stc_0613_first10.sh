@@ -12,7 +12,7 @@ cases=(
     0613pybullet_sample_001455_w000
     0613pybullet_sample_001460_w002
 )
-allowed_gpus=(0 1 2 3 5 6 7)
+allowed_gpus=(2)
 required_free_mib=47000
 required_idle_checks=3
 last_gpu_index=
@@ -122,12 +122,27 @@ run_stage() {
 }
 
 cd "$repo"
-export PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main:/home/gaoya/Code_Video/Code_data/Code_train/train_0419
+export PYTHONPATH="$repo":/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main:/home/gaoya/Code_Video/Code_data/Code_train/train_0419
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONUNBUFFERED=1
 
-run_stage generate
-run_stage evaluate
+guided_complete=$(find "$output_root/generations" -type f -path '*__lambda0p1/complete.json' -size +0c 2>/dev/null | wc -l)
+if (( guided_complete < 9 )); then
+    run_stage generate
+else
+    echo "[generate] skip: guided videos already complete ($guided_complete/9)"
+fi
+
+metric_complete=$(find "$output_root/generations" -type f -path '*__lambda0p1/trajectory_metrics.json' -size +0c 2>/dev/null | wc -l)
+if (( metric_complete < 9 )); then
+    run_stage evaluate
+else
+    echo "[evaluate] skip: trajectory metrics already complete ($metric_complete/9)"
+fi
+
+if [[ -z "$last_gpu_index" ]]; then
+    last_gpu_index=$(wait_for_idle_gpu)
+fi
 
 for case_name in "${cases[@]}"; do
     echo "[overlay] case=$case_name physical_gpu=$last_gpu_index" | tee -a "$log_root/overlays.log"

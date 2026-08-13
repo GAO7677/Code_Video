@@ -138,8 +138,8 @@ def adjusted_conditional_prediction(
         )
     if not math.isfinite(cfg_scale) or cfg_scale <= 0:
         raise ValueError("cfg_scale must be finite and positive")
-    if not math.isfinite(pag_scale) or pag_scale < 0:
-        raise ValueError("pag_scale must be finite and non-negative")
+    if not math.isfinite(pag_scale):
+        raise ValueError("pag_scale must be finite")
     return clean_conditional + (pag_scale / cfg_scale) * (
         clean_conditional - perturbed_conditional
     )
@@ -167,8 +167,8 @@ class Top100PerturbedAttentionGuidance:
             raise ValueError(
                 "this v1 runner requires a finite positive CFG scale different from 1"
             )
-        if not math.isfinite(pag_scale) or pag_scale <= 0:
-            raise ValueError("pag_scale must be finite and positive for a guided run")
+        if not math.isfinite(pag_scale) or pag_scale == 0:
+            raise ValueError("pag_scale must be finite and non-zero for a guided run")
         self.pipe = pipe
         self.ablator = ablator
         self.cfg_scale = float(cfg_scale)
@@ -411,8 +411,8 @@ def main() -> None:
         raise ValueError(
             "cfg-scale must be finite, positive, and different from 1 for this v1 runner"
         )
-    if not math.isfinite(args.pag_scale) or args.pag_scale <= 0:
-        raise ValueError("pag-scale must be finite and positive")
+    if not math.isfinite(args.pag_scale) or args.pag_scale == 0:
+        raise ValueError("pag-scale must be finite and non-zero; scale 0 reuses Baseline")
 
     manifest = json.loads(args.manifest_path.read_text(encoding="utf-8"))
     ranking = json.loads(args.head_ranking_path.read_text(encoding="utf-8"))

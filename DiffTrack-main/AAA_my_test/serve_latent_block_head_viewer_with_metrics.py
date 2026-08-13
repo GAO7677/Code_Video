@@ -424,14 +424,23 @@ TOP100_M1_GUIDANCE_PORTAL_CARD = r'''
 TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD = r'''
 <a class="card new" href="/top100-m1-token-communication?v=1"><div><span>48 / M1 TOKEN COMMUNICATION</span><h2>13×13 R→R Token 通信位置</h2><p>逐 Query 时刻展示实际 22×40 latent 网格单元；橙色为 Query，青色为全部 13 帧被删除的 K/V，并提供 169 条通信矩阵。</p></div><span class="go">打开 Token 通信页面</span></a>
 '''
+TRAINING_FREE_M1_CONTROL_PORTAL_CARD = r'''
+<a class="card new" href="/training-free-m1-control?v=1"><div><span>51 / TRAINING-FREE M1 CONTROL</span><h2>M1 Soft Scaling × Contrast Guidance</h2><p>独立展示 3 cases × seeds {47326,42}：α∈{−1,−0.5,0,+0.5,+1} 直接缩放 R→R contribution，并与同刻度 conditional contrast guidance 严格对比。</p></div><span class="go">打开 M1 双向控制台</span></a>
+'''
 GT_STC_PREFLIGHT_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-guidance-preflight?v=1"><div><span>43 / GT-STC PREFLIGHT</span><h2>GT Tube 引导错误预检</h2><p>逐 case 审计 13 个 latent 时刻的 SAM2 region 与 CoTracker 可见性，区分已复现报错、未来必报错、运行中和待运行。</p></div><span class="go">打开 GT Tube 诊断页</span></a>
 '''
 GT_STC_RESULTS_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-guidance-results?v=6"><div><span>44 / GT-STC + ATTENTION MICROSCOPE</span><h2>GT 轨迹潜变量引导结果</h2><p>实时展示 context-Query → future-Key 双协议矩阵，并在最终生成 RGB 帧上逐 step 对比 PRE/POST attention 静态 overlay；未生成项固定为 Pending。</p></div><span class="go">打开双协议实时结果</span></a>
 '''
+GT_STC_METHOD_COMPARISON_PORTAL_CARD = r'''
+<a class="card new" href="/gt-stc-guidance-method-comparison?v=2"><div><span>49 / LATENT × DIRECT ATTENTION</span><h2>两种轨迹干预机制对比</h2><p>固定 001460、object A、seed 47326，用 7×7 全 49 帧拼图对比 source、旧 latent guidance 与新 direct attention，并检查轨迹指标和 PRE/POST attention。</p></div><span class="go">打开机制对比台</span></a>
+'''
+GT_STC_FIRST10_COMPARISON_PORTAL_CARD = r'''
+<a class="card new" href="/gt-stc-first10-vs-full40?v=1"><div><span>50 / DENOISING WINDOW CONTROL</span><h2>前 10 step vs 全 40 step</h2><p>3 个 0613 case，固定 seed 47326、latest3350 Top100、λ=0.1；Region / Point / Combined 逐组左右对比完整引导与仅高噪声前 10 步引导。</p></div><span class="go">打开去噪窗口对比</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + TRAINING_FREE_M1_CONTROL_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + GT_STC_METHOD_COMPARISON_PORTAL_CARD + GT_STC_FIRST10_COMPARISON_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -443,7 +452,10 @@ from AAA_my_test.object_query_ablation_metrics import stage4_representatives_das
 from AAA_my_test.object_query_ablation_metrics import stage4_temporal_dashboard
 from AAA_my_test.object_query_ablation_metrics import top100_m1_guidance_dashboard
 from AAA_my_test.object_query_ablation_metrics import top100_m1_token_communication_dashboard
+from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import dashboard as training_free_m1_control_dashboard
 from AAA_my_test import gt_stc_guidance_dashboard
+from AAA_my_test import gt_stc_first10_comparison_dashboard
+from AAA_my_test import gt_stc_guidance_method_comparison_dashboard
 from AAA_my_test import gt_stc_guidance_results_dashboard
 
 
@@ -486,6 +498,12 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/training-free-m1-control":
+            self.send_payload(
+                training_free_m1_control_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
         if path == "/gt-stc-guidance-preflight":
             self.send_payload(
                 gt_stc_guidance_dashboard.page().encode("utf-8"),
@@ -498,6 +516,43 @@ class MetricsHandler(viewer.Handler):
                 "text/html; charset=utf-8",
             )
             return
+        if path == "/gt-stc-first10-vs-full40":
+            self.send_payload(
+                gt_stc_first10_comparison_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/gt-stc-guidance-method-comparison":
+            self.send_payload(
+                gt_stc_guidance_method_comparison_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/gt-stc-guidance-method-comparison/catalog":
+            payload = json.dumps(
+                gt_stc_guidance_method_comparison_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/gt-stc-guidance-method-comparison/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            result = gt_stc_guidance_method_comparison_dashboard.asset(
+                params.get("kind", [""])[0],
+                params.get("method", [""])[0],
+                params.get("group", [""])[0],
+                params.get("direction", [""])[0],
+                params.get("latent", [""])[0],
+                params.get("step", [""])[0],
+            )
+            if result is None or not result.is_file():
+                self.send_error(404, "guidance comparison asset is not ready")
+                return
+            viewer.send_file_with_range(self, result, "image/jpeg")
+            return
         if path == "/api/gt-stc-guidance-results/catalog":
             payload = json.dumps(
                 gt_stc_guidance_results_dashboard.catalog(),
@@ -505,6 +560,34 @@ class MetricsHandler(viewer.Handler):
                 allow_nan=False,
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/gt-stc-first10-vs-full40/catalog":
+            payload = json.dumps(
+                gt_stc_first10_comparison_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/gt-stc-first10-vs-full40/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = gt_stc_first10_comparison_dashboard.asset(
+                params.get("kind", [""])[0],
+                case=params.get("case", [""])[0],
+                target=params.get("target", [""])[0],
+                variant=params.get("variant", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                self.send_error(404, "first10/full40 comparison asset is not ready")
+                return
+            content_type = (
+                "image/jpeg"
+                if asset.suffix.lower() in {".jpg", ".jpeg"}
+                else "video/mp4"
+            )
+            viewer.send_file_with_range(self, asset, content_type)
             return
         if path == "/api/gt-stc-guidance-results/asset":
             from urllib.parse import parse_qs
@@ -630,6 +713,33 @@ class MetricsHandler(viewer.Handler):
                 allow_nan=False,
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/training-free-m1-control/catalog":
+            payload = json.dumps(
+                training_free_m1_control_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/training-free-m1-control/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            try:
+                seed = int(params.get("seed", ["47326"])[0])
+                value = float(params.get("value", ["0"])[0])
+            except ValueError:
+                raise FileNotFoundError("invalid Training-Free M1 asset coordinates")
+            result = training_free_m1_control_dashboard.asset(
+                params.get("family", [""])[0],
+                params.get("case", [""])[0],
+                seed,
+                value,
+            )
+            if result is None or not result.is_file():
+                raise FileNotFoundError("Training-Free M1 asset is not ready")
+            viewer.send_file_with_range(self, result, "video/mp4")
             return
         if path == "/api/top100-m1-token-communication/asset":
             from urllib.parse import parse_qs

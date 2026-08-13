@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "experiment_id": "training_free_m1_control_tf1_v1",
+  "execution_policy": "TF-0 must pass before TF-1; stop after TF-1",
+  "gpu": 1,
+  "cases": [
+    "0613pybullet_sample_001460_w002",
+    "0613pybullet_sample_000331_w001",
+    "physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed-ball-and-block-fall_motion_to_end"
+  ],
+  "seeds": [47326, 42],
+  "region": "object_A",
+  "head_scope": "top100",
+  "time_scope": "all_time",
+  "soft_scaling": {
+    "alphas": [-1.0, -0.5, 0.0, 0.5, 1.0],
+    "generated_alphas": [-1.0, -0.5, 0.5, 1.0],
+    "cfg_branches": ["conditional", "unconditional"]
+  },
+  "contrast_guidance": {
+    "lambdas": [-1.0, -0.5, 0.0, 0.5, 1.0],
+    "generated_lambdas": [-1.0, -0.5, 0.5, 1.0],
+    "perturbed_branches": ["conditional"]
+  },
+  "sampling": {
+    "steps": 40,
+    "cfg_scale": 5.0,
+    "shift": 5.0,
+    "solver": "unipc",
+    "frames": 49,
+    "height": 704,
+    "width": 1280,
+    "fps": 30
+  },
+  "source_manifest": "/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/training_free_top100_m23_guidance_v1/guidance_grid_manifest.json",
+  "source_manifest_sha256": "1fd31c8284d27c4d21d99ef7d97e462e9348b3e86573b8ee5a726825e53bc3b3",
+  "head_ranking": "/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/head_scopes_latest3350_with_random100.json",
+  "head_ranking_sha256": "b49f06106da9e22ca853ec1163312cbfb3155413212785789cf4ed705a7cb350"
+}
