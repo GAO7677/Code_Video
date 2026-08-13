@@ -72,6 +72,7 @@
       "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
       "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
       "t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000",
+      "wan22_openvid_lora_baseline",
       "full_sa_physrvg_dit"
     ],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
@@ -307,6 +308,18 @@
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints"
       ]
+    },
+    {
+      "key": "wan22_openvid_lora_baseline",
+      "label": "Wan2.2 + OpenVid LoRA (No Additional Adapter)",
+      "color": "#5B6770",
+      "static_checkpoints": [
+        {
+          "step": 0,
+          "path": "/data/gaoya/agent-data/checkpoints/inference_baselines/wan22_openvid_lora_no_additional_adapter/checkpoints/step-000000"
+        }
+      ],
+      "watch_roots": []
     },
     {
       "key": "full_sa_physrvg_dit",

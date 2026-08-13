@@ -246,6 +246,16 @@ def load_configured_checkpoints(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Scan current config roots so stale long-running watchers cannot hide new methods."""
     records: dict[tuple[str, int], dict[str, Any]] = {}
     for method_index, method in enumerate(config["methods"]):
+        for item in method.get("static_checkpoints", []):
+            step = int(item["step"])
+            records[(str(method["key"]), step)] = {
+                "method_key": method["key"],
+                "method_label": method["label"],
+                "method_index": method_index,
+                "step": step,
+                "checkpoint_dir": str(Path(item["path"]).resolve()),
+                "source": "configured-static",
+            }
         for root_value in method.get("watch_roots", []):
             root = Path(root_value).resolve()
             if not root.is_dir():
@@ -299,39 +309,30 @@ def load_live_test_manifests(
         (str(row["method_key"]), int(row["step"])) for row in completed
     }
     live = list(completed)
-    for method_index, method in enumerate(config["methods"]):
-        for root_value in method.get("watch_roots", []):
-            root = Path(root_value).resolve()
-            if not root.is_dir():
-                continue
-            for checkpoint in sorted(root.glob("step-*")):
-                try:
-                    step = int(checkpoint.name.removeprefix("step-"))
-                except ValueError:
-                    continue
-                pair = (str(method["key"]), step)
-                if pair in completed_pairs:
-                    continue
-                output_name = (
-                    f"step-{step:06d}_steps{int(runtime['num_inference_steps'])}"
-                    f"_{int(runtime['height'])}x{int(runtime['width'])}"
-                    f"_ctx{int(runtime['context_frames']):02d}_{int(runtime['num_frames'])}f"
-                )
-                result_root = watch_root / "results" / method["key"] / output_name
-                if count_paired_result_cases(result_root) == 0:
-                    continue
-                live.append(
-                    {
-                        "method_key": method["key"],
-                        "method_label": method["label"],
-                        "method_index": method_index,
-                        "step": step,
-                        "checkpoint_dir": str(checkpoint),
-                        "result_root": str(result_root),
-                        "origin": "watcher-live",
-                    }
-                )
-                completed_pairs.add(pair)
+    for task in load_configured_checkpoints(config):
+        method_key = str(task["method_key"])
+        step = int(task["step"])
+        pair = (method_key, step)
+        if pair in completed_pairs:
+            continue
+        output_name = (
+            f"step-{step:06d}_steps{int(runtime['num_inference_steps'])}"
+            f"_{int(runtime['height'])}x{int(runtime['width'])}"
+            f"_ctx{int(runtime['context_frames']):02d}_{int(runtime['num_frames'])}f"
+        )
+        result_root = watch_root / "results" / method_key / output_name
+        live.append(
+            {
+                "method_key": method_key,
+                "method_label": task["method_label"],
+                "method_index": task["method_index"],
+                "step": step,
+                "checkpoint_dir": task["checkpoint_dir"],
+                "result_root": str(result_root),
+                "origin": "watcher-live",
+            }
+        )
+        completed_pairs.add(pair)
     return sorted(live, key=lambda row: (row.get("method_index", 999), row["step"]))
 
 
@@ -1321,6 +1322,11 @@ MERGED_METHODS = [
         "color": "#315C87",
     },
     {"key": "object_only", "label": "Object-only", "color": "#4D4D4D"},
+    {
+        "key": "wan22_openvid_lora_baseline",
+        "label": "Wan2.2 + OpenVid LoRA (No Additional Adapter)",
+        "color": "#5B6770",
+    },
     {"key": "full_sa", "label": "Full-SA + Object", "color": "#D62728"},
     {
         "key": "full_sa_physrvg_dit",

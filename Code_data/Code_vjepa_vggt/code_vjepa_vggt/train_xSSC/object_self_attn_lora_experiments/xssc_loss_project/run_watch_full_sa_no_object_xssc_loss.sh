@@ -6,7 +6,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${PROJECT_DIR}/.." && pwd)"
 PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 CONFIG="${CONFIG:-${ROOT}/xssc_lora_three_train_watch_config_with_t_head.json}"
-METHOD="${METHOD:-full_sa_no_object_xssc_loss_dinov3_movic_step50000,full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000,t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000}"
+METHOD="${METHOD:-full_sa_no_object_xssc_loss_dinov3_movic_step50000,full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000,t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000,wan22_openvid_lora_baseline}"
 GPUS="${GPUS:-3}"
 POLL_SECONDS="${POLL_SECONDS:-60}"
 GPU_WORKERS_PER_GPU="${GPU_WORKERS_PER_GPU:-2}"
@@ -37,7 +37,7 @@ while true; do
   run_stage test5_cpu_metrics \
     "${PYTHON}" "${ROOT}/xssc_lora_checkpoint_filtered_cpu_metrics.py" \
       --config "${CONFIG}" --methods "${METHOD}" \
-      --steps "500,1000,1500,2000,2500,3000,3500,4000,4500,5000,5500,6000,6500,7000,7500,8000,8500,9000,9500,10000,10500,11000,11500,12000,12500,13000,13500,14000,14500,15000,15500,16000,16500,17000,17500,18000,18500,19000,19500,20000" \
+      --steps "0,500,1000,1500,2000,2500,3000,3500,4000,4500,5000,5500,6000,6500,7000,7500,8000,8500,9000,9500,10000,10500,11000,11500,12000,12500,13000,13500,14000,14500,15000,15500,16000,16500,17000,17500,18000,18500,19000,19500,20000" \
       --workers 4 --refresh || true
 
   run_stage test5_gpu_metrics \
