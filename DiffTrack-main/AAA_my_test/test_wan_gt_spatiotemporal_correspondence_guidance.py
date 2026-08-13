@@ -94,6 +94,19 @@ class CorrespondenceGuidanceTests(unittest.TestCase):
             complete.mkdir(parents=True)
             (complete / "generated.mp4").write_bytes(b"video")
             (complete / "complete.json").write_text("{}", encoding="utf-8")
+            attention = (
+                dual_root
+                / "firstframe_ti2v"
+                / "generations"
+                / "case_a"
+                / "seed_47326"
+                / "top100__object_A"
+                / "attention_audit"
+                / "step_05"
+            )
+            attention.mkdir(parents=True)
+            (attention / "attention_comparison.mp4").write_bytes(b"attention")
+            (attention / "complete.json").write_text("{}", encoding="utf-8")
             diagnostic = (
                 dual_root
                 / "diagnostics"
@@ -137,11 +150,29 @@ class CorrespondenceGuidanceTests(unittest.TestCase):
                     variant="../../gt_trajectory",
                     backend="firstframe_ti2v",
                 )
+                attention_asset = gt_stc_guidance_results_dashboard.asset(
+                    "dual_attention_audit",
+                    "case_a",
+                    target="object_A",
+                    variant="top100__object_A",
+                    backend="firstframe_ti2v",
+                    step=5,
+                )
+                rejected_attention = gt_stc_guidance_results_dashboard.asset(
+                    "dual_attention_audit",
+                    "case_a",
+                    target="object_A",
+                    variant="top100__object_A",
+                    backend="firstframe_ti2v",
+                    step=4,
+                )
             finally:
                 gt_stc_guidance_results_dashboard.ROOT = original_root
                 gt_stc_guidance_results_dashboard.DUAL_ROOT = original_dual_root
             self.assertEqual(dual["planned"], 8)
             self.assertEqual(dual["complete"], 1)
+            self.assertEqual(dual["attention_audits_ready"], 1)
+            self.assertEqual(dual["attention_audits_total"], 48)
             self.assertEqual(len(dual["cases"][0]["targets"][0]["protocols"]), 2)
             self.assertEqual(
                 len(dual["cases"][0]["targets"][0]["protocols"][0]["variants"]),
@@ -153,6 +184,8 @@ class CorrespondenceGuidanceTests(unittest.TestCase):
                 diagnostic_asset, diagnostic / "gt_13_anchor_trajectory.mp4"
             )
             self.assertIsNone(rejected_diagnostic)
+            self.assertEqual(attention_asset, attention / "attention_comparison.mp4")
+            self.assertIsNone(rejected_attention)
             self.assertTrue(
                 dual["cases"][0]["targets"][0]["protocols"][0]["diagnostics"][0]["ready"]
             )

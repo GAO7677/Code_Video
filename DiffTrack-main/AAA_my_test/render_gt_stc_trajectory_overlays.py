@@ -80,10 +80,23 @@ def atomic_npz(path: Path, **arrays: Any) -> None:
     temporary.replace(path)
 
 
-def registered_variants(root: Path, seed: int) -> dict[tuple[str, str], list[str]]:
-    screen = read_json(root / "screening" / f"seed_{seed:05d}" / "baseline_eligibility.json")
-    final = read_json(
-        root / "final_analysis" / f"seed_{seed:05d}" / "frozen_validation_report.json"
+def registered_variants(
+    root: Path,
+    seed: int,
+    target_map: Path | None = None,
+    primary_only: bool = False,
+) -> dict[tuple[str, str], list[str]]:
+    screen = read_json(
+        target_map
+        if target_map is not None
+        else root / "screening" / f"seed_{seed:05d}" / "baseline_eligibility.json"
+    )
+    final = (
+        {}
+        if primary_only
+        else read_json(
+            root / "final_analysis" / f"seed_{seed:05d}" / "frozen_validation_report.json"
+        )
     )
     trigger_modes = {str(value) for value in final.get("trigger_modes", [])}
     result: dict[tuple[str, str], list[str]] = {}
@@ -447,7 +460,12 @@ def iter_track_tasks(
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     root = args.output_root.resolve()
-    matrix = registered_variants(root, args.seed)
+    matrix = registered_variants(
+        root,
+        args.seed,
+        args.target_map.resolve() if args.target_map is not None else None,
+        args.primary_only,
+    )
     tasks, source_videos = iter_track_tasks(root, args.seed, matrix)
     if args.case:
         matrix = {key: value for key, value in matrix.items() if key[0] == args.case}
@@ -530,6 +548,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--target-map", type=Path)
+    parser.add_argument(
+        "--primary-only",
+        action="store_true",
+        help="Render only Baseline and Region/Point/Combined lambda=0.1 variants",
+    )
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--ffmpeg", type=Path, default=DEFAULT_FFMPEG)

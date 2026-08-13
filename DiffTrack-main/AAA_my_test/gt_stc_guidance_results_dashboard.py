@@ -15,6 +15,10 @@ ROOT = Path(
 DUAL_ROOT = Path(
     "/data/gaoya/agent-data/outputs/wan_context_point_guidance_head_compare/attention_audit_v3"
 )
+FIRST10_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/wan_gt_spatiotemporal_correspondence_guidance/"
+    "latest3350_top100_first10_0613_v1"
+)
 SEED = 47326
 ATTENTION_STEPS = tuple(range(5, 41, 5))
 MODES = ("region", "point", "combined")
@@ -22,6 +26,11 @@ MODE_LABELS = {
     "region": "Region · tube mass",
     "point": "Point · tracked correspondence",
     "combined": "Combined · region + point",
+}
+FIRST10_CASE_TARGETS = {
+    "0613pybullet_sample_000336_w001": "object_B",
+    "0613pybullet_sample_001455_w000": "object_A",
+    "0613pybullet_sample_001460_w002": "object_A",
 }
 DUAL_BACKENDS = {
     "firstframe_ti2v": {
@@ -317,6 +326,116 @@ def _variant(
     }
 
 
+def _window_variant(
+    root: Path,
+    case: str,
+    target: str,
+    mode: str,
+    window: str,
+) -> dict[str, Any]:
+    name = "baseline" if mode == "baseline" else f"{mode}__{target}__lambda0p1"
+    directory = root / "generations" / case / f"seed_{SEED:05d}" / name
+    video = directory / "generated.mp4"
+    metric = _target_metric(directory / "trajectory_metrics.json", target)
+    overlay = (
+        root
+        / "trajectory_overlays"
+        / case
+        / f"seed_{SEED:05d}"
+        / f"{name}__{target}.mp4"
+    )
+    return {
+        "name": name,
+        "mode": mode,
+        "window": window,
+        "label": (
+            "Baseline · no guidance"
+            if mode == "baseline"
+            else f"{MODE_LABELS[mode]} · {'steps 0–9' if window == 'first10' else 'steps 0–39'}"
+        ),
+        "complete": _ready(directory / "complete.json") and _ready(video),
+        "video_ready": _ready(video),
+        "trajectory_overlay_ready": _ready(overlay),
+        "metric_ready": metric is not None,
+        "metric": metric,
+    }
+
+
+def _add_baseline_delta(variant: dict[str, Any], baseline: dict[str, Any]) -> None:
+    metric = variant.get("metric") or {}
+    reference = baseline.get("metric") or {}
+    variant["delta_ade_d0"] = (
+        float(metric["ade_d0"]) - float(reference["ade_d0"])
+        if metric.get("ade_d0") is not None and reference.get("ade_d0") is not None
+        else None
+    )
+    variant["delta_track_loss"] = (
+        float(metric["future_track_loss_score_0_100"])
+        - float(reference["future_track_loss_score_0_100"])
+        if metric.get("future_track_loss_score_0_100") is not None
+        and reference.get("future_track_loss_score_0_100") is not None
+        else None
+    )
+
+
+def _window_catalog() -> dict[str, Any]:
+    cases = []
+    complete = metrics = overlays = 0
+    for case, target in FIRST10_CASE_TARGETS.items():
+        baseline = _window_variant(ROOT, case, target, "baseline", "baseline")
+        variants = [baseline]
+        for mode in MODES:
+            full = _window_variant(ROOT, case, target, mode, "full40")
+            first10 = _window_variant(FIRST10_ROOT, case, target, mode, "first10")
+            _add_baseline_delta(full, baseline)
+            _add_baseline_delta(first10, baseline)
+            full_metric = full.get("metric") or {}
+            first10_metric = first10.get("metric") or {}
+            first10["delta_ade_vs_full40"] = (
+                float(first10_metric["ade_d0"]) - float(full_metric["ade_d0"])
+                if first10_metric.get("ade_d0") is not None
+                and full_metric.get("ade_d0") is not None
+                else None
+            )
+            first10["delta_track_loss_vs_full40"] = (
+                float(first10_metric["future_track_loss_score_0_100"])
+                - float(full_metric["future_track_loss_score_0_100"])
+                if first10_metric.get("future_track_loss_score_0_100") is not None
+                and full_metric.get("future_track_loss_score_0_100") is not None
+                else None
+            )
+            variants.extend((full, first10))
+            complete += int(first10["complete"])
+            metrics += int(first10["metric_ready"])
+            overlays += int(first10["trajectory_overlay_ready"])
+        tube_manifest = _json(ROOT / "gt_tubes" / case / "manifest.json")
+        cases.append(
+            {
+                "case": case,
+                "target": target,
+                "source_video_ready": _ready(
+                    Path(str(tube_manifest.get("source_video", "")))
+                ),
+                "source_trajectory_overlay_ready": _ready(
+                    ROOT / "trajectory_overlays" / case / f"source__{target}.mp4"
+                ),
+                "variants": variants,
+            }
+        )
+    return {
+        "root": str(FIRST10_ROOT),
+        "seed": SEED,
+        "case_count": len(cases),
+        "planned": len(FIRST10_CASE_TARGETS) * len(MODES),
+        "complete": complete,
+        "metrics": metrics,
+        "overlays": overlays,
+        "guidance_step_range_inclusive": [0, 9],
+        "reference_step_range_inclusive": [0, 39],
+        "cases": cases,
+    }
+
+
 def _representatives(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Select auditable best/worst examples from the frozen eligible cohort."""
     rows: list[dict[str, Any]] = []
@@ -457,6 +576,7 @@ def catalog() -> dict[str, Any]:
     return {
         "protocol": "wan_gt_guidance_frozen_validation_v1",
         "dual_protocol": _dual_catalog(),
+        "first10_comparison": _window_catalog(),
         "seed": SEED,
         "case_count": int(screening.get("case_count", 0)),
         "eligible_case_count": int(screening.get("eligible_case_count", 0)),
@@ -518,6 +638,41 @@ def asset(
     backend: str = "",
     step: int | str = "",
 ) -> Path | None:
+    window_kinds = {
+        "window_source",
+        "window_trajectory_source",
+        "window_full_generated",
+        "window_full_trajectory",
+        "window_first10_generated",
+        "window_first10_trajectory",
+    }
+    if kind in window_kinds:
+        if FIRST10_CASE_TARGETS.get(case) != target:
+            return None
+        allowed = {"baseline"} | {
+            f"{mode}__{target}__lambda0p1" for mode in MODES
+        }
+        if kind == "window_source":
+            source = Path(
+                str(_json(ROOT / "gt_tubes" / case / "manifest.json").get("source_video", ""))
+            )
+            return source if _ready(source) else None
+        if kind == "window_trajectory_source":
+            video = ROOT / "trajectory_overlays" / case / f"source__{target}.mp4"
+            return video if _ready(video) else None
+        if variant not in allowed:
+            return None
+        root = FIRST10_ROOT if "first10" in kind else ROOT
+        video = (
+            root / "generations" / case / f"seed_{SEED:05d}" / variant / "generated.mp4"
+            if kind.endswith("generated")
+            else root
+            / "trajectory_overlays"
+            / case
+            / f"seed_{SEED:05d}"
+            / f"{variant}__{target}.mp4"
+        )
+        return video if _ready(video) else None
     if kind in {
         "dual_source",
         "dual_generated",
@@ -638,14 +793,18 @@ def asset(
 
 def page() -> str:
     return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GT-STC Guidance Validation</title><style>
-:root{--ink:#152238;--paper:#edf3f7;--panel:#f8fbfd;--line:#b7c7d5;--cobalt:#175c91;--cyan:#1d91a8;--amber:#d88a24;--red:#b64d50;--muted:#60748a;--shadow:0 14px 40px #17345018}*{box-sizing:border-box}body{margin:0;background:linear-gradient(90deg,#dbe7ee 1px,transparent 1px),linear-gradient(#dbe7ee 1px,transparent 1px),var(--paper);background-size:28px 28px;color:var(--ink);font:15px/1.55 "Avenir Next","Segoe UI",sans-serif}header{padding:34px clamp(20px,5vw,72px) 28px;background:#eef5f9eF;border-bottom:1px solid var(--line);backdrop-filter:blur(10px)}a{color:var(--cobalt)}.eyebrow,.mono{font:700 11px/1.3 ui-monospace,SFMono-Regular,monospace;letter-spacing:.12em;text-transform:uppercase}.eyebrow{color:var(--cyan);margin-top:18px}h1{max-width:1100px;margin:8px 0 10px;font:700 clamp(34px,6vw,76px)/.94 "Arial Narrow","Avenir Next Condensed",sans-serif;letter-spacing:-.045em}.lead{max-width:970px;color:#3c536b;font-size:17px}.anchor-strip{display:grid;grid-template-columns:repeat(13,1fr);max-width:780px;margin-top:24px;border:1px solid var(--line);background:var(--panel)}.anchor-strip i{height:13px;border-right:1px solid var(--line);background:linear-gradient(90deg,var(--cobalt),var(--cyan));opacity:calc(.25 + var(--n)*.055)}.anchor-strip i:last-child{border:0}main{padding:26px clamp(16px,4vw,64px) 80px;max-width:1900px;margin:auto}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stat,.section{background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow)}.stat{padding:18px}.stat b{display:block;font:700 30px/1 "Arial Narrow",sans-serif;margin-top:7px}.section{margin-top:18px;padding:20px}.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:16px 0}.toolbar label{font-weight:700}.toolbar select,.toolbar button{display:block;margin-top:5px;padding:9px 12px;border:1px solid #8da5b7;background:#fff;color:var(--ink)}.toolbar button{cursor:pointer;background:var(--cobalt);color:#fff}.track-legend{display:flex;flex-wrap:wrap;gap:18px;margin:-4px 0 14px;padding:10px 12px;border-left:4px solid var(--cyan);background:#eaf3f7;color:#3d5368}.swatch{display:inline-block;width:22px;height:4px;margin:0 7px 3px 0;border-radius:4px}.swatch.gt{background:#29e2ee}.swatch.candidate{background:#ffa73d}.swatch.lost{background:#f34a58}.definitions{overflow:auto}table{width:100%;border-collapse:collapse;min-width:800px}th,td{text-align:left;padding:10px;border-bottom:1px solid #d6e1e8;vertical-align:top}th{font:700 11px ui-monospace,monospace;text-transform:uppercase;color:var(--muted)}.case-title{display:flex;justify-content:space-between;gap:16px;align-items:center}.case-title h2{margin:0;font:700 25px "Arial Narrow",sans-serif}.grid{display:grid;grid-template-columns:repeat(5,minmax(220px,1fr));gap:11px;overflow-x:auto;padding-bottom:8px}.card{min-width:220px;border:1px solid var(--line);background:#fff}.card video,.empty{width:100%;aspect-ratio:16/9;background:#102033;display:block}.empty{display:grid;place-items:center;color:#b9c8d4;font:700 12px ui-monospace,monospace;text-align:center;padding:20px}.caption{padding:12px}.caption b{display:block}.view-tag{display:block;margin-top:3px;color:var(--muted);font:700 10px ui-monospace,monospace;text-transform:uppercase}.bad{color:var(--red)}.good{color:#16785f}.pending{color:var(--amber)}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin-top:9px;font:12px ui-monospace,monospace;color:#40576d}.aggregate{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}.agg{padding:14px;border-left:5px solid var(--cyan);background:#eef6f8}.agg b{display:block}.jump{padding:6px 9px;border:1px solid var(--cobalt);background:#fff;color:var(--cobalt);cursor:pointer}.footer{color:var(--muted);margin-top:28px}.dual-board{border-top:7px solid var(--cobalt)}.dual-intro{display:grid;grid-template-columns:minmax(240px,1.2fr) minmax(280px,2fr);gap:18px;align-items:start}.dual-intro h2{margin:2px 0 8px;font:700 clamp(27px,4vw,46px)/1 "Arial Narrow",sans-serif}.protocol-row{margin-top:16px;border:1px solid var(--line);background:#eef5f8}.protocol-head{display:grid;grid-template-columns:minmax(240px,1fr) minmax(280px,2fr);gap:16px;padding:14px 16px;border-bottom:1px solid var(--line);background:#e4eef3}.protocol-head h3{margin:0;font:700 22px "Arial Narrow",sans-serif}.protocol-head p{margin:4px 0 0;color:var(--muted)}.flow-rail{display:grid;grid-template-columns:repeat(13,1fr);gap:3px;align-self:center}.flow-rail i{height:22px;border:1px solid #a8bdca;background:#c9d7df;position:relative}.flow-rail i.context{background:var(--cobalt);border-color:var(--cobalt)}.flow-rail i.future{background:linear-gradient(135deg,#d4eef1,var(--cyan));border-color:#69aeba}.flow-rail i::after{content:attr(data-t);position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:700 8px ui-monospace,monospace}.dual-grid{display:grid;grid-template-columns:repeat(4,minmax(225px,1fr));gap:11px;padding:12px;overflow-x:auto}.source-grid{display:grid;grid-template-columns:minmax(240px,380px) 1fr;gap:16px;align-items:start;margin-top:14px}.source-note{padding:14px 16px;border-left:5px solid var(--amber);background:#fff5e7}.source-note p{margin:5px 0;color:#53687a}.pending-slot{background:repeating-linear-gradient(135deg,#13263a,#13263a 12px,#193149 12px,#193149 24px);grid-template-rows:auto auto;align-content:center;gap:7px}.pending-slot strong{color:#ffd18c;letter-spacing:.16em}.pending-slot span{font-weight:500;color:#aebfcc}.dual-progress{height:8px;background:#d7e2e8;margin-top:8px;overflow:hidden}.dual-progress i{display:block;height:100%;background:linear-gradient(90deg,var(--cobalt),var(--cyan))}.constraint-audit{margin-top:18px;padding-top:16px;border-top:2px dashed #8aa6b8}.constraint-audit>h3{font:700 26px "Arial Narrow",sans-serif;margin:0 0 5px}.direction-warning{padding:14px 16px;border-left:6px solid var(--red);background:#fff0ef;color:#6c3034}.direction-warning b{display:block;margin-bottom:4px}.audit-row .protocol-head{background:#f4e8e7}.audit-note{display:block;margin-top:8px;color:#516879;font-size:12px}.audit-grid{display:grid;grid-template-columns:repeat(4,minmax(245px,1fr));gap:11px;padding:12px;overflow-x:auto}.attention-microscope{margin-top:22px;padding:18px;background:#10253a;color:#eaf7fb;border:1px solid #163e5c;box-shadow:0 18px 44px #10253a32}.attention-head{display:grid;grid-template-columns:minmax(280px,1fr) minmax(420px,1.5fr);gap:18px;align-items:end}.attention-head h3{margin:0;font:700 clamp(26px,3vw,42px)/1 "Arial Narrow",sans-serif}.attention-head p{margin:7px 0 0;color:#a9c4d3}.step-rail{display:grid;grid-template-columns:repeat(8,1fr);gap:5px}.step-rail button{border:1px solid #47738e;background:#17344c;color:#b9d2df;padding:10px 4px;font:700 11px ui-monospace,monospace;cursor:pointer}.step-rail button.active{background:var(--amber);border-color:#ffd08b;color:#17263a;box-shadow:0 0 0 2px #ffd08b33}.attention-protocol{margin-top:15px;border-top:1px solid #31526a;padding-top:12px}.attention-protocol h4{margin:0 0 8px;font:700 19px "Arial Narrow",sans-serif}.attention-grid{display:grid;grid-template-columns:repeat(3,minmax(410px,1fr));gap:10px;overflow-x:auto}.attention-card{background:#f8fbfd;color:var(--ink)}.attention-card video,.attention-card .empty{aspect-ratio:6.7/1}.attention-card .metrics{grid-template-columns:repeat(4,1fr)}.attention-legend{display:flex;gap:18px;flex-wrap:wrap;margin:10px 0 0;color:#bdd2dd;font:12px ui-monospace,monospace}.attention-legend b{color:#fff}@media(max-width:900px){.dual-intro,.protocol-head,.source-grid,.attention-head{grid-template-columns:1fr}.dual-grid,.audit-grid{grid-template-columns:repeat(4,78vw)}.attention-grid{grid-template-columns:repeat(3,86vw)}}@media(max-width:760px){h1{font-size:43px}.section{padding:13px}.grid{grid-template-columns:repeat(5,82vw)}.step-rail{grid-template-columns:repeat(4,1fr)}}@media(prefers-reduced-motion:no-preference){.stat,.section{animation:up .35s ease both}@keyframes up{from{opacity:0;transform:translateY(8px)}}}</style></head><body>
+:root{--ink:#152238;--paper:#edf3f7;--panel:#f8fbfd;--line:#b7c7d5;--cobalt:#175c91;--cyan:#1d91a8;--amber:#d88a24;--red:#b64d50;--muted:#60748a;--shadow:0 14px 40px #17345018}*{box-sizing:border-box}body{margin:0;background:linear-gradient(90deg,#dbe7ee 1px,transparent 1px),linear-gradient(#dbe7ee 1px,transparent 1px),var(--paper);background-size:28px 28px;color:var(--ink);font:15px/1.55 "Avenir Next","Segoe UI",sans-serif}header{padding:34px clamp(20px,5vw,72px) 28px;background:#eef5f9eF;border-bottom:1px solid var(--line);backdrop-filter:blur(10px)}a{color:var(--cobalt)}.eyebrow,.mono{font:700 11px/1.3 ui-monospace,SFMono-Regular,monospace;letter-spacing:.12em;text-transform:uppercase}.eyebrow{color:var(--cyan);margin-top:18px}h1{max-width:1100px;margin:8px 0 10px;font:700 clamp(34px,6vw,76px)/.94 "Arial Narrow","Avenir Next Condensed",sans-serif;letter-spacing:-.045em}.lead{max-width:970px;color:#3c536b;font-size:17px}.anchor-strip{display:grid;grid-template-columns:repeat(13,1fr);max-width:780px;margin-top:24px;border:1px solid var(--line);background:var(--panel)}.anchor-strip i{height:13px;border-right:1px solid var(--line);background:linear-gradient(90deg,var(--cobalt),var(--cyan));opacity:calc(.25 + var(--n)*.055)}.anchor-strip i:last-child{border:0}main{padding:26px clamp(16px,4vw,64px) 80px;max-width:1900px;margin:auto}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stat,.section{background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow)}.stat{padding:18px}.stat b{display:block;font:700 30px/1 "Arial Narrow",sans-serif;margin-top:7px}.section{margin-top:18px;padding:20px}.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:16px 0}.toolbar label{font-weight:700}.toolbar select,.toolbar button{display:block;margin-top:5px;padding:9px 12px;border:1px solid #8da5b7;background:#fff;color:var(--ink)}.toolbar button{cursor:pointer;background:var(--cobalt);color:#fff}.track-legend{display:flex;flex-wrap:wrap;gap:18px;margin:-4px 0 14px;padding:10px 12px;border-left:4px solid var(--cyan);background:#eaf3f7;color:#3d5368}.swatch{display:inline-block;width:22px;height:4px;margin:0 7px 3px 0;border-radius:4px}.swatch.gt{background:#29e2ee}.swatch.candidate{background:#ffa73d}.swatch.lost{background:#f34a58}.definitions{overflow:auto}table{width:100%;border-collapse:collapse;min-width:800px}th,td{text-align:left;padding:10px;border-bottom:1px solid #d6e1e8;vertical-align:top}th{font:700 11px ui-monospace,monospace;text-transform:uppercase;color:var(--muted)}.case-title{display:flex;justify-content:space-between;gap:16px;align-items:center}.case-title h2{margin:0;font:700 25px "Arial Narrow",sans-serif}.grid{display:grid;grid-template-columns:repeat(5,minmax(220px,1fr));gap:11px;overflow-x:auto;padding-bottom:8px}.card{min-width:220px;border:1px solid var(--line);background:#fff}.card video,.empty{width:100%;aspect-ratio:16/9;background:#102033;display:block}.empty{display:grid;place-items:center;color:#b9c8d4;font:700 12px ui-monospace,monospace;text-align:center;padding:20px}.caption{padding:12px}.caption b{display:block}.view-tag{display:block;margin-top:3px;color:var(--muted);font:700 10px ui-monospace,monospace;text-transform:uppercase}.bad{color:var(--red)}.good{color:#16785f}.pending{color:var(--amber)}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin-top:9px;font:12px ui-monospace,monospace;color:#40576d}.aggregate{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}.agg{padding:14px;border-left:5px solid var(--cyan);background:#eef6f8}.agg b{display:block}.jump{padding:6px 9px;border:1px solid var(--cobalt);background:#fff;color:var(--cobalt);cursor:pointer}.footer{color:var(--muted);margin-top:28px}.dual-board{border-top:7px solid var(--cobalt)}.dual-intro{display:grid;grid-template-columns:minmax(240px,1.2fr) minmax(280px,2fr);gap:18px;align-items:start}.dual-intro h2{margin:2px 0 8px;font:700 clamp(27px,4vw,46px)/1 "Arial Narrow",sans-serif}.protocol-row{margin-top:16px;border:1px solid var(--line);background:#eef5f8}.protocol-head{display:grid;grid-template-columns:minmax(240px,1fr) minmax(280px,2fr);gap:16px;padding:14px 16px;border-bottom:1px solid var(--line);background:#e4eef3}.protocol-head h3{margin:0;font:700 22px "Arial Narrow",sans-serif}.protocol-head p{margin:4px 0 0;color:var(--muted)}.flow-rail{display:grid;grid-template-columns:repeat(13,1fr);gap:3px;align-self:center}.flow-rail i{height:22px;border:1px solid #a8bdca;background:#c9d7df;position:relative}.flow-rail i.context{background:var(--cobalt);border-color:var(--cobalt)}.flow-rail i.future{background:linear-gradient(135deg,#d4eef1,var(--cyan));border-color:#69aeba}.flow-rail i::after{content:attr(data-t);position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:700 8px ui-monospace,monospace}.dual-grid{display:grid;grid-template-columns:repeat(4,minmax(225px,1fr));gap:11px;padding:12px;overflow-x:auto}.source-grid{display:grid;grid-template-columns:minmax(240px,380px) 1fr;gap:16px;align-items:start;margin-top:14px}.source-note{padding:14px 16px;border-left:5px solid var(--amber);background:#fff5e7}.source-note p{margin:5px 0;color:#53687a}.pending-slot{background:repeating-linear-gradient(135deg,#13263a,#13263a 12px,#193149 12px,#193149 24px);grid-template-rows:auto auto;align-content:center;gap:7px}.pending-slot strong{color:#ffd18c;letter-spacing:.16em}.pending-slot span{font-weight:500;color:#aebfcc}.dual-progress{height:8px;background:#d7e2e8;margin-top:8px;overflow:hidden}.dual-progress i{display:block;height:100%;background:linear-gradient(90deg,var(--cobalt),var(--cyan))}.constraint-audit{margin-top:18px;padding-top:16px;border-top:2px dashed #8aa6b8}.constraint-audit>h3{font:700 26px "Arial Narrow",sans-serif;margin:0 0 5px}.direction-warning{padding:14px 16px;border-left:6px solid var(--red);background:#fff0ef;color:#6c3034}.direction-warning b{display:block;margin-bottom:4px}.audit-row .protocol-head{background:#f4e8e7}.audit-note{display:block;margin-top:8px;color:#516879;font-size:12px}.audit-grid{display:grid;grid-template-columns:repeat(4,minmax(245px,1fr));gap:11px;padding:12px;overflow-x:auto}.attention-microscope{margin-top:22px;padding:18px;background:#10253a;color:#eaf7fb;border:1px solid #163e5c;box-shadow:0 18px 44px #10253a32}.attention-head{display:grid;grid-template-columns:minmax(280px,1fr) minmax(420px,1.5fr);gap:18px;align-items:end}.attention-head h3{margin:0;font:700 clamp(26px,3vw,42px)/1 "Arial Narrow",sans-serif}.attention-head p{margin:7px 0 0;color:#a9c4d3}.step-rail{display:grid;grid-template-columns:repeat(8,1fr);gap:5px}.step-rail button{border:1px solid #47738e;background:#17344c;color:#b9d2df;padding:10px 4px;font:700 11px ui-monospace,monospace;cursor:pointer}.step-rail button.active{background:var(--amber);border-color:#ffd08b;color:#17263a;box-shadow:0 0 0 2px #ffd08b33}.attention-protocol{margin-top:15px;border-top:1px solid #31526a;padding-top:12px}.attention-protocol h4{margin:0 0 8px;font:700 19px "Arial Narrow",sans-serif}.attention-grid{display:grid;grid-template-columns:repeat(3,minmax(410px,1fr));gap:10px;overflow-x:auto}.attention-card{background:#f8fbfd;color:var(--ink)}.attention-card video,.attention-card .empty{aspect-ratio:6.7/1}.attention-card .metrics{grid-template-columns:repeat(4,1fr)}.attention-legend{display:flex;gap:18px;flex-wrap:wrap;margin:10px 0 0;color:#bdd2dd;font:12px ui-monospace,monospace}.attention-legend b{color:#fff}.window-board{border-top:7px solid var(--amber)}.window-head{display:grid;grid-template-columns:minmax(280px,1fr) minmax(420px,1.5fr);gap:22px;align-items:end}.window-head h2{margin:2px 0 7px;font:700 clamp(27px,4vw,46px)/1 "Arial Narrow",sans-serif}.window-head p{margin:0;color:var(--muted)}.denoise-rail{display:grid;grid-template-columns:repeat(40,1fr);gap:2px}.denoise-rail i{height:30px;background:#cdd8df;border:1px solid #b5c4cd;position:relative}.denoise-rail i.active{background:linear-gradient(180deg,#f6bd64,var(--amber));border-color:#ba731e}.denoise-rail i:nth-child(10){margin-right:5px}.denoise-rail i::after{content:attr(data-step);position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:700 7px ui-monospace,monospace}.window-grid{display:grid;grid-template-columns:repeat(8,minmax(220px,1fr));gap:11px;overflow-x:auto;padding-bottom:8px}.window-card.first10{border-top:5px solid var(--amber)}.window-card.full40{border-top:5px solid var(--cobalt)}.window-card.baseline{border-top:5px solid #8aa0b0}@media(max-width:900px){.dual-intro,.protocol-head,.source-grid,.attention-head,.window-head{grid-template-columns:1fr}.dual-grid,.audit-grid{grid-template-columns:repeat(4,78vw)}.attention-grid{grid-template-columns:repeat(3,86vw)}}@media(max-width:760px){h1{font-size:43px}.section{padding:13px}.grid{grid-template-columns:repeat(5,82vw)}.window-grid{grid-template-columns:repeat(8,82vw)}.step-rail{grid-template-columns:repeat(4,1fr)}.denoise-rail{grid-template-columns:repeat(20,1fr)}}@media(prefers-reduced-motion:no-preference){.stat,.section{animation:up .35s ease both}@keyframes up{from{opacity:0;transform:translateY(8px)}}}</style></head><body>
 <header><a href="/">← 返回 8092 总入口</a> · <a href="/gt-stc-guidance-preflight?v=2">Tube 预检</a><div class="eyebrow">Frozen latest3350 · source-oracle intervention</div><h1>同一条 GT 轨迹，<br>哪组 heads 拉得更准？</h1><p class="lead">First-frame TI2V 与 8-frame V2V 使用相同 latent RMS 预算；除最终视频外，页面逐步展示 step 5/10/…/40 的原始 PRE attention、约束后 POST attention、差分和 predicted-x0。未落盘项保留 Pending。</p><div class="anchor-strip" aria-label="13 latent anchors"><i style="--n:0"></i><i style="--n:1"></i><i style="--n:2"></i><i style="--n:3"></i><i style="--n:4"></i><i style="--n:5"></i><i style="--n:6"></i><i style="--n:7"></i><i style="--n:8"></i><i style="--n:9"></i><i style="--n:10"></i><i style="--n:11"></i><i style="--n:12"></i></div></header>
-<main><section class="section dual-board" id="equalBudget"><div class="dual-intro"><div><span class="eyebrow">Live GPU1 matrix · equal-budget head direction</span><h2>双协议 Head Guidance</h2><p>所有 planned slot 始终占位；页面每 30 秒读取落盘状态，不等待整批跑完。</p></div><div id="dualSummary" class="summary"></div></div><div class="toolbar"><label>Case<select id="dualCase"></select></label><label>Target<select id="dualTarget"></select></label><button id="dualRefresh">刷新现场</button><button id="dualReplay">双协议同步重播</button><span id="dualUpdated" class="mono">读取中</span></div><div class="definitions"><table><thead><tr><th>约束 / 指标</th><th>精确计算</th><th>判读</th></tr></thead><tbody id="dualDefs"></tbody></table></div><div id="dualGallery"></div></section><div id="summary" class="summary" style="margin-top:18px"></div><section class="section"><h2>原冻结验证 · 计算与判读</h2><div class="definitions"><table><thead><tr><th>指标</th><th>精确计算</th><th>方向</th></tr></thead><tbody id="defs"></tbody></table></div></section><section class="section" id="paired"><div class="case-title"><h2>原冻结配对结果 · Region / Point / Combined</h2><span id="updated" class="mono">读取中</span></div><div class="toolbar"><label>Case<select id="case"></select></label><label>Target<select id="target"></select></label><label>画面<select id="view"><option value="trajectory">对象轨迹叠加</option><option value="raw">原始视频</option></select></label><button id="refresh">刷新现场</button><button id="replay">同步重播</button></div><div id="trackLegend" class="track-legend"><span><i class="swatch gt"></i>青色：Source GT 对应点、质心与历史路径</span><span><i class="swatch candidate"></i>橙色：生成视频 CoTracker 结果</span><span><i class="swatch lost"></i>红色：当前帧 TRACK LOST</span></div><div id="gallery"></div></section><section class="section"><h2>Case-balanced 汇总</h2><div id="aggregate" class="aggregate"></div></section><section class="section"><h2>代表性样本</h2><p>仅在冻结 eligible cohort 内选择；ADE 排序要求 guided trajectory gate 通过，Track Loss 排序保留破坏性失败。</p><div class="definitions"><table><thead><tr><th>Mode</th><th>选择理由</th><th>Case / Target</th><th>ΔADE/D0</th><th>ΔTrack Loss</th><th>查看</th></tr></thead><tbody id="representatives"></tbody></table></div></section><p class="footer">视频使用懒加载；未生成项保留明确 Pending 卡位，刷新无需改变当前 case/target。</p></main>
+<main><section class="section dual-board" id="equalBudget"><div class="dual-intro"><div><span class="eyebrow">Live GPU1 matrix · equal-budget head direction</span><h2>双协议 Head Guidance</h2><p>所有 planned slot 始终占位；页面每 30 秒读取落盘状态，不等待整批跑完。</p></div><div id="dualSummary" class="summary"></div></div><div class="toolbar"><label>Case<select id="dualCase"></select></label><label>Target<select id="dualTarget"></select></label><button id="dualRefresh">刷新现场</button><button id="dualReplay">双协议同步重播</button><span id="dualUpdated" class="mono">读取中</span></div><div class="definitions"><table><thead><tr><th>约束 / 指标</th><th>精确计算</th><th>判读</th></tr></thead><tbody id="dualDefs"></tbody></table></div><div id="dualGallery"></div></section><div id="summary" class="summary" style="margin-top:18px"></div><section class="section window-board" id="first10"><div class="window-head"><div><span class="eyebrow">Temporal intervention window · controlled comparison</span><h2>仅前 10 步 Guidance vs 全 40 步</h2><p>同 seed、同 Top100、同 λ=0.1、同 Region/Point/Combined；唯一变量是 correspondence gradient 施加于 step 0–9，还是 step 0–39。</p></div><div><div class="denoise-rail" id="denoiseRail"></div><div class="mono" style="margin-top:7px">橙色 step 0–9：施加 guidance · 灰色 step 10–39：普通 CFG 去噪</div></div></div><div id="windowSummary" class="summary" style="margin-top:16px"></div><div class="toolbar"><label>0613 case<select id="windowCase"></select></label><label>画面<select id="windowView"><option value="trajectory">对象轨迹叠加</option><option value="raw">原始视频</option></select></label><button id="windowRefresh">刷新现场</button><button id="windowReplay">同步重播</button><span id="windowUpdated" class="mono">读取中</span></div><div id="windowTrackLegend" class="track-legend"><span><i class="swatch gt"></i>青色：Source GT</span><span><i class="swatch candidate"></i>橙色：生成轨迹</span><span><i class="swatch lost"></i>红色：TRACK LOST</span></div><div id="windowGallery"></div></section><section class="section"><h2>原冻结验证 · 计算与判读</h2><div class="definitions"><table><thead><tr><th>指标</th><th>精确计算</th><th>方向</th></tr></thead><tbody id="defs"></tbody></table></div></section><section class="section" id="paired"><div class="case-title"><h2>原冻结配对结果 · Region / Point / Combined</h2><span id="updated" class="mono">读取中</span></div><div class="toolbar"><label>Case<select id="case"></select></label><label>Target<select id="target"></select></label><label>画面<select id="view"><option value="trajectory">对象轨迹叠加</option><option value="raw">原始视频</option></select></label><button id="refresh">刷新现场</button><button id="replay">同步重播</button></div><div id="trackLegend" class="track-legend"><span><i class="swatch gt"></i>青色：Source GT 对应点、质心与历史路径</span><span><i class="swatch candidate"></i>橙色：生成视频 CoTracker 结果</span><span><i class="swatch lost"></i>红色：当前帧 TRACK LOST</span></div><div id="gallery"></div></section><section class="section"><h2>Case-balanced 汇总</h2><div id="aggregate" class="aggregate"></div></section><section class="section"><h2>代表性样本</h2><p>仅在冻结 eligible cohort 内选择；ADE 排序要求 guided trajectory gate 通过，Track Loss 排序保留破坏性失败。</p><div class="definitions"><table><thead><tr><th>Mode</th><th>选择理由</th><th>Case / Target</th><th>ΔADE/D0</th><th>ΔTrack Loss</th><th>查看</th></tr></thead><tbody id="representatives"></tbody></table></div></section><p class="footer">视频使用懒加载；未生成项保留明确 Pending 卡位，刷新无需改变当前 case/target。</p></main>
 <script>
 const api='/api/gt-stc-guidance-results',E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),F=(v,d=3)=>v==null?'N/A':Number(v).toFixed(d);let D;const $=id=>document.getElementById(id);
 function lazy(){const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting&&e.target.dataset.src){e.target.src=e.target.dataset.src;delete e.target.dataset.src;e.target.load();io.unobserve(e.target)}}),{rootMargin:'500px'});document.querySelectorAll('video[data-src]').forEach(v=>io.observe(v))}
 function metric(v){const m=v.metric||{},gate=m.quality_pass===true;return `<div class="metrics"><span class="${gate?'good':'bad'}">Gate ${gate?'PASS':'FAIL/N.A.'}</span><span>ADE/D0 ${F(m.ade_d0)}</span><span>FDE/D0 ${F(m.fde_d0)}</span><span>PCK10 ${F(m.pck_10pct_d0)}</span><span>TrackLoss ${F(m.future_track_loss_score_0_100,1)}</span>${v.mode==='baseline'?'':`<span>ΔADE ${F(v.delta_ade_d0)}</span><span>ΔLoss ${F(v.delta_track_loss,1)}</span>`}</div>`}
 function video(src,label,v,view){const waiting=view==='trajectory'?'轨迹叠加生成中':'视频未生成';return `<article class="card">${src?`<video controls muted playsinline preload="none" data-src="${src}"></video>`:`<div class="empty">${waiting}</div>`}<div class="caption"><b>${E(label)}</b><span class="view-tag">${view==='trajectory'?'GT / CoTracker trajectory overlay':'raw video'}</span>${v?metric(v):'<div class="metrics"><span>Source GT tube</span></div>'}</div></article>`}
+function windowMetric(v){const m=v.metric||{};if(!v.metric_ready)return `<div class="metrics"><span class="pending">指标 Pending</span><span>${v.complete?'等待 CoTracker':'等待生成'}</span></div>`;const extra=v.window==='first10'?`<span>vs Full ΔADE ${F(v.delta_ade_vs_full40)}</span><span>vs Full ΔLoss ${F(v.delta_track_loss_vs_full40,1)}</span>`:'';return `<div class="metrics"><span class="${m.quality_pass?'good':'bad'}">Gate ${m.quality_pass?'PASS':'FAIL/N.A.'}</span><span>ADE/D0 ${F(m.ade_d0)}</span><span>FDE/D0 ${F(m.fde_d0)}</span><span>PCK10 ${F(m.pck_10pct_d0)}</span><span>TrackLoss ${F(m.future_track_loss_score_0_100,1)}</span>${v.mode==='baseline'?'':`<span>vs Base ΔADE ${F(v.delta_ade_d0)}</span><span>vs Base ΔLoss ${F(v.delta_track_loss,1)}</span>${extra}`}</div>`}
+function windowCard(src,v,view){const state=v.window==='first10'?'first10':v.window==='full40'?'full40':'baseline',waiting=view==='trajectory'?'轨迹 overlay Pending':'生成 Pending';return `<article class="card window-card ${state}">${src?`<video controls muted playsinline preload="none" data-src="${src}"></video>`:`<div class="empty pending-slot"><strong>PENDING</strong><span>${waiting}</span></div>`}<div class="caption"><b>${E(v.label)}</b><span class="view-tag">${view==='trajectory'?'GT / CoTracker trajectory overlay':'raw video'} · seed 47326</span>${windowMetric(v)}</div></article>`}
+function renderWindow(){const d=D.first10_comparison,c=d.cases.find(x=>x.case===$('windowCase').value)||d.cases[0];if(!c){$('windowGallery').innerHTML='<p class="pending">0613 前10步任务尚未注册。</p>';return}const q=x=>encodeURIComponent(x),view=$('windowView').value;$('windowTrackLegend').hidden=view!=='trajectory';const sourceKind=view==='trajectory'?'window_trajectory_source':'window_source',sourceReady=view==='trajectory'?c.source_trajectory_overlay_ready:c.source_video_ready;let cards=video(sourceReady?`${api}/asset?kind=${sourceKind}&case=${q(c.case)}&target=${q(c.target)}`:'','Source GT',null,view);for(const v of c.variants){const first=v.window==='first10',ready=view==='trajectory'?v.trajectory_overlay_ready:v.video_ready,kind=view==='trajectory'?(first?'window_first10_trajectory':'window_full_trajectory'):(first?'window_first10_generated':'window_full_generated'),src=ready?`${api}/asset?kind=${kind}&case=${q(c.case)}&target=${q(c.target)}&variant=${q(v.name)}`:'';cards+=windowCard(src,v,view)}$('windowGallery').innerHTML=`<div class="case-title"><h2>${E(c.case)} · ${E(c.target)}</h2><span class="mono">fixed control · Top100 · λ0.1</span></div><div class="window-grid">${cards}</div>`;lazy()}
+function windowSummary(){const d=D.first10_comparison,p=d.planned?Math.round(100*d.complete/d.planned):0;$('windowSummary').innerHTML=`<div class="stat"><span class="mono">Matrix</span><b>${d.case_count} × 3</b><small>cases × Region/Point/Combined</small></div><div class="stat"><span class="mono">Generated</span><b>${d.complete}/${d.planned}</b><small>${p}% 已落盘<div class="dual-progress"><i style="width:${p}%"></i></div></small></div><div class="stat"><span class="mono">Metrics</span><b>${d.metrics}/${d.planned}</b><small>future-only CoTracker</small></div><div class="stat"><span class="mono">Overlays</span><b>${d.overlays}/${d.planned}</b><small>完成后自动补齐</small></div>`;$('denoiseRail').innerHTML=Array.from({length:40},(_,i)=>`<i class="${i<10?'active':''}" data-step="${i}"></i>`).join('')}
 function dualMetric(v){const m=v.metric||{};if(!v.metric_ready)return `<div class="metrics"><span class="pending">指标 Pending</span><span>${v.complete?'等待 CoTracker':'等待视频'}</span></div>`;return `<div class="metrics"><span class="${m.quality_pass?'good':'bad'}">Gate ${m.quality_pass?'PASS':'FAIL'}</span><span>ADE/D0 ${F(m.ade_d0)}</span><span>FDE/D0 ${F(m.fde_d0)}</span><span>PCK10 ${F(m.pck_10pct_d0)}</span><span>TrackLoss ${F(m.future_track_loss_score_0_100,1)}</span></div>`}
 function dualCard(src,v,backend,caseName,targetName){return `<article class="card">${src?`<video controls muted playsinline preload="none" data-src="${src}"></video>`:`<div class="empty pending-slot"><strong>PENDING</strong><span>GPU1 尚未生成该 slot</span></div>`}<div class="caption"><b>${E(v.label)}</b><span class="view-tag">${E(backend)} · ${E(targetName)}</span>${dualMetric(v)}</div></article>`}
 function diagnosticCard(src,v,backend){return `<article class="card">${src?`<video controls muted playsinline loop preload="none" data-src="${src}"></video>`:`<div class="empty pending-slot"><strong>PENDING</strong><span>${v.name==='baseline_before'?'同 backend Baseline 尚未生成':'诊断视频尚未渲染'}</span></div>`}<div class="caption"><b>${E(v.label)}</b><span class="view-tag">${E(backend)} · 13 latent anchors</span><span class="audit-note">${E(v.note)}</span></div></article>`}
@@ -660,6 +819,6 @@ function dualSummary(){const d=D.dual_protocol,p=d.planned?Math.round(100*d.comp
 function render(){const c=D.cases.find(x=>x.case===$('case').value)||D.cases[0];if(!c){$('gallery').innerHTML='<p>Baseline screen 尚未完成。</p>';return}const opts=c.targets.map(t=>`<option>${E(t.name)}</option>`).join('');if($('target').dataset.case!==c.case){$('target').innerHTML=opts;$('target').dataset.case=c.case}const t=c.targets.find(x=>x.name===$('target').value)||c.targets[0],q=x=>encodeURIComponent(x),view=$('view').value;$('trackLegend').hidden=view!=='trajectory';const sourceKind=view==='trajectory'?'trajectory_source':'source',sourceReady=view==='trajectory'?t.source_trajectory_overlay_ready:c.source_video_ready;let cards=video(sourceReady?`${api}/asset?kind=${sourceKind}&case=${q(c.case)}&target=${q(t.name)}`:'','Source GT',null,view);for(const v of t.variants){const ready=view==='trajectory'?v.trajectory_overlay_ready:v.video_ready,kind=view==='trajectory'?'trajectory_generated':'generated',src=ready?`${api}/asset?kind=${kind}&case=${q(c.case)}&target=${q(t.name)}&variant=${q(v.name)}`:'';cards+=video(src,v.label,v,view)}$('gallery').innerHTML=`<div class="case-title"><h2>${E(c.case)} · ${E(t.name)}</h2><span class="mono">seed ${D.seed}</span></div><div class="grid">${cards}</div>`;lazy()}
 function reps(){$('representatives').innerHTML=(D.representatives||[]).map(x=>`<tr><td><b>${E(x.mode)}</b></td><td>${E(x.category)}</td><td>${E(x.case)}<br><span class="mono">${E(x.target)}</span></td><td>${F(x.delta_ade_d0)}</td><td>${F(x.delta_track_loss,1)}</td><td><button class="jump" data-case="${E(x.case)}" data-target="${E(x.target)}">跳转</button></td></tr>`).join('')||'<tr><td colspan="6" class="pending">轨迹指标完成后自动生成。</td></tr>';document.querySelectorAll('.jump').forEach(b=>b.onclick=()=>{$('case').value=b.dataset.case;$('target').dataset.case='';render();$('target').value=b.dataset.target;render();$('paired').scrollIntoView({behavior:'smooth'})})}
 function summary(){const p=D.guided_total?Math.round(100*D.guided_complete/D.guided_total):0,s=D.sensitivity_total?`${D.sensitivity_complete}/${D.sensitivity_total}`:'未触发';$('summary').innerHTML=`<div class="stat"><span class="mono">Source audit</span><b>${D.case_count}/20</b><small>完成 tube 的 case</small></div><div class="stat"><span class="mono">Frozen screen</span><b>${D.eligible_target_count}</b><small>${D.eligible_case_count} cases 的 eligible targets</small></div><div class="stat"><span class="mono">Primary λ0.1</span><b>${D.guided_complete}/${D.guided_total}</b><small>${p}% · Region/Point/Combined</small></div><div class="stat"><span class="mono">Primary metrics</span><b>${D.guided_metrics}/${D.guided_total}</b><small>CoTracker future-only</small></div><div class="stat"><span class="mono">Trajectory overlays</span><b>${D.trajectory_overlays_ready}/${D.trajectory_overlays_total}</b><small>GT 青色 / generated 橙色</small></div><div class="stat"><span class="mono">Conditional sensitivity</span><b>${s}</b><small>${D.trigger_modes.length?E(D.trigger_modes.join(' + '))+' · λ0.05/0.2':'冻结触发尚未满足/判定'}</small></div>`;$('defs').innerHTML=D.definitions.map(x=>`<tr><td><b>${E(x.metric)}</b></td><td>${E(x.calculation)}</td><td>${E(x.direction)}</td></tr>`).join('');$('aggregate').innerHTML=D.final_report_ready?D.final_aggregate.map(x=>`<div class="agg"><b>${E(x.mode)} · λ${x.lambda}</b><span>完成 ${x.completed_target_count}/${x.eligible_target_count} · gated ${x.guided_target_gate_pass_count} · ΔADE/D0 ${F(x.case_balanced_mean_delta_ade_d0)} · ΔTrack Loss ${F(x.case_balanced_mean_delta_track_loss,1)} · 改善 cases ${x.improved_case_count}</span></div>`).join(''):'<p class="pending">完整三模式指标尚未齐全；汇总将在最后一个评估完成后自动出现。</p>';reps()}
-async function load(){D=await fetch(api+'/catalog?x='+Date.now()).then(r=>r.json());const old=$('case').value,dualOld=$('dualCase').value;$('case').innerHTML=D.cases.map(c=>`<option>${E(c.case)}</option>`).join('');if(D.cases.some(c=>c.case===old))$('case').value=old;$('dualCase').innerHTML=D.dual_protocol.cases.map(c=>`<option>${E(c.case)}</option>`).join('');if(D.dual_protocol.cases.some(c=>c.case===dualOld))$('dualCase').value=dualOld;dualSummary();renderDual();summary();render();const now=new Date().toLocaleTimeString();$('updated').textContent=now;$('dualUpdated').textContent=`last scan ${now}`}
-$('dualCase').onchange=renderDual;$('dualTarget').onchange=renderDual;$('dualRefresh').onclick=load;$('dualReplay').onclick=()=>document.querySelectorAll('#dualGallery video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})});$('case').onchange=render;$('target').onchange=render;$('view').onchange=render;$('refresh').onclick=load;$('replay').onclick=()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})});load();setInterval(load,30000);
+async function load(){D=await fetch(api+'/catalog?x='+Date.now()).then(r=>r.json());const old=$('case').value,dualOld=$('dualCase').value,windowOld=$('windowCase').value;$('case').innerHTML=D.cases.map(c=>`<option>${E(c.case)}</option>`).join('');if(D.cases.some(c=>c.case===old))$('case').value=old;$('dualCase').innerHTML=D.dual_protocol.cases.map(c=>`<option>${E(c.case)}</option>`).join('');if(D.dual_protocol.cases.some(c=>c.case===dualOld))$('dualCase').value=dualOld;$('windowCase').innerHTML=D.first10_comparison.cases.map(c=>`<option>${E(c.case)}</option>`).join('');if(D.first10_comparison.cases.some(c=>c.case===windowOld))$('windowCase').value=windowOld;dualSummary();renderDual();windowSummary();renderWindow();summary();render();const now=new Date().toLocaleTimeString();$('updated').textContent=now;$('dualUpdated').textContent=`last scan ${now}`;$('windowUpdated').textContent=`last scan ${now}`}
+$('dualCase').onchange=renderDual;$('dualTarget').onchange=renderDual;$('dualRefresh').onclick=load;$('dualReplay').onclick=()=>document.querySelectorAll('#dualGallery video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})});$('windowCase').onchange=renderWindow;$('windowView').onchange=renderWindow;$('windowRefresh').onclick=load;$('windowReplay').onclick=()=>document.querySelectorAll('#windowGallery video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})});$('case').onchange=render;$('target').onchange=render;$('view').onchange=render;$('refresh').onclick=load;$('replay').onclick=()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})});load();setInterval(load,30000);
 </script></body></html>'''

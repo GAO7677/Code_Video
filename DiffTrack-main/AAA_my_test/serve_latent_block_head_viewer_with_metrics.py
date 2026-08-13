@@ -419,7 +419,7 @@ STAGE4_REPRESENTATIVES_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-information-flow-stage4-representatives?v=1"><div><span>46 / STAGE 4 EVIDENCE</span><h2>代表性 Case · 正例与反例</h2><p>精选 M1/M2/M3 的强正例、时间方向反例、Random100 异常、R→C spillover 候选和低影响对照；同组并排 Baseline、Top100、Bottom100、Random100 与实时指标。</p></div><span class="go">打开代表性证据页</span></a>
 '''
 TOP100_M1_GUIDANCE_PORTAL_CARD = r'''
-<a class="card new" href="/top100-m1-guidance-pilot?v=2"><div><span>47 / TRAINING-FREE M1/M2/M3 GUIDANCE</span><h2>Baseline × Top100 M1/M2/M3</h2><p>3 个代表 case、seed 47326；固定 CFG=5、λ=0.5、40 步和 Top100，只替换 R→R、C→R、R→C 扰动信息流。</p></div><span class="go">打开受控 Guidance 对比</span></a>
+<a class="card new" href="/top100-m1-guidance-pilot?v=3"><div><span>47 / TRAINING-FREE M1/M2/M3 GUIDANCE</span><h2>Baseline × Top100 M1/M2/M3</h2><p>3 cases × seeds {47326,42} × λ {0.5,1}；固定 CFG=5、40 步和 Top100，只替换 guidance 强度与 R→R、C→R、R→C 信息流。</p></div><span class="go">打开受控 Guidance 网格</span></a>
 '''
 TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD = r'''
 <a class="card new" href="/top100-m1-token-communication?v=1"><div><span>48 / M1 TOKEN COMMUNICATION</span><h2>13×13 R→R Token 通信位置</h2><p>逐 Query 时刻展示实际 22×40 latent 网格单元；橙色为 Query，青色为全部 13 帧被删除的 K/V，并提供 169 条通信矩阵。</p></div><span class="go">打开 Token 通信页面</span></a>
@@ -614,6 +614,8 @@ class MetricsHandler(viewer.Handler):
             result = top100_m1_guidance_dashboard.asset(
                 params.get("kind", [""])[0],
                 params.get("case", [""])[0],
+                int(params.get("seed", ["47326"])[0]),
+                float(params.get("pag_scale", ["0.5"])[0]),
             )
             if result is None or not result.is_file():
                 raise FileNotFoundError("Top100-M1 guidance pilot asset is not ready")
