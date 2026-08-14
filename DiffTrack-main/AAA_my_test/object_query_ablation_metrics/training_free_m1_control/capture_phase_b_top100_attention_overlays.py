@@ -8,12 +8,14 @@ full-mask alpha={0.1,0.25}.  All five rows are *observed* with the same frozen
 Baseline SAM2 full-mask query set, so changing a row does not change the
 measurement itself.
 
-For each latent time t and denoising window W we stream
+For denoising window W we stream a fixed-anchor trajectory probe
 
-  mean_{s in W, cfg, (layer,head) in Top100, q in R_t} A_s[q, K_t]
+  mean_{s in W, cfg, (layer,head) in Top100}
+      sum_{q in R_F04} A_s[q, K_0:12]
 
 where softmax is still normalized over all 13x22x40 keys.  Only the displayed
-same-time K_t slice is selected after softmax.
+key-frame slice is selected after softmax.  This matches the older trajectory
+view: one frozen object query is followed through all 13 latent key frames.
 """
 
 from __future__ import annotations
@@ -73,6 +75,8 @@ GRID = (13, 22, 40)
 FRAME_TOKEN_COUNT = GRID[1] * GRID[2]
 SEQUENCE = int(np.prod(GRID))
 ANCHOR_FRAMES = tuple(range(0, 49, 4))
+QUERY_LATENT_FRAME = 1
+QUERY_PIXEL_FRAME = ANCHOR_FRAMES[QUERY_LATENT_FRAME]
 WINDOWS: dict[str, tuple[int, ...]] = {
     "all40": tuple(range(40)),
     "first10": tuple(range(10)),
@@ -109,7 +113,7 @@ FULL_MASK_ROOT = FULL_ROOT / "baseline_sam2_full_masks"
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/"
     "latest3350_v1/training_free_m1_direct_enhancement_v2/"
-    "seed90094_top100_attention_overlays"
+    "seed90094_top100_fixed_f04_trajectory_overlays"
 )
 
 
@@ -194,10 +198,30 @@ def _atomic_npz(path: Path, **arrays: np.ndarray) -> None:
     temporary.replace(path)
 
 
-class SameTimeTop100Capture:
-    """Streaming exact-softmax capture with no full attention tensor retained."""
+def fixed_query_head_maps(
+    qh: torch.Tensor,
+    kh: torch.Tensor,
+    query_rows: tuple[int, ...],
+    grid: tuple[int, int, int],
+) -> torch.Tensor:
+    """Return per-head fixed-query sums over every key token."""
+    if qh.ndim != 4 or kh.shape != qh.shape:
+        raise ValueError(f"expected matching [batch,heads,tokens,dim] Q/K, got {qh.shape}/{kh.shape}")
+    if qh.shape[2] != int(np.prod(grid)):
+        raise ValueError(f"grid {grid} does not match sequence length {qh.shape[2]}")
+    rows = torch.as_tensor(query_rows, device=qh.device, dtype=torch.long)
+    if not len(rows):
+        raise ValueError("fixed query row set is empty")
+    logits = torch.matmul(qh[:, :, rows], kh.transpose(-1, -2)).float()
+    probabilities = torch.softmax(logits.mul(1.0 / math.sqrt(qh.shape[-1])), dim=-1)
+    # Match the legacy trajectory view: average CFG/batch, sum object Query rows.
+    return probabilities.mean(dim=0).sum(dim=1).reshape(qh.shape[1], *grid)
 
-    def __init__(self, entries: list[dict], query_rows_by_time: list[list[int]]) -> None:
+
+class FixedQueryTrajectoryTop100Capture:
+    """Stream fixed-F04 Query attention to all 13 latent Key frames."""
+
+    def __init__(self, entries: list[dict], query_rows: list[int]) -> None:
         self.by_block: dict[int, list[int]] = {}
         for entry in entries:
             self.by_block.setdefault(int(entry["block"]), []).append(int(entry["head"]))
@@ -205,14 +229,14 @@ class SameTimeTop100Capture:
             self.by_block[block] = sorted(set(self.by_block[block]))
         if sum(map(len, self.by_block.values())) != 100:
             raise RuntimeError("capture requires exactly 100 unique Top100 heads")
-        if len(query_rows_by_time) != GRID[0] or any(not rows for rows in query_rows_by_time):
-            raise RuntimeError("every latent frame must contain full-mask Object-A queries")
-        self.query_rows_by_time = [tuple(map(int, rows)) for rows in query_rows_by_time]
+        if not query_rows:
+            raise RuntimeError("fixed F04 full-mask Object-A query set is empty")
+        self.query_rows = tuple(map(int, query_rows))
         self.sums = {
             name: np.zeros(GRID, dtype=np.float64) for name in WINDOWS
         }
         self.counts = {
-            name: np.zeros(GRID[0], dtype=np.int64) for name in WINDOWS
+            name: 0 for name in WINDOWS
         }
         self.calls_by_step_cfg: dict[tuple[int, int], int] = {}
 
@@ -238,24 +262,14 @@ class SameTimeTop100Capture:
         qh = q.reshape(q.shape[0], SEQUENCE, num_heads, 128).permute(0, 2, 1, 3)
         kh = k.reshape(k.shape[0], SEQUENCE, num_heads, 128).permute(0, 2, 1, 3)
         selected_q = qh[:, heads]
-        selected_k = kh[:, heads].transpose(-1, -2)
-        scale = 1.0 / math.sqrt(128)
+        selected_k = kh[:, heads]
         active_windows = [name for name, steps in WINDOWS.items() if step in steps]
-        for time_index, row_values in enumerate(self.query_rows_by_time):
-            rows = torch.as_tensor(row_values, device=q.device, dtype=torch.long)
-            logits = torch.matmul(selected_q[:, :, rows], selected_k).float().mul(scale)
-            probabilities = torch.softmax(logits, dim=-1)
-            start = time_index * FRAME_TOKEN_COUNT
-            same_time = probabilities[..., start : start + FRAME_TOKEN_COUNT]
-            # One map per physical head; query tokens and CFG batch are averaged.
-            head_maps = same_time.mean(dim=(0, 2)).reshape(
-                len(heads), GRID[1], GRID[2]
-            )
-            map_sum = head_maps.sum(dim=0).detach().cpu().numpy().astype(np.float64)
-            for window in active_windows:
-                self.sums[window][time_index] += map_sum
-                self.counts[window][time_index] += len(heads)
-            del logits, probabilities, same_time, head_maps
+        head_maps = fixed_query_head_maps(selected_q, selected_k, self.query_rows, GRID)
+        map_sum = head_maps.sum(dim=0).detach().cpu().numpy().astype(np.float64)
+        for window in active_windows:
+            self.sums[window] += map_sum
+            self.counts[window] += len(heads)
+        del head_maps
         key = (int(step), int(cfg_call))
         self.calls_by_step_cfg[key] = self.calls_by_step_cfg.get(key, 0) + len(heads)
 
@@ -274,21 +288,22 @@ class SameTimeTop100Capture:
         maps: dict[str, np.ndarray] = {}
         for window, steps in WINDOWS.items():
             expected = len(steps) * 2 * 100
-            if not np.all(self.counts[window] == expected):
+            if self.counts[window] != expected:
                 raise RuntimeError(
-                    f"{window}: counts={self.counts[window].tolist()}, expected={expected}"
+                    f"{window}: count={self.counts[window]}, expected={expected}"
                 )
-            maps[window] = (
-                self.sums[window] / self.counts[window][:, None, None]
-            ).astype(np.float32)
+            maps[window] = (self.sums[window] / self.counts[window]).astype(np.float32)
         audit = {
             "physical_top100_heads": 100,
             "denoising_steps": 40,
             "cfg_branches": 2,
             "head_events_all40": 8000,
-            "query_token_counts_by_latent": [len(rows) for rows in self.query_rows_by_time],
-            "window_head_events_per_latent": {
-                name: int(self.counts[name][0]) for name in WINDOWS
+            "query_latent_frame": QUERY_LATENT_FRAME,
+            "query_pixel_frame": QUERY_PIXEL_FRAME,
+            "query_token_count": len(self.query_rows),
+            "query_aggregation": "sum",
+            "window_head_events": {
+                name: int(self.counts[name]) for name in WINDOWS
             },
         }
         return maps, audit
@@ -297,7 +312,7 @@ class SameTimeTop100Capture:
 class PassiveCaptureAblator(AttentionMatrixAblator):
     """Install model-step bookkeeping and capture Q/K without intervention."""
 
-    def __init__(self, *args, capture: SameTimeTop100Capture, **kwargs) -> None:
+    def __init__(self, *args, capture: FixedQueryTrajectoryTop100Capture, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.capture = capture
 
@@ -314,7 +329,7 @@ class PassiveCaptureAblator(AttentionMatrixAblator):
         return {"model_call_counts": self.model_call_counts, "intervention": "none"}
 
 
-def attach_capture(ablator, capture: SameTimeTop100Capture) -> None:
+def attach_capture(ablator, capture: FixedQueryTrajectoryTop100Capture) -> None:
     """Decorate an intervention ablator without changing its math or install order."""
     original_attention = ablator._attention
 
@@ -348,7 +363,7 @@ def _build_intervention(
     tracks: np.ndarray,
     anchors: np.ndarray,
     partition,
-    capture: SameTimeTop100Capture,
+    capture: FixedQueryTrajectoryTop100Capture,
 ):
     common = dict(
         pipe=pipe,
@@ -442,8 +457,8 @@ def _overlay_frame(
     *,
     scale: float,
     title: str,
-    rows: list[int],
-    time_index: int,
+    query_rows: list[int],
+    key_time_index: int,
 ) -> np.ndarray:
     normalized = np.clip(heat / max(scale, 1e-12), 0.0, 1.0)
     display = np.sqrt(normalized)
@@ -456,7 +471,8 @@ def _overlay_frame(
     color = cv2.cvtColor(color, cv2.COLOR_BGR2RGB)
     alpha = (0.72 * resized)[..., None]
     blended = np.clip(rgb.astype(np.float32) * (1.0 - alpha) + color * alpha, 0, 255).astype(np.uint8)
-    _draw_query_cells(blended, rows, time_index)
+    if key_time_index == QUERY_LATENT_FRAME:
+        _draw_query_cells(blended, query_rows, QUERY_LATENT_FRAME)
     cv2.rectangle(blended, (0, 0), (blended.shape[1], 44), (9, 18, 23), -1)
     cv2.putText(
         blended,
@@ -471,10 +487,14 @@ def _overlay_frame(
     return blended
 
 
-def render_overlays(output_root: Path, variant_rows: tuple[Variant, ...], rows_by_time: list[list[int]]) -> dict:
+def render_overlays(
+    output_root: Path,
+    variant_rows: tuple[Variant, ...],
+    query_rows: list[int],
+) -> dict:
     captures: dict[str, dict[str, np.ndarray]] = {}
     for variant in variant_rows:
-        path = output_root / "captures" / variant.id / "top100_same_time_maps.npz"
+        path = output_root / "captures" / variant.id / "top100_fixed_f04_trajectory_maps.npz"
         if not path.is_file():
             continue
         with np.load(path, allow_pickle=False) as arrays:
@@ -511,8 +531,9 @@ def render_overlays(output_root: Path, variant_rows: tuple[Variant, ...], rows_b
             for time_index, pixel_frame in enumerate(ANCHOR_FRAMES):
                 name = f"latent_{time_index:02d}__frame_{pixel_frame:02d}.jpg"
                 title = (
-                    f"L{time_index:02d} / F{pixel_frame:02d}  "
-                    f"|R_t|={len(rows_by_time[time_index])}  "
+                    f"Q=L{QUERY_LATENT_FRAME:02d}/F{QUERY_PIXEL_FRAME:02d} -> "
+                    f"K=L{time_index:02d}/F{pixel_frame:02d}  "
+                    f"|R_q|={len(query_rows)}  "
                     f"mean={captures[variant.id][window][time_index].mean():.3e}"
                 )
                 overlay = _overlay_frame(
@@ -520,8 +541,8 @@ def render_overlays(output_root: Path, variant_rows: tuple[Variant, ...], rows_b
                     captures[variant.id][window][time_index],
                     scale=scales[window],
                     title=title,
-                    rows=rows_by_time[time_index],
-                    time_index=time_index,
+                    query_rows=query_rows,
+                    key_time_index=time_index,
                 )
                 target = directory / name
                 iio.imwrite(target, overlay, quality=90)
@@ -543,7 +564,7 @@ def render_overlays(output_root: Path, variant_rows: tuple[Variant, ...], rows_b
             }
         )
     payload = {
-        "protocol": "phase_b_seed90094_top100_same_time_attention_overlay_v1",
+        "protocol": "phase_b_seed90094_top100_fixed_f04_trajectory_overlay_v2",
         "case": CASE,
         "seed": SEED,
         "default_window": "all40",
@@ -555,16 +576,19 @@ def render_overlays(output_root: Path, variant_rows: tuple[Variant, ...], rows_b
         "color_scale_scope": "shared across all five variants and all 13 latent frames within each denoising window",
         "anchor_pixel_frames": list(ANCHOR_FRAMES),
         "latent_grid": list(GRID),
-        "query_token_counts_by_latent": [len(rows) for rows in rows_by_time],
+        "query_latent_frame": QUERY_LATENT_FRAME,
+        "query_pixel_frame": QUERY_PIXEL_FRAME,
+        "query_token_count": len(query_rows),
         "formula": (
-            "H_W,t(x,y)=mean_{s in W,cfg,(l,h) in latest3350 Top100,q in frozen "
-            "Baseline SAM2 R_t} softmax(QK^T/sqrt(128))[q,K_t(x,y)]"
+            "H_W,t(x,y)=mean_{s in W,cfg,(l,h) in latest3350 Top100} "
+            "sum_{q in frozen Baseline SAM2 R_F04} "
+            "softmax(QK^T/sqrt(128))[q,K_t(x,y)]"
         ),
         "softmax_key_domain": "all 13x22x40 keys; K_t is sliced only after softmax",
-        "query_definition": "same frozen Baseline SAM2 object_A full-mask latent tokens for all five rows",
+        "query_definition": "same fixed F04/latent-1 frozen Baseline SAM2 object_A full-mask tokens for all five rows",
         "cfg_aggregation": "mean conditional and unconditional",
         "head_aggregation": "equal mean of 100 physical layer-heads",
-        "query_aggregation": "equal mean of all full-mask object_A query tokens in each latent frame",
+        "query_aggregation": "sum of all fixed F04 full-mask object_A query tokens, matching the legacy trajectory view",
         "records": records,
     }
     _atomic_json(output_root / "overlay_manifest.json", payload)
@@ -615,9 +639,10 @@ def main() -> None:
         args.sam2_full_mask_root, CASE, SEED, Path(str(sample["baseline_video"]))
     )
     rows_by_time = _full_mask_rows_by_time(partition)
+    query_rows = rows_by_time[QUERY_LATENT_FRAME]
     args.output_root.mkdir(parents=True, exist_ok=True)
     protocol = {
-        "protocol": "phase_b_seed90094_top100_same_time_attention_overlay_v1",
+        "protocol": "phase_b_seed90094_top100_fixed_f04_trajectory_overlay_v2",
         "case": CASE,
         "seed": SEED,
         "manifest_path": str(args.manifest_path),
@@ -626,13 +651,16 @@ def main() -> None:
         "head_ranking_sha256": sha256_file(args.head_ranking_path),
         "full_mask_cache": str(full_mask_path),
         "full_mask_cache_sha256": sha256_file(full_mask_path),
-        "query_token_counts_by_latent": [len(values) for values in rows_by_time],
+        "query_latent_frame": QUERY_LATENT_FRAME,
+        "query_pixel_frame": QUERY_PIXEL_FRAME,
+        "query_token_count": len(query_rows),
+        "query_token_indices": query_rows,
         "variants": [variant.__dict__ | {"video": str(variant.video)} for variant in rows],
     }
     _atomic_json(args.output_root / "protocol.json", protocol)
 
     if args.only == "render":
-        render_overlays(args.output_root, rows, rows_by_time)
+        render_overlays(args.output_root, rows, query_rows)
         print(args.output_root / "overlay_manifest.json")
         return
 
@@ -668,7 +696,7 @@ def main() -> None:
             (output / "error.txt").unlink(missing_ok=True)
             print(f"[{index}/{len(pending)}] capture {variant.id}", flush=True)
             try:
-                capture = SameTimeTop100Capture(entries, rows_by_time)
+                capture = FixedQueryTrajectoryTop100Capture(entries, query_rows)
                 ablator = _build_intervention(
                     pipe=pipe_wrapper.pipe,
                     variant=variant,
@@ -707,11 +735,11 @@ def main() -> None:
                 temporary.replace(replay)
                 replay_audit = _replay_audit(replay, variant.video)
                 _atomic_npz(
-                    output / "top100_same_time_maps.npz",
+                    output / "top100_fixed_f04_trajectory_maps.npz",
                     **maps,
-                    query_token_counts_by_latent=np.asarray(
-                        [len(values) for values in rows_by_time], dtype=np.int32
-                    ),
+                    query_latent_frame=np.int32(QUERY_LATENT_FRAME),
+                    query_pixel_frame=np.int32(QUERY_PIXEL_FRAME),
+                    query_token_indices=np.asarray(query_rows, dtype=np.int32),
                     anchor_pixel_frames=np.asarray(ANCHOR_FRAMES, dtype=np.int32),
                 )
                 result = {
@@ -743,7 +771,7 @@ def main() -> None:
         gc.collect()
         torch.cuda.empty_cache()
 
-    render_overlays(args.output_root, rows, rows_by_time)
+    render_overlays(args.output_root, rows, query_rows)
     print(args.output_root / "overlay_manifest.json")
 
 

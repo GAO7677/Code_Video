@@ -7,7 +7,7 @@ shift
 DIFFTRACK="/home/gaoya/Code_Video/DiffTrack-main"
 PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 SCRIPT="${DIFFTRACK}/AAA_my_test/object_query_ablation_metrics/training_free_m1_control/capture_phase_b_top100_attention_overlays.py"
-OUTPUT="/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/training_free_m1_direct_enhancement_v2/seed90094_top100_attention_overlays"
+OUTPUT="/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/training_free_m1_direct_enhancement_v2/seed90094_top100_fixed_f04_trajectory_overlays"
 
 if [[ "${GPU}" == "4" ]]; then
   echo "GPU 4 is forbidden by workspace policy" >&2

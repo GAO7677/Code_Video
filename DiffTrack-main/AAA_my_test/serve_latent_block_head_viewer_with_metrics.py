@@ -464,7 +464,7 @@ OBJECT_QUERY_ANTI_DUPLICATION_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-anti-duplication?v=3"><div><span>57 / OBJECT QUERY ANTI-DUPLICATION</span><h2>检测门控的 R→F 去重探索</h2><p>按 case 汇总全部已生成实验；每个 case 的所有 seed、Baseline、Detector-gated 与 Broad Q@K 扫描在同一页按组对比。</p></div><span class="go">打开完整 case 实验桌</span></a>
 '''
 PHASE_B_ATTENTION_OVERLAY_PORTAL_CARD = r'''
-<a class="card new" href="/training-free-m1-phase-b-attention?v=1&amp;window=all40"><div><span>58 / PHASE-B ATTENTION OVERLAY</span><h2>Seed 90094 · 5 × 13 Latent 热力图</h2><p>Baseline、Sparse 8-point 与 SAM2 Full-mask 的 α=0.1/0.25 五行对照；默认 40-step mean，并切换 First10 / First20 / Last20。</p></div><span class="go">打开 13-Latent Attention 页</span></a>
+<a class="card new" href="/training-free-m1-phase-b-attention?v=3&amp;window=all40"><div><span>58 / FIXED-F04 TRAJECTORY</span><h2>Seed 90094 · QF04 → 13 Key Frames</h2><p>固定 F04 的完整小球 SAM2 Query，比较 Baseline、Sparse 8-point 与 Full-mask α=0.1/0.25 的跨帧 Top100 响应轨迹。</p></div><span class="go">打开 13-Latent 轨迹页</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>",
