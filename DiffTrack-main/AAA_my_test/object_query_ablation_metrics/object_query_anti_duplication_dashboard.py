@@ -144,14 +144,14 @@ def _experiment_label(manifest: dict[str, Any]) -> tuple[str, str, str]:
         triggered = bool(manifest.get("intervention_triggered", True))
         if not triggered:
             return (
-                f"Direct softmax · 0-token exact no-op · {mode_label}",
+                f"【新方案】Direct Softmax · 0-token exact no-op · {mode_label}",
                 "noop",
-                "Direct softmax (new)",
+                "新方案 · Direct Softmax",
             )
         return (
-            f"Direct softmax · {mode_label} · {step_label}",
+            f"【新方案】Direct Softmax · {mode_label} · {step_label}",
             "direct-softmax",
-            "Direct softmax (new)",
+            "新方案 · Direct Softmax",
         )
     mode = str(manifest.get("branch_mode", "unknown"))
     mode_label = {
@@ -171,22 +171,22 @@ def _experiment_label(manifest: dict[str, Any]) -> tuple[str, str, str]:
     triggered = bool(manifest.get("intervention_triggered", True))
     if external and not triggered:
         return (
-            f"Detector gate · 0-token exact no-op · {mode_label}",
+            f"【旧方案】Detector-gated PAG · 0-token exact no-op · {mode_label}",
             "noop",
-            "Detector-gated",
+            "旧方案 · Detector-gated PAG",
         )
     if external:
         return (
-            f"Detector-confirmed · {mode_label} · {scale_label} · {step_label}",
+            f"【旧方案】Detector-gated PAG · {mode_label} · {scale_label} · {step_label}",
             "targeted",
-            "Detector-gated",
+            "旧方案 · Detector-gated PAG",
         )
     quantile = manifest.get("quantile")
     percentile = f"P{round(100 * float(quantile))}" if quantile is not None else "P?"
     return (
-        f"Broad Q@K {percentile} · {mode_label} · {scale_label} · {step_label}",
+        f"【旧宽泛方案】Broad Q@K {percentile} · {mode_label} · {scale_label} · {step_label}",
         "rejected-broad",
-        "Broad Q@K scan",
+        "旧宽泛方案 · Broad Q@K",
     )
 
 
@@ -325,18 +325,18 @@ def _all_case_rows(assets: dict[str, str]) -> list[dict[str, Any]]:
                 items.append(entry)
 
             append_item(
-                label="Baseline · 同 seed 未干预控制",
+                label="【Baseline 基准】同 seed 未干预生成",
                 path=baseline,
                 kind="control",
-                group="Control",
+                group="Baseline 基准",
             )
             experiment_rows = []
             for result_dir, manifest in manifests:
                 label, kind, group = _experiment_label(manifest)
                 group_order = {
-                    "Direct softmax (new)": 0,
-                    "Detector-gated": 1,
-                    "Broad Q@K scan": 2,
+                    "新方案 · Direct Softmax": 0,
+                    "旧方案 · Detector-gated PAG": 1,
+                    "旧宽泛方案 · Broad Q@K": 2,
                 }.get(group, 9)
                 experiment_rows.append(
                     (group_order, label, result_dir, manifest, kind, group)
@@ -556,6 +556,6 @@ const media=key=>`/api/object-query-anti-duplication/asset?key=${encodeURICompon
 let observer;
 function activateLazy(root=document){if(observer)observer.disconnect();observer=new IntersectionObserver(entries=>entries.forEach(entry=>{if(!entry.isIntersecting)return;const video=entry.target;if(video.dataset.src&&!video.src)video.src=video.dataset.src;observer.unobserve(video)}),{rootMargin:'500px 0px'});root.querySelectorAll('video[data-src]').forEach(video=>observer.observe(video))}
 function card(x){const m=x.metrics;const metrics=m?`<div class="metrics"><div class="metric"><b>${m.extra_frames}/49</b>Extra ↓</div><div class="metric"><b>${m.missing_frames}/49</b>Missing ↓</div><div class="metric"><b>${fmt(m.center_ade_d0,3)}</b>ADE/D0 ↓</div><div class="metric"><b>${fmt(m.full_frame_mae,5)}</b>MAE ↓</div></div><div class="metric-note">检测阈值 ${fmt(x.detector_box_threshold,2)} · audit=${esc(x.audit||'N/A')}</div>`:'<div class="metric-note">该结果尚无匹配的检测指标记录</div>';const facts=[];if(x.direct_mode)facts.push(`direct=${x.direct_mode}`);if(x.branch_mode)facts.push(x.branch_mode);if(x.guidance_scale!==undefined&&x.guidance_scale!==null)facts.push(`lambda=${Number(x.guidance_scale)}`);if(x.guidance_steps)facts.push(`S${String(x.guidance_steps[0]).padStart(2,'0')}–S${String(x.guidance_steps[1]).padStart(2,'0')}`);facts.push(x.intervention_triggered===false?'not triggered':'generated');const directAudit=(x.direct_audit||[]).length?`<div class="metric-note">${x.direct_audit.map(a=>`${esc(a.direction)} · ${a.events} events · QK ${fmt(a.pre_mass,6)}→${fmt(a.post_mass,6)} · mean |ΔAV|=${fmt(a.removed_av,5)}`).join('<br>')}</div>`:'';const overlay=x.overlay?`<details class="overlay"><summary>查看实际检测点 / 框 overlay</summary><video controls muted playsinline preload="none" data-src="${media(x.overlay)}"></video></details>`:'';return `<article class="card ${esc(x.kind)}"><h4>${esc(x.label)}</h4><video controls muted playsinline preload="none" data-src="${media(x.asset)}"></video><div class="facts">${facts.map(value=>`<span class="fact">${esc(value)}</span>`).join('')}</div>${directAudit}${metrics}${overlay}</article>`}
-function renderCase(row){const groups=['Control','Direct softmax (new)','Detector-gated','Broad Q@K scan'];const seeds=row.seeds.map(seed=>{const sections=groups.map(group=>{const items=seed.items.filter(item=>item.group===group);return items.length?`<section class="experiment-group"><div class="group-head"><h3>${esc(group)}</h3><span>${items.length} 个已生成结果</span></div><div class="grid">${items.map(card).join('')}</div></section>`:''}).join('');return `<section class="seed-block"><div class="seed-head"><h2>seed ${seed.seed}</h2><span class="badge ${esc(seed.cohort)}">${seed.cohort==='positive'?'重复正例':'干净对照'}</span><span class="badge">target=${esc(seed.target)}</span><span class="badge">gate=${seed.gate_tokens} tokens</span><span class="badge">${seed.experiment_count} videos</span></div>${sections}</section>`}).join('');document.querySelector('#content').innerHTML=`<h2 class="case-title">${esc(row.case)}</h2><p class="case-summary">${row.seeds.length} 个 seed；本页汇总 ${row.seeds.reduce((n,seed)=>n+seed.experiment_count,0)} 个 Baseline / 实验结果。</p>${seeds}`;activateLazy(document.querySelector('#content'))}
-async function init(){const response=await fetch('/api/object-query-anti-duplication/catalog',{cache:'no-store'});const data=await response.json();const rows=data.cases||[];const select=document.querySelector('#case-select');select.innerHTML=rows.map(row=>`<option value="${esc(row.case)}">${esc(row.case)} (${row.seeds.reduce((n,seed)=>n+seed.experiment_count,0)})</option>`).join('');document.querySelector('#case-count').textContent=`${rows.length} cases · ${rows.reduce((n,row)=>n+row.seeds.length,0)} case-seed samples`;const requested=new URLSearchParams(location.search).get('case');if(requested&&rows.some(row=>row.case===requested))select.value=requested;const render=()=>{const row=rows.find(item=>item.case===select.value)||rows[0];if(!row){document.querySelector('#content').innerHTML='<div class="empty">当前没有已生成实验</div>';return}select.value=row.case;history.replaceState(null,'',`${location.pathname}?case=${encodeURIComponent(row.case)}&v=4`);renderCase(row)};select.addEventListener('change',render);render()}
+function renderCase(row){const groups=['Baseline 基准','新方案 · Direct Softmax','旧方案 · Detector-gated PAG','旧宽泛方案 · Broad Q@K'];const seeds=row.seeds.map(seed=>{const sections=groups.map(group=>{const items=seed.items.filter(item=>item.group===group);return items.length?`<section class="experiment-group"><div class="group-head"><h3>${esc(group)}</h3><span>${items.length} 个已生成结果</span></div><div class="grid">${items.map(card).join('')}</div></section>`:''}).join('');return `<section class="seed-block"><div class="seed-head"><h2>seed ${seed.seed}</h2><span class="badge ${esc(seed.cohort)}">${seed.cohort==='positive'?'重复正例':'干净对照'}</span><span class="badge">target=${esc(seed.target)}</span><span class="badge">gate=${seed.gate_tokens} tokens</span><span class="badge">${seed.experiment_count} videos</span></div>${sections}</section>`}).join('');document.querySelector('#content').innerHTML=`<h2 class="case-title">${esc(row.case)}</h2><p class="case-summary">${row.seeds.length} 个 seed；本页汇总 ${row.seeds.reduce((n,seed)=>n+seed.experiment_count,0)} 个 Baseline / 实验结果。</p>${seeds}`;activateLazy(document.querySelector('#content'))}
+async function init(){const response=await fetch('/api/object-query-anti-duplication/catalog',{cache:'no-store'});const data=await response.json();const rows=data.cases||[];const select=document.querySelector('#case-select');select.innerHTML=rows.map(row=>`<option value="${esc(row.case)}">${esc(row.case)} (${row.seeds.reduce((n,seed)=>n+seed.experiment_count,0)})</option>`).join('');document.querySelector('#case-count').textContent=`${rows.length} cases · ${rows.reduce((n,row)=>n+row.seeds.length,0)} case-seed samples`;const requested=new URLSearchParams(location.search).get('case');if(requested&&rows.some(row=>row.case===requested))select.value=requested;const render=()=>{const row=rows.find(item=>item.case===select.value)||rows[0];if(!row){document.querySelector('#content').innerHTML='<div class="empty">当前没有已生成实验</div>';return}select.value=row.case;history.replaceState(null,'',`${location.pathname}?case=${encodeURIComponent(row.case)}&v=5`);renderCase(row)};select.addEventListener('change',render);render()}
 init().catch(error=>{document.querySelector('#content').innerHTML=`<div class="empty">目录读取失败：${esc(error.message)}</div>`});</script></body></html>'''
