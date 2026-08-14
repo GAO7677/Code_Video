@@ -114,3 +114,28 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 
 The entry currently enforces per-GPU batch size 1 so every loss has one
 unambiguous fixed object query set.
+
+## Training-case diagnostic and noise sweep
+
+The completed report retains the original `training t=500 / Probe=0.5`
+diagnostic and appends five controlled training-noise stages with two lower
+Probe corruptions:
+
+```text
+training timestep: 100, 300, 500, 700, 900
+Probe (noise level, timestep): (0.1, 100), (0.2, 200)
+```
+
+Within each case, all training stages share one `epsilon_train`; both Probe
+levels and every Teacher/Student pair share one `epsilon_p`. Run the complete
+forward and render pipeline in the foreground with:
+
+```bash
+GPU_ID=2 ./run_training_case_noise_sweep_gpu0.sh
+```
+
+The report is available at:
+
+```text
+/data/gaoya/agent-data/outputs/frozen_motion_probe_training_diagnostics/index.html
+```

@@ -3,6 +3,11 @@
 The experiment contract is in [plan.md](plan.md). All commands below run in the
 foreground. They do not implement or train an ODE.
 
+The most recent step-25000/GPU0 branch, its stopped-process status, current
+metrics, recovery procedure, and downstream execution order are documented in
+[handoff.md](handoff.md). That handoff takes precedence over the older
+step-50000/two-GPU launch example below.
+
 ## 1. Causal adaptation
 
 Select a completed noncausal MOVi-C step-050000 checkpoint and two currently

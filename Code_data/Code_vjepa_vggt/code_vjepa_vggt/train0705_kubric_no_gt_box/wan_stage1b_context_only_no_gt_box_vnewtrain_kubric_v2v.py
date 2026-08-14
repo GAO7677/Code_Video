@@ -437,6 +437,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--method-suffix", type=str, default=None)
     parser.add_argument(
+        "--generation-prompt-suffix",
+        type=str,
+        default="",
+        help=(
+            "Optional text appended to the generation prompt. The original "
+            "input_caption remains unchanged in result metadata for evaluation."
+        ),
+    )
+    parser.add_argument(
         "--shard-tag",
         type=str,
         default=None,
@@ -718,6 +727,8 @@ def _run_single_case_in_process(
     input_json_path: Path,
     source_video: str,
     input_caption: str,
+    generation_prompt: str,
+    generation_prompt_suffix: str,
     output_dir: Path,
     output_video: Path,
     num_frames: int,
@@ -742,6 +753,7 @@ def _run_single_case_in_process(
     logs.append(f"[case] input_json={input_json_path}")
     logs.append(f"[case] source_video={source_video}")
     logs.append(f"[case] input_caption={input_caption}")
+    logs.append(f"[case] generation_prompt={generation_prompt}")
     logs.append(f"[case] checkpoint_dir={checkpoint_dir}")
 
     context_video_path = Path(source_video).expanduser().resolve()
@@ -761,7 +773,7 @@ def _run_single_case_in_process(
     object_context, object_debug = infer0705._build_object_context(
         model=model,
         context_video_single=context_video_single,
-        prompt=str(input_caption),
+        prompt=str(generation_prompt),
         video_path=str(context_video_path),
     )
     object_context, ablation_debug = infer0705._apply_object_context_ablation(
@@ -794,7 +806,7 @@ def _run_single_case_in_process(
     }
     with torch.no_grad():
         pipe_kwargs = dict(
-            prompt=str(input_caption),
+            prompt=str(generation_prompt),
             context_video=context_pil,
             seed=int(seed),
             tiled=True,
@@ -814,7 +826,7 @@ def _run_single_case_in_process(
                 dump_root=Path(dump_pipe_inputs_root),
                 sample_stem=output_video.stem,
                 context_pil=context_pil,
-                prompt=str(input_caption),
+                prompt=str(generation_prompt),
                 negative_prompt=negative_prompt,
                 pipe_kwargs=pipe_kwargs,
                 source_video=str(source_video),
@@ -886,6 +898,9 @@ def _run_single_case_in_process(
         "input_video": str(context_sheet_path),
         "source_video": str(source_video),
         "input_caption": str(input_caption),
+        "evaluation_caption": str(input_caption),
+        "generation_prompt": str(generation_prompt),
+        "generation_prompt_suffix": str(generation_prompt_suffix),
         "output_video": str(output_video),
         "seed": int(seed),
         "step": int(sampling_steps),
@@ -977,6 +992,7 @@ def main() -> None:
         "context_frames": int(cli_args.context_frames),
         "sampling_mode": str(cli_args.sampling_mode),
         "negative_prompt": resolved_negative_prompt,
+        "generation_prompt_suffix": str(cli_args.generation_prompt_suffix).strip(),
         "initialize_model_on_cpu": bool(cli_args.initialize_model_on_cpu),
         "disable_object_branch": bool(cli_args.disable_object_branch),
         "device": str(cli_args.device),
@@ -1098,6 +1114,10 @@ def main() -> None:
             continue
 
         sample_stem = input_json_path.stem
+        generation_prompt_suffix = str(cli_args.generation_prompt_suffix).strip()
+        generation_prompt = str(input_caption)
+        if generation_prompt_suffix:
+            generation_prompt = f"{generation_prompt.rstrip()} {generation_prompt_suffix}"
         output_video = step_output_dir / f"{sample_stem}.mp4"
         output_json = step_output_dir / f"{sample_stem}.json"
         output_log = step_output_dir / f"{sample_stem}.log"
@@ -1116,6 +1136,8 @@ def main() -> None:
                 input_json_path=input_json_path,
                 source_video=source_video,
                 input_caption=input_caption,
+                generation_prompt=generation_prompt,
+                generation_prompt_suffix=generation_prompt_suffix,
                 output_dir=step_output_dir,
                 output_video=output_video,
                 num_frames=int(cli_args.num_frames),

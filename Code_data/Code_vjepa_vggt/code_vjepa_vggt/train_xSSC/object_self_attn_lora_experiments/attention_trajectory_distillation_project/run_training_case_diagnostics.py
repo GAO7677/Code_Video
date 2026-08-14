@@ -1735,11 +1735,73 @@ def media_figure(path: str, title: str, note: str = "") -> str:
     )
 
 
+def noise_sweep_html(metrics: dict[str, Any] | None) -> str:
+    if not metrics:
+        return ""
+    probes_by_id = {row["id"]: row for row in metrics["probe_settings"]}
+    comparisons = {
+        (row["training_stage_id"], row["probe_setting_id"]): row
+        for row in metrics["comparisons"]
+    }
+    summary_rows = []
+    stage_sections = []
+    for stage in metrics["training_stages"]:
+        stage_id = stage["id"]
+        probe_sections = []
+        for probe_id, probe in probes_by_id.items():
+            row = comparisons[(stage_id, probe_id)]
+            summary_rows.append(
+                "<tr>"
+                f"<td>{stage['training_timestep']:.0f}</td>"
+                f"<td>{stage['scheduler_sigma']:.4f}</td>"
+                f"<td>{probe['noise_level']:.2f}</td>"
+                f"<td>{probe['timestep']:.0f}</td>"
+                f"<td>{row['heatmap_kl_student_teacher']:.6f}</td>"
+                f"<td>{row['trajectory_huber']:.6f}</td>"
+                f"<td>{row['gradient_to_first_pass_v_pred_norm']:.5f}</td>"
+                "</tr>"
+            )
+            probe_base = f"noise_sweep/probes/{probe_id}"
+            comparison_base = f"noise_sweep/comparisons/{stage_id}/{probe_id}"
+            probe_sections.append(
+                f"""<div class="sweep-probe"><h4>Probe noise {probe['noise_level']:.2f} / timestep {probe['timestep']:.0f}</h4>
+<div class="facts"><div class="fact"><span>KL(student || teacher)</span><strong>{row['heatmap_kl_student_teacher']:.6f}</strong></div><div class="fact"><span>Trajectory Huber</span><strong>{row['trajectory_huber']:.6f}</strong></div><div class="fact"><span>Weighted auxiliary</span><strong>{row['weighted_auxiliary_loss']:.6f}</strong></div><div class="fact"><span>Gradient ||dL/dv_pred||</span><strong>{row['gradient_to_first_pass_v_pred_norm']:.5f}</strong></div><div class="fact"><span>Peak allocated</span><strong>{row['peak_gpu_memory_mib']:.0f} MiB</strong></div></div>
+<div class="grid">
+{media_figure(f'{probe_base}/vae_teacher_probe_input.mp4','GT x0 + shared Probe noise',f"level={probe['noise_level']:.2f}; t={probe['timestep']:.0f}; sigma={probe['scheduler_sigma']:.4f}")}
+{media_figure(f'{comparison_base}/vae_student_probe_input.mp4','x0_pred + same Probe noise',f"shared seed={probe['shared_probe_noise_seed']}")}
+{media_figure(f'{comparison_base}/teacher_frame_heatmap_overlay.mp4','Teacher: GT frame | Top100 | overlay','corresponding frame concatenation')}
+{media_figure(f'{comparison_base}/student_frame_heatmap_overlay.mp4','Student: x0_pred frame | Top100 | overlay','corresponding frame concatenation')}
+{media_figure(f'{comparison_base}/teacher_top100_heatmap.mp4','Teacher Top100 aggregate heatmap')}
+{media_figure(f'{comparison_base}/student_top100_heatmap.mp4','Student Top100 aggregate heatmap')}
+<div class="wide">{media_figure(f'{comparison_base}/teacher_student_five_panel.mp4','GT | x0_pred | Teacher overlay | Student overlay | difference')}</div>
+<div class="wide">{media_figure(f'{comparison_base}/teacher_student_13frame_contact_sheet.jpg','13-frame aligned heatmap contact sheet')}</div>
+{media_figure(f'{comparison_base}/trajectory_overlay.jpg','Teacher and Student soft-argmax trajectories')}
+<figure><figcaption><strong>Trajectory numeric values</strong><span>normalized (x,y), 13 latent frames</span></figcaption><a href="{html.escape(comparison_base)}/trajectory_values.json">Open trajectory_values.json</a></figure>
+</div></div>"""
+            )
+        stage_base = f"noise_sweep/stages/{stage_id}"
+        stage_sections.append(
+            f"""<div class="sweep-stage"><h3>Training timestep {stage['training_timestep']:.0f} / scheduler sigma {stage['scheduler_sigma']:.4f}</h3>
+<div class="facts"><div class="fact"><span>Flow loss</span><strong>{stage['weighted_loss']:.6f}</strong></div><div class="fact"><span>Raw v MSE</span><strong>{stage['raw_v_mse']:.6f}</strong></div><div class="fact"><span>Training noise seed</span><strong>{stage['shared_training_noise_seed']}</strong></div><div class="fact"><span>Peak allocated</span><strong>{stage['peak_gpu_memory_mib']:.0f} MiB</strong></div></div>
+<div class="grid">
+{media_figure(f'{stage_base}/vae_training_xt.mp4','Training x_t',f"t={stage['training_timestep']:.0f}; sigma={stage['scheduler_sigma']:.4f}")}
+{media_figure(f'{stage_base}/vae_predicted_x0.mp4','Baseline x0_pred','x_t - sigma_t * v_pred')}
+{media_figure(f'{stage_base}/vae_x0_difference.mp4','Decoded |x0_pred - GT x0| x3')}
+{media_figure(f'{stage_base}/x0_anchor_contact_sheet.jpg','13 aligned x0 anchor frames','GT | x_t | x0_pred | difference')}
+</div>{''.join(probe_sections)}</div>"""
+        )
+    return f"""<section id="noise-sweep"><h2>Training-noise stages × low-noise Frozen Probe</h2>
+<p class="protocol">Controlled sweep: all five training stages share one <code>epsilon_train</code>. Probe 0.1 and 0.2 share one <code>epsilon_p</code>, and each Teacher/Student pair uses exactly the same corruption. The original t=500 / Probe=0.5 result above is retained.</p>
+<div class="table-wrap"><table class="metric-table"><thead><tr><th>Training t</th><th>Training sigma</th><th>Probe noise</th><th>Probe t</th><th>KL</th><th>Trajectory Huber</th><th>||dL/dv_pred||</th></tr></thead><tbody>{''.join(summary_rows)}</tbody></table></div>
+{''.join(stage_sections)}</section>"""
+
+
 def case_page(
     case: dict[str, Any],
     metrics: dict[str, Any],
     *,
     index_href: str,
+    sweep_metrics: dict[str, Any] | None = None,
 ) -> str:
     candidates = case["sam2_amg"]["candidates"]
     candidate_html = "".join(
@@ -1756,6 +1818,7 @@ def case_page(
     )
     probe = metrics["probe"]
     flow = metrics["flow"]
+    sweep_html = noise_sweep_html(sweep_metrics)
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(case['case_key'])}</title>
 <style>
@@ -1763,8 +1826,8 @@ def case_page(
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Noto Sans CJK SC","Source Han Sans SC",sans-serif;letter-spacing:0}}
 header{{position:sticky;top:0;z-index:10;background:#eef1edf2;border-bottom:1px solid var(--line);padding:12px 20px;backdrop-filter:blur(10px)}}
 header h1{{font-size:22px;margin:2px 0}}header p{{margin:0;color:var(--muted)}}nav{{display:flex;gap:13px;flex-wrap:wrap;margin-top:8px}}a{{color:var(--green);font-weight:700;text-decoration:none}}
-main{{width:min(1900px,calc(100% - 24px));margin:auto;padding:18px 0 60px}}section{{border-top:2px solid var(--ink);padding:15px 0 26px}}h2{{font-size:19px;margin:0 0 10px}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}.wide{{grid-column:1/-1}}figure{{margin:0;background:var(--paper);border:1px solid var(--line);padding:8px}}figcaption{{display:flex;justify-content:space-between;gap:12px;margin-bottom:6px}}figcaption span{{font-size:11px;color:var(--muted)}}video,img{{display:block;width:100%;height:auto;background:#101210}}.facts{{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));border:1px solid var(--line);background:var(--paper)}}.fact{{padding:10px;border-right:1px solid var(--line)}}.fact:last-child{{border:0}}.fact span{{display:block;color:var(--muted);font-size:11px}}.fact strong{{font-size:16px}}.candidates{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}}code{{font-size:12px}}@media(max-width:900px){{header{{position:static}}.grid,.candidates{{grid-template-columns:1fr}}.facts{{grid-template-columns:1fr 1fr}}}}
-</style></head><body><header><a href="{html.escape(index_href)}">返回总览</a><h1>{html.escape(case['case_key'])}</h1><p>{html.escape(case['caption'])}</p><nav><a href="#sam2">SAM2</a><a href="#x0">x0</a><a href="#probe">Frozen Probe</a><a href="#candidates">全部 AMG candidates</a></nav></header><main>
+main{{width:min(1900px,calc(100% - 24px));margin:auto;padding:18px 0 60px}}section{{border-top:2px solid var(--ink);padding:15px 0 26px}}h2{{font-size:19px;margin:0 0 10px}}h3{{font-size:18px;margin:0 0 10px}}h4{{font-size:16px;margin:0 0 8px}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}.wide{{grid-column:1/-1}}figure{{margin:0;background:var(--paper);border:1px solid var(--line);padding:8px}}figcaption{{display:flex;justify-content:space-between;gap:12px;margin-bottom:6px}}figcaption span{{font-size:11px;color:var(--muted)}}video,img{{display:block;width:100%;height:auto;background:#101210}}.facts{{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));border:1px solid var(--line);background:var(--paper);margin-bottom:12px}}.fact{{padding:10px;border-right:1px solid var(--line)}}.fact:last-child{{border:0}}.fact span{{display:block;color:var(--muted);font-size:11px}}.fact strong{{font-size:16px}}.candidates{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}}.sweep-stage{{border-top:1px solid var(--line);padding:22px 0 8px}}.sweep-probe{{border-top:1px dashed var(--line);padding:18px 0 8px;margin-top:18px}}.table-wrap{{overflow:auto}}.metric-table{{width:100%;border-collapse:collapse;background:var(--paper);margin:12px 0}}.metric-table th,.metric-table td{{border:1px solid var(--line);padding:8px;text-align:left;white-space:nowrap}}.metric-table th{{background:#dfe5e0}}.protocol{{padding:12px;border-left:5px solid var(--green);background:var(--paper)}}code{{font-size:12px}}@media(max-width:900px){{header{{position:static}}.grid,.candidates{{grid-template-columns:1fr}}.facts{{grid-template-columns:1fr 1fr}}}}
+</style></head><body><header><a href="{html.escape(index_href)}">返回总览</a><h1>{html.escape(case['case_key'])}</h1><p>{html.escape(case['caption'])}</p><nav><a href="#sam2">SAM2</a><a href="#x0">x0</a><a href="#probe">Frozen Probe</a>{'<a href="#noise-sweep">Noise sweep</a>' if sweep_metrics else ''}<a href="#candidates">全部 AMG candidates</a></nav></header><main>
 <section><div class="facts"><div class="fact"><span>Split / index</span><strong>train / {case['dataset_index']}</strong></div><div class="fact"><span>Grid</span><strong>{' x '.join(map(str,metrics['grid']))}</strong></div><div class="fact"><span>Query cells</span><strong>{metrics['query_token_count']}</strong></div><div class="fact"><span>Top heads</span><strong>100 / {metrics['head_selection']['num_blocks']} blocks</strong></div><div class="fact"><span>Peak allocated</span><strong>{metrics['peak_gpu_memory_mib']:.0f} MiB</strong></div></div></section>
 <section id="sam2"><h2>SAM2 target identity and query</h2><div class="grid">
 {media_figure('prep/f04.png','F04 training frame')}{media_figure('prep/sam2_identity_mask.png','Selected identity-constrained SAM2 mask',case['target_phrase'])}
@@ -1781,6 +1844,7 @@ main{{width:min(1900px,calc(100% - 24px));margin:auto;padding:18px 0 60px}}secti
 <div class="wide">{media_figure('teacher_student_five_panel.mp4','GT | x0_pred | Teacher overlay | Student overlay | difference')}</div>
 <div class="wide">{media_figure('teacher_student_13frame_contact_sheet.jpg','13-frame aligned heatmap contact sheet')}</div>
 {media_figure('trajectory_overlay.jpg','Teacher and Student soft-argmax trajectories')}<figure><figcaption><strong>Trajectory numeric values</strong><span>normalized (x,y), 13 latent frames</span></figcaption><a href="trajectory_values.json">Open trajectory_values.json</a></figure></div></section>
+{sweep_html}
 <section id="candidates"><h2>All prompt-free SAM2 AMG candidates</h2><div class="candidates">{candidate_html}</div></section>
 </main></body></html>"""
 
@@ -1790,22 +1854,33 @@ def index_page(cases: list[dict[str, Any]]) -> str:
         f"<tr><td><a href='cases/{html.escape(row['case_key'])}/index.html'>{html.escape(row['case_key'])}</a></td>"
         f"<td>{html.escape(row['family'])}</td><td>{row['dataset_index']}</td>"
         f"<td>{html.escape(row['target_phrase'])}</td><td>{row['query_token_count']}</td>"
+        f"<td>{html.escape(row['noise_sweep'])}</td>"
         f"<td>{row['heatmap_kl']:.6f}</td><td>{row['trajectory_huber']:.6f}</td>"
         f"<td>{row['gradient_norm']:.5f}</td></tr>"
         for row in cases
     )
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Frozen Motion Probe training diagnostics</title><style>
 :root{{--bg:#edf0ec;--paper:#fff;--ink:#17201b;--muted:#59665f;--line:#b7c1bb;--green:#176c59}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Noto Sans CJK SC","Source Han Sans SC",sans-serif;letter-spacing:0}}header,main{{width:min(1500px,calc(100% - 28px));margin:auto}}header{{padding:24px 0 14px;border-bottom:2px solid var(--ink)}}h1{{font-size:28px;margin:0}}p{{margin:4px 0;color:var(--muted)}}main{{padding:20px 0 60px}}table{{width:100%;border-collapse:collapse;background:var(--paper)}}th,td{{padding:11px;border:1px solid var(--line);text-align:left}}th{{background:#dfe5e0;font-size:12px}}a{{color:var(--green);font-weight:800;text-decoration:none}}.protocol{{margin-top:18px;padding:12px;border-left:5px solid var(--green);background:var(--paper)}}code{{font-size:12px}}@media(max-width:850px){{main{{overflow:auto}}table{{min-width:1050px}}}}
-</style></head><body><header><h1>Frozen Motion Probe training-case diagnostics</h1><p>PyBullet train split · official Wan2.2-TI2V-5B baseline · F04/latent-1 fixed query · latest3350 Top100</p></header><main><table><thead><tr><th>Case</th><th>Family</th><th>Train index</th><th>Identity target</th><th>Query cells</th><th>KL</th><th>Trajectory Huber</th><th>||dL/dv_pred||</th></tr></thead><tbody>{rows}</tbody></table><div class="protocol"><strong>Controlled probe:</strong> Teacher and Student share noise, timestep, text and clean TI2V conditioning. Teacher heatmap uses <code>Q_GT @ K_GT</code>; Student uses detached <code>Q_GT @ K_Student</code>. The displayed Student is the step-0 official baseline, which is output-equivalent to the zero-initialized adapter.</div></main></body></html>"""
+</style></head><body><header><h1>Frozen Motion Probe training-case diagnostics</h1><p>PyBullet train split · official Wan2.2-TI2V-5B baseline · F04/latent-1 fixed query · latest3350 Top100</p></header><main><table><thead><tr><th>Case</th><th>Family</th><th>Train index</th><th>Identity target</th><th>Query cells</th><th>Noise sweep</th><th>Original KL</th><th>Original Trajectory Huber</th><th>Original ||dL/dv_pred||</th></tr></thead><tbody>{rows}</tbody></table><div class="protocol"><strong>Controlled probe:</strong> Teacher and Student share noise, timestep, text and clean TI2V conditioning. Teacher heatmap uses <code>Q_GT @ K_GT</code>; Student uses detached <code>Q_GT @ K_Student</code>. The displayed Student is the step-0 official baseline, which is output-equivalent to the zero-initialized adapter. Case pages retain the original t=500 / Probe=0.5 result and append the five-stage Probe=0.1/0.2 sweep.</div></main></body></html>"""
 
 
-def report_index_row(case: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+def report_index_row(
+    case: dict[str, Any],
+    metrics: dict[str, Any],
+    sweep_metrics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "case_key": case["case_key"],
         "family": case["family"],
         "dataset_index": case["dataset_index"],
         "target_phrase": case["target_phrase"],
         "query_token_count": metrics["query_token_count"],
+        "noise_sweep": (
+            f"{len(sweep_metrics['training_stages'])} t x "
+            f"{len(sweep_metrics['probe_settings'])} probe"
+            if sweep_metrics
+            else "pending"
+        ),
         "heatmap_kl": metrics["probe"]["heatmap_kl_student_teacher"],
         "trajectory_huber": metrics["probe"]["trajectory_huber"],
         "gradient_norm": metrics["probe"]["gradient_to_first_pass_v_pred_norm"],
@@ -1829,15 +1904,26 @@ def run_render(args: argparse.Namespace) -> None:
         source_cache = Path(case["cache_dir"])
         case_output = output_root / "cases" / case_key
         metrics = json.loads((case_output / "metrics.json").read_text(encoding="utf-8"))
+        sweep_metrics_path = case_output / "noise_sweep" / "metrics.json"
+        sweep_metrics = (
+            json.loads(sweep_metrics_path.read_text(encoding="utf-8"))
+            if sweep_metrics_path.is_file()
+            else None
+        )
         complete = case_output / "render_complete.json"
         print(f"[render {position}/{len(manifest['cases'])}] {case_key}", flush=True)
         index_href = "../" * (len(Path(case_key).parts) + 1) + "index.html"
         if complete.is_file() and not args.overwrite:
             (case_output / "index.html").write_text(
-                case_page(case, metrics, index_href=index_href),
+                case_page(
+                    case,
+                    metrics,
+                    index_href=index_href,
+                    sweep_metrics=sweep_metrics,
+                ),
                 encoding="utf-8",
             )
-            index_rows.append(report_index_row(case, metrics))
+            index_rows.append(report_index_row(case, metrics, sweep_metrics))
             continue
         bundle = torch.load(case_output / "latents.pt", map_location="cpu", weights_only=True)
         decoded = decode_latent_bundle(
@@ -1926,17 +2012,263 @@ def run_render(args: argparse.Namespace) -> None:
         else:
             prep_link.symlink_to(source_cache, target_is_directory=True)
         (case_output / "index.html").write_text(
-            case_page(case, metrics, index_href=index_href),
+            case_page(
+                case,
+                metrics,
+                index_href=index_href,
+                sweep_metrics=sweep_metrics,
+            ),
             encoding="utf-8",
         )
         atomic_json(complete, {"case_key": case_key, "state": "complete"})
-        index_rows.append(report_index_row(case, metrics))
+        index_rows.append(report_index_row(case, metrics, sweep_metrics))
         del bundle, decoded
         gc.collect()
         torch.cuda.empty_cache()
     (output_root / "index.html").write_text(index_page(index_rows), encoding="utf-8")
     atomic_json(output_root / "report_manifest.json", {"schema_version": 1, "cases": index_rows})
     atomic_json(output_root / "status.json", {"state": "complete", "case_count": len(index_rows)})
+
+
+def run_sweep_render(args: argparse.Namespace) -> None:
+    config = noise_sweep_config(args)
+    cache_root = args.cache_root.resolve()
+    output_root = args.output_root.resolve()
+    manifest = json.loads((cache_root / "manifest.json").read_text(encoding="utf-8"))
+    vae_pipe = WanVideoPipeline.from_pretrained(
+        torch_dtype=torch.bfloat16,
+        device=torch.device(args.device),
+        model_configs=[ModelConfig(str(args.wan_root.resolve() / "Wan2.2_VAE.pth"))],
+        tokenizer_config=None,
+        redirect_common_files=False,
+    )
+    index_rows = []
+    for position, case in enumerate(manifest["cases"], start=1):
+        case_key = case["case_key"]
+        case_output = output_root / "cases" / case_key
+        case_sweep = case_output / "noise_sweep"
+        sweep_metrics_path = case_sweep / "metrics.json"
+        if not sweep_metrics_path.is_file():
+            raise FileNotFoundError(f"run sweep-forward first: {sweep_metrics_path}")
+        metrics = json.loads((case_output / "metrics.json").read_text(encoding="utf-8"))
+        sweep_metrics = json.loads(sweep_metrics_path.read_text(encoding="utf-8"))
+        complete = case_sweep / "render_complete.json"
+        index_href = "../" * (len(Path(case_key).parts) + 1) + "index.html"
+        print(f"[sweep-render {position}/{len(manifest['cases'])}] {case_key}", flush=True)
+        if complete.is_file() and not args.overwrite:
+            (case_output / "index.html").write_text(
+                case_page(
+                    case,
+                    metrics,
+                    index_href=index_href,
+                    sweep_metrics=sweep_metrics,
+                ),
+                encoding="utf-8",
+            )
+            index_rows.append(report_index_row(case, metrics, sweep_metrics))
+            continue
+
+        with np.load(Path(case["cache_dir"]) / "source_frames.npz") as source_arrays:
+            source_frames = source_arrays["frames"].astype(np.uint8)
+        base_bundle = torch.load(
+            case_output / "latents.pt", map_location="cpu", weights_only=True
+        )
+        target_decoded = decode_latent_bundle(
+            vae_pipe, {"target_x0": base_bundle["target_x0"]}
+        )["target_x0"]
+        del base_bundle
+
+        teacher_heatmaps: dict[str, np.ndarray] = {}
+        teacher_decoded: dict[str, np.ndarray] = {}
+        for probe in config["probe_settings"]:
+            probe_root = case_sweep / "probes" / probe["id"]
+            teacher_bundle = torch.load(
+                probe_root / "teacher.pt", map_location="cpu", weights_only=True
+            )
+            teacher_heatmaps[probe["id"]] = (
+                teacher_bundle["teacher_heatmap"].float().numpy()
+            )
+            teacher_decoded[probe["id"]] = decode_latent_bundle(
+                vae_pipe,
+                {"teacher_probe_input": teacher_bundle["teacher_probe_input"]},
+            )["teacher_probe_input"]
+            write_video(
+                probe_root / "vae_teacher_probe_input.mp4",
+                teacher_decoded[probe["id"]],
+                float(args.fps),
+            )
+            atomic_json(
+                probe_root / "render_complete.json",
+                {"state": "complete", "id": probe["id"]},
+            )
+            del teacher_bundle
+
+        for stage_position, stage in enumerate(config["training_stages"], start=1):
+            print(
+                f"  [stage {stage_position}/{len(config['training_stages'])}] "
+                f"t={stage['timestep']:.0f}",
+                flush=True,
+            )
+            stage_root = case_sweep / "stages" / stage["id"]
+            stage_bundle = torch.load(
+                stage_root / "latents.pt", map_location="cpu", weights_only=True
+            )
+            stage_decoded = decode_latent_bundle(
+                vae_pipe,
+                {
+                    "training_xt": stage_bundle["training_xt"],
+                    "predicted_x0": stage_bundle["predicted_x0"],
+                },
+            )
+            write_video(
+                stage_root / "vae_training_xt.mp4",
+                stage_decoded["training_xt"],
+                float(args.fps),
+            )
+            write_video(
+                stage_root / "vae_predicted_x0.mp4",
+                stage_decoded["predicted_x0"],
+                float(args.fps),
+            )
+            difference = np.clip(
+                np.abs(
+                    stage_decoded["predicted_x0"].astype(np.float32)
+                    - target_decoded.astype(np.float32)
+                )
+                * 3.0,
+                0,
+                255,
+            ).astype(np.uint8)
+            write_video(
+                stage_root / "vae_x0_difference.mp4", difference, float(args.fps)
+            )
+            anchors = anchor_frame_indices(13, len(source_frames))
+            x0_panels = []
+            for latent_index, pixel_index in enumerate(anchors):
+                x0_panels.append(
+                    np.concatenate(
+                        [
+                            add_label(
+                                resize_panel(target_decoded[pixel_index]),
+                                f"VAE GT L{latent_index:02d}",
+                            ),
+                            add_label(
+                                resize_panel(stage_decoded["training_xt"][pixel_index]),
+                                f"x_t F{pixel_index:02d}",
+                            ),
+                            add_label(
+                                resize_panel(stage_decoded["predicted_x0"][pixel_index]),
+                                "x0 pred",
+                            ),
+                            add_label(resize_panel(difference[pixel_index]), "abs diff x3"),
+                        ],
+                        axis=1,
+                    )
+                )
+            x0_sheet = make_contact_sheet(x0_panels, columns=1)
+            cv2.imwrite(
+                str(stage_root / "x0_anchor_contact_sheet.jpg"),
+                cv2.cvtColor(x0_sheet, cv2.COLOR_RGB2BGR),
+                [cv2.IMWRITE_JPEG_QUALITY, 91],
+            )
+            atomic_json(
+                stage_root / "render_complete.json",
+                {"state": "complete", "id": stage["id"]},
+            )
+
+            for probe in config["probe_settings"]:
+                comparison_root = (
+                    case_sweep / "comparisons" / stage["id"] / probe["id"]
+                )
+                comparison_bundle = torch.load(
+                    comparison_root / "latents.pt",
+                    map_location="cpu",
+                    weights_only=True,
+                )
+                student_decoded = decode_latent_bundle(
+                    vae_pipe,
+                    {
+                        "student_probe_input": comparison_bundle[
+                            "student_probe_input"
+                        ]
+                    },
+                )["student_probe_input"]
+                write_video(
+                    comparison_root / "vae_student_probe_input.mp4",
+                    student_decoded,
+                    float(args.fps),
+                )
+                with np.load(comparison_root / "probe_outputs.npz") as probe_file:
+                    probe_arrays = {key: probe_file[key] for key in probe_file.files}
+                probe_arrays["teacher_heatmap"] = teacher_heatmaps[probe["id"]]
+                render_heatmap_media(
+                    comparison_root,
+                    {
+                        "target_x0": target_decoded,
+                        "predicted_x0": stage_decoded["predicted_x0"],
+                    },
+                    probe_arrays,
+                    float(args.heatmap_fps),
+                )
+                teacher_trajectory = probe_arrays["teacher_trajectory"][0]
+                student_trajectory = probe_arrays["student_trajectory"][0]
+                trajectory_image = trajectory_visualization(
+                    source_frames[int(args.query_pixel_frame)],
+                    teacher_trajectory,
+                    student_trajectory,
+                )
+                cv2.imwrite(
+                    str(comparison_root / "trajectory_overlay.jpg"),
+                    cv2.cvtColor(trajectory_image, cv2.COLOR_RGB2BGR),
+                    [cv2.IMWRITE_JPEG_QUALITY, 93],
+                )
+                atomic_json(
+                    comparison_root / "trajectory_values.json",
+                    {
+                        "coordinate_order": ["x", "y"],
+                        "coordinate_range": [0.0, 1.0],
+                        "teacher": teacher_trajectory,
+                        "student": student_trajectory,
+                    },
+                )
+                atomic_json(
+                    comparison_root / "render_complete.json",
+                    {
+                        "state": "complete",
+                        "training_stage_id": stage["id"],
+                        "probe_setting_id": probe["id"],
+                    },
+                )
+                del comparison_bundle, student_decoded, probe_arrays
+                gc.collect()
+                torch.cuda.empty_cache()
+            del stage_bundle, stage_decoded, difference, x0_panels, x0_sheet
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        (case_output / "index.html").write_text(
+            case_page(
+                case,
+                metrics,
+                index_href=index_href,
+                sweep_metrics=sweep_metrics,
+            ),
+            encoding="utf-8",
+        )
+        atomic_json(complete, {"state": "complete", "case_key": case_key})
+        index_rows.append(report_index_row(case, metrics, sweep_metrics))
+        del source_frames, target_decoded, teacher_heatmaps, teacher_decoded
+        gc.collect()
+        torch.cuda.empty_cache()
+    (output_root / "index.html").write_text(index_page(index_rows), encoding="utf-8")
+    atomic_json(
+        output_root / "report_manifest.json",
+        {"schema_version": 2, "cases": index_rows},
+    )
+    atomic_json(
+        output_root / "noise_sweep_status.json",
+        {"state": "complete", "case_count": len(index_rows)},
+    )
 
 
 def main() -> None:
@@ -1948,8 +2280,12 @@ def main() -> None:
         run_prepare(args)
     elif args.mode == "forward":
         run_forward(args)
-    else:
+    elif args.mode == "render":
         run_render(args)
+    elif args.mode == "sweep-forward":
+        run_sweep_forward(args)
+    else:
+        run_sweep_render(args)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,8 @@ OUTPUT_ROOT="${3:-/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora}"
 TEST_LIST="${TEST_LIST:-/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-8}"
 NEGATIVE_PROMPT="${NEGATIVE_PROMPT:-模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理}"
+GENERATION_PROMPT_SUFFIX="${GENERATION_PROMPT_SUFFIX:-}"
+FORCE_INFERENCE="${FORCE_INFERENCE:-1}"
 
 EXPERIMENT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRAIN_XSSC_ROOT="$(dirname "${EXPERIMENT_ROOT}")"
@@ -73,6 +75,10 @@ STEP_TAG="$(basename "${CHECKPOINT_DIR}")"
 STEP_OUTPUT_DIR_NAME="${STEP_OUTPUT_DIR_NAME:-${EXPERIMENT_NAME}_${STEP_TAG}_steps${NUM_INFERENCE_STEPS}_512x896_ctx08_49f}"
 TRACE_ROOT="${TRACE_ROOT:-${OUTPUT_ROOT}/_numeric_traces/${STEP_OUTPUT_DIR_NAME}}"
 XSSC_BOX_CACHE_DIR="${XSSC_BOX_CACHE_DIR:-/data/gaoya/agent-data/cache/xssc_object_self_attn_lora_infer/${EXPERIMENT_NAME}}"
+FORCE_ARGS=()
+if [[ "${FORCE_INFERENCE}" == "1" ]]; then
+  FORCE_ARGS=(--force)
+fi
 
 mkdir -p "${OUTPUT_ROOT}" "${TRACE_ROOT}" "${XSSC_BOX_CACHE_DIR}"
 echo "experiment=${EXPERIMENT_NAME}"
@@ -80,6 +86,8 @@ echo "checkpoint=${CHECKPOINT_DIR}"
 echo "config=${EXPERIMENT_CONFIG}"
 echo "gpu=${GPU_ID}"
 echo "output=${OUTPUT_ROOT}/${STEP_OUTPUT_DIR_NAME}"
+echo "generation_prompt_suffix=${GENERATION_PROMPT_SUFFIX}"
+echo "force_inference=${FORCE_INFERENCE}"
 
 exec env \
   PYTHONNOUSERSITE=1 \
@@ -109,5 +117,6 @@ exec env \
   --sampling-mode prefix \
   --num-inference-steps "${NUM_INFERENCE_STEPS}" \
   --negative-prompt "${NEGATIVE_PROMPT}" \
+  --generation-prompt-suffix "${GENERATION_PROMPT_SUFFIX}" \
   --dump-numeric-trace-root "${TRACE_ROOT}" \
-  --force
+  "${FORCE_ARGS[@]}"

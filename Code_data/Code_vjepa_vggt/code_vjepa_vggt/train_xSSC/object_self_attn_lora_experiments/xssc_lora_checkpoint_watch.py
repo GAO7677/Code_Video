@@ -284,6 +284,7 @@ def register_manifest(
     origin: str,
 ) -> dict[str, Any]:
     validation = validate_result_root(config, result_root)
+    method = method_config(config, task["method_key"])
     payload = {
         **task,
         "checkpoint_dir": str(Path(task["checkpoint_dir"]).resolve()),
@@ -292,6 +293,13 @@ def register_manifest(
         "inference_completed_utc": timestamp(),
         "validation": validation,
     }
+    for field in (
+        "condition",
+        "generation_prompt_suffix",
+        "evaluation_caption_policy",
+    ):
+        if field in method:
+            payload[field] = method[field]
     atomic_write_json(
         manifest_path(config, task["method_key"], int(task["step"])),
         payload,
@@ -512,6 +520,7 @@ def run_inference_task(
     if not checkpoint_is_stable(config, checkpoint):
         raise RuntimeError(f"Checkpoint is incomplete or still changing: {checkpoint}")
     method_key = task["method_key"]
+    method = method_config(config, method_key)
     step = int(task["step"])
     method_output_root = paths["results"] / method_key
     output_name = (
@@ -531,6 +540,12 @@ def run_inference_task(
             "NUM_INFERENCE_STEPS": str(runtime["num_inference_steps"]),
             "STEP_OUTPUT_DIR_NAME": output_name,
             "TRACE_ROOT": str(trace_root),
+            "GENERATION_PROMPT_SUFFIX": str(
+                method.get("generation_prompt_suffix", "")
+            ),
+            "FORCE_INFERENCE": (
+                "1" if runtime.get("force_inference", True) else "0"
+            ),
         }
     )
     log(f"inference start method={method_key} step={step} gpu={gpu_id}")

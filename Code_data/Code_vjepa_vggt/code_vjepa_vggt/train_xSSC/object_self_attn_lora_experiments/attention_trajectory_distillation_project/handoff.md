@@ -202,6 +202,9 @@ SAM2 的关键问题不是能否使用，而是如何确定哪个候选 mask 对
 | `train_xssc_object_self_attn_lora_frozen_motion_probe.py` | 独立训练入口、baseline/probe 加载、x0 重建、双 probe forward、loss 与梯度诊断 |
 | `frozen_motion_probe.py` | 固定 GT-Q/Student-K heatmap、QK capture、soft-argmax、KL、Huber、mask/point 到 token 映射 |
 | `test_frozen_motion_probe.py` | 冻结参数、输入梯度、共享噪声、checkpoint、固定 GT-Q、`v_pred` 梯度测试 |
+| `run_training_case_diagnostics.py` | SAM2 cache、5B case forward、训练噪声/Probe sweep、媒体和 HTML 报告 |
+| `test_training_case_diagnostics.py` | sweep 配置、HTML、mask、contact sheet 和差分渲染测试 |
+| `run_training_case_noise_sweep_gpu0.sh` | 五个训练 timestep 与 Probe 0.1/0.2 的可恢复前台运行脚本 |
 | `README.md` | 配置、数据契约、训练命令模板和旧 Scheme B 对比 |
 | `handoff.md` | 当前项目状态与下一步执行说明 |
 
@@ -246,20 +249,42 @@ print("PASS", len(names), "tests")
 PY
 ```
 
-## 8. 尚未执行
+## 8. 已完成训练前 case 诊断
 
-- 尚未启动完整 Wan2.2 5B training smoke test；
-- 尚未把 SAM2 query cache 接入当前训练 dataset；
-- 尚未运行训练集 case 级 diagnostic；
-- 尚未生成 GT/x0/noisy heatmap 的可视化页面；
-- 尚未确定首批训练 case 和 SAM2 多候选 mask 的目标选择规则；
-- 尚未对 `lambda_heatmap`、`lambda_trajectory`、`probe_timestep`、
-  `probe_noise_level` 做超参数扫描。
+已对真实 `PyBullet0713NoGTBoxDataset(split="train")` 的 F1/F2/F3 各一个
+case 完成 5B 只前向诊断：
 
-## 9. 下一步：训练前 case 诊断
+| Case | Train index | 目标 | 最佳 AMG/身份 mask IoU | Query cells |
+|---|---:|---|---:|---:|
+| `F1/0717_f1_attempt000012` | 0 | teal painted metal spool | 0.979 | 7 |
+| `F2/0717_f2_attempt000001` | 320 | blue rubber roller drum | 0.960 | 6 |
+| `F3/0717_f3_attempt000002` | 476 | red rubber wheel | 0.986 | 6 |
 
-正式训练前应先随机选择 3–5 个训练集 case，执行只前向、不更新参数的
-diagnostic。每个 case 至少展示以下内容。
+实际分辨率为 `512 x 896`，probe grid 为 `13 x 16 x 28`。每例页面均保留原始
+`training t=500 / Probe noise=0.5` 结果，并追加：
+
+- 训练 timestep `100/300/500/700/900`，同一例共用一个 `epsilon_train`；
+- Probe `(noise_level,timestep)` 为 `(0.1,100)` 和 `(0.2,200)`；
+- 两档 Probe 共用一个 `epsilon_p`，每组 Teacher/Student 也共用该噪声；
+- 每个组合展示加噪输入、Top100 heatmap、对应视频帧拼接、差分和 trajectory。
+
+报告入口：
+
+```text
+/data/gaoya/agent-data/outputs/frozen_motion_probe_training_diagnostics/index.html
+```
+
+前台重跑命令：
+
+```bash
+GPU_ID=2 ./run_training_case_noise_sweep_gpu0.sh
+```
+
+脚本禁止 GPU 4，并在目标 GPU 已使用超过 2 GiB 时拒绝运行。所有 30 个
+Student 组合均满足 Teacher heatmap 无梯度、Student heatmap 有梯度、probe
+trainable params 为 0、`||dL/dv_pred|| > 0`。
+
+## 9. Case 诊断页面内容
 
 ### 9.1 输入与 SAM2
 
@@ -311,7 +336,7 @@ Case metadata
 └── Loss and gradient audit table
 ```
 
-建议将中间结果写入：
+中间结果已写入：
 
 ```text
 /data/gaoya/agent-data/outputs/frozen_motion_probe_training_diagnostics/
@@ -334,8 +359,8 @@ Case metadata
    correspondence trajectory，只能作为内部 motion proxy。
 6. **probe noise/timestep**：二者可以独立配置，但需要报告 scheduler sigma，
    并通过后续消融确认最佳 probe noise regime。
-7. **当前尚无 5B end-to-end 证据**：现阶段只能确认实现与小模型梯度逻辑，
-   不能声称训练效果已经改善。
+7. **5B 证据边界**：目前已有三例 5B 只前向及辅助梯度证据，但尚未执行参数
+   更新或训练收敛实验，不能声称训练效果已经改善。
 
 ## 11. 旧 Scheme B 与当前版本
 
@@ -351,8 +376,7 @@ Case metadata
 
 ## 12. 当前结论
 
-代码层面的 Frozen Motion Probe 与梯度约束已经完成，并通过小模型测试；
-下一步不应直接启动长训练，而应先完成 SAM2 cache 接入和 3–5 个训练 case
-的端到端可视化诊断。只有确认 object mask、query cells、`x0_pred`、Teacher/
-Student heatmap、trajectory 和梯度范数均符合预期后，才适合运行短训练 smoke
-test 和后续超参数实验。
+代码层面的 Frozen Motion Probe、梯度约束和三例 5B 端到端可视化诊断均已
+完成。下一步仍需把离线 SAM2 query cache 接入正式训练 dataset，然后执行短
+训练 smoke test，验证一次真实 optimizer step、显存和 checkpoint 行为；之后
+再比较 Probe `0.1/0.2` 与 loss 权重，而不是直接启动长训练。

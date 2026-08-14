@@ -1563,6 +1563,7 @@ def merge_video_records(
     current_records: list[dict[str, Any]],
     legacy_records: list[dict[str, Any]],
     current_site_prefix: str,
+    methods_override: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     deduplicated: dict[tuple[str, int], dict[str, Any]] = {}
     for record in legacy_records + prefix_video_records(
@@ -1570,12 +1571,13 @@ def merge_video_records(
         current_site_prefix,
     ):
         deduplicated[(str(record["method_key"]), int(record["step"]))] = record
-    method_keys = [method["key"] for method in MERGED_METHODS]
+    methods = MERGED_METHODS if methods_override is None else methods_override
+    method_keys = [method["key"] for method in methods]
     return sorted(
         deduplicated.values(),
         key=lambda row: (
             method_keys.index(row["method_key"])
-            if row["method_key"] in METHOD_BY_KEY
+            if row["method_key"] in method_keys
             else 999,
             int(row.get("step", 0)),
             str(row["method_key"]),
@@ -1597,6 +1599,7 @@ def build_average_metrics_page(
     cases: list[dict[str, Any]],
     *,
     page_title: str,
+    methods_override: list[dict[str, str]] | None = None,
 ) -> str:
     expected = len(cases)
     summaries: list[dict[str, Any]] = []
@@ -1624,9 +1627,10 @@ def build_average_metrics_page(
                 "mean": sum(values) / len(values) if values else None,
             }
         summaries.append(summary)
-    method_colors = {method["key"]: method["color"] for method in MERGED_METHODS}
+    methods = MERGED_METHODS if methods_override is None else methods_override
+    method_colors = {method["key"]: method["color"] for method in methods}
     method_order = {
-        method["key"]: index for index, method in enumerate(MERGED_METHODS)
+        method["key"]: index for index, method in enumerate(methods)
     }
     metric_directions = {
         spec["key"]: spec["direction"] for spec in CASE_METRIC_SPECS
@@ -1749,11 +1753,13 @@ def write_unified_videos_page(
     page_title: str,
 ) -> None:
     page_root.mkdir(parents=True, exist_ok=True)
+    display_methods = config["methods"] if config.get("ab_experiment") else MERGED_METHODS
     merged_cases = prefix_case_media(cases, f"{current_site_prefix}/media")
     merged_records = merge_video_records(
         current_records,
         legacy_records,
         current_site_prefix,
+        methods_override=display_methods,
     )
     (page_root / "index.html").write_text(
         build_videos_page(
@@ -1761,7 +1767,7 @@ def write_unified_videos_page(
             merged_records,
             merged_cases,
             page_title=page_title,
-            methods_override=MERGED_METHODS,
+            methods_override=display_methods,
         ),
         encoding="utf-8",
     )
@@ -1848,6 +1854,7 @@ def build_weight_provenance_section() -> str:
 
 
 def build_watch_index(
+    config: dict[str, Any],
     status: list[dict[str, Any]],
     pending: bool,
     phys_status: dict[str, Any] | None,
@@ -1861,7 +1868,16 @@ def build_watch_index(
     )
     state = "推理排队中" if pending else "持续监听"
     phys_section = build_physiciq_section(phys_status)
-    weight_provenance_section = build_weight_provenance_section()
+    weight_provenance_section = (
+        "" if config.get("ab_experiment") else build_weight_provenance_section()
+    )
+    runtime = config["runtime"]
+    run_summary = (
+        f"test_5 · {int(runtime['context_frames'])} context · "
+        f"{int(runtime['num_frames'])} frames · "
+        f"{int(runtime['height'])}×{int(runtime['width'])} · "
+        f"{int(runtime['num_inference_steps'])} denoising steps"
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1907,7 +1923,7 @@ def build_watch_index(
 </head>
 <body>
   <header><h1>xSSC LoRA checkpoint watcher</h1>
-    <p>test_5 · 8 context · 49 frames · 512×896 · 8 denoising steps</p></header>
+    <p>{escape(run_summary)}</p></header>
   <main>
     {weight_provenance_section}
     <div class="links">
@@ -2037,6 +2053,7 @@ def build_master_hub(
         test_cases,
     )
     legacy_test_records.extend(test5_reference_records)
+    site_titles = config.get("site_titles", {})
     write_unified_videos_page(
         config=config,
         page_root=hub_root / "test5",
@@ -2044,7 +2061,9 @@ def build_master_hub(
         current_records=test_records,
         legacy_records=legacy_test_records,
         current_site_prefix="../gallery",
-        page_title="test_5 · 全 checkpoint 合并对比",
+        page_title=str(
+            site_titles.get("test5", "test_5 · 全 checkpoint 合并对比")
+        ),
     )
     test5_average_root = hub_root / "test5-average-metrics"
     test5_average_root.mkdir(parents=True, exist_ok=True)
@@ -2054,9 +2073,20 @@ def build_master_hub(
                 test_records,
                 legacy_test_records,
                 "../gallery",
+                methods_override=(
+                    config["methods"] if config.get("ab_experiment") else None
+                ),
             ),
             test_cases,
-            page_title="test_5 · 全 case 平均指标",
+            page_title=str(
+                site_titles.get(
+                    "test5_average_metrics",
+                    "test_5 · 全 case 平均指标",
+                )
+            ),
+            methods_override=(
+                config["methods"] if config.get("ab_experiment") else None
+            ),
         ),
         encoding="utf-8",
     )
@@ -2328,6 +2358,16 @@ def build_master_hub(
       <a href="physiciq-top3-vs-physrvg-all-cases/">综合 Top 3 × PhysRVG · 67 case</a></div>
       <div class="status">动态汇总<strong>全部方案</strong><small>PhysRVG OFF / +LoRA 可切换</small></div>
     </section>"""
+    step40_ab_entry = ""
+    if (hub_root / "test5-step40-object-count-ab").exists():
+        step40_ab_entry = """
+    <section class="entry"><div><h2>test_5 · 40-step Object-count A/B</h2>
+      <div class="meta">18 个 step-500 权重；原始 prompt 与 object-count 约束 prompt 的 40-step 配对生成和完整指标</div>
+      <a href="test5-step40-object-count-ab/">Case 视频对比</a>
+      <a href="test5-step40-object-count-ab-average-metrics/">全 case 平均指标</a>
+      <a href="test5-step40-object-count-ab-status/">流水线状态</a></div>
+      <div class="status">GPU 7<strong>36 组 · 720 视频</strong><small>推理完成后自动评测</small></div>
+    </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -2376,6 +2416,7 @@ def build_master_hub(
       <a href="test5-average-metrics/">全 case 平均指标表</a></div>
       <div class="status">全部 step<strong>{total_inferred + legacy_checkpoint_count} 组结果</strong><small>持续增量更新</small></div>
     </section>
+    {step40_ab_entry}
     {physrvg_test5_entry}
     {physrvg_physiciq_entry}
     {physiciq_entry}
@@ -2472,7 +2513,7 @@ def main() -> None:
     phys_status = build_physiciq_status(config)
     pending = (watch_root / "state" / "inference.pending").is_file()
     (site_root / "index.html").write_text(
-        build_watch_index(status, pending, phys_status),
+        build_watch_index(config, status, pending, phys_status),
         encoding="utf-8",
     )
     manifest = {
