@@ -299,7 +299,7 @@
       "color": "#D55E00",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints",
-        "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000/resume_step000500_gpu56_20260814T095638Z/checkpoints"
+        "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000/resume_step000500_pybullet100_gpu56_20260814T101910Z/checkpoints"
       ]
     },
     {
