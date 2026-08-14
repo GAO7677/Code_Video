@@ -4,9 +4,9 @@ This module deliberately contains no Wan model-loading code.  It implements the
 small, testable part of Frozen Motion Probe distillation:
 
 * capture selected self-attention Q/K heads without changing attention output;
-* aggregate them into one normalized spatiotemporal correspondence heatmap;
+* retain every physical head and form equal/PCK-weighted aggregate heatmaps;
 * turn each latent-frame heatmap into a differentiable soft-argmax trajectory;
-* compare student and teacher heatmaps with KL(student || teacher).
+* compare teacher and student head maps with PCK-weighted KL(teacher || student).
 
 The caller owns the frozen DiT and is responsible for running the teacher under
 ``torch.no_grad()`` while retaining gradients for the student probe input.
@@ -15,13 +15,110 @@ The caller owns the frozen DiT and is responsible for running the teacher under
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
+import json
 import math
+from pathlib import Path
 from types import MethodType
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def ordered_head_pairs(
+    selected_heads_by_block: Mapping[int, Sequence[int]],
+) -> tuple[tuple[int, int], ...]:
+    pairs = tuple(
+        (int(block_id), int(head_id))
+        for block_id, head_ids in sorted(selected_heads_by_block.items())
+        for head_id in sorted({int(value) for value in head_ids})
+    )
+    if not pairs:
+        raise ValueError("selected_heads_by_block is empty")
+    return pairs
+
+
+def load_pck_head_weights(
+    selection_metadata: Mapping[str, Any],
+    selected_heads_by_block: Mapping[int, Sequence[int]],
+    *,
+    score_key: str = "pck32",
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Load and align normalized PCK weights to collector head order."""
+    pairs = ordered_head_pairs(selected_heads_by_block)
+    source_value = selection_metadata.get("selection_source")
+    if not source_value:
+        raise KeyError("head-selection metadata has no selection_source")
+    source_path = Path(str(source_value)).expanduser()
+    if not source_path.is_absolute():
+        config_path = Path(str(selection_metadata.get("config_path", ".")))
+        source_path = config_path.parent / source_path
+    source_path = source_path.resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"PCK score source does not exist: {source_path}")
+    payload = json.loads(source_path.read_text(encoding="utf-8"))
+    expected_step = int(selection_metadata.get("ranking_step", -1))
+    if int(payload.get("ranking_step", -2)) != expected_step:
+        raise ValueError(
+            "PCK score source ranking step mismatch: "
+            f"source={payload.get('ranking_step')}, selection={expected_step}"
+        )
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise TypeError("PCK score source entries must be a list")
+    scores_by_pair: dict[tuple[int, int], float] = {}
+    ranked_pairs: list[tuple[int, int]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise TypeError(f"invalid PCK entry: {entry!r}")
+        if int(entry.get("step", expected_step)) != expected_step:
+            continue
+        pair = (int(entry["block"]), int(entry["head"]))
+        if pair in scores_by_pair:
+            raise ValueError(f"duplicate PCK entry for head {pair}")
+        score = float(entry[score_key])
+        if not math.isfinite(score) or score < 0.0:
+            raise ValueError(f"invalid {score_key}={score} for head {pair}")
+        scores_by_pair[pair] = score
+        ranked_pairs.append(pair)
+    missing = [pair for pair in pairs if pair not in scores_by_pair]
+    if missing:
+        raise KeyError(f"PCK score source is missing selected heads: {missing[:12]}")
+    declared_count = int(selection_metadata.get("num_heads", len(pairs)))
+    if declared_count != len(pairs):
+        raise ValueError(
+            f"selected head count mismatch: metadata={declared_count}, actual={len(pairs)}"
+        )
+    top_pairs = set(ranked_pairs[:declared_count])
+    if top_pairs != set(pairs):
+        raise ValueError("selected heads do not match the PCK source Top-N identity")
+    raw_scores = torch.tensor(
+        [scores_by_pair[pair] for pair in pairs], dtype=torch.float64
+    )
+    score_sum = raw_scores.sum()
+    if not bool(torch.isfinite(score_sum)) or float(score_sum) <= 0.0:
+        raise ValueError("PCK scores must have a positive finite sum")
+    weights = (raw_scores / score_sum).to(torch.float32)
+    audit = {
+        "score_key": str(score_key),
+        "source_path": str(source_path),
+        "source_sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+        "ranking_step": expected_step,
+        "completed_runs_at_selection": int(
+            payload.get("completed_runs_at_selection", -1)
+        ),
+        "head_pairs": [list(pair) for pair in pairs],
+        "raw_scores": raw_scores.tolist(),
+        "normalized_weights": weights.tolist(),
+        "score_sum": float(score_sum),
+        "score_min": float(raw_scores.min()),
+        "score_max": float(raw_scores.max()),
+        "weight_min": float(weights.min()),
+        "weight_max": float(weights.max()),
+    }
+    return weights, audit
 
 
 def assert_no_lora_modules(module: nn.Module, *, label: str) -> None:
@@ -227,6 +324,83 @@ def capture_wan_self_attention_qk(
     finally:
         for attention, original_forward in originals:
             attention.forward = original_forward
+
+
+def normalize_head_probabilities(probabilities: torch.Tensor) -> torch.Tensor:
+    if probabilities.ndim != 3:
+        raise ValueError(
+            f"expected [B,H,S] head probabilities, got {probabilities.shape}"
+        )
+    normalized = probabilities.float().clamp_min(1e-12)
+    return normalized / normalized.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+
+
+def aggregate_head_probabilities(
+    probabilities: torch.Tensor,
+    *,
+    grid: tuple[int, int, int],
+    head_weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    normalized = normalize_head_probabilities(probabilities)
+    if normalized.shape[-1] != math.prod(grid):
+        raise ValueError(
+            f"head token count {normalized.shape[-1]} does not match grid={grid}"
+        )
+    if head_weights is None:
+        aggregate = normalized.mean(dim=1)
+    else:
+        weights = torch.as_tensor(
+            head_weights, device=normalized.device, dtype=normalized.dtype
+        ).flatten()
+        if weights.numel() != normalized.shape[1]:
+            raise ValueError(
+                f"head weight count {weights.numel()} != heads {normalized.shape[1]}"
+            )
+        if not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
+            raise ValueError("head weights must be finite and non-negative")
+        if float(weights.sum()) <= 0.0:
+            raise ValueError("head weights must have a positive sum")
+        weights = weights / weights.sum()
+        aggregate = (normalized * weights.reshape(1, -1, 1)).sum(dim=1)
+    aggregate = aggregate / aggregate.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+    return aggregate.reshape(aggregate.shape[0], *map(int, grid))
+
+
+def teacher_student_head_kl(
+    student_probabilities: torch.Tensor,
+    teacher_probabilities: torch.Tensor,
+) -> torch.Tensor:
+    """Return per-example, per-head ``KL(Teacher || Student)`` as ``[B,H]``."""
+    if student_probabilities.shape != teacher_probabilities.shape:
+        raise ValueError(
+            "Student/Teacher head probability shape mismatch: "
+            f"{student_probabilities.shape}/{teacher_probabilities.shape}"
+        )
+    student = normalize_head_probabilities(student_probabilities)
+    teacher = normalize_head_probabilities(teacher_probabilities.detach())
+    return (teacher * (teacher.log() - student.log())).sum(dim=-1)
+
+
+def pck_weighted_teacher_student_head_kl(
+    student_probabilities: torch.Tensor,
+    teacher_probabilities: torch.Tensor,
+    head_weights: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    per_head = teacher_student_head_kl(
+        student_probabilities,
+        teacher_probabilities,
+    )
+    weights = torch.as_tensor(
+        head_weights, device=per_head.device, dtype=per_head.dtype
+    ).flatten()
+    if weights.numel() != per_head.shape[1]:
+        raise ValueError(f"head weight count {weights.numel()} != heads {per_head.shape[1]}")
+    if not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
+        raise ValueError("head weights must be finite and non-negative")
+    if float(weights.sum()) <= 0.0:
+        raise ValueError("head weights must have a positive sum")
+    weights = weights / weights.sum()
+    return (per_head * weights.reshape(1, -1)).sum(dim=1).mean(), per_head
 
 
 def flatten_heatmap_distribution(heatmap: torch.Tensor) -> torch.Tensor:

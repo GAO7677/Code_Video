@@ -1,0 +1,6 @@
+{
+  "extends": "smoke_vae_cache_full_sa_object_slot_dedup_gpu3.json",
+  "experiment": {"name": "smoke_vae_cache_full_sa_object_slot_dedup_gpu3_bs4"},
+  "optimization": {"train_batch_size_per_gpu": 4},
+  "logging": {"wandb_name": "smoke_vae_cache_full_sa_object_slot_dedup_gpu3_bs4"}
+}

@@ -267,6 +267,10 @@ case 完成 5B 只前向诊断：
 - Probe `(noise_level,timestep)` 为 `(0.1,100)` 和 `(0.2,200)`；
 - 两档 Probe 共用一个 `epsilon_p`，每组 Teacher/Student 也共用该噪声；
 - 每个组合展示加噪输入、Top100 heatmap、对应视频帧拼接、差分和 trajectory。
+- 每个组合还展示一张横向 latent 时间轴图：Teacher 和 Student 各占一行，
+  从 `L00/F00` 排到 `L12/F48`，并使用同一个 heatmap 色标。
+- 页面按 Query、原始 x0、原始 Probe、noise sweep、SAM2 candidates 排列；
+  sweep 默认展开 `t=500`，其他阶段和详细视频使用折叠区域。
 
 报告入口：
 

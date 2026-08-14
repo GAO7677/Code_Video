@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
 
 from frozen_motion_probe import (
     TopHeadQKCollector,
+    aggregate_head_probabilities,
     blend_with_fixed_probe_noise,
     capture_wan_self_attention_qk,
     fixed_query_head_probabilities,
+    load_pck_head_weights,
+    pck_weighted_teacher_student_head_kl,
     query_rows_from_mask,
     query_rows_from_points,
     student_teacher_heatmap_kl,
@@ -210,3 +216,62 @@ def test_fixed_teacher_query_loss_reaches_first_pass_v_prediction():
     assert v_pred.grad is not None
     assert float(v_pred.grad.abs().sum()) > 0.0
     assert all(parameter.grad is None for parameter in probe.parameters())
+
+
+def test_pck_weighted_teacher_student_head_kl_matches_manual_formula():
+    teacher = torch.tensor(
+        [[[0.75, 0.25], [0.20, 0.80]]], dtype=torch.float32
+    )
+    student = torch.tensor(
+        [[[0.50, 0.50], [0.40, 0.60]]],
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+    weights = torch.tensor([0.75, 0.25])
+    loss, per_head = pck_weighted_teacher_student_head_kl(
+        student,
+        teacher,
+        weights,
+    )
+    manual = (
+        teacher * (teacher.log() - student.log())
+    ).sum(dim=-1)
+    assert torch.allclose(per_head, manual)
+    assert torch.allclose(loss, (manual * weights).sum(dim=1).mean())
+    loss.backward()
+    assert student.grad is not None
+    assert float(student.grad.abs().sum()) > 0.0
+
+
+def test_pck_weighted_aggregate_uses_requested_head_weights():
+    heads = torch.tensor(
+        [[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32
+    )
+    weighted = aggregate_head_probabilities(
+        heads,
+        grid=(1, 1, 2),
+        head_weights=torch.tensor([0.8, 0.2]),
+    )
+    equal = aggregate_head_probabilities(heads, grid=(1, 1, 2))
+    assert torch.allclose(weighted.flatten(1), torch.tensor([[0.8, 0.2]]))
+    assert torch.allclose(equal.flatten(1), torch.tensor([[0.5, 0.5]]))
+
+
+def test_latest3350_pck_weights_align_with_selected_top100():
+    config_path = (
+        Path(__file__).resolve().parent.parent
+        / "configs/physiciq67_pck32_s039_latest3350_top100_heads.json"
+    )
+    metadata = json.loads(config_path.read_text(encoding="utf-8"))
+    metadata["config_path"] = str(config_path)
+    selected: dict[int, list[int]] = {}
+    for target in metadata["targets"]:
+        selected.setdefault(int(target["block"]), []).append(int(target["head"]))
+    weights, audit = load_pck_head_weights(metadata, selected)
+    assert weights.shape == (100,)
+    assert torch.allclose(weights.sum(), torch.tensor(1.0))
+    assert audit["score_key"] == "pck32"
+    assert audit["ranking_step"] == 39
+    assert audit["completed_runs_at_selection"] == 3350
+    assert audit["score_min"] > 0.0
+    assert audit["weight_max"] > audit["weight_min"]

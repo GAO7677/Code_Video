@@ -139,3 +139,17 @@ The report is available at:
 ```text
 /data/gaoya/agent-data/outputs/frozen_motion_probe_training_diagnostics/index.html
 ```
+
+Each Probe result includes a two-row fixed-query timeline: the Teacher Top100
+response is the first row and the Student response is the second row, with
+latent frames ordered from `L00/F00` through `L12/F48` under one shared color
+scale. The case page keeps `t=500` open and collapses the other training stages
+and detailed videos. After changing only report code, regenerate the timelines
+and HTML without loading the DiT or VAE:
+
+```bash
+PYTHONNOUSERSITE=1 \
+PYTHONPATH=/home/gaoya/Code_Video/DiffTrack-main:/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main:/home/gaoya/Grounded-SAM-2-main \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+run_training_case_diagnostics.py refresh-report --device cpu
+```

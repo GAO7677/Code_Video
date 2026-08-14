@@ -36,12 +36,16 @@ import code_vjepa_vggt.context_wan_v_newtrain as context_wan
 import train_xssc_object_self_attn_lora as core
 from attention_trajectory_distillation_project.frozen_motion_probe import (
     TopHeadQKCollector,
+    aggregate_head_probabilities,
     assert_no_lora_modules,
     blend_with_fixed_probe_noise,
     capture_wan_self_attention_qk,
+    load_pck_head_weights,
+    pck_weighted_teacher_student_head_kl,
     query_rows_from_mask,
     query_rows_from_points,
     student_teacher_heatmap_kl,
+    teacher_student_head_kl,
     trajectory_huber_loss,
 )
 
@@ -263,6 +267,21 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
         )
         self.motion_probe_selected_heads_by_block = probe_heads_by_block
         self.motion_probe_head_metadata = probe_head_metadata
+        pck_weights, pck_audit = load_pck_head_weights(
+            probe_head_metadata,
+            probe_heads_by_block,
+        )
+        self.register_buffer(
+            "motion_probe_pck_weights",
+            pck_weights,
+            persistent=True,
+        )
+        self.register_buffer(
+            "motion_probe_pck_head_identity",
+            torch.tensor(pck_audit["head_pairs"], dtype=torch.int32),
+            persistent=True,
+        )
+        self.motion_probe_pck_audit = pck_audit
 
         probe_device = torch.device(motion_probe_device)
         probe_pipe = context_wan.ContextAwareWanVideoPipeline.from_pretrained(
@@ -357,7 +376,7 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
         grid: tuple[int, int, int],
         retain_input_gradient: bool,
         fixed_query_by_block: dict[int, torch.Tensor] | None = None,
-    ) -> tuple[torch.Tensor, dict[int, torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[int, torch.Tensor]]:
         probe_dit = self._motion_probe_dit
         probe_dit.eval()
         if any(parameter.requires_grad for parameter in probe_dit.parameters()):
@@ -582,10 +601,14 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
             raise RuntimeError(
                 f"Frozen Motion Probe captured {physical_heads.shape[1]} heads, expected 100"
             )
-        heatmap = physical_heads.mean(dim=1)
-        heatmap = heatmap / heatmap.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+        heatmap = aggregate_head_probabilities(
+            physical_heads,
+            grid=grid,
+            head_weights=self.motion_probe_pck_weights,
+        )
         return (
-            heatmap.reshape(heatmap.shape[0], *grid),
+            heatmap,
+            physical_heads,
             query_representations_by_block,
         )
 
@@ -681,7 +704,7 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
         )
 
         with torch.no_grad():
-            teacher_heatmap, gt_query_by_block = self._run_frozen_probe(
+            teacher_heatmap, teacher_head_maps, gt_query_by_block = self._run_frozen_probe(
                 latents=teacher_probe_input,
                 timestep=probe_timestep,
                 captured_inputs=record["inputs"],
@@ -691,11 +714,12 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 fixed_query_by_block=None,
             )
             teacher_heatmap = teacher_heatmap.detach()
+            teacher_head_maps = teacher_head_maps.detach()
             gt_query_by_block = {
                 block_id: query.detach()
                 for block_id, query in gt_query_by_block.items()
             }
-        student_heatmap, _ = self._run_frozen_probe(
+        student_heatmap, student_head_maps, _ = self._run_frozen_probe(
             latents=student_probe_input,
             timestep=probe_timestep,
             captured_inputs=record["inputs"],
@@ -711,9 +735,26 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 "student Frozen Motion Probe heatmap lost its gradient to x0_pred"
             )
 
-        heatmap_loss = student_teacher_heatmap_kl(
-            student_heatmap,
-            teacher_heatmap,
+        heatmap_loss, per_head_kl = pck_weighted_teacher_student_head_kl(
+            student_head_maps,
+            teacher_head_maps,
+            self.motion_probe_pck_weights,
+        )
+        equal_teacher_heatmap = aggregate_head_probabilities(
+            teacher_head_maps,
+            grid=grid,
+        )
+        equal_student_heatmap = aggregate_head_probabilities(
+            student_head_maps,
+            grid=grid,
+        )
+        equal_head_kl = teacher_student_head_kl(
+            student_head_maps,
+            teacher_head_maps,
+        ).mean()
+        legacy_aggregate_kl = student_teacher_heatmap_kl(
+            equal_student_heatmap,
+            equal_teacher_heatmap,
         )
         trajectory_loss, student_trajectory, teacher_trajectory = trajectory_huber_loss(
             student_heatmap,
@@ -760,6 +801,12 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
             {
                 "train/loss_flow": float(flow_loss.detach().item()),
                 "train/loss_motion_probe_heatmap_kl_student_teacher": float(
+                    legacy_aggregate_kl.detach().item()
+                ),
+                "train/loss_motion_probe_equal_head_kl_teacher_student": float(
+                    equal_head_kl.detach().item()
+                ),
+                "train/loss_motion_probe_pck_head_kl_teacher_student": float(
                     heatmap_loss.detach().item()
                 ),
                 "train/loss_motion_probe_trajectory_huber": float(
@@ -789,6 +836,24 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 "train/motion_probe_noise_level": self.motion_probe_noise_level,
                 "train/motion_probe_scheduler_sigma": float(
                     scheduler_sigma.detach().float().item()
+                ),
+                "train/motion_probe_pck_score_min": float(
+                    self.motion_probe_pck_audit["score_min"]
+                ),
+                "train/motion_probe_pck_score_max": float(
+                    self.motion_probe_pck_audit["score_max"]
+                ),
+                "train/motion_probe_pck_weight_min": float(
+                    self.motion_probe_pck_audit["weight_min"]
+                ),
+                "train/motion_probe_pck_weight_max": float(
+                    self.motion_probe_pck_audit["weight_max"]
+                ),
+                "train/motion_probe_per_head_kl_min": float(
+                    per_head_kl.detach().min().item()
+                ),
+                "train/motion_probe_per_head_kl_max": float(
+                    per_head_kl.detach().max().item()
                 ),
                 "train/motion_probe_trainable_params": 0.0,
                 "train/loss_total": float(total.detach().item()),
@@ -1000,7 +1065,8 @@ def log_stage_summary(accelerator, model, args: argparse.Namespace) -> None:
             f"probe_noise_level={args.probe_noise_level:g}; "
             f"lambda_heatmap={args.motion_probe_heatmap_weight:g}; "
             f"lambda_trajectory={args.motion_probe_trajectory_weight:g}; "
-            "KL=student||teacher; trajectory=13-frame normalized soft-argmax Huber"
+            "heatmap loss=sum_h normalized(PCK_h)*KL(teacher_h||student_h); "
+            "trajectory=PCK-weighted aggregate 13-frame normalized soft-argmax Huber"
         )
 
 

@@ -709,6 +709,7 @@ def build_videos_page(
             "methods": methods,
             "records": records,
             "cases": cases,
+            "autoRefresh": bool(config.get("ab_experiment")),
             "metricSpecs": [
                 {
                     "key": spec["key"],
@@ -946,6 +947,19 @@ def build_videos_page(
     document.getElementById("pause").onclick=()=>videos().forEach(video=>video.pause());
     document.getElementById("replay").onclick=()=>videos().forEach(video=>{{video.currentTime=0;video.play().catch(()=>{{}})}});
     render();
+    if(D.autoRefresh){{
+      const loadedAt=Date.parse(document.lastModified);
+      window.setInterval(async()=>{{
+        try{{
+          const response=await fetch(window.location.href,{{method:"HEAD",cache:"no-store"}});
+          const modifiedAt=Date.parse(response.headers.get("Last-Modified")??"");
+          const videoIsPlaying=videos().some(video=>!video.paused&&!video.ended);
+          if(Number.isFinite(modifiedAt)&&modifiedAt>loadedAt&&!videoIsPlaying){{
+            window.location.reload();
+          }}
+        }}catch{{}}
+      }},30000);
+    }}
   </script>
 </body>
 </html>
@@ -2054,13 +2068,22 @@ def build_master_hub(
     )
     legacy_test_records.extend(test5_reference_records)
     site_titles = config.get("site_titles", {})
+    test5_page_root = hub_root / "test5"
+    test5_media_prefix = "../gallery"
+    if config.get("ab_experiment"):
+        test5_page_root.mkdir(parents=True, exist_ok=True)
+        link_directory(
+            watch_root / "site" / "videos" / "media",
+            test5_page_root / "media",
+        )
+        test5_media_prefix = "."
     write_unified_videos_page(
         config=config,
-        page_root=hub_root / "test5",
+        page_root=test5_page_root,
         cases=test_cases,
         current_records=test_records,
         legacy_records=legacy_test_records,
-        current_site_prefix="../gallery",
+        current_site_prefix=test5_media_prefix,
         page_title=str(
             site_titles.get("test5", "test_5 · 全 checkpoint 合并对比")
         ),
@@ -2072,7 +2095,7 @@ def build_master_hub(
             merge_video_records(
                 test_records,
                 legacy_test_records,
-                "../gallery",
+                test5_media_prefix,
                 methods_override=(
                     config["methods"] if config.get("ab_experiment") else None
                 ),

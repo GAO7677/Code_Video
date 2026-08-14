@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import numpy as np
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+
+import cv2
+import numpy as np
 
 from run_training_case_diagnostics import (
     anchor_frame_indices,
@@ -9,6 +13,8 @@ from run_training_case_diagnostics import (
     mask_iou,
     noise_sweep_config,
     noise_sweep_html,
+    render_equal_pck_timeline,
+    render_heatmap_timelines,
     signed_difference_image,
     sweep_value_code,
 )
@@ -118,5 +124,44 @@ def test_noise_sweep_html_contains_all_stage_probe_combinations():
     )
     assert rendered.count('class="sweep-stage"') == 5
     assert rendered.count('class="sweep-probe"') == 10
-    assert rendered.count("corresponding frame concatenation") == 20
+    assert rendered.count("equal_vs_pck_top100_timeline.jpg") == 10
+    assert rendered.count("Inputs and frame-by-frame media") == 10
     assert "noise_sweep/comparisons/train_0100/probe_010" in rendered
+
+
+def test_heatmap_timelines_form_one_row_per_role_with_shared_frame_order():
+    teacher = np.zeros((1, 13, 4, 7), dtype=np.float32)
+    student = np.zeros_like(teacher)
+    for index in range(13):
+        teacher[0, index, index % 4, index % 7] = 1.0
+        student[0, index, (index + 1) % 4, (index + 2) % 7] = 1.0
+    with TemporaryDirectory() as directory:
+        files = render_heatmap_timelines(
+            Path(directory), teacher, student, pixel_frames=49
+        )
+        teacher_image = cv2.imread(str(Path(directory) / files["teacher_timeline"]))
+        student_image = cv2.imread(str(Path(directory) / files["student_timeline"]))
+        combined_image = cv2.imread(str(Path(directory) / files["combined_timeline"]))
+    assert teacher_image.shape == (96, 13 * 160, 3)
+    assert student_image.shape == teacher_image.shape
+    assert combined_image.shape == (96 * 2 + 6, 13 * 160, 3)
+
+
+def test_equal_pck_timeline_has_four_rows_under_one_scale():
+    maps = []
+    for offset in range(4):
+        values = np.zeros((1, 13, 4, 7), dtype=np.float32)
+        for index in range(13):
+            values[0, index, (index + offset) % 4, (index + offset) % 7] = 1.0
+        maps.append(values)
+    with TemporaryDirectory() as directory:
+        filename = render_equal_pck_timeline(
+            Path(directory),
+            teacher_equal=maps[0],
+            student_equal=maps[1],
+            teacher_pck=maps[2],
+            student_pck=maps[3],
+            pixel_frames=49,
+        )
+        image = cv2.imread(str(Path(directory) / filename))
+    assert image.shape == (96 * 4 + 6 * 3, 13 * 160, 3)
