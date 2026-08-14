@@ -70,7 +70,8 @@ Student map = softmax(stopgrad(Q_GT) @ K_Student^T / sqrt(d))
 ```
 
 多个 query rows 先在每个 physical head 内聚合，再根据该 head 的 `pck32`
-分数计算 `w_h = p_h / sum_j p_j`，对 Top100 heads 加权。PCK 分数从 Top100
+分数计算 `w_h = p_h^gamma / sum_j p_j^gamma`，当前 `gamma=30`，对 Top100
+heads 加权。PCK 分数从 Top100
 配置记录的 `selection_source` 读取；加载时会严格检查 ranking step、Top100
 head identity、重复/缺失项及 collector 顺序。已有可视化代码使用 query-row
 sum；当前训练代码使用 mean。两者仅相差固定常数，进行每个 head 的 heatmap
@@ -103,7 +104,7 @@ L = L_flow
   + lambda_heatmap * sum_h w_h KL(A_h^teacher || A_h^student)
   + lambda_trajectory * Huber(Traj(A_PCK^student), Traj(A_PCK^teacher))
 
-w_h = PCK_h / sum_j PCK_j
+w_h = PCK_h^gamma / sum_j PCK_j^gamma, gamma = 30
 A_PCK = sum_h w_h A_h
 ```
 
@@ -214,7 +215,7 @@ SAM2 的关键问题不是能否使用，而是如何确定哪个候选 mask 对
 | `run_training_case_diagnostics.py` | SAM2 cache、5B case forward、训练噪声/Probe sweep、媒体和 HTML 报告 |
 | `test_training_case_diagnostics.py` | sweep 配置、HTML、mask、contact sheet 和差分渲染测试 |
 | `run_training_case_noise_sweep_gpu0.sh` | 五个训练 timestep 与 Probe 0.1/0.2 的可恢复前台运行脚本 |
-| `run_training_case_pck_weighted_gpu0.sh` | PCK-weighted 全量前向及 equal/PCK 对比渲染脚本 |
+| `run_training_case_pck_weighted_gpu0.sh` | 可配置 PCK power 的全量前向及 equal/linear/sharpened 对比渲染脚本 |
 | `README.md` | 配置、数据契约、训练命令模板和旧 Scheme B 对比 |
 | `handoff.md` | 当前项目状态与下一步执行说明 |
 
@@ -228,7 +229,7 @@ attention_trajectory_distillation_project/
 
 ## 7. 已完成验证
 
-已通过 17 项小模型与报告测试，包括：
+已通过 19 项小模型与报告测试，包括：
 
 1. frozen probe 参数不产生梯度；
 2. Student probe input 保留梯度；
@@ -238,7 +239,8 @@ attention_trajectory_distillation_project/
 6. 固定 Teacher GT-Q 后，loss 可以回传到第一次 forward 的 `v_pred`；
 7. PCK-weighted KL 与手工公式一致，且梯度可以回传到 Student；
 8. PCK score 与 Top100 identity/collector 顺序严格对齐；
-9. equal/PCK 四行时间轴尺寸和页面结构正确。
+9. equal/PCK `gamma=1/30` 六行时间轴尺寸和页面结构正确；
+10. `gamma=30` power sharpening 与手工权重、loss 公式一致。
 
 同时完成：
 
@@ -288,11 +290,10 @@ case 完成 5B 只前向诊断：
 - 训练 timestep `100/300/500/700/900`，同一例共用一个 `epsilon_train`；
 - Probe `(noise_level,timestep)` 为 `(0.1,100)` 和 `(0.2,200)`；
 - 两档 Probe 共用一个 `epsilon_p`，每组 Teacher/Student 也共用该噪声；
-- 每个组合并排展示 Top100 equal 与 PCK-weighted heatmap、对应视频帧拼接、
-  差分和 trajectory；
-- 每个组合还展示一张四行横向 latent 时间轴图：equal Teacher、equal
-  Student、PCK Teacher、PCK Student，从 `L00/F00` 排到 `L12/F48`，四行
-  使用同一个 heatmap 色标；
+- 完成的 `gamma=30` 组合并排展示 Top100 equal、PCK `gamma=1` 和 PCK
+  `gamma=30` heatmap、对应视频帧拼接、差分和 trajectory；
+- 六行横向 latent 时间轴按三种 weighting 的 Teacher/Student 排列，从
+  `L00/F00` 到 `L12/F48`，六行使用同一个 heatmap 色标；
 - 页面按 Query、原始 x0、原始 Probe、noise sweep、SAM2 candidates 排列；
   sweep 默认展开 `t=500`，其他阶段和详细视频使用折叠区域。
 
@@ -305,15 +306,21 @@ case 完成 5B 只前向诊断：
 前台重跑命令：
 
 ```bash
-GPU_ID=0 ./run_training_case_pck_weighted_gpu0.sh
+GPU_ID=0 PCK_WEIGHT_POWER=30 ./run_training_case_pck_weighted_gpu0.sh
 ```
 
 脚本禁止 GPU 4，并在目标 GPU 已使用超过 2 GiB 时拒绝运行。原始 3 组加
-sweep 30 组共 33 个 Probe 组合均满足：PCK 权重和为 1、head map shape 为
-`[1,100,5824]`、Teacher 无梯度、Student 有梯度、probe trainable params 为
-0、`||dL/dv_pred|| > 0`。当前 PCK 分数范围为 `88.955780–93.545941`，归一化
-权重范围为 `0.009823422–0.010330315`，因此 equal/PCK 视觉差异预期较小；
-33 组 PCK KL 相对 equal-head KL 的变化范围约为 `-0.986%–+0.503%`。
+sweep 30 组共 33 个 `gamma=30` Probe 前向均已完成，并满足 PCK 权重和为 1、
+head map shape 为 `[1,100,5824]`、Teacher 无梯度、Student 有梯度、probe
+trainable params 为 0、`||dL/dv_pred|| > 0`。线性权重范围为
+`0.009823422–0.010330315`；`gamma=30` 权重范围扩大为
+`0.005509757–0.024926210`，最大/最小为 `4.524x`。33 组 `gamma=30` KL 相对
+equal-head KL 的变化范围为 `-24.096%–+20.975%`。
+
+按用户停止指令，媒体渲染在 F1 `t=700` 阶段中止。已完整保留 3 个原始 Probe
+和 F1 `t=100/300/500 x Probe 0.1/0.2` 六组 sweep，共 9 组 `gamma=30` 媒体；
+其余 24 个 sweep 在页面中只展示已有 equal/`gamma=1` 媒体及已计算完成的
+`gamma=30` loss/gradient，不引用缺失视频。
 
 ## 9. Case 诊断页面内容
 
@@ -344,10 +351,10 @@ Teacher 和 Student 使用同一 `epsilon_p`、`probe_noise_level` 和
 1. GT noisy probe input；
 2. Student noisy probe input；
 3. Teacher/Student Top100 equal heatmap overlay；
-4. Teacher/Student Top100 PCK-weighted heatmap overlay；
-5. equal/PCK 两种 Teacher/Student heatmap difference；
-6. 四行共享色标的 13-frame latent 时间轴；
-7. equal/PCK 两组 soft-argmax trajectories 与叠加图；
+4. Teacher/Student Top100 PCK `gamma=1/30` heatmap overlay；
+5. equal/PCK 三种 Teacher/Student heatmap difference；
+6. 六行共享色标的 13-frame latent 时间轴；
+7. equal/PCK `gamma=1/30` 三组 soft-argmax trajectories 与叠加图；
 8. query rows 与 Teacher GT-Q/Student-K 计算定义；
 9. `L_flow`、heatmap KL、trajectory Huber、total loss；
 10. auxiliary loss 到 `v_pred` 的 gradient norm。
@@ -411,3 +418,35 @@ Case metadata
 完成。下一步仍需把离线 SAM2 query cache 接入正式训练 dataset，然后执行短
 训练 smoke test，验证一次真实 optimizer step、显存和 checkpoint 行为；之后
 再比较 Probe `0.1/0.2` 与 loss 权重，而不是直接启动长训练。
+
+## 13. Noise-gated point correspondence case 诊断
+
+新增 `noise_gated_correspondence.py`、
+`run_pybullet_correspondence_diagnostics.py`、
+`test_noise_gated_correspondence.py` 和 GPU 0 前台脚本。诊断沿用 F1/F2/F3
+三个 PyBullet train cases。当前 PyBullet adapter 没有 simulator 导出的逐点
+trajectory，因此本轮明确使用 F04 SAM2 identity mask 内 8 个点初始化的
+CoTracker pseudo-GT，不把它称为 simulator GT；source 固定为 `L01/F04`，
+只监督 `L02/F08–L12/F48` 的未来可见点。
+
+每个 target point 在 `16×28` token grid 上生成 `sigma=1.0` 的连续 Gaussian
+label，Top100 Main Student Q/K attention 按 `pck32` 加权，分别计算 soft-label
+CE 与 PCK aggregate soft-argmax coordinate Huber。noise gate 使用
+`SNR/(SNR+1)`，并在 scheduler `sigma>=0.75` 时归零，因此 `t=900` 会保留原始
+attention 可视化，但不会产生 correspondence loss 梯度。已完成
+`t=100/300/500/700/900` 共 15 个 5B step-0 forward；这仍是 forward-only
+诊断，没有 optimizer step，不能声称模型已经通过该 loss 得到改善。
+
+报告中每一帧为五栏拼接 overlay：point trajectory、Gaussian target、PCK QK
+attention、gated soft-CE contribution、coordinate-loss sensitivity。输出位置：
+
+```text
+/data/gaoya/agent-data/outputs/noise_gated_correspondence_diagnostics/index.html
+```
+
+前台重跑与本地服务命令：
+
+```bash
+GPU_ID=0 ./run_pybullet_correspondence_diagnostics_gpu0.sh --overwrite
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python -m http.server 8765 --bind 0.0.0.0 --directory /data/gaoya/agent-data/outputs/noise_gated_correspondence_diagnostics
+```

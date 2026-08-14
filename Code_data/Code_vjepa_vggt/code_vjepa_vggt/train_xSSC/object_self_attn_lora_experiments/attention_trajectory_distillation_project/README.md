@@ -13,13 +13,14 @@ L = L_flow
   + motion_probe_trajectory_weight
       * Huber(trajectory(A_PCK^student), trajectory(A_PCK^teacher))
 
-w_h = PCK_h / sum_j PCK_j
+w_h = PCK_h^gamma / sum_j PCK_j^gamma, gamma = 30
 A_PCK = sum_h w_h A_h
 ```
 
 The loss operates on all 100 physical head distributions before aggregation.
 The PCK score source is the `selection_source` recorded by the Top100 head
-configuration, using its `pck32` field. The loader verifies the ranking step,
+configuration, using its `pck32` field and a configurable power sharpening
+exponent (`gamma=30` by default). The loader verifies the ranking step,
 Top100 identity, missing/duplicate heads, and collector order before registering
 the normalized weights. Equal-head aggregation and the legacy aggregate
 `KL(Student || Teacher)` remain diagnostics only; neither is optimized.
@@ -119,6 +120,7 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
   --head_selection_expected_num_heads 100 \
   --probe_timestep 500 \
   --probe_noise_level 0.5 \
+  --motion_probe_pck_weight_power 30 \
   --motion_probe_query_latent_frame 1 \
   --motion_probe_heatmap_weight 0.1 \
   --motion_probe_trajectory_weight 0.1
@@ -143,7 +145,7 @@ levels and every Teacher/Student pair share one `epsilon_p`. Run the complete
 PCK-weighted forward and equal-vs-PCK render pipeline in the foreground with:
 
 ```bash
-GPU_ID=0 ./run_training_case_pck_weighted_gpu0.sh
+GPU_ID=0 PCK_WEIGHT_POWER=30 ./run_training_case_pck_weighted_gpu0.sh
 ```
 
 The report is available at:
@@ -152,16 +154,53 @@ The report is available at:
 /data/gaoya/agent-data/outputs/frozen_motion_probe_training_diagnostics/index.html
 ```
 
-Each Probe result includes side-by-side equal/PCK videos and trajectories plus a
-four-row fixed-query timeline: equal Teacher, equal Student, PCK Teacher, and
-PCK Student. Latent frames are ordered from `L00/F00` through `L12/F48`, and all
-four rows use one shared color scale. The case page keeps `t=500` open and
-collapses the other training stages and detailed videos. After changing only
-report code, regenerate the timelines and HTML without loading the DiT or VAE:
+Completed sharpened results include side-by-side equal, linear PCK (`gamma=1`),
+and active PCK (`gamma=30`) videos and trajectories. Their six-row timeline is
+ordered as Teacher/Student for all three weighting modes from `L00/F00` through
+`L12/F48`, under one shared color scale. The interrupted render completed all
+three original Probe results and six F1 sweep combinations (`t=100/300/500` x
+Probe `0.1/0.2`). Remaining sweep sections retain their existing equal/linear
+media while reporting the completed `gamma=30` loss and gradient values.
+Regenerate only completed timelines and HTML without loading the DiT or VAE:
 
 ```bash
 PYTHONNOUSERSITE=1 \
 PYTHONPATH=/home/gaoya/Code_Video/DiffTrack-main:/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main:/home/gaoya/Grounded-SAM-2-main \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-run_training_case_diagnostics.py refresh-report --device cpu
+run_training_case_diagnostics.py refresh-report --device cpu --pck-weight-power 30
 ```
+
+## Noise-gated point correspondence diagnostic
+
+`run_pybullet_correspondence_diagnostics.py` evaluates the direct Main Student
+Q/K correspondence proposal on the same three PyBullet train cases. Because the
+dataset adapter does not expose simulator point trajectories, this diagnostic
+labels its supervision explicitly as CoTracker pseudo-GT: eight points are
+sampled inside the frozen F04 SAM2 identity mask and tracked bidirectionally.
+The source is `L01/F04`; future latent frames use continuous Gaussian labels
+with `sigma=1.0` token. Top100 heads are PCK-weighted, coordinate Huber is
+computed from the aggregate soft-argmax, and an SNR gate with `gamma=1.0`
+disables correspondence supervision at scheduler `sigma >= 0.75`.
+
+Run all trajectory preparation, five-stage 5B forward diagnostics, and overlay
+rendering in the foreground on GPU 0 with:
+
+```bash
+GPU_ID=0 ./run_pybullet_correspondence_diagnostics_gpu0.sh --overwrite
+```
+
+The generated page and large artifacts are stored under:
+
+```text
+/data/gaoya/agent-data/outputs/noise_gated_correspondence_diagnostics/
+```
+
+Serve that page in the foreground with:
+
+```bash
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python -m http.server 8765 --bind 0.0.0.0 --directory /data/gaoya/agent-data/outputs/noise_gated_correspondence_diagnostics
+```
+
+This is a forward-only step-0 diagnostic, not an optimizer run. Differentiable
+Q/K behavior, Gaussian boundary continuity, coordinate mapping, and noise-gate
+behavior are covered by `test_noise_gated_correspondence.py`.

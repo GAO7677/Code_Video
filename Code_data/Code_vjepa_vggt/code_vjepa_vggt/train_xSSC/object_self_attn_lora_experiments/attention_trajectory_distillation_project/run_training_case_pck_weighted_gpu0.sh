@@ -4,6 +4,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 GPU_ID="${GPU_ID:-0}"
+PCK_WEIGHT_POWER="${PCK_WEIGHT_POWER:-30}"
 
 if [[ "${GPU_ID}" == "4" ]]; then
   echo "GPU 4 is prohibited by workspace rules." >&2
@@ -22,12 +23,13 @@ export PYTHONPATH="/home/gaoya/Code_Video/DiffTrack-main:/home/gaoya/Code_Video/
 
 SWEEP_ARGS=(
   --device cuda:0
+  --pck-weight-power "${PCK_WEIGHT_POWER}"
   --sweep-training-timesteps 100 300 500 700 900
   --sweep-probe-noise-levels 0.1 0.2
   --sweep-probe-timesteps 100 200
 )
 
-"${PYTHON}" "${HERE}/run_training_case_diagnostics.py" forward --device cuda:0 --overwrite
+"${PYTHON}" "${HERE}/run_training_case_diagnostics.py" forward --device cuda:0 --pck-weight-power "${PCK_WEIGHT_POWER}" --overwrite
 "${PYTHON}" "${HERE}/run_training_case_diagnostics.py" sweep-forward "${SWEEP_ARGS[@]}" --overwrite
-"${PYTHON}" "${HERE}/run_training_case_diagnostics.py" render --device cuda:0 --overwrite
+"${PYTHON}" "${HERE}/run_training_case_diagnostics.py" render --device cuda:0 --pck-weight-power "${PCK_WEIGHT_POWER}" --overwrite
 "${PYTHON}" "${HERE}/run_training_case_diagnostics.py" sweep-render "${SWEEP_ARGS[@]}" --overwrite

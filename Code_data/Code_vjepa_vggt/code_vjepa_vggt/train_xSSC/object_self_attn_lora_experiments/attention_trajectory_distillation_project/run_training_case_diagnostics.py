@@ -1015,10 +1015,11 @@ def run_forward(args: argparse.Namespace) -> None:
                 teacher_head_maps,
                 student_head_maps,
                 grid=grid,
-                pck_weights=pck_weights,
+                pck_linear_weights=pck_linear_weights,
+                pck_weight_power=float(args.pck_weight_power),
                 trajectory_huber_delta=float(args.trajectory_huber_delta),
             )
-            heatmap_loss = comparison["pck_head_kl_teacher_student"]
+            heatmap_loss = comparison["pck_sharpened_head_kl_teacher_student"]
             trajectory_loss = comparison["trajectory_loss"]
             student_trajectory = comparison["student_trajectory"]
             teacher_trajectory = comparison["teacher_trajectory"]
@@ -1058,16 +1059,24 @@ def run_forward(args: argparse.Namespace) -> None:
             heatmap_difference=(comparison["student_equal"] - comparison["teacher_equal"]).detach().cpu().float().numpy(),
             teacher_trajectory=comparison["equal_teacher_trajectory"].detach().cpu().float().numpy(),
             student_trajectory=comparison["equal_student_trajectory"].detach().cpu().float().numpy(),
-            teacher_heatmap_pck=comparison["teacher_pck"].detach().cpu().float().numpy(),
-            student_heatmap_pck=comparison["student_pck"].detach().cpu().float().numpy(),
-            heatmap_difference_pck=(comparison["student_pck"] - comparison["teacher_pck"]).detach().cpu().float().numpy(),
-            teacher_trajectory_pck=teacher_trajectory.detach().cpu().float().numpy(),
-            student_trajectory_pck=student_trajectory.detach().cpu().float().numpy(),
+            teacher_heatmap_pck=comparison["teacher_pck_linear"].detach().cpu().float().numpy(),
+            student_heatmap_pck=comparison["student_pck_linear"].detach().cpu().float().numpy(),
+            heatmap_difference_pck=(comparison["student_pck_linear"] - comparison["teacher_pck_linear"]).detach().cpu().float().numpy(),
+            teacher_trajectory_pck=comparison["linear_teacher_trajectory"].detach().cpu().float().numpy(),
+            student_trajectory_pck=comparison["linear_student_trajectory"].detach().cpu().float().numpy(),
+            teacher_heatmap_pck_sharpened=comparison["teacher_pck_sharpened"].detach().cpu().float().numpy(),
+            student_heatmap_pck_sharpened=comparison["student_pck_sharpened"].detach().cpu().float().numpy(),
+            heatmap_difference_pck_sharpened=(comparison["student_pck_sharpened"] - comparison["teacher_pck_sharpened"]).detach().cpu().float().numpy(),
+            teacher_trajectory_pck_sharpened=teacher_trajectory.detach().cpu().float().numpy(),
+            student_trajectory_pck_sharpened=student_trajectory.detach().cpu().float().numpy(),
             teacher_head_probabilities=teacher_head_maps.cpu().float().numpy(),
             student_head_probabilities=student_head_maps.detach().cpu().float().numpy(),
             per_head_kl_teacher_student=comparison["per_head_kl_teacher_student"].detach().cpu().float().numpy(),
-            per_head_weighted_contribution=comparison["per_head_weighted_contribution"].detach().cpu().float().numpy(),
-            pck_weights=pck_weights.detach().cpu().float().numpy(),
+            per_head_linear_pck_contribution=comparison["per_head_linear_pck_contribution"].detach().cpu().float().numpy(),
+            per_head_weighted_contribution=comparison["per_head_sharpened_pck_contribution"].detach().cpu().float().numpy(),
+            pck_weights=pck_linear_weights.detach().cpu().float().numpy(),
+            pck_weights_sharpened=pck_weights.detach().cpu().float().numpy(),
+            pck_weight_power=np.asarray(float(args.pck_weight_power), dtype=np.float32),
             query_rows=query_rows.cpu().numpy(),
             selected_mask=selected_mask,
         )
@@ -1120,14 +1129,21 @@ def run_forward(args: argparse.Namespace) -> None:
                 "equal_head_kl_teacher_student": float(
                     comparison["equal_head_kl_teacher_student"].detach().item()
                 ),
+                "pck_linear_head_kl_teacher_student": float(
+                    comparison["pck_linear_head_kl_teacher_student"].detach().item()
+                ),
                 "pck_weighted_head_kl_teacher_student": float(
                     heatmap_loss.detach().item()
                 ),
+                "pck_weight_power": float(args.pck_weight_power),
                 "trajectory_huber": float(
                     comparison["equal_trajectory_loss"].detach().item()
                 ),
                 "trajectory_huber_pck_weighted": float(trajectory_loss.detach().item()),
-                "heatmap_loss_definition": "sum_h normalized(PCK_h) * KL(Teacher_h || Student_h)",
+                "trajectory_huber_pck_linear": float(
+                    comparison["linear_trajectory_loss"].detach().item()
+                ),
+                "heatmap_loss_definition": "sum_h normalized(PCK_h^gamma) * KL(Teacher_h || Student_h)",
                 "heatmap_weight": float(args.heatmap_weight),
                 "trajectory_weight": float(args.trajectory_weight),
                 "weighted_auxiliary_loss": float(auxiliary_loss.detach().item()),
@@ -1597,10 +1613,13 @@ def run_sweep_forward(args: argparse.Namespace) -> None:
                         teacher_head_maps,
                         student_head_maps,
                         grid=grid,
-                        pck_weights=pck_weights,
+                        pck_linear_weights=pck_linear_weights,
+                        pck_weight_power=float(args.pck_weight_power),
                         trajectory_huber_delta=float(args.trajectory_huber_delta),
                     )
-                    heatmap_loss = comparison["pck_head_kl_teacher_student"]
+                    heatmap_loss = comparison[
+                        "pck_sharpened_head_kl_teacher_student"
+                    ]
                     trajectory_loss = comparison["trajectory_loss"]
                     student_trajectory = comparison["student_trajectory"]
                     teacher_trajectory = comparison["teacher_trajectory"]
@@ -1629,16 +1648,24 @@ def run_sweep_forward(args: argparse.Namespace) -> None:
                     heatmap_difference=(comparison["student_equal"] - comparison["teacher_equal"]).detach().cpu().float().numpy(),
                     teacher_trajectory=comparison["equal_teacher_trajectory"].detach().cpu().float().numpy(),
                     student_trajectory=comparison["equal_student_trajectory"].detach().cpu().float().numpy(),
-                    teacher_heatmap_pck=comparison["teacher_pck"].detach().cpu().float().numpy(),
-                    student_heatmap_pck=comparison["student_pck"].detach().cpu().float().numpy(),
-                    heatmap_difference_pck=(comparison["student_pck"] - comparison["teacher_pck"]).detach().cpu().float().numpy(),
-                    teacher_trajectory_pck=teacher_trajectory.detach().cpu().float().numpy(),
-                    student_trajectory_pck=student_trajectory.detach().cpu().float().numpy(),
+                    teacher_heatmap_pck=comparison["teacher_pck_linear"].detach().cpu().float().numpy(),
+                    student_heatmap_pck=comparison["student_pck_linear"].detach().cpu().float().numpy(),
+                    heatmap_difference_pck=(comparison["student_pck_linear"] - comparison["teacher_pck_linear"]).detach().cpu().float().numpy(),
+                    teacher_trajectory_pck=comparison["linear_teacher_trajectory"].detach().cpu().float().numpy(),
+                    student_trajectory_pck=comparison["linear_student_trajectory"].detach().cpu().float().numpy(),
+                    teacher_heatmap_pck_sharpened=comparison["teacher_pck_sharpened"].detach().cpu().float().numpy(),
+                    student_heatmap_pck_sharpened=comparison["student_pck_sharpened"].detach().cpu().float().numpy(),
+                    heatmap_difference_pck_sharpened=(comparison["student_pck_sharpened"] - comparison["teacher_pck_sharpened"]).detach().cpu().float().numpy(),
+                    teacher_trajectory_pck_sharpened=teacher_trajectory.detach().cpu().float().numpy(),
+                    student_trajectory_pck_sharpened=student_trajectory.detach().cpu().float().numpy(),
                     teacher_head_probabilities=teacher_head_maps.cpu().float().numpy(),
                     student_head_probabilities=student_head_maps.detach().cpu().float().numpy(),
                     per_head_kl_teacher_student=comparison["per_head_kl_teacher_student"].detach().cpu().float().numpy(),
-                    per_head_weighted_contribution=comparison["per_head_weighted_contribution"].detach().cpu().float().numpy(),
-                    pck_weights=pck_weights.detach().cpu().float().numpy(),
+                    per_head_linear_pck_contribution=comparison["per_head_linear_pck_contribution"].detach().cpu().float().numpy(),
+                    per_head_weighted_contribution=comparison["per_head_sharpened_pck_contribution"].detach().cpu().float().numpy(),
+                    pck_weights=pck_linear_weights.detach().cpu().float().numpy(),
+                    pck_weights_sharpened=pck_weights.detach().cpu().float().numpy(),
+                    pck_weight_power=np.asarray(float(args.pck_weight_power), dtype=np.float32),
                 )
                 atomic_json(
                     comparison_root / "metrics.json",
@@ -1654,16 +1681,25 @@ def run_sweep_forward(args: argparse.Namespace) -> None:
                         "equal_head_kl_teacher_student": float(
                             comparison["equal_head_kl_teacher_student"].detach().item()
                         ),
+                        "pck_linear_head_kl_teacher_student": float(
+                            comparison[
+                                "pck_linear_head_kl_teacher_student"
+                            ].detach().item()
+                        ),
                         "pck_weighted_head_kl_teacher_student": float(
                             heatmap_loss.detach().item()
                         ),
+                        "pck_weight_power": float(args.pck_weight_power),
                         "trajectory_huber": float(
                             comparison["equal_trajectory_loss"].detach().item()
                         ),
                         "trajectory_huber_pck_weighted": float(
                             trajectory_loss.detach().item()
                         ),
-                        "heatmap_loss_definition": "sum_h normalized(PCK_h) * KL(Teacher_h || Student_h)",
+                        "trajectory_huber_pck_linear": float(
+                            comparison["linear_trajectory_loss"].detach().item()
+                        ),
+                        "heatmap_loss_definition": "sum_h normalized(PCK_h^gamma) * KL(Teacher_h || Student_h)",
                         "weighted_auxiliary_loss": float(auxiliary_loss.detach().item()),
                         "trajectory_distance_normalized": float(
                             trajectory_distance.item()
@@ -1987,22 +2023,50 @@ def render_heatmap_timelines(
     return files
 
 
+def pck_power_label(power: float) -> str:
+    value = float(power)
+    return str(int(value)) if value.is_integer() else f"{value:g}".replace(".", "p")
+
+
+def pck_sharpened_directory(power: float) -> str:
+    return f"pck_gamma{pck_power_label(power)}"
+
+
+def pck_sharpened_media_complete(output_root: Path, power: float) -> bool:
+    media_root = output_root / pck_sharpened_directory(power)
+    required = (
+        "teacher_student_five_panel.mp4",
+        "teacher_student_13frame_contact_sheet.jpg",
+        "teacher_frame_heatmap_overlay.mp4",
+        "student_frame_heatmap_overlay.mp4",
+        "trajectory_overlay.jpg",
+        "trajectory_values.json",
+    )
+    return all((media_root / filename).is_file() for filename in required)
+
+
 def render_equal_pck_timeline(
     output_root: Path,
     *,
     teacher_equal: np.ndarray,
     student_equal: np.ndarray,
-    teacher_pck: np.ndarray,
-    student_pck: np.ndarray,
+    teacher_pck_linear: np.ndarray,
+    student_pck_linear: np.ndarray,
+    teacher_pck_sharpened: np.ndarray,
+    student_pck_sharpened: np.ndarray,
+    pck_weight_power: float,
     pixel_frames: int,
     tile_size: tuple[int, int] = (160, 96),
 ) -> str:
+    power_label = pck_power_label(pck_weight_power)
     rows = []
     values_by_role = (
         ("E-T", teacher_equal),
         ("E-S", student_equal),
-        ("P-T", teacher_pck),
-        ("P-S", student_pck),
+        ("P1-T", teacher_pck_linear),
+        ("P1-S", student_pck_linear),
+        (f"P{power_label}-T", teacher_pck_sharpened),
+        (f"P{power_label}-S", student_pck_sharpened),
     )
     normalized_values = []
     for role, values in values_by_role:
@@ -2014,7 +2078,7 @@ def render_equal_pck_timeline(
         normalized_values.append((role, values))
     expected_shape = normalized_values[0][1].shape
     if any(values.shape != expected_shape for _, values in normalized_values):
-        raise ValueError("equal/PCK heatmaps must have matching shapes")
+        raise ValueError("equal/linear/sharpened PCK heatmaps must have matching shapes")
     anchors = anchor_frame_indices(expected_shape[0], int(pixel_frames))
     shared_scale = max(heatmap_scale(values) for _, values in normalized_values)
     for role, values in normalized_values:
@@ -2042,7 +2106,7 @@ def render_equal_pck_timeline(
             combined_rows.append(divider)
         combined_rows.append(row)
     combined = np.concatenate(combined_rows, axis=0)
-    filename = "equal_vs_pck_top100_timeline.jpg"
+    filename = f"equal_vs_pck_gamma{power_label}_top100_timeline.jpg"
     cv2.imwrite(
         str(output_root / filename),
         cv2.cvtColor(combined, cv2.COLOR_RGB2BGR),
@@ -2056,6 +2120,7 @@ def render_probe_weighting_media(
     decoded: dict[str, np.ndarray],
     arrays: dict[str, np.ndarray],
     heatmap_fps: float,
+    pck_weight_power: float,
 ) -> None:
     render_heatmap_media(output_root, decoded, arrays, heatmap_fps)
     required = {
@@ -2080,12 +2145,37 @@ def render_probe_weighting_media(
         pck_arrays,
         heatmap_fps,
     )
+    sharpened_required = {
+        "teacher_heatmap_pck_sharpened",
+        "student_heatmap_pck_sharpened",
+        "heatmap_difference_pck_sharpened",
+        "teacher_trajectory_pck_sharpened",
+        "student_trajectory_pck_sharpened",
+    }
+    if not sharpened_required.issubset(arrays):
+        return
+    sharpened_arrays = {
+        "teacher_heatmap": arrays["teacher_heatmap_pck_sharpened"],
+        "student_heatmap": arrays["student_heatmap_pck_sharpened"],
+        "heatmap_difference": arrays["heatmap_difference_pck_sharpened"],
+        "teacher_trajectory": arrays["teacher_trajectory_pck_sharpened"],
+        "student_trajectory": arrays["student_trajectory_pck_sharpened"],
+    }
+    render_heatmap_media(
+        output_root / pck_sharpened_directory(pck_weight_power),
+        decoded,
+        sharpened_arrays,
+        heatmap_fps,
+    )
     render_equal_pck_timeline(
         output_root,
         teacher_equal=arrays["teacher_heatmap"],
         student_equal=arrays["student_heatmap"],
-        teacher_pck=arrays["teacher_heatmap_pck"],
-        student_pck=arrays["student_heatmap_pck"],
+        teacher_pck_linear=arrays["teacher_heatmap_pck"],
+        student_pck_linear=arrays["student_heatmap_pck"],
+        teacher_pck_sharpened=arrays["teacher_heatmap_pck_sharpened"],
+        student_pck_sharpened=arrays["student_heatmap_pck_sharpened"],
+        pck_weight_power=pck_weight_power,
         pixel_frames=decoded["target_x0"].shape[0],
     )
 
@@ -2095,6 +2185,7 @@ def refresh_probe_weighting_timelines(
     arrays: Mapping[str, np.ndarray],
     *,
     pixel_frames: int,
+    pck_weight_power: float,
 ) -> None:
     render_heatmap_timelines(
         output_root,
@@ -2110,12 +2201,23 @@ def refresh_probe_weighting_timelines(
         arrays["student_heatmap_pck"],
         pixel_frames=pixel_frames,
     )
+    if "teacher_heatmap_pck_sharpened" not in arrays:
+        return
+    render_heatmap_timelines(
+        output_root / pck_sharpened_directory(pck_weight_power),
+        arrays["teacher_heatmap_pck_sharpened"],
+        arrays["student_heatmap_pck_sharpened"],
+        pixel_frames=pixel_frames,
+    )
     render_equal_pck_timeline(
         output_root,
         teacher_equal=arrays["teacher_heatmap"],
         student_equal=arrays["student_heatmap"],
-        teacher_pck=arrays["teacher_heatmap_pck"],
-        student_pck=arrays["student_heatmap_pck"],
+        teacher_pck_linear=arrays["teacher_heatmap_pck"],
+        student_pck_linear=arrays["student_heatmap_pck"],
+        teacher_pck_sharpened=arrays["teacher_heatmap_pck_sharpened"],
+        student_pck_sharpened=arrays["student_heatmap_pck_sharpened"],
+        pck_weight_power=pck_weight_power,
         pixel_frames=pixel_frames,
     )
 
@@ -2226,6 +2328,12 @@ def noise_sweep_html(metrics: dict[str, Any] | None) -> str:
         for row in metrics["comparisons"]
     }
     pck_audit = metrics.get("head_selection", {}).get("pck_weighting", {})
+    pck_weight_power = float(
+        pck_audit.get("weight_power", DEFAULT_PCK_WEIGHT_POWER)
+    )
+    power_label = pck_power_label(pck_weight_power)
+    sharpened_directory = pck_sharpened_directory(pck_weight_power)
+    comparison_timeline = f"equal_vs_pck_gamma{power_label}_top100_timeline.jpg"
     summary_rows: list[str] = []
     stage_sections: list[str] = []
     for stage in metrics["training_stages"]:
@@ -2241,20 +2349,72 @@ def noise_sweep_html(metrics: dict[str, Any] | None) -> str:
                 f"<td>{probe['timestep']:.0f}</td>"
                 f"<td>{row['heatmap_kl_student_teacher']:.6f}</td>"
                 f"<td>{row.get('equal_head_kl_teacher_student', float('nan')):.6f}</td>"
+                f"<td>{row.get('pck_linear_head_kl_teacher_student', float('nan')):.6f}</td>"
                 f"<td>{row.get('pck_weighted_head_kl_teacher_student', float('nan')):.6f}</td>"
                 f"<td>{row['trajectory_huber']:.6f}</td>"
+                f"<td>{row.get('trajectory_huber_pck_linear', float('nan')):.6f}</td>"
                 f"<td>{row.get('trajectory_huber_pck_weighted', float('nan')):.6f}</td>"
                 f"<td>{row['gradient_to_first_pass_v_pred_norm']:.5f}</td>"
                 "</tr>"
             )
             probe_base = f"noise_sweep/probes/{probe_id}"
             comparison_base = f"noise_sweep/comparisons/{stage_id}/{probe_id}"
+            sharpened_media_complete = bool(
+                row.get("pck_sharpened_media_complete", False)
+            )
+            if sharpened_media_complete:
+                timeline_html = timeline_figure(
+                    f"{comparison_base}/{comparison_timeline}",
+                    f"Equal vs PCK γ=1 vs γ={power_label}",
+                    f"E-T · E-S · P1-T · P1-S · P{power_label}-T · "
+                    f"P{power_label}-S · one shared scale",
+                )
+                sharpened_video = media_figure(
+                    f"{comparison_base}/{sharpened_directory}/teacher_student_five_panel.mp4",
+                    f"PCK γ={power_label} aggregate",
+                    "active training weighting",
+                )
+                sharpened_trajectory = media_figure(
+                    f"{comparison_base}/{sharpened_directory}/trajectory_overlay.jpg",
+                    f"PCK γ={power_label} trajectory",
+                    "active training weighting",
+                )
+                sharpened_detail = (
+                    media_figure(
+                        f"{comparison_base}/{sharpened_directory}/teacher_frame_heatmap_overlay.mp4",
+                        f"PCK γ={power_label} Teacher frame / heatmap / overlay",
+                    )
+                    + media_figure(
+                        f"{comparison_base}/{sharpened_directory}/student_frame_heatmap_overlay.mp4",
+                        f"PCK γ={power_label} Student frame / heatmap / overlay",
+                    )
+                    + f'<div class="wide">{media_figure(f"{comparison_base}/{sharpened_directory}/teacher_student_13frame_contact_sheet.jpg", f"PCK γ={power_label} · all 13 aligned frames")}</div>'
+                )
+                sharpened_trajectory_link = (
+                    f' · <a href="{html.escape(comparison_base)}/'
+                    f'{sharpened_directory}/trajectory_values.json">'
+                    f"PCK γ={power_label}</a>"
+                )
+                comparison_class = "result-triplet"
+                media_status = f"γ={power_label} media complete"
+            else:
+                timeline_html = timeline_figure(
+                    f"{comparison_base}/equal_vs_pck_top100_timeline.jpg",
+                    "Equal vs PCK γ=1",
+                    "E-T · E-S · P1-T · P1-S · one shared scale",
+                )
+                sharpened_video = ""
+                sharpened_trajectory = ""
+                sharpened_detail = ""
+                sharpened_trajectory_link = ""
+                comparison_class = "result-pair"
+                media_status = f"γ={power_label} loss complete · media stopped"
             probe_sections.append(
                 f"""<div class="sweep-probe"><div class="probe-heading"><h4>Probe {probe['noise_level']:.2f}</h4><span>t={probe['timestep']:.0f} · scheduler σ={probe['scheduler_sigma']:.4f}</span></div>
-<div class="metric-line"><span>Legacy aggregate KL(S||T) <strong>{row['heatmap_kl_student_teacher']:.6f}</strong></span><span>Equal head KL(T||S) <strong>{row.get('equal_head_kl_teacher_student', float('nan')):.6f}</strong></span><span>PCK head KL(T||S) <strong>{row.get('pck_weighted_head_kl_teacher_student', float('nan')):.6f}</strong></span><span>||dL/dv|| <strong>{row['gradient_to_first_pass_v_pred_norm']:.5f}</strong></span></div>
-{timeline_figure(f'{comparison_base}/equal_vs_pck_top100_timeline.jpg','Equal vs PCK-weighted fixed-query response','E-T · E-S · P-T · P-S · one shared color scale · L00/F00 → L12/F48')}
-<div class="result-pair">{media_figure(f'{comparison_base}/teacher_student_five_panel.mp4','Equal aggregate','GT · x0_pred · Teacher · Student · difference')}{media_figure(f'{comparison_base}/pck_weighted/teacher_student_five_panel.mp4','PCK-weighted aggregate','GT · x0_pred · Teacher · Student · difference')}</div>
-<div class="result-pair">{media_figure(f'{comparison_base}/trajectory_overlay.jpg','Equal trajectory','Teacher green · Student red')}{media_figure(f'{comparison_base}/pck_weighted/trajectory_overlay.jpg','PCK-weighted trajectory','Teacher green · Student red')}</div>
+<div class="metric-line"><span>Equal head KL(T||S) <strong>{row.get('equal_head_kl_teacher_student', float('nan')):.6f}</strong></span><span>PCK γ=1 KL <strong>{row.get('pck_linear_head_kl_teacher_student', float('nan')):.6f}</strong></span><span>PCK γ={power_label} KL <strong>{row.get('pck_weighted_head_kl_teacher_student', float('nan')):.6f}</strong></span><span>||dLγ{power_label}/dv|| <strong>{row['gradient_to_first_pass_v_pred_norm']:.5f}</strong></span><span>{media_status}</span></div>
+{timeline_html}
+<div class="{comparison_class}">{media_figure(f'{comparison_base}/teacher_student_five_panel.mp4','Equal aggregate','GT · x0_pred · Teacher · Student · difference')}{media_figure(f'{comparison_base}/pck_weighted/teacher_student_five_panel.mp4','PCK γ=1 aggregate','linear PCK score weighting')}{sharpened_video}</div>
+<div class="{comparison_class}">{media_figure(f'{comparison_base}/trajectory_overlay.jpg','Equal trajectory','Teacher green · Student red')}{media_figure(f'{comparison_base}/pck_weighted/trajectory_overlay.jpg','PCK γ=1 trajectory','Teacher green · Student red')}{sharpened_trajectory}</div>
 <details class="media-drawer"><summary>Inputs and frame-by-frame media</summary><div class="grid compact-grid">
 {media_figure(f'{probe_base}/vae_teacher_probe_input.mp4','GT x0 + shared Probe noise',f"level={probe['noise_level']:.2f}; shared seed={probe['shared_probe_noise_seed']}")}
 {media_figure(f'{comparison_base}/vae_student_probe_input.mp4','x0_pred + same Probe noise',f"t={probe['timestep']:.0f}")}
@@ -2264,8 +2424,10 @@ def noise_sweep_html(metrics: dict[str, Any] | None) -> str:
 {media_figure(f'{comparison_base}/student_top100_heatmap.mp4','Student Top100 heatmap video')}
 {media_figure(f'{comparison_base}/pck_weighted/teacher_frame_heatmap_overlay.mp4','PCK Teacher frame / heatmap / overlay')}
 {media_figure(f'{comparison_base}/pck_weighted/student_frame_heatmap_overlay.mp4','PCK Student frame / heatmap / overlay')}
-<div class="wide">{media_figure(f'{comparison_base}/teacher_student_13frame_contact_sheet.jpg','All 13 aligned frames')}</div>
-<p class="data-link"><a href="{html.escape(comparison_base)}/trajectory_values.json">Trajectory values.json</a></p>
+<div class="wide">{media_figure(f'{comparison_base}/teacher_student_13frame_contact_sheet.jpg','Equal · all 13 aligned frames')}</div>
+<div class="wide">{media_figure(f'{comparison_base}/pck_weighted/teacher_student_13frame_contact_sheet.jpg','PCK γ=1 · all 13 aligned frames')}</div>
+{sharpened_detail}
+<p class="data-link"><a href="{html.escape(comparison_base)}/trajectory_values.json">Equal trajectory</a> · <a href="{html.escape(comparison_base)}/pck_weighted/trajectory_values.json">PCK γ=1</a>{sharpened_trajectory_link}</p>
 </div></details></div>"""
             )
         stage_base = f"noise_sweep/stages/{stage_id}"
@@ -2280,8 +2442,8 @@ def noise_sweep_html(metrics: dict[str, Any] | None) -> str:
 </div></details>{''.join(probe_sections)}</div></details>"""
         )
     return f"""<section id="noise-sweep"><div class="section-heading"><span>04</span><div><h2>Training-noise sweep</h2><p>Five Main timesteps · Probe 0.1 and 0.2</p></div></div>
-<p class="protocol">All training stages share one <code>epsilon_train</code>; both Probe levels and every Teacher/Student pair share one <code>epsilon_p</code>. PCK score {pck_audit.get('score_min', float('nan')):.4f}–{pck_audit.get('score_max', float('nan')):.4f}; normalized weight {pck_audit.get('weight_min', float('nan')):.6f}–{pck_audit.get('weight_max', float('nan')):.6f}.</p>
-<div class="table-wrap"><table class="metric-table"><thead><tr><th>Training t</th><th>Training σ</th><th>Probe</th><th>Probe t</th><th>Legacy agg KL(S||T)</th><th>Equal head KL(T||S)</th><th>PCK head KL(T||S)</th><th>Equal traj</th><th>PCK traj</th><th>||dL/dv||</th></tr></thead><tbody>{''.join(summary_rows)}</tbody></table></div>
+<p class="protocol">All training stages share one <code>epsilon_train</code>; both Probe levels and every Teacher/Student pair share one <code>epsilon_p</code>. PCK score {pck_audit.get('score_min', float('nan')):.4f}–{pck_audit.get('score_max', float('nan')):.4f}; γ=1 weight {pck_audit.get('linear_weight_min', float('nan')):.6f}–{pck_audit.get('linear_weight_max', float('nan')):.6f}; active γ={power_label} weight {pck_audit.get('weight_min', float('nan')):.6f}–{pck_audit.get('weight_max', float('nan')):.6f}.</p>
+<div class="table-wrap"><table class="metric-table"><thead><tr><th>Training t</th><th>Training σ</th><th>Probe</th><th>Probe t</th><th>Legacy agg KL(S||T)</th><th>Equal head KL(T||S)</th><th>PCK γ=1 KL</th><th>PCK γ={power_label} KL</th><th>Equal traj</th><th>PCK γ=1 traj</th><th>PCK γ={power_label} traj</th><th>||dLγ{power_label}/dv||</th></tr></thead><tbody>{''.join(summary_rows)}</tbody></table></div>
 {''.join(stage_sections)}</section>"""
 
 
@@ -2308,6 +2470,12 @@ def case_page(
     probe = metrics["probe"]
     flow = metrics["flow"]
     pck_audit = metrics.get("head_selection", {}).get("pck_weighting", {})
+    pck_weight_power = float(
+        pck_audit.get("weight_power", DEFAULT_PCK_WEIGHT_POWER)
+    )
+    power_label = pck_power_label(pck_weight_power)
+    sharpened_directory = pck_sharpened_directory(pck_weight_power)
+    comparison_timeline = f"equal_vs_pck_gamma{power_label}_top100_timeline.jpg"
     sweep_html = noise_sweep_html(sweep_metrics)
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(case['case_key'])}</title>
@@ -2317,11 +2485,11 @@ def case_page(
 header{{position:sticky;top:0;z-index:10;background:#f5f7f6f2;border-bottom:1px solid var(--line);padding:11px 20px;backdrop-filter:blur(10px)}}.header-inner{{width:min(1760px,100%);margin:auto}}.back{{font-size:12px}}header h1{{font-size:21px;line-height:1.2;margin:3px 0}}header p{{margin:0;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}nav{{display:flex;gap:16px;flex-wrap:wrap;margin-top:7px}}a{{color:var(--teal);font-weight:700;text-decoration:none}}a:focus-visible,summary:focus-visible{{outline:3px solid #e3a739;outline-offset:2px}}
 main{{width:min(1760px,calc(100% - 28px));margin:auto;padding:20px 0 72px}}section{{border-top:2px solid var(--ink);padding:18px 0 34px}}h2,h3,h4,p{{margin-top:0}}h2{{font-size:20px;margin-bottom:2px}}h4{{font-size:15px;margin-bottom:0}}.section-heading{{display:flex;align-items:flex-start;gap:11px;margin-bottom:14px}}.section-heading>span{{display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--ink);font:700 12px/1 monospace}}.section-heading p{{margin:1px 0 0;color:var(--muted);font-size:12px}}
 .grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}.wide{{grid-column:1/-1}}figure{{margin:0;background:var(--paper);border:1px solid var(--line);padding:7px;border-radius:2px;min-width:0}}figcaption{{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px;min-height:21px}}figcaption strong{{font-size:13px}}figcaption span{{font-size:11px;color:var(--muted);text-align:right}}video,img{{display:block;width:100%;height:auto;background:#101210}}.facts{{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));border:1px solid var(--line);background:var(--paper);margin-bottom:14px}}.fact{{padding:9px 11px;border-right:1px solid var(--line)}}.fact:last-child{{border:0}}.fact span{{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}}.fact strong{{font-size:15px}}
-.timeline{{grid-column:1/-1;padding:8px}}.timeline-scroll{{overflow-x:auto;overscroll-behavior-inline:contain;background:#101210}}.timeline img{{width:auto;max-width:none;min-width:2080px;height:auto}}.result-pair{{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:12px;margin-top:12px}}.protocol{{padding:10px 12px;border-left:4px solid var(--teal);background:var(--paper);margin:0 0 14px}}code{{font-size:12px}}
+.timeline{{grid-column:1/-1;padding:8px}}.timeline-scroll{{overflow-x:auto;overscroll-behavior-inline:contain;background:#101210}}.timeline img{{width:auto;max-width:none;min-width:2080px;height:auto}}.result-triplet{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}}.result-pair{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}}.protocol{{padding:10px 12px;border-left:4px solid var(--teal);background:var(--paper);margin:0 0 14px}}code{{font-size:12px}}
 .table-wrap{{overflow:auto;margin-bottom:16px}}.metric-table{{width:100%;border-collapse:collapse;background:var(--paper)}}.metric-table th,.metric-table td{{border:1px solid var(--line);padding:8px 10px;text-align:left;white-space:nowrap}}.metric-table th{{background:#e7ece9;font-size:11px}}.metric-table .probe-10 td:nth-child(3){{color:var(--teal);font-weight:800}}.metric-table .probe-20 td:nth-child(3){{color:var(--amber);font-weight:800}}
 .sweep-stage{{border-top:1px solid var(--line-strong)}}.sweep-stage:last-child{{border-bottom:1px solid var(--line-strong)}}.sweep-stage>summary{{display:flex;justify-content:space-between;gap:16px;cursor:pointer;padding:13px 4px;font-weight:800;font-size:15px}}.sweep-stage>summary small{{color:var(--muted);font-weight:500}}.stage-body{{padding:0 0 24px}}.sweep-probe{{border-top:1px dashed var(--line);padding:18px 0 6px}}.probe-heading{{display:flex;justify-content:space-between;gap:14px;align-items:baseline;margin-bottom:7px}}.probe-heading span{{font-size:11px;color:var(--muted)}}.metric-line{{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;color:var(--muted);font-size:11px}}.metric-line strong{{color:var(--ink);font-size:12px}}
 .media-drawer{{margin-top:12px;border:1px solid var(--line);background:#edf1ef}}.media-drawer>summary{{cursor:pointer;padding:9px 11px;font-weight:700;font-size:12px}}.media-drawer[open]>summary{{border-bottom:1px solid var(--line)}}.media-drawer .grid{{padding:10px}}.stage-media{{margin:0 0 8px}}.compact-grid figure{{background:var(--paper)}}.data-link{{padding:10px;margin:0}}.candidates{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:10px}}.candidate-drawer{{margin-top:12px}}
-@media(max-width:900px){{header{{position:static}}main{{width:min(100% - 18px,1760px)}}.grid,.result-pair{{grid-template-columns:1fr}}.facts{{grid-template-columns:1fr 1fr}}.wide,.timeline{{grid-column:auto}}.sweep-stage>summary{{display:block}}.sweep-stage>summary small{{display:block;margin-top:3px}}.timeline img{{min-width:1560px}}figcaption{{display:block}}figcaption span{{display:block;text-align:left}}}}
+@media(max-width:900px){{header{{position:static}}main{{width:min(100% - 18px,1760px)}}.grid,.result-triplet,.result-pair{{grid-template-columns:1fr}}.facts{{grid-template-columns:1fr 1fr}}.wide,.timeline{{grid-column:auto}}.sweep-stage>summary{{display:block}}.sweep-stage>summary small{{display:block;margin-top:3px}}.timeline img{{min-width:1560px}}figcaption{{display:block}}figcaption span{{display:block;text-align:left}}}}
 </style></head><body><header><div class="header-inner"><a class="back" href="{html.escape(index_href)}">返回总览</a><h1>{html.escape(case['case_key'])}</h1><p>{html.escape(case['caption'])}</p><nav><a href="#query">固定 Query</a><a href="#baseline">原始 x0</a><a href="#probe">原始 Probe</a>{'<a href="#noise-sweep">噪声 Sweep</a>' if sweep_metrics else ''}<a href="#candidates">SAM2 候选</a></nav></div></header><main>
 <div class="facts"><div class="fact"><span>Split / index</span><strong>train / {case['dataset_index']}</strong></div><div class="fact"><span>Probe grid</span><strong>{' × '.join(map(str,metrics['grid']))}</strong></div><div class="fact"><span>Query cells</span><strong>{metrics['query_token_count']}</strong></div><div class="fact"><span>Top heads</span><strong>100 / {metrics['head_selection']['num_blocks']} blocks</strong></div><div class="fact"><span>Peak allocated</span><strong>{metrics['peak_gpu_memory_mib']:.0f} MiB</strong></div></div>
 <section id="query"><div class="section-heading"><span>01</span><div><h2>Fixed object query</h2><p>F04 identity mask → latent-1 query cells</p></div></div><div class="grid">
@@ -2331,31 +2499,37 @@ main{{width:min(1760px,calc(100% - 28px));margin:auto;padding:20px 0 72px}}secti
 {media_figure('source_training_video.mp4','Training sample','49 frames')}{media_figure('vae_gt_x0.mp4','Wan VAE decoded GT x0')}
 {media_figure('vae_training_xt.mp4','Training x_t',f"t={flow['training_timestep']:.0f}; sigma={flow['scheduler_sigma']:.4f}")}{media_figure('vae_predicted_x0.mp4','Baseline x0_pred','x_t - sigma_t * v_pred')}
 <div class="wide">{media_figure('x0_anchor_contact_sheet.jpg','Aligned x0 audit','GT · x0_pred · difference across 13 anchors')}</div></div></section>
-<section id="probe"><div class="section-heading"><span>03</span><div><h2>Original Frozen Motion Probe</h2><p>Probe noise {probe['noise_level']:.2f} · timestep {probe['timestep']:.0f}</p></div></div><div class="facts"><div class="fact"><span>Legacy agg KL(S||T)</span><strong>{probe['heatmap_kl_student_teacher']:.6f}</strong></div><div class="fact"><span>Equal head KL(T||S)</span><strong>{probe.get('equal_head_kl_teacher_student', float('nan')):.6f}</strong></div><div class="fact"><span>PCK head KL(T||S)</span><strong>{probe.get('pck_weighted_head_kl_teacher_student', float('nan')):.6f}</strong></div><div class="fact"><span>PCK trajectory</span><strong>{probe.get('trajectory_huber_pck_weighted', float('nan')):.6f}</strong></div><div class="fact"><span>||dL/dv_pred||</span><strong>{probe['gradient_to_first_pass_v_pred_norm']:.5f}</strong></div></div>
-<p class="protocol">PCK score {pck_audit.get('score_min', float('nan')):.4f}–{pck_audit.get('score_max', float('nan')):.4f}; normalized weight {pck_audit.get('weight_min', float('nan')):.6f}–{pck_audit.get('weight_max', float('nan')):.6f}. Training heat loss: <code>Σ_h w_h KL(A_h^tea || A_h^stu)</code>.</p>
-{timeline_figure('equal_vs_pck_top100_timeline.jpg','Equal vs PCK-weighted fixed-query response','E-T · E-S · P-T · P-S · one shared color scale · L00/F00 → L12/F48')}
-<div class="result-pair">{media_figure('teacher_student_five_panel.mp4','Equal aggregate','GT · x0_pred · Teacher · Student · difference')}{media_figure('pck_weighted/teacher_student_five_panel.mp4','PCK-weighted aggregate','GT · x0_pred · Teacher · Student · difference')}</div>
-<div class="result-pair">{media_figure('trajectory_overlay.jpg','Equal trajectory','Teacher green · Student red')}{media_figure('pck_weighted/trajectory_overlay.jpg','PCK-weighted trajectory','Teacher green · Student red')}</div>
-<details class="media-drawer"><summary>Inputs and frame-by-frame media</summary><div class="grid compact-grid">{media_figure('vae_teacher_probe_input.mp4','GT x0 + shared Probe noise',f"level={probe['noise_level']:.2f}")}{media_figure('vae_student_probe_input.mp4','x0_pred + same Probe noise',f"seed={probe['shared_noise_seed']}")}{media_figure('teacher_frame_heatmap_overlay.mp4','Equal Teacher frame / heatmap / overlay')}{media_figure('student_frame_heatmap_overlay.mp4','Equal Student frame / heatmap / overlay')}{media_figure('pck_weighted/teacher_frame_heatmap_overlay.mp4','PCK Teacher frame / heatmap / overlay')}{media_figure('pck_weighted/student_frame_heatmap_overlay.mp4','PCK Student frame / heatmap / overlay')}<div class="wide">{media_figure('teacher_student_13frame_contact_sheet.jpg','Equal aggregate · all 13 aligned frames')}</div><div class="wide">{media_figure('pck_weighted/teacher_student_13frame_contact_sheet.jpg','PCK aggregate · all 13 aligned frames')}</div><p class="data-link"><a href="trajectory_values.json">Equal trajectory.json</a> · <a href="pck_weighted/trajectory_values.json">PCK trajectory.json</a></p></div></details></section>
+<section id="probe"><div class="section-heading"><span>03</span><div><h2>Original Frozen Motion Probe</h2><p>Probe noise {probe['noise_level']:.2f} · timestep {probe['timestep']:.0f}</p></div></div><div class="facts"><div class="fact"><span>Equal head KL</span><strong>{probe.get('equal_head_kl_teacher_student', float('nan')):.6f}</strong></div><div class="fact"><span>PCK γ=1 KL</span><strong>{probe.get('pck_linear_head_kl_teacher_student', float('nan')):.6f}</strong></div><div class="fact"><span>PCK γ={power_label} KL</span><strong>{probe.get('pck_weighted_head_kl_teacher_student', float('nan')):.6f}</strong></div><div class="fact"><span>PCK γ={power_label} trajectory</span><strong>{probe.get('trajectory_huber_pck_weighted', float('nan')):.6f}</strong></div><div class="fact"><span>||dLγ{power_label}/dv_pred||</span><strong>{probe['gradient_to_first_pass_v_pred_norm']:.5f}</strong></div></div>
+<p class="protocol">PCK score {pck_audit.get('score_min', float('nan')):.4f}–{pck_audit.get('score_max', float('nan')):.4f}; γ=1 weight {pck_audit.get('linear_weight_min', float('nan')):.6f}–{pck_audit.get('linear_weight_max', float('nan')):.6f}; active γ={power_label} weight {pck_audit.get('weight_min', float('nan')):.6f}–{pck_audit.get('weight_max', float('nan')):.6f}. Training heat loss: <code>Σ_h normalized(PCK_h^{power_label}) KL(A_h^tea || A_h^stu)</code>.</p>
+{timeline_figure(comparison_timeline,f'Equal vs PCK γ=1 vs γ={power_label}',f'E-T · E-S · P1-T · P1-S · P{power_label}-T · P{power_label}-S · one shared scale')}
+<div class="result-triplet">{media_figure('teacher_student_five_panel.mp4','Equal aggregate','GT · x0_pred · Teacher · Student · difference')}{media_figure('pck_weighted/teacher_student_five_panel.mp4','PCK γ=1 aggregate','linear PCK score weighting')}{media_figure(f'{sharpened_directory}/teacher_student_five_panel.mp4',f'PCK γ={power_label} aggregate','active training weighting')}</div>
+<div class="result-triplet">{media_figure('trajectory_overlay.jpg','Equal trajectory','Teacher green · Student red')}{media_figure('pck_weighted/trajectory_overlay.jpg','PCK γ=1 trajectory','Teacher green · Student red')}{media_figure(f'{sharpened_directory}/trajectory_overlay.jpg',f'PCK γ={power_label} trajectory','active training weighting')}</div>
+<details class="media-drawer"><summary>Inputs and frame-by-frame media</summary><div class="grid compact-grid">{media_figure('vae_teacher_probe_input.mp4','GT x0 + shared Probe noise',f"level={probe['noise_level']:.2f}")}{media_figure('vae_student_probe_input.mp4','x0_pred + same Probe noise',f"seed={probe['shared_noise_seed']}")}{media_figure('teacher_frame_heatmap_overlay.mp4','Equal Teacher frame / heatmap / overlay')}{media_figure('student_frame_heatmap_overlay.mp4','Equal Student frame / heatmap / overlay')}{media_figure('pck_weighted/teacher_frame_heatmap_overlay.mp4','PCK γ=1 Teacher frame / heatmap / overlay')}{media_figure('pck_weighted/student_frame_heatmap_overlay.mp4','PCK γ=1 Student frame / heatmap / overlay')}{media_figure(f'{sharpened_directory}/teacher_frame_heatmap_overlay.mp4',f'PCK γ={power_label} Teacher frame / heatmap / overlay')}{media_figure(f'{sharpened_directory}/student_frame_heatmap_overlay.mp4',f'PCK γ={power_label} Student frame / heatmap / overlay')}<div class="wide">{media_figure('teacher_student_13frame_contact_sheet.jpg','Equal aggregate · all 13 aligned frames')}</div><div class="wide">{media_figure('pck_weighted/teacher_student_13frame_contact_sheet.jpg','PCK γ=1 · all 13 aligned frames')}</div><div class="wide">{media_figure(f'{sharpened_directory}/teacher_student_13frame_contact_sheet.jpg',f'PCK γ={power_label} · all 13 aligned frames')}</div><p class="data-link"><a href="trajectory_values.json">Equal trajectory</a> · <a href="pck_weighted/trajectory_values.json">PCK γ=1</a> · <a href="{sharpened_directory}/trajectory_values.json">PCK γ={power_label}</a></p></div></details></section>
 {sweep_html}
 <section id="candidates"><div class="section-heading"><span>05</span><div><h2>SAM2 candidate audit</h2><p>Prompt-free AMG candidates and training filter</p></div></div><div class="grid">{media_figure('prep/sam2_amg_all_overlay.png','All AMG candidates',f"n={case['sam2_amg']['raw_candidate_count']}")}{media_figure('prep/sam2_amg_filtered_overlay.png','Training AMG filter',f"n={case['sam2_amg']['training_filtered_count']}")}</div><details class="media-drawer candidate-drawer"><summary>All candidate masks</summary><div class="candidates">{candidate_html}</div></details></section>
 </main></body></html>"""
 
 
 def index_page(cases: list[dict[str, Any]]) -> str:
+    power_label = pck_power_label(
+        cases[0].get("pck_weight_power", DEFAULT_PCK_WEIGHT_POWER)
+        if cases
+        else DEFAULT_PCK_WEIGHT_POWER
+    )
     rows = "".join(
         f"<tr><td><a href='cases/{html.escape(row['case_key'])}/index.html'>{html.escape(row['case_key'])}</a></td>"
         f"<td>{html.escape(row['family'])}</td><td>{row['dataset_index']}</td>"
         f"<td>{html.escape(row['target_phrase'])}</td><td>{row['query_token_count']}</td>"
         f"<td>{html.escape(row['noise_sweep'])}</td>"
-        f"<td>{row['heatmap_kl']:.6f}</td><td>{row['pck_head_kl']:.6f}</td>"
+        f"<td>{row['equal_head_kl']:.6f}</td><td>{row['pck_linear_head_kl']:.6f}</td>"
+        f"<td>{row['pck_head_kl']:.6f}</td>"
         f"<td>{row['trajectory_huber']:.6f}</td>"
         f"<td>{row['gradient_norm']:.5f}</td></tr>"
         for row in cases
     )
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Frozen Motion Probe training diagnostics</title><style>
 :root{{--bg:#edf0ec;--paper:#fff;--ink:#17201b;--muted:#59665f;--line:#b7c1bb;--green:#176c59}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Noto Sans CJK SC","Source Han Sans SC",sans-serif;letter-spacing:0}}header,main{{width:min(1500px,calc(100% - 28px));margin:auto}}header{{padding:24px 0 14px;border-bottom:2px solid var(--ink)}}h1{{font-size:28px;margin:0}}p{{margin:4px 0;color:var(--muted)}}main{{padding:20px 0 60px}}table{{width:100%;border-collapse:collapse;background:var(--paper)}}th,td{{padding:11px;border:1px solid var(--line);text-align:left}}th{{background:#dfe5e0;font-size:12px}}a{{color:var(--green);font-weight:800;text-decoration:none}}.protocol{{margin-top:18px;padding:12px;border-left:5px solid var(--green);background:var(--paper)}}code{{font-size:12px}}@media(max-width:850px){{main{{overflow:auto}}table{{min-width:1050px}}}}
-</style></head><body><header><h1>Frozen Motion Probe training-case diagnostics</h1><p>PyBullet train split · official Wan2.2-TI2V-5B baseline · F04/latent-1 fixed query · latest3350 Top100</p></header><main><table><thead><tr><th>Case</th><th>Family</th><th>Train index</th><th>Identity target</th><th>Query cells</th><th>Noise sweep</th><th>Legacy agg KL(S||T)</th><th>PCK head KL(T||S)</th><th>PCK Trajectory Huber</th><th>||dL/dv_pred||</th></tr></thead><tbody>{rows}</tbody></table><div class="protocol"><strong>PCK-weighted probe:</strong> Teacher and Student share noise, timestep, text and clean TI2V conditioning. Training heat loss is <code>Σ_h normalized(PCK_h) KL(A_h^tea || A_h^stu)</code>. Case pages compare equal and PCK-weighted aggregate heatmaps under one color scale.</div></main></body></html>"""
+</style></head><body><header><h1>Frozen Motion Probe training-case diagnostics</h1><p>PyBullet train split · official Wan2.2-TI2V-5B baseline · F04/latent-1 fixed query · latest3350 Top100</p></header><main><table><thead><tr><th>Case</th><th>Family</th><th>Train index</th><th>Identity target</th><th>Query cells</th><th>Noise sweep</th><th>Equal head KL</th><th>PCK γ=1 KL</th><th>PCK γ={power_label} KL</th><th>PCK γ={power_label} Trajectory</th><th>||dLγ{power_label}/dv_pred||</th></tr></thead><tbody>{rows}</tbody></table><div class="protocol"><strong>PCK-sharpened probe:</strong> Teacher and Student share noise, timestep, text and clean TI2V conditioning. Active training heat loss is <code>Σ_h normalized(PCK_h^{power_label}) KL(A_h^tea || A_h^stu)</code>. Case pages compare equal, linear PCK and γ={power_label} heatmaps under one shared color scale.</div></main></body></html>"""
 
 
 def report_index_row(
@@ -2375,7 +2549,15 @@ def report_index_row(
             if sweep_metrics
             else "pending"
         ),
-        "heatmap_kl": metrics["probe"]["heatmap_kl_student_teacher"],
+        "pck_weight_power": metrics["probe"].get(
+            "pck_weight_power", DEFAULT_PCK_WEIGHT_POWER
+        ),
+        "equal_head_kl": metrics["probe"].get(
+            "equal_head_kl_teacher_student", float("nan")
+        ),
+        "pck_linear_head_kl": metrics["probe"].get(
+            "pck_linear_head_kl_teacher_student", float("nan")
+        ),
         "pck_head_kl": metrics["probe"].get(
             "pck_weighted_head_kl_teacher_student", float("nan")
         ),
@@ -2481,6 +2663,7 @@ def run_render(args: argparse.Namespace) -> None:
             decoded,
             probe_arrays,
             float(args.heatmap_fps),
+            float(args.pck_weight_power),
         )
         teacher_trajectory = probe_arrays["teacher_trajectory"][0]
         student_trajectory = probe_arrays["student_trajectory"][0]
@@ -2496,6 +2679,13 @@ def run_render(args: argparse.Namespace) -> None:
                 source_frames[int(args.query_pixel_frame)],
                 probe_arrays["teacher_trajectory_pck"][0],
                 probe_arrays["student_trajectory_pck"][0],
+            )
+        if "teacher_trajectory_pck_sharpened" in probe_arrays:
+            render_trajectory_artifacts(
+                case_output / pck_sharpened_directory(args.pck_weight_power),
+                source_frames[int(args.query_pixel_frame)],
+                probe_arrays["teacher_trajectory_pck_sharpened"][0],
+                probe_arrays["student_trajectory_pck_sharpened"][0],
             )
         prep_link = case_output / "prep"
         if prep_link.is_symlink() or prep_link.exists():
@@ -2705,6 +2895,7 @@ def run_sweep_render(args: argparse.Namespace) -> None:
                     },
                     probe_arrays,
                     float(args.heatmap_fps),
+                    float(args.pck_weight_power),
                 )
                 teacher_trajectory = probe_arrays["teacher_trajectory"][0]
                 student_trajectory = probe_arrays["student_trajectory"][0]
@@ -2720,6 +2911,14 @@ def run_sweep_render(args: argparse.Namespace) -> None:
                         source_frames[int(args.query_pixel_frame)],
                         probe_arrays["teacher_trajectory_pck"][0],
                         probe_arrays["student_trajectory_pck"][0],
+                    )
+                if "teacher_trajectory_pck_sharpened" in probe_arrays:
+                    render_trajectory_artifacts(
+                        comparison_root
+                        / pck_sharpened_directory(args.pck_weight_power),
+                        source_frames[int(args.query_pixel_frame)],
+                        probe_arrays["teacher_trajectory_pck_sharpened"][0],
+                        probe_arrays["student_trajectory_pck_sharpened"][0],
                     )
                 atomic_json(
                     comparison_root / "render_complete.json",
@@ -2766,6 +2965,8 @@ def run_refresh_report(args: argparse.Namespace) -> None:
     output_root = args.output_root.resolve()
     manifest = json.loads((cache_root / "manifest.json").read_text(encoding="utf-8"))
     index_rows = []
+    sharpened_media_completed = 0
+    sharpened_media_total = 0
     for position, case in enumerate(manifest["cases"], start=1):
         case_key = case["case_key"]
         case_output = output_root / "cases" / case_key
@@ -2785,6 +2986,7 @@ def run_refresh_report(args: argparse.Namespace) -> None:
                 case_output,
                 probe_file,
                 pixel_frames=int(args.num_frames),
+                pck_weight_power=float(args.pck_weight_power),
             )
         if sweep_metrics:
             teacher_by_probe: dict[str, np.ndarray] = {}
@@ -2810,6 +3012,18 @@ def run_refresh_report(args: argparse.Namespace) -> None:
                     / row["training_stage_id"]
                     / row["probe_setting_id"]
                 )
+                row["pck_sharpened_media_complete"] = (
+                    pck_sharpened_media_complete(
+                        comparison_root,
+                        float(args.pck_weight_power),
+                    )
+                )
+                sharpened_media_total += 1
+                sharpened_media_completed += int(
+                    row["pck_sharpened_media_complete"]
+                )
+                if not row["pck_sharpened_media_complete"]:
+                    continue
                 with np.load(comparison_root / "probe_outputs.npz") as probe_file:
                     arrays = {key: probe_file[key] for key in probe_file.files}
                     arrays.setdefault(
@@ -2820,8 +3034,10 @@ def run_refresh_report(args: argparse.Namespace) -> None:
                         comparison_root,
                         arrays,
                         pixel_frames=int(args.num_frames),
+                        pck_weight_power=float(args.pck_weight_power),
                     )
             del teacher_by_probe
+            atomic_json(sweep_metrics_path, sweep_metrics)
         index_href = "../" * (len(Path(case_key).parts) + 1) + "index.html"
         (case_output / "index.html").write_text(
             case_page(
@@ -2840,7 +3056,24 @@ def run_refresh_report(args: argparse.Namespace) -> None:
     )
     atomic_json(
         output_root / "report_refresh_status.json",
-        {"state": "complete", "case_count": len(index_rows)},
+        {
+            "state": "complete",
+            "case_count": len(index_rows),
+            "pck_sharpened_media_completed": sharpened_media_completed,
+            "pck_sharpened_media_total": sharpened_media_total,
+        },
+    )
+    atomic_json(
+        output_root / "pck_gamma30_render_status.json",
+        {
+            "state": (
+                "complete"
+                if sharpened_media_completed == sharpened_media_total
+                else "partial"
+            ),
+            "completed": sharpened_media_completed,
+            "total": sharpened_media_total,
+        },
     )
 
 

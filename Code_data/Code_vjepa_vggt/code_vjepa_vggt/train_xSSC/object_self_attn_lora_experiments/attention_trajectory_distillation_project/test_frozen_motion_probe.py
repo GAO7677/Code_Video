@@ -15,6 +15,7 @@ from frozen_motion_probe import (
     fixed_query_head_probabilities,
     load_pck_head_weights,
     pck_weighted_teacher_student_head_kl,
+    power_sharpen_head_weights,
     query_rows_from_mask,
     query_rows_from_points,
     student_teacher_heatmap_kl,
@@ -257,6 +258,16 @@ def test_pck_weighted_aggregate_uses_requested_head_weights():
     assert torch.allclose(equal.flatten(1), torch.tensor([[0.5, 0.5]]))
 
 
+def test_power_sharpen_head_weights_expands_reliability_ratio():
+    linear = torch.tensor([0.2, 0.3, 0.5], dtype=torch.float32)
+    sharpened = power_sharpen_head_weights(linear, 3.0)
+    manual = linear.double().pow(3.0)
+    manual = (manual / manual.sum()).float()
+    assert torch.allclose(sharpened, manual)
+    assert torch.allclose(sharpened.sum(), torch.tensor(1.0))
+    assert float(sharpened[-1] / sharpened[0]) > float(linear[-1] / linear[0])
+
+
 def test_latest3350_pck_weights_align_with_selected_top100():
     config_path = (
         Path(__file__).resolve().parent.parent
@@ -267,11 +278,14 @@ def test_latest3350_pck_weights_align_with_selected_top100():
     selected: dict[int, list[int]] = {}
     for target in metadata["targets"]:
         selected.setdefault(int(target["block"]), []).append(int(target["head"]))
-    weights, audit = load_pck_head_weights(metadata, selected)
+    weights, audit = load_pck_head_weights(metadata, selected, weight_power=30.0)
     assert weights.shape == (100,)
     assert torch.allclose(weights.sum(), torch.tensor(1.0))
     assert audit["score_key"] == "pck32"
     assert audit["ranking_step"] == 39
     assert audit["completed_runs_at_selection"] == 3350
+    assert audit["weight_power"] == 30.0
     assert audit["score_min"] > 0.0
+    assert 4.5 < audit["weight_max"] / audit["weight_min"] < 4.6
+    assert audit["linear_weight_max"] / audit["linear_weight_min"] < 1.06
     assert audit["weight_max"] > audit["weight_min"]

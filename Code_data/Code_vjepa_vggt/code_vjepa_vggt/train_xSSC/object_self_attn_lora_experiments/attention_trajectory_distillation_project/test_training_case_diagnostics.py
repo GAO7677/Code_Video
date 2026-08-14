@@ -6,9 +6,11 @@ from types import SimpleNamespace
 
 import cv2
 import numpy as np
+import torch
 
 from run_training_case_diagnostics import (
     anchor_frame_indices,
+    compute_probe_weighting_comparison,
     make_contact_sheet,
     mask_iou,
     noise_sweep_config,
@@ -41,6 +43,35 @@ def test_contact_sheet_and_signed_difference_have_stable_shapes():
     rendered = signed_difference_image(values, (12, 8), vmax=1.0)
     assert rendered.shape == (8, 12, 3)
     assert rendered.dtype == np.uint8
+
+
+def test_probe_comparison_keeps_linear_and_gamma30_losses_distinct():
+    teacher = torch.tensor(
+        [[[0.8, 0.2], [0.3, 0.7]]], dtype=torch.float32
+    )
+    student = torch.tensor(
+        [[[0.5, 0.5], [0.4, 0.6]]], dtype=torch.float32
+    )
+    comparison = compute_probe_weighting_comparison(
+        teacher,
+        student,
+        grid=(1, 1, 2),
+        pck_linear_weights=torch.tensor([0.4, 0.6]),
+        pck_weight_power=30.0,
+        trajectory_huber_delta=0.05,
+    )
+    per_head = comparison["per_head_kl_teacher_student"]
+    linear_weights = comparison["pck_linear_weights"]
+    sharpened_weights = comparison["pck_sharpened_weights"]
+    assert torch.allclose(
+        comparison["pck_linear_head_kl_teacher_student"],
+        (per_head * linear_weights).sum(),
+    )
+    assert torch.allclose(
+        comparison["pck_sharpened_head_kl_teacher_student"],
+        (per_head * sharpened_weights).sum(),
+    )
+    assert float(sharpened_weights.max() / sharpened_weights.min()) > 1.0e5
 
 
 def test_noise_sweep_config_pairs_probe_level_and_timestep():
@@ -113,6 +144,7 @@ def test_noise_sweep_html_contains_all_stage_probe_combinations():
                     "weighted_auxiliary_loss": 0.0011,
                     "gradient_to_first_pass_v_pred_norm": 0.02,
                     "peak_gpu_memory_mib": 2048,
+                    "pck_sharpened_media_complete": True,
                 }
             )
     rendered = noise_sweep_html(
@@ -124,7 +156,8 @@ def test_noise_sweep_html_contains_all_stage_probe_combinations():
     )
     assert rendered.count('class="sweep-stage"') == 5
     assert rendered.count('class="sweep-probe"') == 10
-    assert rendered.count("equal_vs_pck_top100_timeline.jpg") == 10
+    assert rendered.count("equal_vs_pck_gamma30_top100_timeline.jpg") == 10
+    assert rendered.count("pck_gamma30/teacher_student_five_panel.mp4") == 10
     assert rendered.count("Inputs and frame-by-frame media") == 10
     assert "noise_sweep/comparisons/train_0100/probe_010" in rendered
 
@@ -147,9 +180,9 @@ def test_heatmap_timelines_form_one_row_per_role_with_shared_frame_order():
     assert combined_image.shape == (96 * 2 + 6, 13 * 160, 3)
 
 
-def test_equal_pck_timeline_has_four_rows_under_one_scale():
+def test_equal_pck_timeline_has_six_rows_under_one_scale():
     maps = []
-    for offset in range(4):
+    for offset in range(6):
         values = np.zeros((1, 13, 4, 7), dtype=np.float32)
         for index in range(13):
             values[0, index, (index + offset) % 4, (index + offset) % 7] = 1.0
@@ -159,9 +192,13 @@ def test_equal_pck_timeline_has_four_rows_under_one_scale():
             Path(directory),
             teacher_equal=maps[0],
             student_equal=maps[1],
-            teacher_pck=maps[2],
-            student_pck=maps[3],
+            teacher_pck_linear=maps[2],
+            student_pck_linear=maps[3],
+            teacher_pck_sharpened=maps[4],
+            student_pck_sharpened=maps[5],
+            pck_weight_power=30.0,
             pixel_frames=49,
         )
         image = cv2.imread(str(Path(directory) / filename))
-    assert image.shape == (96 * 4 + 6 * 3, 13 * 160, 3)
+    assert filename == "equal_vs_pck_gamma30_top100_timeline.jpg"
+    assert image.shape == (96 * 6 + 6 * 5, 13 * 160, 3)
