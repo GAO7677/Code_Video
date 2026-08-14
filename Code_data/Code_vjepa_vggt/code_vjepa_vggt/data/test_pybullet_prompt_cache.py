@@ -113,6 +113,9 @@ class PyBulletPromptCacheTests(unittest.TestCase):
             embedding = cache.load(record.key)
             self.assertEqual(embedding.shape, (512, 4096))
             self.assertEqual(embedding.dtype, torch.bfloat16)
+            object_embeddings = cache.load_role(record.key, "object_phrases")
+            self.assertEqual(len(object_embeddings), 1)
+            self.assertEqual(object_embeddings[0].shape, (512, 4096))
 
     def test_cache_rejects_changed_caption(self) -> None:
         with self._temporary_directory() as root:

@@ -80,14 +80,16 @@ def object_trajectory_loss(
     if not bool(valid.any()):
         raise ValueError("GT tracker produced no visible future object points")
 
-    per_coordinate = F.huber_loss(
+    per_coordinate = F.smooth_l1_loss(
         pred[:, int(future_start_frame) :],
         gt[:, int(future_start_frame) :],
-        delta=float(huber_delta),
+        beta=float(huber_delta),
         reduction="none",
     )
-    per_point_huber = per_coordinate.mean(dim=-1)
-    loss = per_point_huber[valid].mean()
+    per_point_loss = per_coordinate.mean(dim=-1)
+    per_point_raw_huber = per_point_loss * float(huber_delta)
+    loss = per_point_loss[valid].mean()
+    raw_huber = per_point_raw_huber[valid].mean()
 
     distance = torch.linalg.vector_norm(difference, dim=-1)
     squared_distance = difference.square().sum(dim=-1)
@@ -96,8 +98,11 @@ def object_trajectory_loss(
         "normalized_ade": distance[valid].mean(),
         "normalized_rmse": squared_distance[valid].mean().sqrt(),
         "normalized_gt_motion": gt_motion[valid].mean(),
+        "raw_huber": raw_huber,
         "valid_fraction": valid.float().mean(),
         "valid_count": valid.sum(),
+        "per_frame_loss": _masked_frame_mean(per_point_loss, valid),
+        "per_frame_raw_huber": _masked_frame_mean(per_point_raw_huber, valid),
         "per_frame_ade": _masked_frame_mean(distance, valid),
         "per_point_distance": distance,
         "valid_future": valid,

@@ -673,9 +673,17 @@ def run_tracks(args: argparse.Namespace) -> None:
                 "trajectory_definition": "normalized displacement relative to F04",
                 "loss_primary_validity": "all selected object-query tracks",
                 "loss_audit_validity": "GT CoTracker visibility > 0.9",
+                "trajectory_loss_type": "smooth_l1",
+                "trajectory_loss_beta": float(args.huber_delta),
                 "huber_delta": float(args.huber_delta),
-                "trajectory_huber": float(loss.item()),
-                "trajectory_huber_gt_visible": float(visible_loss.item()),
+                "trajectory_loss": float(loss.item()),
+                "trajectory_loss_gt_visible": float(visible_loss.item()),
+                "trajectory_smooth_l1": float(loss.item()),
+                "trajectory_smooth_l1_gt_visible": float(visible_loss.item()),
+                "trajectory_huber": float(diagnostics["raw_huber"].item()),
+                "trajectory_huber_gt_visible": float(
+                    visible_diagnostics["raw_huber"].item()
+                ),
                 "normalized_ade": float(diagnostics["normalized_ade"].item()),
                 "normalized_ade_gt_visible": float(
                     visible_diagnostics["normalized_ade"].item()
@@ -708,6 +716,12 @@ def run_tracks(args: argparse.Namespace) -> None:
                 pred_tracks_trackres=pred_tracks[0].float().cpu().numpy(),
                 gt_visibility=gt_visibility[0].cpu().numpy().astype(np.uint8),
                 pred_visibility=pred_visibility[0].cpu().numpy().astype(np.uint8),
+                per_frame_trajectory_loss=diagnostics["per_frame_loss"][0]
+                .cpu()
+                .numpy(),
+                per_frame_huber_raw=diagnostics["per_frame_raw_huber"][0]
+                .cpu()
+                .numpy(),
                 per_frame_ade=diagnostics["per_frame_ade"][0].cpu().numpy(),
                 per_frame_ade_gt_visible=visible_diagnostics["per_frame_ade"][0]
                 .cpu()
@@ -823,6 +837,8 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
         pred_tracks = archive["pred_tracks_trackres"].astype(np.float32)
         gt_visibility = archive["gt_visibility"].astype(bool)
         pred_visibility = archive["pred_visibility"].astype(bool)
+        per_frame_loss = archive["per_frame_trajectory_loss"].astype(np.float32)
+        per_frame_huber_raw = archive["per_frame_huber_raw"].astype(np.float32)
         per_frame_ade = archive["per_frame_ade"].astype(np.float32)
         identity_mask = archive["identity_mask"].astype(bool)
     height, width = source_frames.shape[1:3]
@@ -880,10 +896,21 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
                 start = tuple(np.rint(gt_native[frame_id, point_id]).astype(int))
                 stop = tuple(np.rint(pred_native[frame_id, point_id]).astype(int))
                 cv2.line(compare_panel, start, stop, (255, 72, 72), 1, cv2.LINE_AA)
-        frame_ade = "context"
+        frame_metrics = (
+            f"F{frame_id:02d} | context (not supervised) | "
+            f"clip L={metrics['trajectory_loss']:.5f} | "
+            f"raw={metrics['trajectory_huber']:.2e}"
+        )
         if frame_id >= int(args.future_start_frame):
-            value = per_frame_ade[frame_id - int(args.future_start_frame)]
-            frame_ade = "ADE unavailable" if not np.isfinite(value) else f"ADE={value:.4f}"
+            future_id = frame_id - int(args.future_start_frame)
+            loss_value = per_frame_loss[future_id]
+            raw_value = per_frame_huber_raw[future_id]
+            ade_value = per_frame_ade[future_id]
+            frame_metrics = (
+                f"F{frame_id:02d} | Lframe={loss_value:.5f} | "
+                f"Lclip={metrics['trajectory_loss']:.5f} | "
+                f"raw={raw_value:.2e} | ADE={ade_value:.4f}"
+            )
         add_panel_label(gt_panel, "GT RGB + GT CoTracker", f"F{frame_id:02d} | object points")
         add_panel_label(
             pred_panel,
@@ -892,8 +919,8 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
         )
         add_panel_label(
             compare_panel,
-            "Trajectory error overlay",
-            f"F{frame_id:02d} | white=GT, color=pred, red=error | {frame_ade}",
+            "Trajectory loss overlay",
+            frame_metrics,
         )
         frames.append(np.concatenate((gt_panel, pred_panel, compare_panel), axis=1))
     rendered = np.stack(frames).astype(np.uint8)
@@ -917,6 +944,7 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
             "case_key": case["case_key"],
             "frames": int(rendered.shape[0]),
             "resolution": [int(rendered.shape[1]), int(rendered.shape[2])],
+            "trajectory_loss": metrics["trajectory_loss"],
             "trajectory_huber": metrics["trajectory_huber"],
         },
     )
@@ -939,14 +967,14 @@ def render_report(args: argparse.Namespace) -> Path:
 <section class="case">
   <div class="case-head"><div><span class="case-index">CASE {position:02d}</span>
   <h2>{html.escape(case['case_key'])}</h2><p>{html.escape(case['caption'])}</p></div>
-  <div class="loss"><small>ALL OBJECT POINTS HUBER</small><strong>{metrics['trajectory_huber']:.6f}</strong><small>GT-visible {metrics['trajectory_huber_gt_visible']:.6f}</small></div></div>
+  <div class="loss"><small>ALL-POINT SMOOTH L1</small><strong>{metrics['trajectory_loss']:.6f}</strong><small>visible {metrics['trajectory_loss_gt_visible']:.6f} · raw Huber {metrics['trajectory_huber']:.2e}</small></div></div>
   <div class="metrics">
     <span><b>{metrics['normalized_ade']:.4f}</b> all-point ADE</span>
     <span><b>{metrics['normalized_ade_gt_visible']:.4f}</b> visible ADE</span>
     <span><b>{metrics['normalized_rmse']:.4f}</b> normalized RMSE</span>
     <span><b>{metrics['normalized_gt_motion']:.4f}</b> GT motion</span>
     <span><b>{metrics['gt_visible_fraction']:.1%}</b> GT visible</span>
-    <span><b>{gradient_text}</b> dL/dRGB norm</span>
+    <span><b>{metrics['trajectory_huber']:.2e}</b> raw Huber · grad {gradient_text}</span>
   </div>
   <video controls muted loop playsinline preload="metadata" poster="{relative}/trajectory_future_preview.jpg" src="{relative}/object_trajectory_overlay.mp4"></video>
   <div class="media-row">
@@ -957,9 +985,12 @@ def render_report(args: argparse.Namespace) -> Path:
   <div class="links"><a href="{relative}/metrics.json">metrics.json</a><a href="{relative}/trajectories.npz">trajectories.npz</a></div>
 </section>"""
         )
-    mean_loss = float(np.mean([item["trajectory_huber"] for item in summary_metrics]))
+    mean_loss = float(np.mean([item["trajectory_loss"] for item in summary_metrics]))
     mean_visible_loss = float(
-        np.mean([item["trajectory_huber_gt_visible"] for item in summary_metrics])
+        np.mean([item["trajectory_loss_gt_visible"] for item in summary_metrics])
+    )
+    mean_raw_huber = float(
+        np.mean([item["trajectory_huber"] for item in summary_metrics])
     )
     mean_ade = float(np.mean([item["normalized_ade"] for item in summary_metrics]))
     document = f"""<!doctype html>
@@ -974,7 +1005,7 @@ main{{max-width:1500px;margin:auto;padding:22px 28px 80px}}.case{{padding:25px 0
 video,img{{display:block;width:100%;background:#050708}}.case>video{{border:1px solid #29383f;aspect-ratio:21/4;object-fit:contain}}.media-row{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px}}figure{{margin:0;background:var(--paper);border:1px solid var(--line)}}figure video,figure img{{aspect-ratio:16/9;object-fit:contain}}figcaption{{padding:8px 10px;color:var(--muted)}}.links{{display:flex;gap:16px;margin-top:10px}}a{{color:var(--blue);font-weight:700}}
 #replay{{position:fixed;right:22px;bottom:20px;border:1px solid #0e4d3d;background:var(--green);color:white;padding:11px 17px;font-weight:750;cursor:pointer}}
 @media(max-width:900px){{.mast{{grid-template-columns:1fr}}.summary{{justify-content:flex-start}}.metrics{{grid-template-columns:repeat(2,1fr)}}.metrics span{{border-bottom:1px solid var(--line)}}.media-row{{grid-template-columns:1fr}}.case-head{{display:block}}.loss{{text-align:left;margin-top:10px}}.case>video{{aspect-ratio:16/9}}}}
-</style></head><body><header><div class="mast"><div><h1>PyBullet Object Trajectory Loss</h1><p>Full-SA No-Object · merged OpenVid initialization · t={args.training_timestep:g} · F04 SAM2 object points n={args.num_points} · F08–F48 displacement · all points vs GT-visible audit</p></div><div class="summary"><div><small>ALL-POINT MEAN HUBER</small><strong>{mean_loss:.6f}</strong></div><div><small>VISIBLE MEAN HUBER</small><strong>{mean_visible_loss:.6f}</strong></div><div><small>MEAN ADE</small><strong>{mean_ade:.4f}</strong></div></div></div></header><main>{''.join(rows)}</main><button id="replay">Replay all</button><script>
+</style></head><body><header><div class="mast"><div><h1>PyBullet Object Trajectory Loss</h1><p>Full-SA No-Object · merged OpenVid initialization · t={args.training_timestep:g} · F04 SAM2 object points n={args.num_points} · F08–F48 displacement · Smooth L1 β={args.huber_delta:g} · all points vs GT-visible audit</p></div><div class="summary"><div><small>MEAN SMOOTH L1</small><strong>{mean_loss:.6f}</strong></div><div><small>MEAN RAW HUBER</small><strong>{mean_raw_huber:.2e}</strong></div><div><small>MEAN ADE</small><strong>{mean_ade:.4f}</strong></div></div></div></header><main>{''.join(rows)}</main><button id="replay">Replay all</button><script>
 document.getElementById('replay').onclick=()=>document.querySelectorAll('video').forEach(v=>{{v.currentTime=0;v.play().catch(()=>{{}})}});
 </script></body></html>"""
     args.output_root.mkdir(parents=True, exist_ok=True)
@@ -985,8 +1016,14 @@ document.getElementById('replay').onclick=()=>document.querySelectorAll('video')
         {
             "state": "complete",
             "case_count": len(summary_metrics),
-            "mean_trajectory_huber": mean_loss,
-            "mean_trajectory_huber_gt_visible": mean_visible_loss,
+            "mean_trajectory_loss": mean_loss,
+            "mean_trajectory_loss_gt_visible": mean_visible_loss,
+            "mean_trajectory_huber": mean_raw_huber,
+            "mean_trajectory_huber_gt_visible": float(
+                np.mean(
+                    [item["trajectory_huber_gt_visible"] for item in summary_metrics]
+                )
+            ),
             "mean_normalized_ade": mean_ade,
             "index": str(index_path),
         },

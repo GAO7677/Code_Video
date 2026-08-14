@@ -49,6 +49,26 @@ def test_loss_has_gradient_to_prediction() -> None:
     assert float(pred.grad.abs().sum()) > 0.0
 
 
+def test_training_loss_is_raw_huber_divided_by_beta() -> None:
+    pred = torch.zeros((1, 3, 1, 2), requires_grad=True)
+    gt = torch.zeros_like(pred)
+    gt[:, 2, :, 0] = 2.0
+    visibility = torch.ones((1, 3, 1), dtype=torch.bool)
+    beta = 0.01
+    loss, diagnostics = object_trajectory_loss(
+        pred,
+        gt,
+        visibility,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=beta,
+    )
+    torch.testing.assert_close(diagnostics["raw_huber"], loss * beta)
+    torch.testing.assert_close(diagnostics["per_frame_loss"], loss.reshape(1, 1))
+
+
 def test_gt_visibility_is_the_only_validity_gate() -> None:
     pred = torch.zeros((1, 4, 2, 2), requires_grad=True)
     gt = torch.zeros_like(pred)

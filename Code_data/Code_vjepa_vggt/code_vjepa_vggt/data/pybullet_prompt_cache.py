@@ -309,3 +309,12 @@ class PyBulletPromptEmbeddingCache:
         embedding, _ = self.load_prompt_hash(entry.positive_prompt)
         return embedding
 
+    def load_role(self, logical_key: str, role: str) -> list[torch.Tensor]:
+        if role not in PROMPT_ROLES:
+            raise ValueError(f"Unsupported prompt role: {role!r}")
+        entry = self.entries.get(str(logical_key))
+        if entry is None:
+            raise PyBulletPromptCacheError(f"Prompt cache entry not found: {logical_key}")
+        value = getattr(entry, role)
+        prompt_hashes = [value] if isinstance(value, str) else list(value)
+        return [self.load_prompt_hash(prompt_hash)[0] for prompt_hash in prompt_hashes]

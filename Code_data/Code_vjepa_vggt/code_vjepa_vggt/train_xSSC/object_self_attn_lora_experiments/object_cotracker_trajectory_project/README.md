@@ -5,7 +5,7 @@ Training-case diagnostics for a proposed PyBullet-only auxiliary objective:
 ```text
 x_t -> Full-SA No-Object Wan -> x0_pred -> frozen Tiny-VAE
     -> frozen CoTracker3 object-point trajectories
-    -> GT-relative displacement Huber loss
+    -> GT-relative displacement Smooth L1 loss (beta=0.01)
 ```
 
 The GT trajectory is extracted from the original PyBullet RGB video. Twenty-four
@@ -13,6 +13,10 @@ query points are sampled from the cached F04 SAM2 identity mask and reused for
 the predicted video. The report compares loss over all selected object tracks
 with a stricter GT-visible-only audit. Prediction visibility is recorded but
 never removes a primary loss term.
+
+The training-scale loss is Smooth L1, equivalent to raw Huber divided by its
+beta. Reports retain raw Huber for comparison with earlier diagnostics and
+overlay clip loss, per-frame loss, raw Huber, and ADE on the trajectory video.
 
 Run the three cached F1/F2/F3 training cases on GPU 0:
 
