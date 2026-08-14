@@ -364,6 +364,11 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
             inputs, self.pipe.device, self.pipe.torch_dtype
         )
         for unit in self.pipe.units:
+            if (
+                unit.__class__.__name__ == "WanVideoUnit_PromptEmbedder"
+                and "context" in inputs[1]
+            ):
+                continue
             inputs = self.pipe.unit_runner(unit, self.pipe, *inputs)
         return inputs
 

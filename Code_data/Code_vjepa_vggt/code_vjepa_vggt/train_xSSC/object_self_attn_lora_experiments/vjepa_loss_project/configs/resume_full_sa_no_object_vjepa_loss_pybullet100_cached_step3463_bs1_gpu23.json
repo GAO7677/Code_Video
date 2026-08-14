@@ -1,0 +1,13 @@
+{
+  "extends": "resume_full_sa_no_object_vjepa_loss_pybullet100_cached_step3463_gpu23.json",
+  "experiment": {
+    "description": "Resume Full-SA no-object V-JEPA-loss training from interrupted step 3463 on 100% PyBullet with caches and batch 1 after the batch 2 V-JEPA encoder OOM"
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4
+  },
+  "logging": {
+    "wandb_name": "full_sa_no_object_vjepa_loss_pybullet100_cached_resume3463_bs1"
+  }
+}

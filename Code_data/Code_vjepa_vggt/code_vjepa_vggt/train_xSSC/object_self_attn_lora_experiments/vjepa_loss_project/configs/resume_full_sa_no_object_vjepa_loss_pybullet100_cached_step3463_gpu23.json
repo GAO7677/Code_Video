@@ -1,0 +1,31 @@
+{
+  "extends": "formal_full_sa_no_object_gpu27_vjepa_loss.json",
+  "experiment": {
+    "name": "full_sa_no_object_vjepa_loss_pybullet100_cached",
+    "description": "Resume Full-SA no-object V-JEPA-loss training from interrupted step 3463 on 100% PyBullet with VAE and UMT5 prompt caches"
+  },
+  "launch": {
+    "gpu_set": "2,3",
+    "num_processes": 2,
+    "main_process_port": 29531
+  },
+  "data": {
+    "mixture_pybullet_ratio": 1.0,
+    "mixture_kubric_ratio": 0.0,
+    "mixture_openvid_ratio": 0.0
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4
+  },
+  "checkpointing": {
+    "resume_from": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu01_formal_vjepa_loss/20260805T180305Z/checkpoints/interrupted-latest/training_state.pt"
+  },
+  "logging": {
+    "wandb_name": "full_sa_no_object_vjepa_loss_pybullet100_cached_resume3463"
+  },
+  "vjepa_loss": {
+    "num_frames": 16,
+    "frame_sampling": "mixed"
+  }
+}

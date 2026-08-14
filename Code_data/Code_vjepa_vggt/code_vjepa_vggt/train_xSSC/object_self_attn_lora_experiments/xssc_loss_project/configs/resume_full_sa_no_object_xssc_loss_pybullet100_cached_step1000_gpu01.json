@@ -1,0 +1,27 @@
+{
+  "extends": "full_sa_no_object_xssc_loss_dinov3_movic_step50000.json",
+  "experiment": {
+    "name": "full_sa_no_object_xssc_loss_dinov3_movic_step50000_pybullet100_cached",
+    "description": "Resume Full-SA no-object DINOv3 MOVi-C xSSC-loss training from step 1000 on 100% PyBullet with VAE and UMT5 prompt caches"
+  },
+  "launch": {
+    "gpu_set": "0,1",
+    "num_processes": 2,
+    "main_process_port": 29533
+  },
+  "data": {
+    "mixture_pybullet_ratio": 1.0,
+    "mixture_kubric_ratio": 0.0,
+    "mixture_openvid_ratio": 0.0
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 2,
+    "gradient_accumulation_steps": 2
+  },
+  "checkpointing": {
+    "resume_from": "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_no_object_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints/step-001000/training_state.pt"
+  },
+  "logging": {
+    "wandb_name": "full_sa_no_object_xssc_loss_pybullet100_cached_resume1000"
+  }
+}

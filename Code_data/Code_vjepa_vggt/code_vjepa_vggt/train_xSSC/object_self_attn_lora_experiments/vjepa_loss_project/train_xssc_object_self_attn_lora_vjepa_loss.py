@@ -547,6 +547,11 @@ class VJEPAFeatureLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
             self.pipe.torch_dtype,
         )
         for unit in self.pipe.units:
+            if (
+                unit.__class__.__name__ == "WanVideoUnit_PromptEmbedder"
+                and "context" in inputs[1]
+            ):
+                continue
             inputs = self.pipe.unit_runner(unit, self.pipe, *inputs)
         loss, metrics = self._compute_object_losses(
             self.pipe,

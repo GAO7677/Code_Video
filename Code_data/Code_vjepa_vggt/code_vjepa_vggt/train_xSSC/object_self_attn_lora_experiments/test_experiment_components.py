@@ -296,6 +296,7 @@ class ExperimentComponentTests(unittest.TestCase):
             int(config["optimization"]["gradient_accumulation_steps"]),
             8,
         )
+        self.assertIn("--pybullet0713_prompt_cache_dir", command)
 
     def test_official_xssc_object_only_launcher(self) -> None:
         config_path = (

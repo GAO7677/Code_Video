@@ -25,6 +25,7 @@
     "sam2_checkpoint": "/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_large.pt",
     "pybullet_root": "/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5",
     "pybullet_vae_cache_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5/vae_latents_wan22_512x896_49f_prefix_bf16",
+    "pybullet_prompt_cache_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5/prompt_embeddings_wan22_umt5_bf16",
     "kubric_root": "/data/gaoya/dataset/nnsriram97-phyco_kubric",
     "openvid_root": "/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train",
     "output_root": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora",
