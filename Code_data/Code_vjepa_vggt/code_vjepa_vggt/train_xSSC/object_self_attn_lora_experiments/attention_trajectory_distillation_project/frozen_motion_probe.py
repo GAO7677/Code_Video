@@ -40,11 +40,35 @@ def ordered_head_pairs(
     return pairs
 
 
+def power_sharpen_head_weights(
+    head_weights: torch.Tensor,
+    power: float,
+) -> torch.Tensor:
+    """Normalize non-negative weights after monotonic power sharpening."""
+    power = float(power)
+    if not math.isfinite(power) or power <= 0.0:
+        raise ValueError("head weight power must be positive and finite")
+    weights = torch.as_tensor(head_weights).to(torch.float64).flatten()
+    if weights.numel() == 0:
+        raise ValueError("head weights must not be empty")
+    if not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
+        raise ValueError("head weights must be finite and non-negative")
+    maximum = weights.max()
+    if float(maximum) <= 0.0:
+        raise ValueError("head weights must have a positive maximum")
+    sharpened = (weights / maximum).pow(power)
+    total = sharpened.sum()
+    if not bool(torch.isfinite(total)) or float(total) <= 0.0:
+        raise ValueError("sharpened head weights must have a positive finite sum")
+    return (sharpened / total).to(torch.float32)
+
+
 def load_pck_head_weights(
     selection_metadata: Mapping[str, Any],
     selected_heads_by_block: Mapping[int, Sequence[int]],
     *,
     score_key: str = "pck32",
+    weight_power: float = 1.0,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     """Load and align normalized PCK weights to collector head order."""
     pairs = ordered_head_pairs(selected_heads_by_block)
@@ -100,7 +124,8 @@ def load_pck_head_weights(
     score_sum = raw_scores.sum()
     if not bool(torch.isfinite(score_sum)) or float(score_sum) <= 0.0:
         raise ValueError("PCK scores must have a positive finite sum")
-    weights = (raw_scores / score_sum).to(torch.float32)
+    linear_weights = (raw_scores / score_sum).to(torch.float32)
+    weights = power_sharpen_head_weights(linear_weights, weight_power)
     audit = {
         "score_key": str(score_key),
         "source_path": str(source_path),
@@ -111,10 +136,14 @@ def load_pck_head_weights(
         ),
         "head_pairs": [list(pair) for pair in pairs],
         "raw_scores": raw_scores.tolist(),
+        "weight_power": float(weight_power),
+        "linear_normalized_weights": linear_weights.tolist(),
         "normalized_weights": weights.tolist(),
         "score_sum": float(score_sum),
         "score_min": float(raw_scores.min()),
         "score_max": float(raw_scores.max()),
+        "linear_weight_min": float(linear_weights.min()),
+        "linear_weight_max": float(linear_weights.max()),
         "weight_min": float(weights.min()),
         "weight_max": float(weights.max()),
     }
@@ -272,8 +301,8 @@ class TopHeadQKCollector:
         """Return every captured physical head as ``[B,H_selected,S]``.
 
         This form is useful when the Q/K map must be an explicit activation-
-        checkpoint output.  The caller can concatenate blocks and give every
-        physical layer-head equal weight.
+        checkpoint output. The caller can concatenate blocks and apply either
+        equal or externally supplied per-head weights.
         """
         expected = sum(len(heads) for heads in self.selected_heads_by_block.values())
         if self._captured_heads != expected:
@@ -414,7 +443,7 @@ def student_teacher_heatmap_kl(
     student_heatmap: torch.Tensor,
     teacher_heatmap: torch.Tensor,
 ) -> torch.Tensor:
-    """Compute the requested KL(student_attention || teacher_attention)."""
+    """Compute legacy aggregate ``KL(Student || Teacher)`` for audit only."""
     student = flatten_heatmap_distribution(student_heatmap)
     teacher = flatten_heatmap_distribution(teacher_heatmap.detach())
     return (student * (student.log() - teacher.log())).sum(dim=-1).mean()

@@ -3,11 +3,11 @@ set -euo pipefail
 
 ROOT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments
 PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
-CONFIG="${ROOT}/test5_step40_object_count_ab_config.json"
+CONFIG="${ROOT}/test5_step40_object_identity_count_ab_config.json"
 PREPARE="${ROOT}/prepare_test5_step40_object_count_ab.py"
 PUBLISH="${ROOT}/publish_test5_step40_object_count_ab.py"
 WATCHER="${ROOT}/xssc_lora_checkpoint_watch.py"
-OUTPUT_ROOT=/data/gaoya/agent-data/outputs/test5_step40_object_count_ab
+OUTPUT_ROOT=/data/gaoya/agent-data/outputs/test5_step40_object_identity_count_ab
 STATE_ROOT="${OUTPUT_ROOT}/watch/state"
 EXPECTED_GROUPS=36
 EXPECTED_CPU_METRICS=144

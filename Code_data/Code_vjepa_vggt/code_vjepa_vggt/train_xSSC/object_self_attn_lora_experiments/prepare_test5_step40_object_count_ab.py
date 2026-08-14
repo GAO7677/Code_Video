@@ -11,8 +11,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 BASE_CONFIG = ROOT / "xssc_lora_three_train_watch_config_with_t_head.json"
-DEFAULT_OUTPUT = ROOT / "test5_step40_object_count_ab_config.json"
-OUTPUT_ROOT = Path("/data/gaoya/agent-data/outputs/test5_step40_object_count_ab")
+DEFAULT_OUTPUT = ROOT / "test5_step40_object_identity_count_ab_config.json"
+OUTPUT_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/test5_step40_object_identity_count_ab"
+)
 SOURCE_MANIFEST_ROOTS = (
     Path(
         "/data/gaoya/agent-data/outputs/"
@@ -23,10 +25,17 @@ SOURCE_MANIFEST_ROOTS = (
         "xssc_object_self_attn_lora_three_run_watch/state/checkpoints"
     ),
 )
-PROMPT_SUFFIX = (
-    "Keep exactly the same objects and object count as in the input frames; "
-    "no new or duplicated objects."
-)
+PROMPT_SUFFIX = "Maintain consistent object identity and count throughout the video."
+REUSABLE_ORIGINAL_ROOTS = {
+    "object_only": (
+        "/data/gaoya/agent-data/outputs/test5_step40_object_count_ab/watch/"
+        "results/object_only__original/step-000500_steps40_512x896_ctx08_49f"
+    ),
+    "full_sa": (
+        "/data/gaoya/agent-data/outputs/test5_step40_object_count_ab/watch/"
+        "results/full_sa__original/step-000500_steps40_512x896_ctx08_49f"
+    ),
+}
 METHOD_ORDER = (
     "object_only",
     "full_sa",
@@ -129,18 +138,27 @@ def build_methods(manifests: dict[str, dict]) -> tuple[list[dict], list[dict]]:
                 {
                     "key": f"{key}__original",
                     "label": f"{label} · A original prompt",
+                    "scheme_key": key,
+                    "scheme_label": label,
                     "color": METHOD_COLORS[key],
                     "condition": "control_original_prompt",
                     "generation_prompt_suffix": "",
                     "evaluation_caption_policy": "original_input_caption",
+                    "bootstrap_result_roots": (
+                        {"500": REUSABLE_ORIGINAL_ROOTS[key]}
+                        if key in REUSABLE_ORIGINAL_ROOTS
+                        else {}
+                    ),
                     "static_checkpoints": checkpoint_spec,
                     "watch_roots": [],
                 },
                 {
-                    "key": f"{key}__object_count",
-                    "label": f"{label} · B + object-count prompt",
+                    "key": f"{key}__identity_count",
+                    "label": f"{label} · B + identity/count prompt",
+                    "scheme_key": key,
+                    "scheme_label": label,
                     "color": "#167A52",
-                    "condition": "treatment_object_count_prompt",
+                    "condition": "treatment_identity_count_prompt",
                     "generation_prompt_suffix": PROMPT_SUFFIX,
                     "evaluation_caption_policy": "original_input_caption",
                     "static_checkpoints": checkpoint_spec,
@@ -190,9 +208,9 @@ def main() -> None:
     config["physiciq"] = {"enabled": False}
     config["methods"] = methods
     config["site_titles"] = {
-        "test5": "test_5 · 40-step Object-count Prompt A/B",
+        "test5": "test_5 · 40-step Object Identity/Count Prompt A/B",
         "test5_average_metrics": (
-            "test_5 · 40-step Object-count Prompt A/B · 全 case 平均指标"
+            "test_5 · 40-step Object Identity/Count Prompt A/B · 全 case 平均指标"
         ),
     }
     config["ab_experiment"] = {

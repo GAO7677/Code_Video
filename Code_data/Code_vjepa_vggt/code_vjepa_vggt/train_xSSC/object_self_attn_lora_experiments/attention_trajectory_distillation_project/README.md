@@ -8,9 +8,21 @@ and adds:
 
 ```text
 L = L_flow
-  + motion_probe_heatmap_weight * KL(student_attention || teacher_attention)
-  + motion_probe_trajectory_weight * Huber(student_trajectory, teacher_trajectory)
+  + motion_probe_heatmap_weight
+      * sum_h w_h KL(A_h^teacher || A_h^student)
+  + motion_probe_trajectory_weight
+      * Huber(trajectory(A_PCK^student), trajectory(A_PCK^teacher))
+
+w_h = PCK_h / sum_j PCK_j
+A_PCK = sum_h w_h A_h
 ```
+
+The loss operates on all 100 physical head distributions before aggregation.
+The PCK score source is the `selection_source` recorded by the Top100 head
+configuration, using its `pck32` field. The loader verifies the ranking step,
+Top100 identity, missing/duplicate heads, and collector order before registering
+the normalized weights. Equal-head aggregation and the legacy aggregate
+`KL(Student || Teacher)` remain diagnostics only; neither is optimized.
 
 Both the main Student base and the measurement probe load the official
 `/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B` DiT shards.  Historical OpenVid LoRA,
@@ -128,10 +140,10 @@ Probe (noise level, timestep): (0.1, 100), (0.2, 200)
 
 Within each case, all training stages share one `epsilon_train`; both Probe
 levels and every Teacher/Student pair share one `epsilon_p`. Run the complete
-forward and render pipeline in the foreground with:
+PCK-weighted forward and equal-vs-PCK render pipeline in the foreground with:
 
 ```bash
-GPU_ID=2 ./run_training_case_noise_sweep_gpu0.sh
+GPU_ID=0 ./run_training_case_pck_weighted_gpu0.sh
 ```
 
 The report is available at:
@@ -140,12 +152,12 @@ The report is available at:
 /data/gaoya/agent-data/outputs/frozen_motion_probe_training_diagnostics/index.html
 ```
 
-Each Probe result includes a two-row fixed-query timeline: the Teacher Top100
-response is the first row and the Student response is the second row, with
-latent frames ordered from `L00/F00` through `L12/F48` under one shared color
-scale. The case page keeps `t=500` open and collapses the other training stages
-and detailed videos. After changing only report code, regenerate the timelines
-and HTML without loading the DiT or VAE:
+Each Probe result includes side-by-side equal/PCK videos and trajectories plus a
+four-row fixed-query timeline: equal Teacher, equal Student, PCK Teacher, and
+PCK Student. Latent frames are ordered from `L00/F00` through `L12/F48`, and all
+four rows use one shared color scale. The case page keeps `t=500` open and
+collapses the other training stages and detailed videos. After changing only
+report code, regenerate the timelines and HTML without loading the DiT or VAE:
 
 ```bash
 PYTHONNOUSERSITE=1 \

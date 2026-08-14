@@ -701,6 +701,9 @@ def build_videos_page(
             "key": method["key"],
             "label": method["label"],
             "color": method["color"],
+            "condition": method.get("condition"),
+            "schemeKey": method.get("scheme_key", method["key"]),
+            "schemeLabel": method.get("scheme_label", method["label"]),
         }
         for method in method_order
     ]
@@ -709,6 +712,7 @@ def build_videos_page(
             "methods": methods,
             "records": records,
             "cases": cases,
+            "abExperiment": bool(config.get("ab_experiment")),
             "autoRefresh": bool(config.get("ab_experiment")),
             "metricSpecs": [
                 {
@@ -750,12 +754,17 @@ def build_videos_page(
     .generated-head h2{{margin:0;font-size:16px}}.count{{color:var(--muted);font-size:12px}}
     .matrix-wrap{{overflow-x:auto;padding-bottom:8px}}
     .generated-matrix{{display:grid;gap:10px;min-width:1180px;align-items:stretch}}
+    .generated-matrix.ab{{min-width:960px;grid-template-columns:minmax(220px,.55fr)
+      repeat(2,minmax(320px,1fr))}}
     .matrix-head,.step-label{{display:flex;align-items:center;justify-content:center;
       min-height:44px;padding:8px;background:var(--surface);border:1px solid var(--line);
       font-size:13px;font-weight:850;text-align:center}}
     .matrix-head.method{{border-top-width:4px}}
     .step-label{{position:sticky;left:0;z-index:2;color:var(--accent);
       font-variant-numeric:tabular-nums}}
+    .scheme-label{{position:sticky;left:0;z-index:2;display:flex;align-items:center;
+      min-height:220px;padding:14px;background:var(--surface);border:1px solid var(--line);
+      border-left:4px solid var(--accent);font-size:13px;font-weight:850;line-height:1.4}}
     .cell{{min-width:0;padding:9px;background:var(--surface);border:1px solid var(--line);
       border-radius:6px}}
     .label{{min-height:24px;padding:1px 2px 7px;color:var(--warm);
@@ -807,7 +816,7 @@ def build_videos_page(
       <div class="cell"><div class="label">Input context · 8 frames</div>
         <video id="context" preload="metadata" playsinline muted></video></div>
     </div>
-    <div class="generated-head"><h2>已完成 checkpoint</h2><span class="count" id="count"></span></div>
+    <div class="generated-head"><h2 id="generated-title">已完成 checkpoint</h2><span class="count" id="count"></span></div>
     <div class="matrix-wrap"><div class="generated-matrix" id="generated-matrix"></div></div>
     <section class="metrics-section"><h2>当前 case 指标对比</h2>
       <p class="metrics-note">每行一个方法 checkpoint；★ 表示当前筛选范围内该指标最佳。WMReward surprise 越低越好，其余越高越好。</p>
@@ -894,6 +903,63 @@ def build_videos_page(
         }});tbody.append(tr);
       }});table.append(tbody);
     }}
+    function appendAbVideoCell(matrix,method,record,c,step){{
+      const videoPath=record?.videos?.[c.stem];
+      if(!videoPath){{
+        const missing=document.createElement("div");missing.className="missing";
+        missing.textContent="等待该方案生成";matrix.append(missing);return 0;
+      }}
+      const cell=document.createElement("div");cell.className="cell";
+      cell.style.borderTop=`3px solid ${{method.color}}`;
+      const label=document.createElement("div");label.className="label";
+      const condition=method.condition==="control_original_prompt"
+        ? "A · original prompt"
+        : "B · identity/count prompt";
+      label.textContent=`${{condition}} · ${{formatStepLabel(step)}}`;
+      label.style.color=method.color;
+      const video=document.createElement("video");
+      video.preload="metadata";video.playsInline=true;video.muted=true;video.src=videoPath;
+      const checkpoint=document.createElement("div");checkpoint.className="checkpoint";
+      checkpoint.textContent=record.checkpoint_dir;
+      cell.append(label,video,checkpoint);matrix.append(cell);return 1;
+    }}
+    function renderAbMatrix(c,steps,matrix){{
+      matrix.className="generated-matrix ab";
+      const headers=["训练方案","A · original prompt","B · identity/count prompt"];
+      headers.forEach((text,index)=>{{
+        const header=document.createElement("div");header.className="matrix-head";
+        header.textContent=text;
+        if(index===1)header.style.borderTop="4px solid #4D4D4D";
+        if(index===2)header.style.borderTop="4px solid #167A52";
+        matrix.append(header);
+      }});
+      const pairs=[];const pairByKey=new Map();
+      D.methods.forEach(method=>{{
+        if(!pairByKey.has(method.schemeKey)){{
+          const pair={{key:method.schemeKey,label:method.schemeLabel,methods:[]}};
+          pairByKey.set(method.schemeKey,pair);pairs.push(pair);
+        }}
+        pairByKey.get(method.schemeKey).methods.push(method);
+      }});
+      let count=0;
+      steps.forEach(step=>pairs.forEach(pair=>{{
+        const control=pair.methods.find(method=>method.condition==="control_original_prompt");
+        const treatment=pair.methods.find(method=>method.condition!=="control_original_prompt");
+        const scheme=document.createElement("div");scheme.className="scheme-label";
+        scheme.textContent=pair.label;scheme.style.borderLeftColor=control?.color??"#006d77";
+        matrix.append(scheme);
+        [control,treatment].forEach(method=>{{
+          if(!method){{
+            const missing=document.createElement("div");missing.className="missing";
+            missing.textContent="缺少 A/B 配置";matrix.append(missing);return;
+          }}
+          const record=D.records.find(item=>item.step===step&&item.method_key===method.key);
+          count+=appendAbVideoCell(matrix,method,record,c,step);
+        }});
+      }}));
+      document.getElementById("generated-title").textContent="方案 A/B 视频对比";
+      document.getElementById("count").textContent=`${{pairs.length}} 个方案 · ${{count}} 个已生成结果`;
+    }}
     function render(){{
       const c=D.cases.find(x=>x.stem===caseSelect.value);
       if(!c)return;
@@ -905,6 +971,12 @@ def build_videos_page(
       const steps=visibleSteps();
       const matrix=document.getElementById("generated-matrix");
       matrix.replaceChildren();
+      if(D.abExperiment){{
+        renderAbMatrix(c,steps,matrix);
+        renderMetrics(c,steps);
+        return;
+      }}
+      matrix.className="generated-matrix";
       matrix.style.gridTemplateColumns=`88px repeat(${{D.methods.length}},minmax(260px,1fr))`;
       const corner=document.createElement("div");corner.className="matrix-head";
       corner.textContent="Step / Reference";matrix.append(corner);
@@ -2382,15 +2454,17 @@ def build_master_hub(
       <div class="status">动态汇总<strong>全部方案</strong><small>PhysRVG OFF / +LoRA 可切换</small></div>
     </section>"""
     step40_ab_entry = ""
-    if (hub_root / "test5-step40-object-count-ab").exists():
+    if (hub_root / "test5-step40-object-identity-count-ab").exists():
         step40_ab_entry = """
-    <section class="entry"><div><h2>test_5 · 40-step Object-count A/B</h2>
-      <div class="meta">18 个 step-500 权重；原始 prompt 与 object-count 约束 prompt 的 40-step 配对生成和完整指标</div>
-      <a href="test5-step40-object-count-ab/">Case 视频对比</a>
-      <a href="test5-step40-object-count-ab-average-metrics/">全 case 平均指标</a>
-      <a href="test5-step40-object-count-ab-status/">流水线状态</a></div>
+    <!-- TEST5_STEP40_OBJECT_COUNT_AB_START -->
+    <section class="entry"><div><h2>test_5 · 40-step Object Identity/Count A/B</h2>
+      <div class="meta">18 个 step-500 权重；原始 prompt 与 identity/count 约束 prompt 的 40-step 配对生成和完整指标</div>
+      <a href="test5-step40-object-identity-count-ab/">Case 视频对比</a>
+      <a href="test5-step40-object-identity-count-ab-average-metrics/">全 case 平均指标</a>
+      <a href="test5-step40-object-identity-count-ab-status/">流水线状态</a></div>
       <div class="status">GPU 7<strong>36 组 · 720 视频</strong><small>推理完成后自动评测</small></div>
-    </section>"""
+    </section>
+    <!-- TEST5_STEP40_OBJECT_COUNT_AB_END -->"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
 <head>

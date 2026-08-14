@@ -55,6 +55,7 @@ from attention_trajectory_distillation_project.frozen_motion_probe import (
     heatmap_soft_argmax_trajectory,
     load_pck_head_weights,
     pck_weighted_teacher_student_head_kl,
+    power_sharpen_head_weights,
     query_rows_from_mask,
     student_teacher_heatmap_kl,
     teacher_student_head_kl,
@@ -89,6 +90,7 @@ DEFAULT_FAMILIES = ("F1", "F2", "F3")
 DEFAULT_SWEEP_TRAINING_TIMESTEPS = (100.0, 300.0, 500.0, 700.0, 900.0)
 DEFAULT_SWEEP_PROBE_NOISE_LEVELS = (0.1, 0.2)
 DEFAULT_SWEEP_PROBE_TIMESTEPS = (100.0, 200.0)
+DEFAULT_PCK_WEIGHT_POWER = 30.0
 PALETTE_RGB = np.asarray(
     [
         [230, 57, 70],
@@ -163,6 +165,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--heatmap-weight", type=float, default=0.1)
     parser.add_argument("--trajectory-weight", type=float, default=0.1)
     parser.add_argument("--trajectory-huber-delta", type=float, default=0.05)
+    parser.add_argument(
+        "--pck-weight-power",
+        type=float,
+        default=DEFAULT_PCK_WEIGHT_POWER,
+    )
     parser.add_argument("--seed", type=int, default=4200)
     parser.add_argument("--fps", type=float, default=12.0)
     parser.add_argument("--heatmap-fps", type=float, default=4.0)
@@ -223,6 +230,8 @@ def check_common_args(args: argparse.Namespace) -> None:
         raise ValueError("height and width must be divisible by 32")
     if not 0.0 <= float(args.probe_noise_level) <= 1.0:
         raise ValueError("probe-noise-level must be in [0,1]")
+    if not math.isfinite(float(args.pck_weight_power)) or float(args.pck_weight_power) <= 0.0:
+        raise ValueError("pck-weight-power must be positive and finite")
     noise_sweep_config(args)
 
 
@@ -692,26 +701,50 @@ def compute_probe_weighting_comparison(
     student_head_maps: torch.Tensor,
     *,
     grid: tuple[int, int, int],
-    pck_weights: torch.Tensor,
+    pck_linear_weights: torch.Tensor,
+    pck_weight_power: float,
     trajectory_huber_delta: float,
 ) -> dict[str, torch.Tensor]:
     teacher_equal = aggregate_head_probabilities(teacher_head_maps, grid=grid)
     student_equal = aggregate_head_probabilities(student_head_maps, grid=grid)
-    teacher_pck = aggregate_head_probabilities(
+    pck_sharpened_weights = power_sharpen_head_weights(
+        pck_linear_weights,
+        pck_weight_power,
+    ).to(device=teacher_head_maps.device)
+    teacher_pck_linear = aggregate_head_probabilities(
         teacher_head_maps,
         grid=grid,
-        head_weights=pck_weights,
+        head_weights=pck_linear_weights,
     )
-    student_pck = aggregate_head_probabilities(
+    student_pck_linear = aggregate_head_probabilities(
         student_head_maps,
         grid=grid,
-        head_weights=pck_weights,
+        head_weights=pck_linear_weights,
     )
-    pck_head_kl, per_head_kl = pck_weighted_teacher_student_head_kl(
+    teacher_pck_sharpened = aggregate_head_probabilities(
+        teacher_head_maps,
+        grid=grid,
+        head_weights=pck_sharpened_weights,
+    )
+    student_pck_sharpened = aggregate_head_probabilities(
+        student_head_maps,
+        grid=grid,
+        head_weights=pck_sharpened_weights,
+    )
+    pck_linear_head_kl, per_head_kl = pck_weighted_teacher_student_head_kl(
         student_head_maps,
         teacher_head_maps,
-        pck_weights,
+        pck_linear_weights,
     )
+    pck_sharpened_head_kl, sharpened_per_head_kl = (
+        pck_weighted_teacher_student_head_kl(
+            student_head_maps,
+            teacher_head_maps,
+            pck_sharpened_weights,
+        )
+    )
+    if not torch.equal(per_head_kl, sharpened_per_head_kl):
+        raise RuntimeError("per-head KL changed while only PCK weights changed")
     equal_head_kl = teacher_student_head_kl(
         student_head_maps,
         teacher_head_maps,
@@ -721,8 +754,17 @@ def compute_probe_weighting_comparison(
         teacher_equal,
     )
     trajectory_loss, student_trajectory, teacher_trajectory = trajectory_huber_loss(
-        student_pck,
-        teacher_pck,
+        student_pck_sharpened,
+        teacher_pck_sharpened,
+        delta=float(trajectory_huber_delta),
+    )
+    (
+        linear_trajectory_loss,
+        linear_student_trajectory,
+        linear_teacher_trajectory,
+    ) = trajectory_huber_loss(
+        student_pck_linear,
+        teacher_pck_linear,
         delta=float(trajectory_huber_delta),
     )
     (
@@ -734,25 +776,40 @@ def compute_probe_weighting_comparison(
         teacher_equal,
         delta=float(trajectory_huber_delta),
     )
-    weights = torch.as_tensor(
-        pck_weights,
+    linear_weights = torch.as_tensor(
+        pck_linear_weights,
         device=per_head_kl.device,
         dtype=per_head_kl.dtype,
     ).flatten()
-    weights = weights / weights.sum()
+    linear_weights = linear_weights / linear_weights.sum()
+    sharpened_weights = pck_sharpened_weights.to(
+        device=per_head_kl.device,
+        dtype=per_head_kl.dtype,
+    )
     return {
         "teacher_equal": teacher_equal,
         "student_equal": student_equal,
-        "teacher_pck": teacher_pck,
-        "student_pck": student_pck,
+        "teacher_pck_linear": teacher_pck_linear,
+        "student_pck_linear": student_pck_linear,
+        "teacher_pck_sharpened": teacher_pck_sharpened,
+        "student_pck_sharpened": student_pck_sharpened,
         "legacy_aggregate_kl": legacy_aggregate_kl,
         "equal_head_kl_teacher_student": equal_head_kl,
-        "pck_head_kl_teacher_student": pck_head_kl,
+        "pck_linear_head_kl_teacher_student": pck_linear_head_kl,
+        "pck_sharpened_head_kl_teacher_student": pck_sharpened_head_kl,
         "per_head_kl_teacher_student": per_head_kl,
-        "per_head_weighted_contribution": per_head_kl * weights.reshape(1, -1),
+        "per_head_linear_pck_contribution": per_head_kl
+        * linear_weights.reshape(1, -1),
+        "per_head_sharpened_pck_contribution": per_head_kl
+        * sharpened_weights.reshape(1, -1),
+        "pck_linear_weights": linear_weights,
+        "pck_sharpened_weights": sharpened_weights,
         "trajectory_loss": trajectory_loss,
         "student_trajectory": student_trajectory,
         "teacher_trajectory": teacher_trajectory,
+        "linear_trajectory_loss": linear_trajectory_loss,
+        "linear_student_trajectory": linear_student_trajectory,
+        "linear_teacher_trajectory": linear_teacher_trajectory,
         "equal_trajectory_loss": equal_trajectory_loss,
         "equal_student_trajectory": equal_student_trajectory,
         "equal_teacher_trajectory": equal_teacher_trajectory,
@@ -781,7 +838,17 @@ def run_forward(args: argparse.Namespace) -> None:
         num_blocks=30,
         num_heads=24,
     )
-    pck_weights, pck_audit = load_pck_head_weights(head_metadata, selected_heads)
+    pck_linear_weights, _ = load_pck_head_weights(
+        head_metadata,
+        selected_heads,
+        weight_power=1.0,
+    )
+    pck_weights, pck_audit = load_pck_head_weights(
+        head_metadata,
+        selected_heads,
+        weight_power=float(args.pck_weight_power),
+    )
+    pck_linear_weights = pck_linear_weights.to(device)
     pck_weights = pck_weights.to(device)
     runner = SimpleNamespace(
         _motion_probe_dit=pipe.dit,
@@ -1185,7 +1252,17 @@ def run_sweep_forward(args: argparse.Namespace) -> None:
         num_blocks=30,
         num_heads=24,
     )
-    pck_weights, pck_audit = load_pck_head_weights(head_metadata, selected_heads)
+    pck_linear_weights, _ = load_pck_head_weights(
+        head_metadata,
+        selected_heads,
+        weight_power=1.0,
+    )
+    pck_weights, pck_audit = load_pck_head_weights(
+        head_metadata,
+        selected_heads,
+        weight_power=float(args.pck_weight_power),
+    )
+    pck_linear_weights = pck_linear_weights.to(device)
     pck_weights = pck_weights.to(device)
     runner = SimpleNamespace(
         _motion_probe_dit=pipe.dit,

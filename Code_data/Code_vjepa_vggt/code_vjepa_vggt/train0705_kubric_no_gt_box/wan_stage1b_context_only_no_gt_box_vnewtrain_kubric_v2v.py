@@ -1117,7 +1117,9 @@ def main() -> None:
         generation_prompt_suffix = str(cli_args.generation_prompt_suffix).strip()
         generation_prompt = str(input_caption)
         if generation_prompt_suffix:
-            generation_prompt = f"{generation_prompt.rstrip()} {generation_prompt_suffix}"
+            generation_prompt = generation_prompt.rstrip()
+            separator = " " if generation_prompt.endswith((".", "!", "?")) else ". "
+            generation_prompt = f"{generation_prompt}{separator}{generation_prompt_suffix}"
         output_video = step_output_dir / f"{sample_stem}.mp4"
         output_json = step_output_dir / f"{sample_stem}.json"
         output_log = step_output_dir / f"{sample_stem}.log"

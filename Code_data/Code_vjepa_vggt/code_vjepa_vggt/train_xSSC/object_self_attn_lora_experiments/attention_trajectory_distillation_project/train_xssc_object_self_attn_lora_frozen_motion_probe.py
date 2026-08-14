@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -188,6 +189,7 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
         motion_probe_head_feature_subtype: str,
         motion_probe_timestep: float,
         motion_probe_noise_level: float,
+        motion_probe_pck_weight_power: float,
         motion_probe_heatmap_weight: float,
         motion_probe_trajectory_weight: float,
         motion_probe_trajectory_huber_delta: float,
@@ -213,6 +215,7 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
 
         self.motion_probe_timestep = float(motion_probe_timestep)
         self.motion_probe_noise_level = float(motion_probe_noise_level)
+        self.motion_probe_pck_weight_power = float(motion_probe_pck_weight_power)
         self.motion_probe_heatmap_weight = float(motion_probe_heatmap_weight)
         self.motion_probe_trajectory_weight = float(motion_probe_trajectory_weight)
         self.motion_probe_trajectory_huber_delta = float(
@@ -238,6 +241,11 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
             raise ValueError("motion_probe_timestep must be in [0,1000]")
         if not 0.0 <= self.motion_probe_noise_level <= 1.0:
             raise ValueError("motion_probe_noise_level must be in [0,1]")
+        if (
+            not math.isfinite(self.motion_probe_pck_weight_power)
+            or self.motion_probe_pck_weight_power <= 0.0
+        ):
+            raise ValueError("motion_probe_pck_weight_power must be positive and finite")
         if self.motion_probe_heatmap_weight < 0.0:
             raise ValueError("motion_probe_heatmap_weight must be non-negative")
         if self.motion_probe_trajectory_weight < 0.0:
@@ -270,6 +278,14 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
         pck_weights, pck_audit = load_pck_head_weights(
             probe_head_metadata,
             probe_heads_by_block,
+            weight_power=self.motion_probe_pck_weight_power,
+        )
+        self.register_buffer(
+            "motion_probe_pck_linear_weights",
+            torch.tensor(
+                pck_audit["linear_normalized_weights"], dtype=torch.float32
+            ),
+            persistent=True,
         )
         self.register_buffer(
             "motion_probe_pck_weights",
@@ -843,6 +859,15 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 "train/motion_probe_pck_score_max": float(
                     self.motion_probe_pck_audit["score_max"]
                 ),
+                "train/motion_probe_pck_weight_power": float(
+                    self.motion_probe_pck_weight_power
+                ),
+                "train/motion_probe_pck_linear_weight_min": float(
+                    self.motion_probe_pck_audit["linear_weight_min"]
+                ),
+                "train/motion_probe_pck_linear_weight_max": float(
+                    self.motion_probe_pck_audit["linear_weight_max"]
+                ),
                 "train/motion_probe_pck_weight_min": float(
                     self.motion_probe_pck_audit["weight_min"]
                 ),
@@ -886,6 +911,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     group.add_argument("--probe_timestep", type=float, required=True)
     group.add_argument("--probe_noise_level", type=float, required=True)
+    group.add_argument(
+        "--motion_probe_pck_weight_power",
+        type=float,
+        default=30.0,
+        help="Exponent applied to normalized PCK scores before head weighting.",
+    )
     group.add_argument("--motion_probe_heatmap_weight", type=float, required=True)
     group.add_argument("--motion_probe_trajectory_weight", type=float, required=True)
     group.add_argument(
@@ -1027,6 +1058,7 @@ def build_model(args: argparse.Namespace, accelerator):
             ),
             "motion_probe_timestep": args.probe_timestep,
             "motion_probe_noise_level": args.probe_noise_level,
+            "motion_probe_pck_weight_power": args.motion_probe_pck_weight_power,
             "motion_probe_heatmap_weight": args.motion_probe_heatmap_weight,
             "motion_probe_trajectory_weight": args.motion_probe_trajectory_weight,
             "motion_probe_trajectory_huber_delta": (
@@ -1063,9 +1095,10 @@ def log_stage_summary(accelerator, model, args: argparse.Namespace) -> None:
             "loaded LoRA=none; trainable probe params=0; "
             f"latest3350 heads=100; probe_timestep={args.probe_timestep:g}; "
             f"probe_noise_level={args.probe_noise_level:g}; "
+            f"pck_weight_power={args.motion_probe_pck_weight_power:g}; "
             f"lambda_heatmap={args.motion_probe_heatmap_weight:g}; "
             f"lambda_trajectory={args.motion_probe_trajectory_weight:g}; "
-            "heatmap loss=sum_h normalized(PCK_h)*KL(teacher_h||student_h); "
+            "heatmap loss=sum_h normalized(PCK_h^gamma)*KL(teacher_h||student_h); "
             "trajectory=PCK-weighted aggregate 13-frame normalized soft-argmax Huber"
         )
 
