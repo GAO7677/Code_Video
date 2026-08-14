@@ -46,6 +46,17 @@ trajectories are not used during guidance.
 - Test: `test_multi_object_guidance_search.py`
 - tmux: `m1_multi_object_search_gpu12:gpu1` and `:gpu2`.
 
+## Live visualization
+
+- Page: `http://localhost:8092/training-free-m1-multi-object-search?v=1`
+- Portal: `http://localhost:8092/` (`55 / MULTI-OBJECT M1 SEARCH`).
+- The page groups results by selected case and seed.  It shows the shared
+  Baseline followed by completed variants grouped into the four guidance
+  windows; scales are ordered `-1, -0.5, +0.5, +1`.
+- Pending variants do not reserve video cards.  The catalog rescans completion
+  markers every 20 seconds, so newly generated videos appear without rebuilding
+  a static index or restarting the service.
+
 ## Post-generation selection
 
 MSE and CoTracker trajectory metrics are offline selection criteria only; they
