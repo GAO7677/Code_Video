@@ -14,6 +14,14 @@ The ``full_head_output_zero`` control instead sets the complete post-attention
 output O_h=A_hV_h of every selected physical head to zero at every query token.
 It therefore removes R->R, C->R, R->C, and C->C together before the heads are
 concatenated and passed through the attention output projection.
+
+The M2/M3 multi-object controls use the same object-wise union semantics as M1:
+
+    M2: union_i R_i x C_i, where C_i = Omega \\ R_i
+    M3: union_i C_i x R_i
+
+All object-specific blocks are removed in one perturbed forward.  Duplicate
+token pairs caused by overlapping object tubes are removed exactly once.
 """
 
 from __future__ import annotations
@@ -77,11 +85,38 @@ DEFAULT_OUTPUT_ROOT = EXPERIMENT_ROOT / "training_free_m1_multi_object_search_v1
 DEFAULT_MANIFEST = DEFAULT_OUTPUT_ROOT / "search_manifest.json"
 DEFAULT_HEAD_RANKING = EXPERIMENT_ROOT / "head_scopes_latest3350_with_random100.json"
 PROTOCOL = "wan_top100_m1_multi_object_blockdiag_contrast_guidance_v1"
+M2_PROTOCOL = "wan_top100_m2_multi_object_independent_contrast_guidance_v1"
+M3_PROTOCOL = "wan_top100_m3_multi_object_independent_contrast_guidance_v1"
 FULL_HEAD_PROTOCOL = "wan_top100_full_head_output_zero_contrast_guidance_v1"
 PERTURBATION_MODES = (
     "m1_multi_object_blockdiag",
+    "m2_multi_object_independent",
+    "m3_multi_object_independent",
     "full_head_output_zero",
 )
+MULTI_OBJECT_FLOW_CONFIG = {
+    "m1_multi_object_blockdiag": {
+        "id": "M1",
+        "mask_mode": "self_only",
+        "formula": "union_i A[R_i,R_i]V[R_i]",
+        "protocol": PROTOCOL,
+        "symbol": "eps_M1_multi",
+    },
+    "m2_multi_object_independent": {
+        "id": "M2",
+        "mask_mode": "incoming_only",
+        "formula": "union_i A[R_i,C_i]V[C_i]",
+        "protocol": M2_PROTOCOL,
+        "symbol": "eps_M2_multi",
+    },
+    "m3_multi_object_independent": {
+        "id": "M3",
+        "mask_mode": "outgoing_only",
+        "formula": "union_i A[C_i,R_i]V[R_i]",
+        "protocol": M3_PROTOCOL,
+        "symbol": "eps_M3_multi",
+    },
+}
 
 
 def atomic_json(path: Path, payload: Any) -> None:
@@ -143,6 +178,82 @@ def block_diagonal_groups(
         "naive_unchecked_pair_count_per_head": naive_pairs,
         "duplicate_pair_subtractions_prevented": naive_pairs - deleted_pairs,
         "group_count": len(groups),
+    }
+    return groups, audit
+
+
+def multi_object_flow_groups(
+    object_rows: dict[str, torch.Tensor],
+    token_count: int,
+    flow_id: str,
+    device: torch.device,
+) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], dict[str, Any]]:
+    """Return the set-union of per-object M1/M2/M3 query-key blocks."""
+    normalized = {
+        name: frozenset(int(value) for value in rows.detach().cpu().tolist())
+        for name, rows in object_rows.items()
+    }
+    if not normalized or any(not rows for rows in normalized.values()):
+        raise RuntimeError("every multi-object flow region must contain at least one token")
+    if token_count <= 0:
+        raise ValueError("token_count must be positive")
+    universe = frozenset(range(token_count))
+    if any(value not in universe for rows in normalized.values() for value in rows):
+        raise ValueError("object token index is outside the attention token grid")
+    if flow_id not in {"M1", "M2", "M3"}:
+        raise ValueError(f"unsupported multi-object flow: {flow_id}")
+
+    memberships: dict[frozenset[str], list[int]] = defaultdict(list)
+    overlap_rows: dict[int, list[str]] = {}
+    for target in range(token_count):
+        names = frozenset(name for name, rows in normalized.items() if target in rows)
+        memberships[names].append(target)
+        if len(names) > 1:
+            overlap_rows[target] = sorted(names)
+
+    groups: list[tuple[torch.Tensor, torch.Tensor]] = []
+    for names, targets in sorted(memberships.items(), key=lambda item: min(item[1])):
+        if flow_id == "M1":
+            sources = set().union(*(normalized[name] for name in names)) if names else set()
+        elif flow_id == "M2":
+            sources = (
+                set().union(*(universe - normalized[name] for name in names))
+                if names
+                else set()
+            )
+        else:
+            sources = set().union(
+                *(rows for name, rows in normalized.items() if name not in names)
+            )
+        if not sources:
+            continue
+        groups.append(
+            (
+                torch.as_tensor(targets, device=device, dtype=torch.long),
+                torch.as_tensor(sorted(sources), device=device, dtype=torch.long),
+            )
+        )
+
+    deleted_pairs = sum(int(target.numel() * source.numel()) for target, source in groups)
+    if flow_id == "M1":
+        naive_pairs = sum(len(rows) ** 2 for rows in normalized.values())
+    else:
+        naive_pairs = sum(len(rows) * (token_count - len(rows)) for rows in normalized.values())
+    audit = {
+        "flow_id": flow_id,
+        "object_token_counts": {name: len(rows) for name, rows in normalized.items()},
+        "object_token_indices": {
+            name: sorted(rows) for name, rows in normalized.items()
+        },
+        "token_count": token_count,
+        "union_token_count": len(set().union(*normalized.values())),
+        "overlap_token_count": len(overlap_rows),
+        "overlap_tokens": {str(row): names for row, names in sorted(overlap_rows.items())},
+        "deleted_pair_count_per_head": deleted_pairs,
+        "naive_unchecked_pair_count_per_head": naive_pairs,
+        "duplicate_pair_subtractions_prevented": naive_pairs - deleted_pairs,
+        "group_count": len(groups),
+        "object_specific_complements": flow_id in {"M2", "M3"},
     }
     return groups, audit
 
@@ -233,16 +344,31 @@ def apply_grouped_m1_ablation(
     return auxiliary_calls, affected_rows, deleted_pairs
 
 
-class MultiObjectBlockDiagonalM1Ablator(TemporalObjectTubeAblator):
-    """Delete union_i A[R_i,R_i]V[R_i] while preserving cross-object blocks."""
+class MultiObjectIndependentFlowAblator(TemporalObjectTubeAblator):
+    """Delete the set-union of per-object M1, M2, or M3 attention blocks."""
 
-    def __init__(self, *args, object_regions: Iterable[str], group_batch_size: int = 4, **kwargs):
+    def __init__(
+        self,
+        *args,
+        object_regions: Iterable[str],
+        flow_id: str = "M1",
+        group_batch_size: int = 4,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
-        if self.mask_mode != "self_only" or self.target_scope != "all_objects":
-            raise ValueError("multi-object M1 requires all_objects/self_only")
+        expected_mode = {"M1": "self_only", "M2": "incoming_only", "M3": "outgoing_only"}.get(
+            flow_id
+        )
+        if expected_mode is None:
+            raise ValueError(f"unsupported multi-object flow: {flow_id}")
+        if self.mask_mode != expected_mode or self.target_scope != "all_objects":
+            raise ValueError(
+                f"multi-object {flow_id} requires all_objects/{expected_mode}"
+            )
+        self.flow_id = flow_id
         self.object_regions = tuple(str(name) for name in object_regions)
         if not self.object_regions:
-            raise ValueError("multi-object M1 needs at least one object region")
+            raise ValueError("multi-object flow needs at least one object region")
         if any(name not in self.region_slices for name in self.object_regions):
             raise ValueError("object region missing from region_slices")
         self.group_batch_size = int(group_batch_size)
@@ -272,7 +398,12 @@ class MultiObjectBlockDiagonalM1Ablator(TemporalObjectTubeAblator):
                 [int(value) for value in torch.unique(frame, sorted=True).detach().cpu().tolist()]
                 for frame in tokens
             ]
-        groups, audit = block_diagonal_groups(result, device)
+        groups, audit = multi_object_flow_groups(
+            result,
+            time * height * width,
+            self.flow_id,
+            device,
+        )
         del groups
         values = {
             name: [int(value) for value in rows.detach().cpu().tolist()]
@@ -312,9 +443,14 @@ class MultiObjectBlockDiagonalM1Ablator(TemporalObjectTubeAblator):
         if num_heads <= 0 or q.shape[-1] % num_heads:
             raise RuntimeError(f"query width {q.shape[-1]} is not head-aligned")
         object_rows = self._object_rows(q.device)
-        groups, audit = block_diagonal_groups(object_rows, q.device)
+        groups, audit = multi_object_flow_groups(
+            object_rows,
+            int(q.shape[1]),
+            self.flow_id,
+            q.device,
+        )
         if self.block_diagonal_group_audit != audit:
-            raise RuntimeError("block-diagonal group definition changed")
+            raise RuntimeError("multi-object flow group definition changed")
         output = original(q, k, v)
         dose_recorder = None
         if self.record_dose:
@@ -356,6 +492,9 @@ class MultiObjectBlockDiagonalM1Ablator(TemporalObjectTubeAblator):
             "temporal_zeroed_entries_per_head": self.temporal_zeroed_entries_per_head,
             "group_batch_size": self.group_batch_size,
         }
+
+
+MultiObjectBlockDiagonalM1Ablator = MultiObjectIndependentFlowAblator
 
 
 class WindowedMultiObjectM1Guidance:
@@ -470,7 +609,10 @@ class WindowedMultiObjectM1Guidance:
             "perturbation_delta_l2_by_step": self.delta_l2_by_step,
         }
         if hasattr(self.ablator, "block_audit"):
-            result["block_diagonal"] = self.ablator.block_audit()
+            flow_audit = self.ablator.block_audit()
+            result["multi_object_flow"] = flow_audit
+            if getattr(self.ablator, "flow_id", None) == "M1":
+                result["block_diagonal"] = flow_audit
         elif (
             self.ablator.target_scope == "all_tokens"
             and self.ablator.mask_mode == "full_head_output"
@@ -637,6 +779,10 @@ def variant_directory(
 ) -> Path:
     if perturbation_mode == "m1_multi_object_blockdiag":
         prefix = "multi_object_blockdiag__m1_all_time__top100"
+    elif perturbation_mode == "m2_multi_object_independent":
+        prefix = "multi_object_independent__m2_all_time__top100"
+    elif perturbation_mode == "m3_multi_object_independent":
+        prefix = "multi_object_independent__m3_all_time__top100"
     elif perturbation_mode == "full_head_output_zero":
         prefix = "all_token__full_head_output_zero__top100"
     else:
@@ -678,7 +824,7 @@ def process_guided(
     track_path = tracks_directory(args.tracks_root, case, seed) / "tracks.npz"
     tracks = None
     anchors = None
-    if args.perturbation_mode == "m1_multi_object_blockdiag":
+    if args.perturbation_mode in MULTI_OBJECT_FLOW_CONFIG:
         if not track_path.is_file():
             raise FileNotFoundError(track_path)
         with np.load(track_path) as arrays:
@@ -687,28 +833,37 @@ def process_guided(
     json_path, _, payload, wan_args, image = generation_inputs(sample, {}, seed)
     wan_args.cfg_scale = 5.0
     wan_args.sampling_steps = 40
-    if args.perturbation_mode == "m1_multi_object_blockdiag":
+    if args.perturbation_mode in MULTI_OBJECT_FLOW_CONFIG:
         assert tracks is not None and anchors is not None
-        ablator = MultiObjectBlockDiagonalM1Ablator(
+        flow = MULTI_OBJECT_FLOW_CONFIG[args.perturbation_mode]
+        ablator = MultiObjectIndependentFlowAblator(
             pipe_wrapper.pipe,
             entries,
             points,
             region_slices,
             (704, 1280),
             "all_objects",
-            "self_only",
+            str(flow["mask_mode"]),
             None,
             tracks=tracks,
             anchor_frames=anchors,
             object_regions=names,
+            flow_id=str(flow["id"]),
             group_batch_size=args.group_batch_size,
             record_dose=bool(args.record_dose),
         )
-        protocol = PROTOCOL
-        target_scope = "all objects, independent block-diagonal M1"
-        perturbation = "subtract union_i A[R_i,R_i]V[R_i] without renormalization"
-        preserved = "A[R_i,R_j]V[R_j] for i != j, except inherently shared token cells"
-        perturbed_symbol = "eps_M1_multi"
+        protocol = str(flow["protocol"])
+        target_scope = f"all objects, simultaneous object-wise {flow['id']} union"
+        perturbation = f"subtract {flow['formula']} without renormalization"
+        if flow["id"] == "M1":
+            preserved = (
+                "A[R_i,R_j]V[R_j] for i != j, except inherently shared token cells"
+            )
+        elif flow["id"] == "M2":
+            preserved = "each object's R_i->R_i; queries outside every object are unchanged"
+        else:
+            preserved = "each object's R_i->R_i; values outside every object are unchanged"
+        perturbed_symbol = str(flow["symbol"])
     else:
         ablator = AttentionMatrixAblator(
             pipe_wrapper.pipe,
@@ -930,7 +1085,7 @@ def main() -> None:
                 torch.cuda.empty_cache()
 
     if (
-        args.perturbation_mode == "m1_multi_object_blockdiag"
+        args.perturbation_mode in MULTI_OBJECT_FLOW_CONFIG
         and args.stage in {"tracks", "all"}
     ):
         missing_tracks = [
@@ -962,7 +1117,7 @@ def main() -> None:
         for sample in samples:
             if not baseline_ready(sample):
                 raise FileNotFoundError(sample["baseline_video"])
-            if args.perturbation_mode == "m1_multi_object_blockdiag":
+            if args.perturbation_mode in MULTI_OBJECT_FLOW_CONFIG:
                 track_path = (
                     tracks_directory(
                         args.tracks_root, str(sample["case"]), int(sample["seed"])

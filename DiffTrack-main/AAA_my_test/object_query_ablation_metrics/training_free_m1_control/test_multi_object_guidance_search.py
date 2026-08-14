@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -11,6 +12,8 @@ from AAA_my_test.object_query_ablation_metrics.training_free_m1_control.run_mult
     WindowedMultiObjectM1Guidance,
     apply_grouped_m1_ablation,
     block_diagonal_groups,
+    multi_object_flow_groups,
+    variant_directory,
     validate_window,
 )
 
@@ -56,6 +59,77 @@ class BlockDiagonalGroupsTest(unittest.TestCase):
         self.assertEqual(audit["deleted_pair_count_per_head"], 7)
         self.assertEqual(audit["duplicate_pair_subtractions_prevented"], 1)
         self.assertEqual(audit["overlap_token_count"], 1)
+
+
+class MultiObjectFlowGroupsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.objects = {
+            "object_A": torch.tensor([0, 1]),
+            "object_B": torch.tensor([2, 3]),
+        }
+
+    @staticmethod
+    def pairs(groups):
+        return {
+            (int(q), int(k))
+            for queries, keys in groups
+            for q in queries.tolist()
+            for k in keys.tolist()
+        }
+
+    def test_m2_deletes_each_objects_incoming_context_including_other_object(self) -> None:
+        groups, audit = multi_object_flow_groups(
+            self.objects, 5, "M2", torch.device("cpu")
+        )
+        self.assertEqual(
+            self.pairs(groups),
+            {
+                *{(q, k) for q in (0, 1) for k in (2, 3, 4)},
+                *{(q, k) for q in (2, 3) for k in (0, 1, 4)},
+            },
+        )
+        self.assertEqual(audit["deleted_pair_count_per_head"], 12)
+        self.assertTrue(audit["object_specific_complements"])
+
+    def test_m3_deletes_each_objects_outgoing_values_including_cross_object(self) -> None:
+        groups, audit = multi_object_flow_groups(
+            self.objects, 5, "M3", torch.device("cpu")
+        )
+        self.assertEqual(
+            self.pairs(groups),
+            {
+                *{(q, k) for q in (2, 3, 4) for k in (0, 1)},
+                *{(q, k) for q in (0, 1, 4) for k in (2, 3)},
+            },
+        )
+        self.assertEqual(audit["deleted_pair_count_per_head"], 12)
+
+    def test_overlap_pairs_are_subtracted_once_for_m2_and_m3(self) -> None:
+        overlapping = {
+            "object_A": torch.tensor([0, 1]),
+            "object_B": torch.tensor([1, 2]),
+        }
+        for flow_id in ("M2", "M3"):
+            with self.subTest(flow_id=flow_id):
+                groups, audit = multi_object_flow_groups(
+                    overlapping, 4, flow_id, torch.device("cpu")
+                )
+                pairs = self.pairs(groups)
+                self.assertEqual(len(pairs), 7)
+                self.assertEqual(audit["deleted_pair_count_per_head"], 7)
+                self.assertEqual(audit["duplicate_pair_subtractions_prevented"], 1)
+
+    def test_variant_directories_keep_m2_and_m3_separate(self) -> None:
+        root = Path("/tmp/flow-test")
+        m2 = variant_directory(
+            root, "case", 47326, -0.5, 0, 9, "m2_multi_object_independent"
+        )
+        m3 = variant_directory(
+            root, "case", 47326, -0.5, 0, 9, "m3_multi_object_independent"
+        )
+        self.assertIn("multi_object_independent__m2_all_time__top100", str(m2))
+        self.assertIn("multi_object_independent__m3_all_time__top100", str(m3))
+        self.assertNotEqual(m2, m3)
 
 
 class ExactContributionTest(unittest.TestCase):

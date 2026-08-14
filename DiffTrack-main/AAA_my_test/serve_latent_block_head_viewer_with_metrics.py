@@ -431,7 +431,7 @@ TRAINING_FREE_M1_PHASE_BD_PORTAL_CARD = r'''
 <a class="card new" href="/training-free-m1-phase-bd?v=2"><div><span>56 / M1 DIRECT ENHANCEMENT</span><h2>Phase B/D · Sparse vs SAM2 Full-mask</h2><p>20 cases × 5 seeds；每行并排展示同 seed Baseline、原 8 点稀疏 tube 与逐帧 SAM2 完整 object_A token 的 Phase B/D 结果。</p></div><span class="go">打开 Full-mask 对照实时页</span></a>
 '''
 TRAINING_FREE_M1_MULTI_OBJECT_PORTAL_CARD = r'''
-<a class="card new" href="/training-free-m1-multi-object-search?v=2"><div><span>55 / TOP100 GUIDANCE FLOW CONTROL</span><h2>M1 R→R vs Full-Head Zero</h2><p>同 case、seed、guidance window 与 λ 下，对照“仅删除各对象内部 R→R”和“Top100 整颗 head 输出置零”；共同 Baseline 与已生成结果按行并排展示。</p></div><span class="go">打开受控对照实时页</span></a>
+<a class="card new" href="/training-free-m1-multi-object-search?v=3"><div><span>55 / TOP100 GUIDANCE FLOW CONTROL</span><h2>M1 / M2 / M3 vs Full-Head Zero</h2><p>同 case、seed、guidance window 与 λ 下，对照对象内部 R→R、对象接收 C→R、对象广播 R→C 和整颗 head 输出置零；共同 Baseline 与已生成结果按行展示。</p></div><span class="go">打开四信息流受控对照页</span></a>
 '''
 GT_STC_PREFLIGHT_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-guidance-preflight?v=1"><div><span>43 / GT-STC PREFLIGHT</span><h2>GT Tube 引导错误预检</h2><p>逐 case 审计 13 个 latent 时刻的 SAM2 region 与 CoTracker 可见性，区分已复现报错、未来必报错、运行中和待运行。</p></div><span class="go">打开 GT Tube 诊断页</span></a>
@@ -461,10 +461,17 @@ viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + TRAINING_FREE_M1_CONTROL_PORTAL_CARD + TRAINING_FREE_M1_PHASE_BD_PORTAL_CARD + TRAINING_FREE_M1_MULTI_OBJECT_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + GT_STC_METHOD_COMPARISON_PORTAL_CARD + GT_STC_FIRST10_COMPARISON_PORTAL_CARD + GT_STC_DIRECT_MULTICASE_PORTAL_CARD + GT_STC_HYPERPARAM_SEARCH_PORTAL_CARD + STAGE5_TOKEN_OVERLAP_PORTAL_CARD + FULL_MASK_SIGNATURE_PORTAL_CARD + "</section>", 1
 )
 OBJECT_QUERY_ANTI_DUPLICATION_PORTAL_CARD = r'''
-<a class="card new" href="/object-query-anti-duplication?v=1"><div><span>57 / OBJECT QUERY ANTI-DUPLICATION</span><h2>检测门控的 R→F 去重探索</h2><p>000331 / seed 90094 的宽泛与 RGB 定点方案，以及 PhysicIQ 3 个随机 seed 的误触发/no-op 对照；同时展示 Extra、Missing、ADE 与 MAE。</p></div><span class="go">打开多实例修复对比</span></a>
+<a class="card new" href="/object-query-anti-duplication?v=3"><div><span>57 / OBJECT QUERY ANTI-DUPLICATION</span><h2>检测门控的 R→F 去重探索</h2><p>按 case 汇总全部已生成实验；每个 case 的所有 seed、Baseline、Detector-gated 与 Broad Q@K 扫描在同一页按组对比。</p></div><span class="go">打开完整 case 实验桌</span></a>
+'''
+PHASE_B_ATTENTION_OVERLAY_PORTAL_CARD = r'''
+<a class="card new" href="/training-free-m1-phase-b-attention?v=1&amp;window=all40"><div><span>58 / PHASE-B ATTENTION OVERLAY</span><h2>Seed 90094 · 5 × 13 Latent 热力图</h2><p>Baseline、Sparse 8-point 与 SAM2 Full-mask 的 α=0.1/0.25 五行对照；默认 40-step mean，并切换 First10 / First20 / Last20。</p></div><span class="go">打开 13-Latent Attention 页</span></a>
 '''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", OBJECT_QUERY_ANTI_DUPLICATION_PORTAL_CARD + "</section>", 1
+    "</section>",
+    OBJECT_QUERY_ANTI_DUPLICATION_PORTAL_CARD
+    + PHASE_B_ATTENTION_OVERLAY_PORTAL_CARD
+    + "</section>",
+    1,
 )
 
 
@@ -481,6 +488,7 @@ from AAA_my_test.object_query_ablation_metrics import top100_m1_token_communicat
 from AAA_my_test.object_query_ablation_metrics import object_query_anti_duplication_dashboard
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import dashboard as training_free_m1_control_dashboard
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import phase_bd_dashboard
+from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import phase_b_attention_overlay_dashboard
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import multi_object_search_dashboard
 from AAA_my_test import gt_stc_guidance_dashboard
 from AAA_my_test import gt_stc_direct_attention_multicase_dashboard
@@ -575,6 +583,12 @@ class MetricsHandler(viewer.Handler):
         if path == "/training-free-m1-phase-bd":
             self.send_payload(
                 phase_bd_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/training-free-m1-phase-b-attention":
+            self.send_payload(
+                phase_b_attention_overlay_dashboard.page().encode("utf-8"),
                 "text/html; charset=utf-8",
             )
             return
@@ -928,6 +942,33 @@ class MetricsHandler(viewer.Handler):
             if result is None or not result.is_file():
                 raise FileNotFoundError("Phase-B/D asset is not ready")
             viewer.send_file_with_range(self, result, "video/mp4")
+            return
+        if path == "/api/training-free-m1-phase-b-attention/catalog":
+            payload = json.dumps(
+                phase_b_attention_overlay_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/training-free-m1-phase-b-attention/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            try:
+                latent = int(params.get("latent", ["-1"])[0])
+            except ValueError:
+                raise FileNotFoundError("invalid Phase-B attention latent index")
+            result = phase_b_attention_overlay_dashboard.asset(
+                params.get("kind", [""])[0],
+                params.get("variant_id", [""])[0],
+                params.get("window", [""])[0],
+                latent,
+            )
+            if result is None or not result.is_file():
+                raise FileNotFoundError("Phase-B attention asset is not ready")
+            content_type = "video/mp4" if result.suffix == ".mp4" else "image/jpeg"
+            viewer.send_file_with_range(self, result, content_type)
             return
         if path == "/api/training-free-m1-multi-object-search/catalog":
             payload = json.dumps(
