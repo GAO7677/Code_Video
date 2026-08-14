@@ -82,6 +82,9 @@ DEFAULT_HEAD_CONFIG = EXPERIMENT_ROOT / "configs/physiciq67_pck32_s039_latest335
 DEFAULT_HEAD_SUBSET = "T_physiciq67_pck32_s039_latest3350_top100"
 DEFAULT_HEAD_SUBTYPE = "physiciq67_pck32_s039_latest3350"
 DEFAULT_FAMILIES = ("F1", "F2", "F3")
+DEFAULT_SWEEP_TRAINING_TIMESTEPS = (100.0, 300.0, 500.0, 700.0, 900.0)
+DEFAULT_SWEEP_PROBE_NOISE_LEVELS = (0.1, 0.2)
+DEFAULT_SWEEP_PROBE_TIMESTEPS = (100.0, 200.0)
 PALETTE_RGB = np.asarray(
     [
         [230, 57, 70],
@@ -104,7 +107,10 @@ def parse_args() -> argparse.Namespace:
             "and render a diagnostic report."
         )
     )
-    parser.add_argument("mode", choices=("prepare", "forward", "render"))
+    parser.add_argument(
+        "mode",
+        choices=("prepare", "forward", "render", "sweep-forward", "sweep-render"),
+    )
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
@@ -125,6 +131,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--training-timestep", type=float, default=500.0)
     parser.add_argument("--probe-timestep", type=float, default=500.0)
     parser.add_argument("--probe-noise-level", type=float, default=0.5)
+    parser.add_argument(
+        "--sweep-training-timesteps",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_SWEEP_TRAINING_TIMESTEPS),
+    )
+    parser.add_argument(
+        "--sweep-probe-noise-levels",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_SWEEP_PROBE_NOISE_LEVELS),
+    )
+    parser.add_argument(
+        "--sweep-probe-timesteps",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_SWEEP_PROBE_TIMESTEPS),
+    )
     parser.add_argument("--heatmap-weight", type=float, default=0.1)
     parser.add_argument("--trajectory-weight", type=float, default=0.1)
     parser.add_argument("--trajectory-huber-delta", type=float, default=0.05)
@@ -188,6 +212,48 @@ def check_common_args(args: argparse.Namespace) -> None:
         raise ValueError("height and width must be divisible by 32")
     if not 0.0 <= float(args.probe_noise_level) <= 1.0:
         raise ValueError("probe-noise-level must be in [0,1]")
+    noise_sweep_config(args)
+
+
+def sweep_value_code(prefix: str, value: float) -> str:
+    scaled = round(float(value) * (100 if prefix == "probe" else 1))
+    width = 3 if prefix == "probe" else 4
+    return f"{prefix}_{scaled:0{width}d}"
+
+
+def noise_sweep_config(args: argparse.Namespace) -> dict[str, Any]:
+    training_timesteps = tuple(float(value) for value in args.sweep_training_timesteps)
+    probe_levels = tuple(float(value) for value in args.sweep_probe_noise_levels)
+    probe_timesteps = tuple(float(value) for value in args.sweep_probe_timesteps)
+    if not training_timesteps:
+        raise ValueError("sweep-training-timesteps cannot be empty")
+    if len(set(training_timesteps)) != len(training_timesteps):
+        raise ValueError("sweep-training-timesteps must be unique")
+    if any(value < 0.0 or value > 1000.0 for value in training_timesteps):
+        raise ValueError("sweep-training-timesteps must be in [0,1000]")
+    if len(probe_levels) != len(probe_timesteps):
+        raise ValueError(
+            "sweep-probe-noise-levels and sweep-probe-timesteps must have equal lengths"
+        )
+    if not probe_levels or any(value < 0.0 or value > 1.0 for value in probe_levels):
+        raise ValueError("sweep-probe-noise-levels must be non-empty and in [0,1]")
+    if len(set(probe_levels)) != len(probe_levels):
+        raise ValueError("sweep-probe-noise-levels must be unique")
+    if any(value < 0.0 or value > 1000.0 for value in probe_timesteps):
+        raise ValueError("sweep-probe-timesteps must be in [0,1000]")
+    probes = tuple(
+        {
+            "noise_level": level,
+            "timestep": timestep,
+            "id": sweep_value_code("probe", level),
+        }
+        for level, timestep in zip(probe_levels, probe_timesteps)
+    )
+    stages = tuple(
+        {"timestep": timestep, "id": sweep_value_code("train", timestep)}
+        for timestep in training_timesteps
+    )
+    return {"training_stages": stages, "probe_settings": probes}
 
 
 def sample_video_to_uint8(video: torch.Tensor) -> np.ndarray:
@@ -936,6 +1002,527 @@ def run_forward(args: argparse.Namespace) -> None:
         },
     )
     atomic_json(output_root / "status.json", {"state": "forward_complete", "case_count": len(case_summaries)})
+
+
+def collect_case_sweep_metrics(
+    case: dict[str, Any],
+    case_sweep: Path,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    stages = []
+    probes = []
+    comparisons = []
+    for stage in config["training_stages"]:
+        stage_root = case_sweep / "stages" / stage["id"]
+        stages.append(json.loads((stage_root / "metrics.json").read_text(encoding="utf-8")))
+    for probe in config["probe_settings"]:
+        probe_root = case_sweep / "probes" / probe["id"]
+        probes.append(json.loads((probe_root / "metrics.json").read_text(encoding="utf-8")))
+    for stage in config["training_stages"]:
+        for probe in config["probe_settings"]:
+            comparison_root = case_sweep / "comparisons" / stage["id"] / probe["id"]
+            comparisons.append(
+                json.loads((comparison_root / "metrics.json").read_text(encoding="utf-8"))
+            )
+    return {
+        "schema_version": 2,
+        "case_key": case["case_key"],
+        "training_noise_protocol": "one shared epsilon_train across all training timesteps",
+        "probe_noise_protocol": (
+            "one shared epsilon_p across both noise levels and all training timesteps; "
+            "Teacher and Student share epsilon_p"
+        ),
+        "training_stages": stages,
+        "probe_settings": probes,
+        "comparisons": comparisons,
+    }
+
+
+def run_sweep_forward(args: argparse.Namespace) -> None:
+    config = noise_sweep_config(args)
+    cache_root = args.cache_root.resolve()
+    output_root = args.output_root.resolve()
+    manifest_path = cache_root / "manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"run prepare first: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    device = torch.device(args.device)
+    torch.manual_seed(int(args.seed))
+    np.random.seed(int(args.seed))
+    print("[sweep-forward] loading official Wan2.2-TI2V-5B baseline", flush=True)
+    pipe = build_pipeline(args.wan_root.resolve(), str(device), None)
+    pipe.dit.requires_grad_(False).eval()
+    selected_heads, head_metadata = train_core.load_head_selection_config(
+        args.head_config,
+        expected_subset_id=args.head_subset,
+        expected_role="T",
+        expected_feature_subtype=args.head_subtype,
+        expected_num_heads=100,
+        num_blocks=30,
+        num_heads=24,
+    )
+    runner = SimpleNamespace(
+        _motion_probe_dit=pipe.dit,
+        motion_probe_selected_heads_by_block=selected_heads,
+        motion_probe_gradient_checkpointing_offload=True,
+    )
+    completed_cases = []
+    for case_position, case in enumerate(manifest["cases"], start=1):
+        case_key = case["case_key"]
+        case_cache = Path(case["cache_dir"])
+        case_output = output_root / "cases" / case_key
+        case_sweep = case_output / "noise_sweep"
+        complete = case_sweep / "forward_complete.json"
+        if complete.is_file() and not args.overwrite:
+            completed_cases.append(
+                json.loads((case_sweep / "metrics.json").read_text(encoding="utf-8"))
+            )
+            print(
+                f"[sweep-forward {case_position}/{len(manifest['cases'])}] skip {case_key}",
+                flush=True,
+            )
+            continue
+        print(
+            f"[sweep-forward {case_position}/{len(manifest['cases'])}] {case_key}",
+            flush=True,
+        )
+        case_sweep.mkdir(parents=True, exist_ok=True)
+        source_frames = wan_tools.load_video_prefix(
+            Path(case["source_video"]),
+            int(args.num_frames),
+            int(args.height),
+            int(args.width),
+            "cache",
+        )
+        context_frames = source_frames[: int(args.context_frames)]
+        target_x0 = wan_tools.encode_gt_video(pipe, source_frames, "whole_video")
+        inputs_shared, inputs_positive = wan_tools.prepare_conditioning(
+            pipe,
+            prompt=case["caption"],
+            context_video=context_frames,
+            height=int(args.height),
+            width=int(args.width),
+            num_frames=int(args.num_frames),
+            sampling_steps=40,
+            sigma_shift=5.0,
+            cfg_scale=5.0,
+            seed=int(args.seed) + case_position,
+        )
+        captured_inputs = dict(inputs_shared)
+        captured_inputs.update(inputs_positive)
+        pipe.scheduler.set_timesteps(1000, training=True)
+        pipe.load_models_to_device(pipe.in_iteration_models)
+        models = {name: getattr(pipe, name) for name in pipe.in_iteration_models}
+        clean_prefix_len = context_wan.resolve_num_clean_prefix_latents(
+            clean_prefix_latents=captured_inputs.get("clean_prefix_latents"),
+            num_clean_prefix_latents=captured_inputs.get("num_clean_prefix_latents"),
+        )
+        grid = _probe_grid(pipe.dit, target_x0)
+        with np.load(case_cache / "sam2_masks.npz") as mask_arrays:
+            selected_mask = mask_arrays["selected_identity_mask"].astype(np.uint8)
+        query_rows = query_rows_from_mask(
+            torch.from_numpy(selected_mask),
+            grid=grid,
+            query_latent_frame=int(args.query_latent_frame),
+        )
+
+        train_noise_seed = int(args.seed) + 100 * case_position
+        train_generator = torch.Generator(device=device)
+        train_generator.manual_seed(train_noise_seed)
+        training_noise = torch.randn(
+            target_x0.shape,
+            generator=train_generator,
+            device=device,
+            dtype=target_x0.dtype,
+        )
+        for stage_position, stage in enumerate(config["training_stages"], start=1):
+            stage_root = case_sweep / "stages" / stage["id"]
+            stage_complete = stage_root / "forward_complete.json"
+            if stage_complete.is_file() and not args.overwrite:
+                print(
+                    f"  [main {stage_position}/{len(config['training_stages'])}] "
+                    f"skip t={stage['timestep']:.0f}",
+                    flush=True,
+                )
+                continue
+            stage_root.mkdir(parents=True, exist_ok=True)
+            torch.cuda.reset_peak_memory_stats(device)
+            timestep = torch.full(
+                (1,),
+                float(stage["timestep"]),
+                device=device,
+                dtype=pipe.torch_dtype,
+            )
+            latent_xt = pipe.scheduler.add_noise(target_x0, training_noise, timestep)
+            latent_xt = restore_clean_conditioning(latent_xt, target_x0, captured_inputs)
+            main_inputs = dict(captured_inputs)
+            main_inputs["latents"] = latent_xt
+            print(
+                f"  [main {stage_position}/{len(config['training_stages'])}] "
+                f"t={stage['timestep']:.0f}",
+                flush=True,
+            )
+            with torch.no_grad():
+                velocity = pipe.model_fn(**models, **main_inputs, timestep=timestep)
+            sigma = context_wan._diffsynth_sigma_for_timestep(pipe.scheduler, timestep).to(
+                device=device, dtype=target_x0.dtype
+            )
+            pred_x0 = restore_clean_conditioning(
+                latent_xt - sigma * velocity,
+                target_x0,
+                captured_inputs,
+            )
+            target_velocity = pipe.scheduler.training_target(
+                target_x0, training_noise, timestep
+            )
+            flow_mse = torch.nn.functional.mse_loss(
+                velocity[:, :, clean_prefix_len:].float(),
+                target_velocity[:, :, clean_prefix_len:].float(),
+            )
+            flow_weight = pipe.scheduler.training_weight(timestep).to(flow_mse)
+            flow_loss = flow_mse * flow_weight
+            torch.save(
+                {
+                    "training_xt": latent_xt.detach().cpu(),
+                    "predicted_velocity": velocity.detach().cpu(),
+                    "predicted_x0": pred_x0.detach().cpu(),
+                },
+                stage_root / "latents.pt",
+            )
+            atomic_json(
+                stage_root / "metrics.json",
+                {
+                    "id": stage["id"],
+                    "training_timestep": float(timestep.item()),
+                    "scheduler_sigma": float(sigma.float().item()),
+                    "shared_training_noise_seed": train_noise_seed,
+                    "clean_prefix_latents": int(clean_prefix_len),
+                    "raw_v_mse": float(flow_mse.item()),
+                    "training_weight": float(flow_weight.item()),
+                    "weighted_loss": float(flow_loss.item()),
+                    "peak_gpu_memory_mib": float(
+                        torch.cuda.max_memory_allocated(device) / 2**20
+                    ),
+                    "tensors": {
+                        "training_xt": tensor_stats(latent_xt),
+                        "predicted_velocity": tensor_stats(velocity),
+                        "predicted_x0": tensor_stats(pred_x0),
+                    },
+                },
+            )
+            atomic_json(stage_complete, {"state": "complete", "id": stage["id"]})
+            del latent_xt, velocity, pred_x0, target_velocity
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        probe_noise_seed = int(args.seed) + 1000 + case_position
+        probe_generator = torch.Generator(device=device)
+        probe_generator.manual_seed(probe_noise_seed)
+        probe_noise = torch.randn(
+            target_x0.shape,
+            generator=probe_generator,
+            device=device,
+            dtype=target_x0.dtype,
+        )
+        for probe_position, probe in enumerate(config["probe_settings"], start=1):
+            probe_root = case_sweep / "probes" / probe["id"]
+            teacher_path = probe_root / "teacher.pt"
+            teacher_complete = probe_root / "forward_complete.json"
+            teacher_bundle = None
+            if teacher_complete.is_file() and not args.overwrite:
+                teacher_bundle = torch.load(teacher_path, map_location="cpu", weights_only=True)
+                teacher_probe_input = teacher_bundle["teacher_probe_input"].to(device)
+                teacher_heatmap = teacher_bundle["teacher_heatmap"].to(device)
+                fixed_query_by_block = {
+                    int(block): value.to(device)
+                    for block, value in teacher_bundle["fixed_query_by_block"].items()
+                }
+                print(
+                    f"  [teacher {probe_position}/{len(config['probe_settings'])}] "
+                    f"load noise={probe['noise_level']:.2f}",
+                    flush=True,
+                )
+            else:
+                probe_root.mkdir(parents=True, exist_ok=True)
+                torch.cuda.reset_peak_memory_stats(device)
+                probe_timestep = torch.full(
+                    (1,),
+                    float(probe["timestep"]),
+                    device=device,
+                    dtype=pipe.torch_dtype,
+                )
+                teacher_probe_input = restore_clean_conditioning(
+                    blend_with_fixed_probe_noise(
+                        target_x0,
+                        probe_noise,
+                        noise_level=float(probe["noise_level"]),
+                    ),
+                    target_x0,
+                    captured_inputs,
+                )
+                print(
+                    f"  [teacher {probe_position}/{len(config['probe_settings'])}] "
+                    f"noise={probe['noise_level']:.2f}, t={probe['timestep']:.0f}",
+                    flush=True,
+                )
+                with torch.no_grad():
+                    teacher_heatmap, fixed_query_by_block = (
+                        FrozenMotionProbeWanModule._run_frozen_probe(
+                            runner,
+                            latents=teacher_probe_input,
+                            timestep=probe_timestep,
+                            captured_inputs=captured_inputs,
+                            query_rows=query_rows,
+                            grid=grid,
+                            retain_input_gradient=False,
+                            fixed_query_by_block=None,
+                        )
+                    )
+                    teacher_heatmap = teacher_heatmap.detach()
+                    fixed_query_by_block = {
+                        block: value.detach() for block, value in fixed_query_by_block.items()
+                    }
+                probe_sigma = context_wan._diffsynth_sigma_for_timestep(
+                    pipe.scheduler, probe_timestep
+                )
+                torch.save(
+                    {
+                        "teacher_probe_input": teacher_probe_input.detach().cpu(),
+                        "teacher_heatmap": teacher_heatmap.cpu().float(),
+                        "fixed_query_by_block": {
+                            block: value.cpu()
+                            for block, value in fixed_query_by_block.items()
+                        },
+                    },
+                    teacher_path,
+                )
+                atomic_json(
+                    probe_root / "metrics.json",
+                    {
+                        "id": probe["id"],
+                        "noise_level": float(probe["noise_level"]),
+                        "timestep": float(probe_timestep.item()),
+                        "scheduler_sigma": float(probe_sigma.float().item()),
+                        "shared_probe_noise_seed": probe_noise_seed,
+                        "teacher_requires_grad": bool(teacher_heatmap.requires_grad),
+                        "peak_gpu_memory_mib": float(
+                            torch.cuda.max_memory_allocated(device) / 2**20
+                        ),
+                        "tensors": {
+                            "teacher_probe_input": tensor_stats(teacher_probe_input),
+                            "teacher_heatmap": tensor_stats(teacher_heatmap),
+                        },
+                    },
+                )
+                atomic_json(
+                    teacher_complete, {"state": "complete", "id": probe["id"]}
+                )
+            probe_timestep = torch.full(
+                (1,),
+                float(probe["timestep"]),
+                device=device,
+                dtype=pipe.torch_dtype,
+            )
+            for stage_position, stage in enumerate(config["training_stages"], start=1):
+                comparison_root = (
+                    case_sweep / "comparisons" / stage["id"] / probe["id"]
+                )
+                comparison_complete = comparison_root / "forward_complete.json"
+                if comparison_complete.is_file() and not args.overwrite:
+                    print(
+                        f"    [student {stage_position}/{len(config['training_stages'])}] "
+                        f"skip t={stage['timestep']:.0f}",
+                        flush=True,
+                    )
+                    continue
+                comparison_root.mkdir(parents=True, exist_ok=True)
+                stage_root = case_sweep / "stages" / stage["id"]
+                stage_bundle = torch.load(
+                    stage_root / "latents.pt", map_location="cpu", weights_only=True
+                )
+                latent_xt = stage_bundle["training_xt"].to(device)
+                velocity = stage_bundle["predicted_velocity"].to(device)
+                timestep = torch.full(
+                    (1,),
+                    float(stage["timestep"]),
+                    device=device,
+                    dtype=pipe.torch_dtype,
+                )
+                sigma = context_wan._diffsynth_sigma_for_timestep(
+                    pipe.scheduler, timestep
+                ).to(device=device, dtype=target_x0.dtype)
+                velocity_leaf = velocity.detach().requires_grad_(True)
+                pred_x0_leaf = restore_clean_conditioning(
+                    latent_xt.detach() - sigma * velocity_leaf,
+                    target_x0,
+                    captured_inputs,
+                )
+                student_probe_input = restore_clean_conditioning(
+                    blend_with_fixed_probe_noise(
+                        pred_x0_leaf,
+                        probe_noise,
+                        noise_level=float(probe["noise_level"]),
+                    ),
+                    target_x0,
+                    captured_inputs,
+                )
+                torch.cuda.reset_peak_memory_stats(device)
+                print(
+                    f"    [student {stage_position}/{len(config['training_stages'])}] "
+                    f"t={stage['timestep']:.0f}, noise={probe['noise_level']:.2f}",
+                    flush=True,
+                )
+                with torch.enable_grad():
+                    student_heatmap, _ = FrozenMotionProbeWanModule._run_frozen_probe(
+                        runner,
+                        latents=student_probe_input,
+                        timestep=probe_timestep,
+                        captured_inputs=captured_inputs,
+                        query_rows=query_rows,
+                        grid=grid,
+                        retain_input_gradient=True,
+                        fixed_query_by_block=fixed_query_by_block,
+                    )
+                    heatmap_loss = student_teacher_heatmap_kl(
+                        student_heatmap, teacher_heatmap
+                    )
+                    trajectory_loss, student_trajectory, teacher_trajectory = (
+                        trajectory_huber_loss(
+                            student_heatmap,
+                            teacher_heatmap,
+                            delta=float(args.trajectory_huber_delta),
+                        )
+                    )
+                    auxiliary_loss = (
+                        float(args.heatmap_weight) * heatmap_loss
+                        + float(args.trajectory_weight) * trajectory_loss
+                    )
+                    velocity_gradient = torch.autograd.grad(
+                        auxiliary_loss,
+                        velocity_leaf,
+                        retain_graph=False,
+                        create_graph=False,
+                    )[0]
+                student_heatmap_saved = student_heatmap.detach()
+                trajectory_distance = torch.linalg.vector_norm(
+                    student_trajectory.detach() - teacher_trajectory.detach(), dim=-1
+                ).mean()
+                torch.save(
+                    {"student_probe_input": student_probe_input.detach().cpu()},
+                    comparison_root / "latents.pt",
+                )
+                np.savez_compressed(
+                    comparison_root / "probe_outputs.npz",
+                    student_heatmap=student_heatmap_saved.cpu().float().numpy(),
+                    heatmap_difference=(student_heatmap_saved - teacher_heatmap)
+                    .cpu()
+                    .float()
+                    .numpy(),
+                    teacher_trajectory=teacher_trajectory.detach().cpu().float().numpy(),
+                    student_trajectory=student_trajectory.detach().cpu().float().numpy(),
+                )
+                atomic_json(
+                    comparison_root / "metrics.json",
+                    {
+                        "training_stage_id": stage["id"],
+                        "probe_setting_id": probe["id"],
+                        "training_timestep": float(stage["timestep"]),
+                        "probe_noise_level": float(probe["noise_level"]),
+                        "probe_timestep": float(probe["timestep"]),
+                        "heatmap_kl_student_teacher": float(heatmap_loss.detach().item()),
+                        "trajectory_huber": float(trajectory_loss.detach().item()),
+                        "weighted_auxiliary_loss": float(auxiliary_loss.detach().item()),
+                        "trajectory_distance_normalized": float(
+                            trajectory_distance.item()
+                        ),
+                        "gradient_to_first_pass_v_pred_norm": float(
+                            velocity_gradient.detach().float().norm().item()
+                        ),
+                        "gradient_to_first_pass_v_pred_abs_mean": float(
+                            velocity_gradient.detach().float().abs().mean().item()
+                        ),
+                        "teacher_requires_grad": bool(teacher_heatmap.requires_grad),
+                        "student_requires_grad": bool(student_heatmap.requires_grad),
+                        "probe_trainable_parameters": 0,
+                        "peak_gpu_memory_mib": float(
+                            torch.cuda.max_memory_allocated(device) / 2**20
+                        ),
+                        "tensors": {
+                            "student_probe_input": tensor_stats(student_probe_input),
+                            "student_heatmap": tensor_stats(student_heatmap_saved),
+                        },
+                    },
+                )
+                atomic_json(
+                    comparison_complete,
+                    {
+                        "state": "complete",
+                        "training_stage_id": stage["id"],
+                        "probe_setting_id": probe["id"],
+                    },
+                )
+                del (
+                    stage_bundle,
+                    latent_xt,
+                    velocity,
+                    velocity_leaf,
+                    pred_x0_leaf,
+                    student_probe_input,
+                    student_heatmap,
+                    student_heatmap_saved,
+                    velocity_gradient,
+                )
+                gc.collect()
+                torch.cuda.empty_cache()
+            del teacher_bundle, teacher_probe_input, teacher_heatmap, fixed_query_by_block
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        sweep_metrics = collect_case_sweep_metrics(case, case_sweep, config)
+        sweep_metrics.update(
+            {
+                "grid": list(grid),
+                "query_token_count": int(query_rows.numel()),
+                "head_selection": {
+                    "subset_id": head_metadata["subset_id"],
+                    "feature_subtype": head_metadata["feature_subtype"],
+                    "num_heads": 100,
+                    "num_blocks": len(selected_heads),
+                    "config_sha256": head_metadata["config_sha256"],
+                },
+            }
+        )
+        atomic_json(case_sweep / "metrics.json", sweep_metrics)
+        atomic_json(complete, {"state": "complete", "case_key": case_key})
+        completed_cases.append(sweep_metrics)
+        del (
+            source_frames,
+            context_frames,
+            target_x0,
+            inputs_shared,
+            inputs_positive,
+            captured_inputs,
+            training_noise,
+            probe_noise,
+        )
+        gc.collect()
+        torch.cuda.empty_cache()
+    atomic_json(
+        output_root / "noise_sweep_forward_summary.json",
+        {
+            "schema_version": 2,
+            "case_count": len(completed_cases),
+            "training_timesteps": [
+                stage["timestep"] for stage in config["training_stages"]
+            ],
+            "probe_settings": list(config["probe_settings"]),
+            "cases": completed_cases,
+        },
+    )
+    atomic_json(
+        output_root / "noise_sweep_status.json",
+        {"state": "forward_complete", "case_count": len(completed_cases)},
+    )
 
 
 def decode_latent_bundle(

@@ -33,6 +33,9 @@ from code_vjepa_vggt.data.pybullet_vae_cache import (
 
 
 DEFAULT_CACHE_NAME = "vae_latents_wan22_512x896_49f_prefix_bf16"
+ONLINE_COMPARE_MAX_ABS_TOL = 0.25
+ONLINE_COMPARE_MEAN_ABS_TOL = 0.005
+ONLINE_COMPARE_RELATIVE_L2_TOL = 0.01
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -95,6 +98,30 @@ def _encode_sample(pipe, video: torch.Tensor, dtype: torch.dtype) -> torch.Tenso
     if latent.ndim != 5 or int(latent.shape[0]) != 1:
         raise RuntimeError(f"Unexpected Wan VAE latent shape: {tuple(latent.shape)}")
     return latent[0].to(device="cpu", dtype=dtype).contiguous()
+
+
+def _latent_comparison_metrics(
+    online: torch.Tensor,
+    cached: torch.Tensor,
+) -> dict[str, float | bool]:
+    delta = (online.float() - cached.float()).abs()
+    relative_l2_error = delta.norm() / cached.float().norm().clamp_min(
+        torch.finfo(torch.float32).eps
+    )
+    max_abs_error = float(delta.max().item())
+    mean_abs_error = float(delta.mean().item())
+    relative_l2_error_value = float(relative_l2_error.item())
+    return {
+        "exact_equal": bool(torch.equal(online, cached)),
+        "max_abs_error": max_abs_error,
+        "mean_abs_error": mean_abs_error,
+        "relative_l2_error": relative_l2_error_value,
+        "within_tolerance": bool(
+            max_abs_error <= ONLINE_COMPARE_MAX_ABS_TOL
+            and mean_abs_error <= ONLINE_COMPARE_MEAN_ABS_TOL
+            and relative_l2_error_value <= ONLINE_COMPARE_RELATIVE_L2_TOL
+        ),
+    }
 
 
 def _build_dataset(args: argparse.Namespace) -> PyBullet0713NoGTBoxDataset:
@@ -367,22 +394,24 @@ def verify_cache(args: argparse.Namespace) -> None:
             sample = dataset._load_sample(record)
             online = _encode_sample(pipe, sample["video"], torch.bfloat16)
             cached = cache.load(record.key)
-            delta = (online.float() - cached.float()).abs()
             row = {
                 "logical_key": record.key,
-                "max_abs_error": float(delta.max().item()),
-                "mean_abs_error": float(delta.mean().item()),
-                "equal": bool(torch.equal(online, cached)),
+                **_latent_comparison_metrics(online, cached),
             }
             comparisons.append(row)
             print(f"[vae-cache][compare] {row}", flush=True)
-            if not torch.equal(online, cached):
+            if not row["within_tolerance"]:
                 raise RuntimeError(f"Online/cache latent mismatch: {row}")
 
     report = {
         "status": "passed",
         "num_index_entries": len(cache.entries),
         "num_tensor_files_checked": checked,
+        "online_comparison_tolerances": {
+            "max_abs_error": ONLINE_COMPARE_MAX_ABS_TOL,
+            "mean_abs_error": ONLINE_COMPARE_MEAN_ABS_TOL,
+            "relative_l2_error": ONLINE_COMPARE_RELATIVE_L2_TOL,
+        },
         "online_comparisons": comparisons,
     }
     reports_dir = cache_dir / "reports"

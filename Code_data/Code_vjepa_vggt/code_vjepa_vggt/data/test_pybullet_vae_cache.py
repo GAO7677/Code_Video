@@ -9,7 +9,10 @@ from unittest import mock
 import torch
 from safetensors.torch import save_file
 
-from code_vjepa_vggt.data.prepare_pybullet_vae_cache import _distributed_context
+from code_vjepa_vggt.data.prepare_pybullet_vae_cache import (
+    _distributed_context,
+    _latent_comparison_metrics,
+)
 from code_vjepa_vggt.data.pybullet_vae_cache import (
     LATENT_TENSOR_KEY,
     PyBulletVaeCacheError,
@@ -69,6 +72,15 @@ def _write_cache(root: Path, logical_key: str = "F1/case001") -> tuple[Path, Pat
 
 
 class PyBulletVaeCacheTests(unittest.TestCase):
+    def test_online_comparison_uses_bfloat16_numerical_tolerance(self) -> None:
+        reference = torch.ones((16,), dtype=torch.float32)
+        close = reference + 0.001
+        far = reference.clone()
+        far[0] += 1.0
+
+        self.assertTrue(_latent_comparison_metrics(close, reference)["within_tolerance"])
+        self.assertFalse(_latent_comparison_metrics(far, reference)["within_tolerance"])
+
     def test_distributed_context_maps_five_workers_per_visible_gpu(self) -> None:
         calls: list[tuple[str, object]] = []
         environment = {"WORLD_SIZE": "15", "RANK": "5", "LOCAL_RANK": "5"}
