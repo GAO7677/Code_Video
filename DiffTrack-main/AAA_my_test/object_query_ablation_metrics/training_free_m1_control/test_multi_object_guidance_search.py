@@ -9,9 +9,11 @@ import numpy as np
 import torch
 
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control.run_multi_object_guidance_search import (
+    WindowedDirectAttentionAblation,
     WindowedMultiObjectM1Guidance,
     apply_grouped_m1_ablation,
     block_diagonal_groups,
+    direct_variant_directory,
     multi_object_flow_groups,
     variant_directory,
     validate_window,
@@ -194,6 +196,80 @@ class WindowValidationTest(unittest.TestCase):
         for start, end in ((-1, 4), (5, 4), (0, 40)):
             with self.assertRaises(ValueError):
                 validate_window(start, end)
+
+
+class DirectAblationTest(unittest.TestCase):
+    def test_variant_directory_has_no_guidance_scale(self) -> None:
+        root = Path("/tmp/direct-flow-test")
+        result = direct_variant_directory(
+            root, "case", 13248, 0, 9, "m2_multi_object_independent"
+        )
+
+        self.assertIn("direct_multi_object_independent__m2_all_time__top100", str(result))
+        self.assertIn("denoise_00_09", str(result))
+        self.assertNotIn("pag", str(result))
+
+    def test_both_cfg_branches_are_directly_ablated_inside_window(self) -> None:
+        class FakePipe:
+            def __init__(self) -> None:
+                self.model_fn = lambda *args, **kwargs: torch.tensor(1.0)
+
+        class FakeAblator:
+            entries = [{"block": 0, "head": 0}, {"block": 1, "head": 1}]
+            dose_attention_mass = np.full((40, 2, 30, 24), np.nan, dtype=np.float32)
+            record_dose = False
+            mask_mode = "full_head_output"
+            target_scope = "all_tokens"
+
+            def __init__(self, pipe) -> None:
+                self.pipe = pipe
+                self.model_call_counts = {}
+                self.modified_head_events = 0
+                self._original_model_fn = None
+
+            @staticmethod
+            def _step(timestep) -> int:
+                return int(timestep.item())
+
+            def install(self) -> None:
+                self._original_model_fn = self.pipe.model_fn
+
+                def perturbed(*args, **kwargs):
+                    step = self._step(kwargs["timestep"])
+                    self.model_call_counts[step] = self.model_call_counts.get(step, 0) + 1
+                    self.modified_head_events += len(self.entries)
+                    return torch.tensor(2.0)
+
+                self.pipe.model_fn = perturbed
+
+            def remove(self) -> None:
+                self.pipe.model_fn = self._original_model_fn
+
+        pipe = FakePipe()
+        ablator = FakeAblator(pipe)
+        direct = WindowedDirectAttentionAblation(
+            pipe, ablator, denoise_start=0, denoise_end=0, expected_steps=2
+        )
+        direct.install()
+        try:
+            active = [
+                pipe.model_fn(timestep=torch.tensor(step), latents=torch.zeros(1)).item()
+                for step in (0, 0)
+            ]
+            inactive = [
+                pipe.model_fn(timestep=torch.tensor(step), latents=torch.zeros(1)).item()
+                for step in (1, 1)
+            ]
+        finally:
+            direct.remove()
+
+        self.assertEqual(active, [2.0, 2.0])
+        self.assertEqual(inactive, [1.0, 1.0])
+        report = direct.audit()
+        self.assertEqual(report["direct_calls_by_step"], {0: 2})
+        self.assertEqual(report["modified_cfg_branches"], ["conditional", "unconditional"])
+        self.assertEqual(report["modified_head_events"], 4)
+        self.assertNotIn("perturbation_delta_l2_by_step", report)
 
 
 class FullHeadAuditTest(unittest.TestCase):

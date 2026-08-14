@@ -943,6 +943,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="prefix",
     )
     pybullet0713_group.add_argument("--pybullet0713_init_scan_limit", type=int, default=None)
+    pybullet0713_group.add_argument("--pybullet0713_vae_cache_dir", type=str, default=None)
     pybullet0713_group.add_argument(
         "--pybullet0713_family",
         action="append",
@@ -1186,6 +1187,8 @@ def build_dataset(args: argparse.Namespace):
             split_train_ratio=args.pybullet0713_split_train_ratio,
             split_val_ratio=args.pybullet0713_split_val_ratio,
             max_retry_samples=args.pybullet0713_max_retry_samples,
+            vae_cache_dir=args.pybullet0713_vae_cache_dir,
+            vae_checkpoint_path=Path(args.wan_root) / "Wan2.2_VAE.pth",
         )
     if args.dataset_type == "pybullet_raw_no_gt_box":
         if not args.pybullet_raw_root:

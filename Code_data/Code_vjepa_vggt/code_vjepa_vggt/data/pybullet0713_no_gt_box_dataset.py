@@ -12,6 +12,10 @@ import torch
 from decord import VideoReader, cpu
 from torch.utils.data import Dataset
 
+from code_vjepa_vggt.data.pybullet_vae_cache import (
+    PyBulletVaeCacheError,
+    PyBulletVaeLatentCache,
+)
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8, sample_frame_indices
 
 
@@ -153,6 +157,8 @@ class PyBullet0713NoGTBoxDataset(Dataset):
         split_train_ratio: float = 0.9,
         split_val_ratio: float = 0.05,
         max_retry_samples: int = 8,
+        vae_cache_dir: str | Path | None = None,
+        vae_checkpoint_path: str | Path | None = None,
     ) -> None:
         self.root = Path(root)
         self.split = str(split).strip().lower()
@@ -171,6 +177,7 @@ class PyBullet0713NoGTBoxDataset(Dataset):
         self.split_train_ratio = float(split_train_ratio)
         self.split_val_ratio = float(split_val_ratio)
         self.max_retry_samples = max(1, int(max_retry_samples))
+        self.vae_cache_dir = None if vae_cache_dir is None else Path(vae_cache_dir)
 
         if not self.root.is_dir():
             raise FileNotFoundError(f"0713 PyBullet root not found: {self.root}")
@@ -206,6 +213,25 @@ class PyBullet0713NoGTBoxDataset(Dataset):
             self.samples = self.samples[: self.init_scan_limit]
         if not self.samples:
             raise RuntimeError(f"no 0713 PyBullet samples found for split={self.split} under {self.root}")
+        keys = [record.key for record in self.samples]
+        if len(keys) != len(set(keys)):
+            raise RuntimeError("0713 PyBullet index contains duplicate family/case keys")
+        self.vae_cache = None
+        if self.vae_cache_dir is not None:
+            self.vae_cache = PyBulletVaeLatentCache(
+                self.vae_cache_dir,
+                resolution=self.resolution,
+                num_frames=self.num_frames,
+                sampling_strategy=self.sampling_strategy,
+                vae_checkpoint_path=vae_checkpoint_path,
+            )
+            self.vae_cache.validate_records(self.samples, self.root)
+            print(
+                "[pybullet-vae-cache] "
+                f"cache_dir={self.vae_cache.cache_dir} selected={len(self.samples)} "
+                "missing=0 invalid=0",
+                flush=True,
+            )
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -349,7 +375,7 @@ class PyBullet0713NoGTBoxDataset(Dataset):
             "raw_manifest": manifest,
             "raw_meta": meta,
         }
-        return {
+        sample = {
             "video": video,
             "context_video": video[:, context_indices].contiguous(),
             "caption": record.caption,
@@ -359,6 +385,14 @@ class PyBullet0713NoGTBoxDataset(Dataset):
             "num_context_frames": int(self.num_context_frames),
             "metadata": metadata,
         }
+        if self.vae_cache is not None:
+            sample["precomputed_input_latents"] = self.vae_cache.load(record.key)
+            metadata["vae_cache"] = {
+                "hit": True,
+                "encoding_id": self.vae_cache.encoding_id,
+                "cache_dir": str(self.vae_cache.cache_dir),
+            }
+        return sample
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         last_error: Exception | None = None
@@ -366,6 +400,8 @@ class PyBullet0713NoGTBoxDataset(Dataset):
             record = self.samples[(idx + attempt) % len(self.samples)]
             try:
                 return self._load_sample(record)
+            except PyBulletVaeCacheError:
+                raise
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
         raise RuntimeError(
@@ -387,4 +423,7 @@ class PyBullet0713NoGTBoxDataset(Dataset):
             "num_context_frames": self.num_context_frames,
             "sampling_strategy": self.sampling_strategy,
             "resolution": list(self.resolution),
+            "vae_cache_dir": (
+                str(self.vae_cache.cache_dir) if self.vae_cache is not None else None
+            ),
         }

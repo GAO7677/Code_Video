@@ -697,6 +697,7 @@ def build_parser() -> argparse.ArgumentParser:
     dataset.add_argument("--pybullet0713_sampling_strategy", default="prefix", choices=["prefix", "uniform"])
     dataset.add_argument("--pybullet0713_init_scan_limit", type=int, default=None)
     dataset.add_argument("--pybullet0713_family", action="append", default=None)
+    dataset.add_argument("--pybullet0713_vae_cache_dir", type=str, default=None)
     dataset.add_argument("--kubric_root", type=str, default=None)
     dataset.add_argument("--kubric_split", default="train", choices=["train", "val", "test", "all"])
     dataset.add_argument("--kubric_sampling_strategy", default="prefix", choices=["prefix", "uniform"])
@@ -731,6 +732,8 @@ def build_dataset(args: argparse.Namespace):
         sampling_strategy=args.pybullet0713_sampling_strategy,
         families=args.pybullet0713_family,
         init_scan_limit=args.pybullet0713_init_scan_limit,
+        vae_cache_dir=args.pybullet0713_vae_cache_dir,
+        vae_checkpoint_path=Path(args.wan_root) / "Wan2.2_VAE.pth",
     )
     kubric = KubricReplayNoGTBoxDataset(
         root=args.kubric_root,

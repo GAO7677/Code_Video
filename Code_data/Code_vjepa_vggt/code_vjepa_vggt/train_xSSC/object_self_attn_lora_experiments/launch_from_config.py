@@ -302,6 +302,7 @@ def validate_config(config: dict, config_dir: Path) -> dict:
         "paths.diffsynth_root",
         "paths.wan_root",
         "paths.pybullet_root",
+        "paths.pybullet_vae_cache_dir",
         "paths.kubric_root",
         "paths.openvid_root",
     ]
@@ -500,6 +501,7 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "--pybullet0713_root": paths["pybullet_root"],
         "--pybullet0713_split": data["pybullet_split"],
         "--pybullet0713_sampling_strategy": data["pybullet_sampling_strategy"],
+        "--pybullet0713_vae_cache_dir": paths["pybullet_vae_cache_dir"],
         "--kubric_root": paths["kubric_root"],
         "--kubric_split": data["kubric_split"],
         "--kubric_sampling_strategy": data["kubric_sampling_strategy"],

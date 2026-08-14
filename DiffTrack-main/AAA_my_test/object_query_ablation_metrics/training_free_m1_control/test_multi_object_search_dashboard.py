@@ -56,6 +56,38 @@ class MultiObjectSearchDashboardTest(unittest.TestCase):
         self.assertIn("family:'head_zero'", page)
         self.assertIn("Baseline 只显示一次", page)
 
+    def test_direct_matrix_is_limited_to_the_priority_case_and_seed(self) -> None:
+        payload = dashboard.catalog()
+
+        self.assertEqual(
+            payload["direct_case_seeds"],
+            [{"case": "0613pybullet_sample_001460_w002", "seed": 13248}],
+        )
+        self.assertEqual(payload["progress"]["direct_expected"], 16)
+        for row in payload["rows"]:
+            expected = 4 if (row["case"], row["seed"]) in dashboard.DIRECT_CASE_SEEDS else 0
+            self.assertEqual(
+                {family: len(records) for family, records in row["direct_records"].items()},
+                {family: expected for family in dashboard.DIRECT_FAMILIES},
+            )
+
+    def test_direct_variants_have_no_guidance_scale(self) -> None:
+        variants = {
+            family: dashboard._direct_variant(0, 9, family)
+            for family in dashboard.DIRECT_FAMILIES
+        }
+
+        self.assertEqual(len(set(variants.values())), 4)
+        self.assertTrue(all("direct_" in value for value in variants.values()))
+        self.assertTrue(all("pag" not in value for value in variants.values()))
+
+    def test_page_has_a_separate_direct_no_guidance_region(self) -> None:
+        page = dashboard.page()
+
+        self.assertIn('id="direct"', page)
+        self.assertIn("DIRECT ABLATION · NO GUIDANCE", page)
+        self.assertIn("directCard", page)
+
     def test_asset_rejects_head_zero_for_an_unselected_case(self) -> None:
         payload = dashboard.catalog()
         row = next(
@@ -69,6 +101,9 @@ class MultiObjectSearchDashboardTest(unittest.TestCase):
         )
         self.assertIsNone(
             dashboard.asset("m2_multi", row["case"], row["seed"], -1.0, 0, 4)
+        )
+        self.assertIsNone(
+            dashboard.asset("direct_m1", row["case"], row["seed"], 0.0, 0, 4)
         )
 
 

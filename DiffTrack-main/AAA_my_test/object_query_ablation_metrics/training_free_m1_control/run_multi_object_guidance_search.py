@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Top100 contrast guidance with an audited attention perturbation.
+"""Run Top100 guidance or direct generation with an audited attention perturbation.
 
 The default ``m1_multi_object_blockdiag`` mode preserves the original experiment.
 For object-token tubes R_i, its perturbed conditional forward subtracts
@@ -88,6 +88,11 @@ PROTOCOL = "wan_top100_m1_multi_object_blockdiag_contrast_guidance_v1"
 M2_PROTOCOL = "wan_top100_m2_multi_object_independent_contrast_guidance_v1"
 M3_PROTOCOL = "wan_top100_m3_multi_object_independent_contrast_guidance_v1"
 FULL_HEAD_PROTOCOL = "wan_top100_full_head_output_zero_contrast_guidance_v1"
+DIRECT_PROTOCOL = "wan_top100_m1_multi_object_blockdiag_direct_ablation_v1"
+M2_DIRECT_PROTOCOL = "wan_top100_m2_multi_object_independent_direct_ablation_v1"
+M3_DIRECT_PROTOCOL = "wan_top100_m3_multi_object_independent_direct_ablation_v1"
+FULL_HEAD_DIRECT_PROTOCOL = "wan_top100_full_head_output_zero_direct_ablation_v1"
+EXECUTION_MODES = ("guidance", "direct")
 PERTURBATION_MODES = (
     "m1_multi_object_blockdiag",
     "m2_multi_object_independent",
@@ -100,6 +105,7 @@ MULTI_OBJECT_FLOW_CONFIG = {
         "mask_mode": "self_only",
         "formula": "union_i A[R_i,R_i]V[R_i]",
         "protocol": PROTOCOL,
+        "direct_protocol": DIRECT_PROTOCOL,
         "symbol": "eps_M1_multi",
     },
     "m2_multi_object_independent": {
@@ -107,6 +113,7 @@ MULTI_OBJECT_FLOW_CONFIG = {
         "mask_mode": "incoming_only",
         "formula": "union_i A[R_i,C_i]V[C_i]",
         "protocol": M2_PROTOCOL,
+        "direct_protocol": M2_DIRECT_PROTOCOL,
         "symbol": "eps_M2_multi",
     },
     "m3_multi_object_independent": {
@@ -114,6 +121,7 @@ MULTI_OBJECT_FLOW_CONFIG = {
         "mask_mode": "outgoing_only",
         "formula": "union_i A[C_i,R_i]V[R_i]",
         "protocol": M3_PROTOCOL,
+        "direct_protocol": M3_DIRECT_PROTOCOL,
         "symbol": "eps_M3_multi",
     },
 }
@@ -627,6 +635,117 @@ class WindowedMultiObjectM1Guidance:
         return result
 
 
+class WindowedDirectAttentionAblation:
+    """Run the perturbed model directly for both CFG branches in one step window."""
+
+    def __init__(
+        self,
+        pipe: Any,
+        ablator: MultiObjectBlockDiagonalM1Ablator,
+        *,
+        denoise_start: int,
+        denoise_end: int,
+        expected_steps: int = 40,
+    ) -> None:
+        validate_window(denoise_start, denoise_end, expected_steps)
+        self.pipe = pipe
+        self.ablator = ablator
+        self.denoise_start = int(denoise_start)
+        self.denoise_end = int(denoise_end)
+        self.expected_steps = int(expected_steps)
+        self._clean_model_fn = None
+        self._perturbed_model_fn = None
+        self.pipeline_calls_by_step: dict[int, int] = {}
+        self.direct_calls_by_step: dict[int, int] = {}
+
+    @property
+    def active_steps(self) -> list[int]:
+        return list(range(self.denoise_start, self.denoise_end + 1))
+
+    def install(self) -> None:
+        self._clean_model_fn = self.pipe.model_fn
+        self.ablator.install()
+        self._perturbed_model_fn = self.pipe.model_fn
+        self.pipe.model_fn = self
+
+    def remove(self) -> None:
+        self.ablator.remove()
+
+    def __call__(self, *args, **kwargs):
+        if self._clean_model_fn is None or self._perturbed_model_fn is None:
+            raise RuntimeError("direct ablation is not installed")
+        timestep = kwargs.get("timestep")
+        latents = kwargs.get("latents")
+        if timestep is None or latents is None:
+            return self._clean_model_fn(*args, **kwargs)
+        step = self.ablator._step(timestep)
+        branch = self.pipeline_calls_by_step.get(step, 0)
+        if branch not in (0, 1):
+            raise RuntimeError(f"unexpected CFG call {branch} at step {step}")
+        if self.denoise_start <= step <= self.denoise_end:
+            result = self._perturbed_model_fn(*args, **kwargs)
+            self.direct_calls_by_step[step] = self.direct_calls_by_step.get(step, 0) + 1
+        else:
+            result = self._clean_model_fn(*args, **kwargs)
+        self.pipeline_calls_by_step[step] = branch + 1
+        return result
+
+    def audit(self) -> dict[str, Any]:
+        all_steps = list(range(self.expected_steps))
+        active = self.active_steps
+        if sorted(self.pipeline_calls_by_step) != all_steps or any(
+            count != 2 for count in self.pipeline_calls_by_step.values()
+        ):
+            raise RuntimeError(f"invalid pipeline call coverage: {self.pipeline_calls_by_step}")
+        if sorted(self.direct_calls_by_step) != active or any(
+            count != 2 for count in self.direct_calls_by_step.values()
+        ):
+            raise RuntimeError(f"invalid direct call coverage: {self.direct_calls_by_step}")
+        if sorted(self.ablator.model_call_counts) != active or any(
+            count != 2 for count in self.ablator.model_call_counts.values()
+        ):
+            raise RuntimeError(
+                f"invalid perturbed call coverage: {self.ablator.model_call_counts}"
+            )
+        expected_events = len(self.ablator.entries) * len(active) * 2
+        if self.ablator.modified_head_events != expected_events:
+            raise RuntimeError(
+                f"modified {self.ablator.modified_head_events} head events, "
+                f"expected {expected_events}"
+            )
+        dose_finite = int(np.isfinite(self.ablator.dose_attention_mass).sum())
+        if self.ablator.record_dose and dose_finite != expected_events:
+            raise RuntimeError(f"dose coverage {dose_finite} != {expected_events}")
+        result = {
+            "pipeline_calls_by_step": self.pipeline_calls_by_step,
+            "direct_calls_by_step": self.direct_calls_by_step,
+            "perturbed_calls_by_step": self.ablator.model_call_counts,
+            "active_denoising_steps": active,
+            "inactive_denoising_steps": [step for step in all_steps if step not in active],
+            "modified_cfg_branches": ["conditional", "unconditional"],
+            "modified_head_events": self.ablator.modified_head_events,
+            "expected_modified_head_events": expected_events,
+            "dose_finite_events": dose_finite,
+        }
+        if hasattr(self.ablator, "block_audit"):
+            flow_audit = self.ablator.block_audit()
+            result["multi_object_flow"] = flow_audit
+            if getattr(self.ablator, "flow_id", None) == "M1":
+                result["block_diagonal"] = flow_audit
+        elif (
+            self.ablator.target_scope == "all_tokens"
+            and self.ablator.mask_mode == "full_head_output"
+        ):
+            result["all_token_head_output_zero"] = {
+                "all_query_tokens": True,
+                "selected_head_count": len(self.ablator.entries),
+                "removed_flows": ["R->R", "C->R", "R->C", "C->C"],
+            }
+        else:
+            raise RuntimeError("ablator does not provide an audit for this perturbation")
+        return result
+
+
 def tracks_directory(root: Path, case: str, seed: int) -> Path:
     return root / case / f"seed_{seed:05d}" / "frozen_baseline_tracks"
 
@@ -794,28 +913,62 @@ def variant_directory(
     return output_root / "guided" / case / f"seed_{seed:05d}" / variant
 
 
-def process_guided(
+def direct_variant_directory(
+    output_root: Path,
+    case: str,
+    seed: int,
+    denoise_start: int,
+    denoise_end: int,
+    perturbation_mode: str,
+) -> Path:
+    prefixes = {
+        "m1_multi_object_blockdiag": "direct_multi_object_blockdiag__m1_all_time__top100",
+        "m2_multi_object_independent": "direct_multi_object_independent__m2_all_time__top100",
+        "m3_multi_object_independent": "direct_multi_object_independent__m3_all_time__top100",
+        "full_head_output_zero": "direct_all_token__full_head_output_zero__top100",
+    }
+    try:
+        prefix = prefixes[perturbation_mode]
+    except KeyError as exc:
+        raise ValueError(f"unsupported perturbation mode: {perturbation_mode}") from exc
+    variant = f"{prefix}__denoise_{denoise_start:02d}_{denoise_end:02d}"
+    return output_root / "direct" / case / f"seed_{seed:05d}" / variant
+
+
+def process_variant(
     pipe_wrapper: Any,
     sample: dict[str, Any],
     entries: list[dict[str, Any]],
     args: argparse.Namespace,
-    pag_scale: float,
+    pag_scale: float | None,
     denoise_start: int,
     denoise_end: int,
 ) -> None:
     case, seed = str(sample["case"]), int(sample["seed"])
-    output = variant_directory(
-        args.output_root,
-        case,
-        seed,
-        pag_scale,
-        denoise_start,
-        denoise_end,
-        args.perturbation_mode,
-    )
+    direct = args.execution_mode == "direct"
+    if direct:
+        output = direct_variant_directory(
+            args.output_root,
+            case,
+            seed,
+            denoise_start,
+            denoise_end,
+            args.perturbation_mode,
+        )
+    else:
+        assert pag_scale is not None
+        output = variant_directory(
+            args.output_root,
+            case,
+            seed,
+            pag_scale,
+            denoise_start,
+            denoise_end,
+            args.perturbation_mode,
+        )
     required = (output / "generated.mp4", output / "manifest.json", output / "complete.json")
     if all(path.is_file() for path in required) and not args.overwrite:
-        print(f"[guidance] skip {output.relative_to(args.output_root)}", flush=True)
+        print(f"[{args.execution_mode}] skip {output.relative_to(args.output_root)}", flush=True)
         return
     output.mkdir(parents=True, exist_ok=True)
     (output / "complete.json").unlink(missing_ok=True)
@@ -852,7 +1005,7 @@ def process_guided(
             group_batch_size=args.group_batch_size,
             record_dose=bool(args.record_dose),
         )
-        protocol = str(flow["protocol"])
+        protocol = str(flow["direct_protocol"] if direct else flow["protocol"])
         target_scope = f"all objects, simultaneous object-wise {flow['id']} union"
         perturbation = f"subtract {flow['formula']} without renormalization"
         if flow["id"] == "M1":
@@ -876,7 +1029,7 @@ def process_guided(
             None,
             record_dose=False,
         )
-        protocol = FULL_HEAD_PROTOCOL
+        protocol = FULL_HEAD_DIRECT_PROTOCOL if direct else FULL_HEAD_PROTOCOL
         target_scope = "all query tokens and all latent-frame token positions"
         perturbation = (
             "set O_h=A_hV_h to zero for every selected head and every query token "
@@ -884,16 +1037,26 @@ def process_guided(
         )
         preserved = "unselected 620 physical heads only"
         perturbed_symbol = "eps_head_zero"
-    guidance = WindowedMultiObjectM1Guidance(
-        pipe_wrapper.pipe,
-        ablator,
-        cfg_scale=5.0,
-        pag_scale=pag_scale,
-        denoise_start=denoise_start,
-        denoise_end=denoise_end,
-        expected_steps=40,
-    )
-    guidance.install()
+    if direct:
+        controller = WindowedDirectAttentionAblation(
+            pipe_wrapper.pipe,
+            ablator,
+            denoise_start=denoise_start,
+            denoise_end=denoise_end,
+            expected_steps=40,
+        )
+    else:
+        assert pag_scale is not None
+        controller = WindowedMultiObjectM1Guidance(
+            pipe_wrapper.pipe,
+            ablator,
+            cfg_scale=5.0,
+            pag_scale=pag_scale,
+            denoise_start=denoise_start,
+            denoise_end=denoise_end,
+            expected_steps=40,
+        )
+    controller.install()
     try:
         video = _run_pipe_once(
             pipe=pipe_wrapper,
@@ -911,8 +1074,8 @@ def process_guided(
             offload_model=False,
         )
     finally:
-        guidance.remove()
-    audit = guidance.audit()
+        controller.remove()
+    audit = controller.audit()
     temporary = output / "generated.tmp.mp4"
     save_video_np(video, temporary, fps=30)
     temporary.replace(output / "generated.mp4")
@@ -933,15 +1096,12 @@ def process_guided(
         "target_scope": target_scope,
         "object_regions": list(names),
         "object_count": len(names),
+        "execution_mode": args.execution_mode,
         "perturbation_mode": args.perturbation_mode,
         "perturbation": perturbation,
         "preserved": preserved,
-        "guidance_equation": (
-            f"eps_u + 5*(eps_c-eps_u) + lambda*(eps_c-{perturbed_symbol})"
-        ),
-        "pag_scale": pag_scale,
-        "guidance_step_range_inclusive": [denoise_start, denoise_end],
         "inactive_steps_are_clean_cfg": True,
+        "future_source_gt_used_by_generation": False,
         "future_source_gt_used_by_guidance": False,
         "trajectory_source": (
             "same-seed Baseline CoTracker tube"
@@ -952,24 +1112,46 @@ def process_guided(
         "audit": audit,
         "output_video": str(output / "generated.mp4"),
     }
+    if direct:
+        metadata.update(
+            {
+                "sampling_equation": "eps_u_deleted + 5*(eps_c_deleted-eps_u_deleted)",
+                "ablation_step_range_inclusive": [denoise_start, denoise_end],
+                "cfg_branches_modified": ["conditional", "unconditional"],
+                "uses_prediction_contrast_guidance": False,
+                "pag_scale": None,
+            }
+        )
+    else:
+        metadata.update(
+            {
+                "guidance_equation": (
+                    f"eps_u + 5*(eps_c-eps_u) + lambda*(eps_c-{perturbed_symbol})"
+                ),
+                "pag_scale": pag_scale,
+                "guidance_step_range_inclusive": [denoise_start, denoise_end],
+            }
+        )
     atomic_json(output / "manifest.json", metadata)
-    atomic_json(
-        output / "complete.json",
-        {
-            "protocol": protocol,
-            "case": case,
-            "seed": seed,
-            "pag_scale": pag_scale,
-            "guidance_step_range_inclusive": [denoise_start, denoise_end],
-            "object_count": len(names),
-            "perturbation_mode": args.perturbation_mode,
-            "modified_head_events": audit["modified_head_events"],
-        },
-    )
+    complete_payload = {
+        "protocol": protocol,
+        "case": case,
+        "seed": seed,
+        "execution_mode": args.execution_mode,
+        "object_count": len(names),
+        "perturbation_mode": args.perturbation_mode,
+        "modified_head_events": audit["modified_head_events"],
+    }
+    if direct:
+        complete_payload["ablation_step_range_inclusive"] = [denoise_start, denoise_end]
+    else:
+        complete_payload["pag_scale"] = pag_scale
+        complete_payload["guidance_step_range_inclusive"] = [denoise_start, denoise_end]
+    atomic_json(output / "complete.json", complete_payload)
     del video
     gc.collect()
     torch.cuda.empty_cache()
-    print(f"[guidance] complete {output.relative_to(args.output_root)}", flush=True)
+    print(f"[{args.execution_mode}] complete {output.relative_to(args.output_root)}", flush=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -985,6 +1167,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tracks-root", type=Path, default=DEFAULT_OUTPUT_ROOT / "tracks")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--group-batch-size", type=int, default=4)
+    parser.add_argument("--execution-mode", choices=EXECUTION_MODES, default="guidance")
     parser.add_argument(
         "--perturbation-mode",
         choices=PERTURBATION_MODES,
@@ -1010,6 +1193,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.execution_mode == "direct" and args.pag_scale:
+        raise ValueError("direct execution has no PAG scale")
     if args.perturbation_mode == "full_head_output_zero" and args.record_dose:
         raise ValueError(
             "full_head_output_zero does not expose A-block mass; run without --record-dose"
@@ -1034,10 +1219,14 @@ def main() -> None:
     samples = all_samples[args.worker_id :: args.num_workers]
     if not samples:
         raise RuntimeError("worker filters selected no samples")
-    scales = (
-        list(args.pag_scale)
-        if args.pag_scale
-        else [float(value) for value in manifest["search_grid"]["pag_scales"]]
+    scales: list[float | None] = (
+        [None]
+        if args.execution_mode == "direct"
+        else (
+            list(args.pag_scale)
+            if args.pag_scale
+            else [float(value) for value in manifest["search_grid"]["pag_scales"]]
+        )
     )
     windows = (
         [(int(value[0]), int(value[1])) for value in args.guidance_window]
@@ -1053,12 +1242,21 @@ def main() -> None:
         "worker_id": args.worker_id,
         "num_workers": args.num_workers,
         "sample_count": len(samples),
-        "guided_task_count": len(samples) * len(scales) * len(windows),
+        "task_count": len(samples) * len(scales) * len(windows),
+        "guided_task_count": (
+            len(samples) * len(scales) * len(windows)
+            if args.execution_mode == "guidance"
+            else 0
+        ),
+        "direct_task_count": (
+            len(samples) * len(windows) if args.execution_mode == "direct" else 0
+        ),
         "cases": sorted({str(row["case"]) for row in samples}),
         "seeds": sorted({int(row["seed"]) for row in samples}),
         "scales": scales,
         "windows": windows,
         "perturbation_mode": args.perturbation_mode,
+        "execution_mode": args.execution_mode,
     }
     print(json.dumps(summary, ensure_ascii=False), flush=True)
     if args.dry_run:
@@ -1143,14 +1341,19 @@ def main() -> None:
                             stop = True
                             break
                         task_index += 1
+                        scale_text = (
+                            ""
+                            if pag_scale is None
+                            else f" lambda={pag_scale:g}"
+                        )
                         print(
-                            f"[guidance {task_index}/{total}] case={sample['case']} "
-                            f"seed={sample['seed']} lambda={pag_scale:g} "
-                            f"window={denoise_start}..{denoise_end}",
+                            f"[{args.execution_mode} {task_index}/{total}] "
+                            f"case={sample['case']} seed={sample['seed']}"
+                            f"{scale_text} window={denoise_start}..{denoise_end}",
                             flush=True,
                         )
                         try:
-                            process_guided(
+                            process_variant(
                                 pipe,
                                 sample,
                                 entries,
@@ -1160,15 +1363,26 @@ def main() -> None:
                                 denoise_end,
                             )
                         except Exception:
-                            output = variant_directory(
-                                args.output_root,
-                                str(sample["case"]),
-                                int(sample["seed"]),
-                                pag_scale,
-                                denoise_start,
-                                denoise_end,
-                                args.perturbation_mode,
-                            )
+                            if args.execution_mode == "direct":
+                                output = direct_variant_directory(
+                                    args.output_root,
+                                    str(sample["case"]),
+                                    int(sample["seed"]),
+                                    denoise_start,
+                                    denoise_end,
+                                    args.perturbation_mode,
+                                )
+                            else:
+                                assert pag_scale is not None
+                                output = variant_directory(
+                                    args.output_root,
+                                    str(sample["case"]),
+                                    int(sample["seed"]),
+                                    pag_scale,
+                                    denoise_start,
+                                    denoise_end,
+                                    args.perturbation_mode,
+                                )
                             output.mkdir(parents=True, exist_ok=True)
                             (output / "error.txt").write_text(
                                 traceback.format_exc(), encoding="utf-8"
@@ -1183,8 +1397,13 @@ def main() -> None:
             gc.collect()
             torch.cuda.empty_cache()
 
+    completion_name = (
+        f"worker_{args.worker_id}_complete.json"
+        if args.execution_mode == "guidance"
+        else f"worker_{args.worker_id}_direct_{args.perturbation_mode}_complete.json"
+    )
     atomic_json(
-        args.output_root / "logs" / f"worker_{args.worker_id}_complete.json",
+        args.output_root / "logs" / completion_name,
         {**summary, "completed_at_utc": datetime.now(timezone.utc).isoformat()},
     )
 

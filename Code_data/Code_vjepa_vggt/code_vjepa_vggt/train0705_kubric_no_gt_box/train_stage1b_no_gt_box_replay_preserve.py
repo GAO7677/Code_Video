@@ -474,6 +474,8 @@ def build_dataset(args: argparse.Namespace):
             split_train_ratio=args.pybullet0713_split_train_ratio,
             split_val_ratio=args.pybullet0713_split_val_ratio,
             max_retry_samples=args.pybullet0713_max_retry_samples,
+            vae_cache_dir=args.pybullet0713_vae_cache_dir,
+            vae_checkpoint_path=Path(args.wan_root) / "Wan2.2_VAE.pth",
         )
     else:
         if not args.pybullet_raw_root:

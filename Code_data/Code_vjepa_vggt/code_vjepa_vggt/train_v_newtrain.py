@@ -1459,6 +1459,22 @@ class WanTrainingModule(DiffusionTrainingModule):
         return self._legacy_sample_context(video)
 
     def get_pipeline_inputs(self, data):
+        precomputed_input_latents = data.get("precomputed_input_latents")
+        if precomputed_input_latents is not None:
+            if not isinstance(precomputed_input_latents, torch.Tensor):
+                raise TypeError("precomputed_input_latents must be a torch.Tensor")
+            if precomputed_input_latents.ndim != 4:
+                raise ValueError(
+                    "precomputed_input_latents must be [C,T,H,W], "
+                    f"got shape={tuple(precomputed_input_latents.shape)}"
+                )
+            if not getattr(self, "_reported_precomputed_vae_cache", False):
+                print(
+                    "[pybullet-vae-cache] using precomputed input_latents; "
+                    "Wan VAE input-video encoding is bypassed",
+                    flush=True,
+                )
+                self._reported_precomputed_vae_cache = True
         if "prompt" in data:
             prompt = data["prompt"]
             video = data["video"]
@@ -1473,7 +1489,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         context_frame_indices = context_spec["frame_indices"]
         enable_condition_inputs = len(context_frame_indices) > 0
         inputs_shared = {
-            "input_video": video,
+            "input_video": video if precomputed_input_latents is None else None,
             "context_video": None,
             "context_frame_indices": context_frame_indices,
             "ctx_max_length": context_spec.get("ctx_max_length"),
@@ -1493,8 +1509,11 @@ class WanTrainingModule(DiffusionTrainingModule):
             "max_timestep_boundary": self.max_timestep_boundary,
             "min_timestep_boundary": self.min_timestep_boundary,
         }
+        if precomputed_input_latents is not None:
+            inputs_shared["input_latents"] = precomputed_input_latents.unsqueeze(0)
         if raw_sample is not None:
-            sampled_raw = raw_sample
+            sampled_raw = dict(raw_sample)
+            sampled_raw.pop("precomputed_input_latents", None)
             if (
                 self.ctx_max_length is not None
                 and "video" in raw_sample
@@ -1548,6 +1567,7 @@ class WanTrainingModule(DiffusionTrainingModule):
                 sampled_raw["sampled_ctx_num_frames"] = int(sampled_index_tensor.numel())
                 if context_spec.get("ctx_max_length") is not None:
                     sampled_raw["ctx_max_length"] = int(context_spec["ctx_max_length"])
+            sampled_raw.pop("precomputed_input_latents", None)
             inputs_shared["raw_sample"] = sampled_raw
             context_video = sampled_raw["context_video"]
             inputs_shared["context_video"] = (

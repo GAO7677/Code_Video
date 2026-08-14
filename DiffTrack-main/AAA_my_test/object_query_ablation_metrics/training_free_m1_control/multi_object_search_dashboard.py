@@ -19,6 +19,7 @@ HEAD_ZERO_ROOT = ROOT.parent / "training_free_top100_full_head_output_zero_searc
 HEAD_ZERO_GUIDED_ROOT = HEAD_ZERO_ROOT / "guided"
 M2_ROOT = ROOT.parent / "training_free_m2_multi_object_search_v1"
 M3_ROOT = ROOT.parent / "training_free_m3_multi_object_search_v1"
+DIRECT_ROOT = ROOT.parent / "training_free_direct_multi_object_ablation_v1"
 HEAD_ZERO_CASES = (
     "0613pybullet_sample_000301_w000",
     "0613pybullet_sample_000331_w001",
@@ -27,6 +28,8 @@ HEAD_ZERO_CASES = (
     "0613pybullet_sample_001460_w002",
 )
 M2_M3_CASES = ("0613pybullet_sample_001460_w002",)
+DIRECT_FAMILIES = ("direct_m1", "direct_m2", "direct_m3", "direct_head_zero")
+DIRECT_CASE_SEEDS = frozenset({("0613pybullet_sample_001460_w002", 13248)})
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -57,6 +60,20 @@ def _variant(
     return f"{prefix}__pag{_tag(scale)}__denoise_{start:02d}_{end:02d}"
 
 
+def _direct_variant(start: int, end: int, family: str) -> str:
+    prefixes = {
+        "direct_m1": "direct_multi_object_blockdiag__m1_all_time__top100",
+        "direct_m2": "direct_multi_object_independent__m2_all_time__top100",
+        "direct_m3": "direct_multi_object_independent__m3_all_time__top100",
+        "direct_head_zero": "direct_all_token__full_head_output_zero__top100",
+    }
+    try:
+        prefix = prefixes[family]
+    except KeyError as exc:
+        raise ValueError(f"unknown direct family: {family}") from exc
+    return f"{prefix}__denoise_{start:02d}_{end:02d}"
+
+
 def _directory(
     case: str,
     seed: int,
@@ -77,6 +94,16 @@ def _directory(
         raise ValueError(f"unknown guidance family: {family}") from exc
     return root / case / f"seed_{seed:05d}" / _variant(
         scale, start, end, family
+    )
+
+
+def _direct_directory(case: str, seed: int, start: int, end: int, family: str) -> Path:
+    return (
+        DIRECT_ROOT
+        / "direct"
+        / case
+        / f"seed_{seed:05d}"
+        / _direct_variant(start, end, family)
     )
 
 
@@ -104,7 +131,12 @@ def _record(
     end: int,
     family: str = "m1_multi",
 ) -> dict[str, Any]:
-    directory = _directory(case, seed, scale, start, end, family)
+    direct = family in DIRECT_FAMILIES
+    directory = (
+        _direct_directory(case, seed, start, end, family)
+        if direct
+        else _directory(case, seed, scale, start, end, family)
+    )
     video = directory / "generated.mp4"
     complete = directory / "complete.json"
     run_manifest = _read_json(directory / "manifest.json")
@@ -147,19 +179,30 @@ def _record(
                 "m2_multi": "M2 multi-object C→R",
                 "m3_multi": "M3 multi-object R→C",
                 "head_zero": "Top100 full-head output zero",
+                "direct_m1": "Direct M1 multi-object R→R",
+                "direct_m2": "Direct M2 multi-object C→R",
+                "direct_m3": "Direct M3 multi-object R→C",
+                "direct_head_zero": "Direct Top100 full-head output zero",
             }[family]
         ),
-        "scale": scale,
+        "scale": None if direct else scale,
         "window": [start, end],
         "window_key": f"{start:02d}_{end:02d}",
-        "variant": _variant(scale, start, end, family),
+        "variant": (
+            _direct_variant(start, end, family)
+            if direct
+            else _variant(scale, start, end, family)
+        ),
         "state": state,
         "ready": state == "complete",
         "object_count": int(run_manifest.get("object_count") or 0),
         "object_regions": list(run_manifest.get("object_regions") or []),
         "modified_head_events": int(audit.get("modified_head_events") or 0),
         "expected_modified_head_events": int(audit.get("expected_modified_head_events") or 0),
-        "flow_id": str(multi_flow.get("flow_id") or ("M1" if family == "m1_multi" else "")),
+        "flow_id": str(
+            multi_flow.get("flow_id")
+            or ("M1" if family in {"m1_multi", "direct_m1"} else "")
+        ),
         "deleted_pairs_per_head": int(multi_flow.get("deleted_pair_count_per_head") or 0),
         "overlap_token_count": int(multi_flow.get("overlap_token_count") or 0),
         "duplicate_pair_subtractions_prevented": int(
@@ -170,6 +213,7 @@ def _record(
         ),
         "all_query_tokens": bool(head_zero.get("all_query_tokens")),
         "removed_flows": list(head_zero.get("removed_flows") or []),
+        "modified_cfg_branches": list(audit.get("modified_cfg_branches") or []),
         "mean_prediction_delta_l2": (
             sum(finite_deltas) / len(finite_deltas) if finite_deltas else None
         ),
@@ -194,8 +238,15 @@ def catalog() -> dict[str, Any]:
     cases = list(dict.fromkeys(case for case, _ in samples))
     seeds = [int(value) for value in manifest.get("seeds") or []]
     rows: list[dict[str, Any]] = []
+    all_families = (
+        "m1_multi",
+        "m2_multi",
+        "m3_multi",
+        "head_zero",
+        *DIRECT_FAMILIES,
+    )
     case_complete = {
-        case: {family: 0 for family in ("m1_multi", "m2_multi", "m3_multi", "head_zero")}
+        case: {family: 0 for family in all_families}
         for case in cases
     }
     family_complete = {family: 0 for family in case_complete[cases[0]]}
@@ -237,11 +288,20 @@ def catalog() -> dict[str, Any]:
                 if case in HEAD_ZERO_CASES
                 else []
             )
+            direct_records = {
+                family: (
+                    [_record(case, seed, 0.0, start, end, family) for start, end in windows]
+                    if (case, seed) in DIRECT_CASE_SEEDS
+                    else []
+                )
+                for family in DIRECT_FAMILIES
+            }
             family_records = {
                 "m1_multi": records,
                 "m2_multi": m2_records,
                 "m3_multi": m3_records,
                 "head_zero": head_zero_records,
+                **direct_records,
             }
             completed = {
                 family: sum(record["ready"] for record in items)
@@ -271,6 +331,7 @@ def catalog() -> dict[str, Any]:
                     "m2_records": m2_records,
                     "m3_records": m3_records,
                     "head_zero_records": head_zero_records,
+                    "direct_records": direct_records,
                     "progress": {
                         "complete": completed["m1_multi"],
                         "expected": len(scales) * len(windows),
@@ -284,6 +345,13 @@ def catalog() -> dict[str, Any]:
                         "head_zero_complete": completed["head_zero"],
                         "head_zero_expected": len(head_zero_records),
                         "head_zero_errors": errors["head_zero"],
+                        "direct_complete": sum(
+                            completed[family] for family in DIRECT_FAMILIES
+                        ),
+                        "direct_expected": sum(
+                            len(direct_records[family]) for family in DIRECT_FAMILIES
+                        ),
+                        "direct_errors": sum(errors[family] for family in DIRECT_FAMILIES),
                     },
                 }
             )
@@ -294,6 +362,7 @@ def catalog() -> dict[str, Any]:
         if row["case"] in HEAD_ZERO_CASES
     )
     m2_m3_expected = len(M2_M3_CASES) * len(seeds) * len(scales) * len(windows)
+    direct_expected = len(DIRECT_CASE_SEEDS) * len(DIRECT_FAMILIES) * len(windows)
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "experiment_id": manifest.get("experiment_id"),
@@ -305,6 +374,9 @@ def catalog() -> dict[str, Any]:
         "controlled": manifest.get("controlled") or {},
         "head_zero_cases": list(HEAD_ZERO_CASES),
         "m2_m3_cases": list(M2_M3_CASES),
+        "direct_case_seeds": [
+            {"case": case, "seed": seed} for case, seed in sorted(DIRECT_CASE_SEEDS)
+        ],
         "families": {
             "m1_multi": {
                 "label": "M1 multi-object R→R",
@@ -322,6 +394,10 @@ def catalog() -> dict[str, Any]:
                 "label": "Top100 full-head output zero",
                 "definition": "set O_h=A_hV_h=0 at every query token; remove R→R, C→R, R→C, C→C together",
             },
+            "direct": {
+                "label": "Direct M1/M2/M3/full-head ablation",
+                "definition": "apply the deleted attention operator to both CFG branches; no prediction contrast and no lambda",
+            },
         },
         "progress": {
             "guided_complete": family_complete["m1_multi"],
@@ -338,6 +414,9 @@ def catalog() -> dict[str, Any]:
             "head_zero_complete": family_complete["head_zero"],
             "head_zero_expected": head_zero_expected,
             "head_zero_errors": family_error["head_zero"],
+            "direct_complete": sum(family_complete[family] for family in DIRECT_FAMILIES),
+            "direct_expected": direct_expected,
+            "direct_errors": sum(family_error[family] for family in DIRECT_FAMILIES),
             "by_case": [
                 {
                     "case": case,
@@ -360,6 +439,14 @@ def catalog() -> dict[str, Any]:
                         len(seeds) * len(scales) * len(windows)
                         if case in HEAD_ZERO_CASES
                         else 0
+                    ),
+                    "direct_complete": sum(
+                        case_complete[case][family] for family in DIRECT_FAMILIES
+                    ),
+                    "direct_expected": sum(
+                        len(DIRECT_FAMILIES) * len(windows)
+                        for direct_case, _seed in DIRECT_CASE_SEEDS
+                        if direct_case == case
                     ),
                 }
                 for case in cases
@@ -391,6 +478,12 @@ def asset(
         for value in grid.get("guidance_windows_inclusive") or []
         if isinstance(value, list) and len(value) == 2
     ]
+    if kind in DIRECT_FAMILIES:
+        if (case, seed) not in DIRECT_CASE_SEEDS or (start, end) not in allowed_windows:
+            return None
+        directory = _direct_directory(case, seed, start, end, kind)
+        path = directory / "generated.mp4"
+        return path if (directory / "complete.json").is_file() and path.is_file() else None
     family = {
         "guided": "m1_multi",
         "m1_multi": "m1_multi",
@@ -417,23 +510,26 @@ def page() -> str:
 
 PAGE = r'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Top100 M1/M2/M3 Guidance Flow Comparison</title><style>
-:root{--bg:#dce7e9;--paper:#f5f9f8;--ink:#142a31;--muted:#62747a;--line:#93a8ad;--deep:#173d48;--cyan:#117f88;--red:#b1455b;--amber:#c2901e;--violet:#6746a5;--complete:#247457}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:linear-gradient(90deg,#173d480c 1px,transparent 1px),linear-gradient(#173d480c 1px,transparent 1px),var(--bg);background-size:22px 22px;color:var(--ink);font-family:"Aptos Narrow","Noto Sans CJK SC",Arial,sans-serif}a{color:var(--cyan);font-weight:800}header,main,footer{width:min(1800px,calc(100% - 28px));margin:auto}header{padding:24px 0 18px}.eyebrow{margin-top:20px;color:var(--red);font:900 11px ui-monospace,monospace;letter-spacing:.18em}.hero{display:grid;grid-template-columns:minmax(380px,.82fr) minmax(560px,1.18fr);gap:34px;align-items:end}h1,h2,h3{font-family:"Arial Black","Noto Sans CJK SC",sans-serif}h1{margin:8px 0 0;font-size:clamp(46px,7vw,96px);line-height:.85;letter-spacing:-.07em}.lead{margin:0;max-width:940px;font-size:17px;line-height:1.65}.equation{margin-top:18px;padding:13px 16px;background:var(--deep);color:#edf8f8;font:13px/1.65 ui-monospace,monospace}.equation b{color:#73d5d5}.equation em{color:#cdb9ff;font-style:normal}.window-ruler{display:grid;grid-template-columns:5fr 5fr 10fr 20fr;margin-top:16px;border:1px solid var(--line);background:var(--paper)}.window-ruler span{position:relative;padding:10px;text-align:center;border-right:1px solid var(--line);font:800 10px ui-monospace,monospace}.window-ruler span:last-child{border:0}.window-ruler span:after{content:"";position:absolute;left:0;bottom:0;height:4px;width:100%;background:var(--cyan);opacity:calc(.35 + var(--i)*.15)}.toolbar{position:sticky;top:0;z-index:6;display:flex;gap:9px;align-items:end;flex-wrap:wrap;padding:11px;margin-top:16px;border:1px solid var(--line);background:#dce7e9ef;backdrop-filter:blur(9px)}label{display:grid;gap:4px;color:var(--muted);font:900 10px ui-monospace,monospace;letter-spacing:.08em}select,button{min-height:37px;padding:7px 10px;border:1px solid var(--line);background:white;color:var(--ink);font-weight:800}select#case{max-width:min(650px,75vw)}button{cursor:pointer}.status{margin-left:auto;font:800 11px ui-monospace,monospace}.summary{display:grid;grid-template-columns:1.35fr repeat(5,1fr);gap:9px;margin:18px 0}.summary article{min-height:100px;padding:13px 15px;border:1px solid var(--line);background:var(--paper)}.summary strong{display:block;font:900 31px "Arial Black",sans-serif}.summary span{color:var(--muted);font:11px/1.5 ui-monospace,monospace}.summary .case-summary strong{font-size:19px;line-height:1.25}.baseline{margin:20px 0 24px;padding:13px;border:1px solid var(--line);background:var(--paper)}.section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:3px solid var(--ink)}.section-head h2{margin:0;font-size:27px}.section-head p{margin:0;color:var(--muted);font:11px ui-monospace,monospace}.baseline-grid{display:grid;grid-template-columns:minmax(300px,580px) 1fr;gap:14px;margin-top:11px}.baseline-copy{padding:8px 5px}.baseline-copy h3{margin:0 0 8px;font-size:20px}.baseline-copy p{margin:5px 0;color:var(--muted);line-height:1.55}.window{margin:26px 0 38px}.window-label{display:flex;align-items:end;gap:18px;padding-bottom:9px;border-bottom:3px solid var(--deep)}.window-label .step{font:900 45px/.9 "Arial Black",sans-serif;color:var(--cyan)}.window-label h2{margin:0;font-size:26px}.window-label p{margin:3px 0 0;color:var(--muted)}.compare-head{display:grid;grid-template-columns:120px repeat(2,minmax(280px,1fr));gap:10px;margin-top:11px}.compare-head span{padding:8px 10px;border-bottom:4px solid var(--cyan);font:900 11px ui-monospace,monospace}.compare-head span:last-child{border-color:var(--violet)}.compare-row{display:grid;grid-template-columns:120px 1fr;gap:10px;margin-top:10px}.compare-label{display:grid;place-content:center;padding:10px;border:1px solid var(--line);background:var(--deep);color:white;text-align:center;font:900 12px/1.55 ui-monospace,monospace}.compare-cards{display:grid;grid-template-columns:repeat(4,minmax(250px,1fr));gap:10px}.compare-cards.count-1{grid-template-columns:minmax(280px,1fr)}.compare-cards.count-2{grid-template-columns:repeat(2,minmax(280px,1fr))}.compare-cards.count-3{grid-template-columns:repeat(3,minmax(260px,1fr))}.card{padding:9px;border:1px solid var(--line);border-top:6px solid var(--cyan);background:var(--paper)}.card.m2-multi{border-top-color:var(--amber)}.card.m3-multi{border-top-color:var(--red)}.card.head-zero{border-top-color:var(--violet)}.card h3{display:flex;justify-content:space-between;gap:8px;margin:1px 0 8px;font-size:16px}.family{display:block;margin-bottom:6px;color:var(--cyan);font:900 10px ui-monospace,monospace;letter-spacing:.08em}.m2-multi .family{color:var(--amber)}.m3-multi .family{color:var(--red)}.head-zero .family{color:var(--violet)}.badge{color:var(--complete);font:900 10px ui-monospace,monospace}video{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#071318}.facts{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.facts span{padding:4px 6px;background:#e3ebec;font:10px ui-monospace,monospace}.card details{margin-top:7px;color:var(--muted);font:11px/1.5 ui-monospace,monospace}.empty{margin-top:11px;padding:24px;border:1px dashed var(--line);background:#f5f9f880;color:var(--muted);text-align:center}.case-progress{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin:14px 0 25px}.case-progress a{display:grid;gap:5px;padding:8px;border:1px solid var(--line);background:var(--paper);color:var(--ink);text-decoration:none;font:10px ui-monospace,monospace;overflow:hidden}.case-progress a.active{outline:3px solid var(--cyan);outline-offset:-3px}.case-progress b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.meter{height:4px;background:#d1dcde}.meter i{display:block;height:100%;background:var(--cyan)}.meter.m2 i{background:var(--amber)}.meter.m3 i{background:var(--red)}.meter.zero i{background:var(--violet)}footer{padding:0 0 45px;color:var(--muted);font:11px/1.6 ui-monospace,monospace}@media(max-width:1450px){.compare-cards{grid-template-columns:repeat(2,minmax(280px,1fr))}}@media(max-width:1100px){.hero,.summary,.baseline-grid{grid-template-columns:1fr}.case-progress{grid-template-columns:repeat(3,1fr)}.status{width:100%;margin-left:0}}@media(max-width:760px){header,main,footer{width:calc(100% - 12px)}.case-progress{grid-template-columns:1fr}.window-label{align-items:start}.summary{grid-template-columns:1fr 1fr}.summary .case-summary{grid-column:1/-1}.compare-head{display:none}.compare-row{grid-template-columns:1fr}.compare-cards{grid-template-columns:1fr}.compare-label{place-content:start;text-align:left}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
-</style></head><body><header><a href="/">← 返回 8092 总入口</a> · <a href="/training-free-m1-control?v=2">单对象 M1 控制</a><div class="eyebrow">LATEST3350 TOP100 · SAME CASE / SEED / λ / WINDOW · FOUR-FLOW LIVE CONTROL</div><div class="hero"><h1>对象通信，<br>四种切法</h1><p class="lead">严格固定首帧、prompt、seed、初始噪声、CFG=5 和 40 个采样步。同一行只比较相同 guidance window 与 λ：M1 删除对象内部通信，M2 删除每个对象接收的外部输入，M3 删除每个对象向外广播的输出，Full-head zero 关闭同一 Top100 的整颗 head。</p></div><div class="equation"><b>M1 · Rᵢ→Rᵢ</b>: εᵤ + 5(εc−εᵤ) + λ(εc−εM1)　|　⋃ᵢ A[Rᵢ,Rᵢ]V[Rᵢ]=0<br><strong style="color:var(--amber)">M2 · Cᵢ→Rᵢ</strong>: εᵤ + 5(εc−εᵤ) + λ(εc−εM2)　|　⋃ᵢ A[Rᵢ,Cᵢ]V[Cᵢ]=0，Cᵢ=Ω∖Rᵢ<br><strong style="color:#ef93a6">M3 · Rᵢ→Cᵢ</strong>: εᵤ + 5(εc−εᵤ) + λ(εc−εM3)　|　⋃ᵢ A[Cᵢ,Rᵢ]V[Rᵢ]=0<br><em>Full-head zero</em>: εᵤ + 5(εc−εᵤ) + λ(εc−εhead-zero)　|　Oₕ=AₕVₕ=0，四类流同时删除</div><div class="window-ruler"><span style="--i:0">STEP 0–4</span><span style="--i:1">STEP 0–9</span><span style="--i:2">STEP 0–19</span><span style="--i:3">STEP 0–39</span></div><div class="toolbar"><label>CASE<select id="case"></select></label><label>SEED<select id="seed"></select></label><button id="refresh">刷新已生成结果</button><button id="replay">同步重播</button><span id="status" class="status">读取中…</span></div></header><main><section id="summary" class="summary"></section><nav id="caseProgress" class="case-progress"></nav><section id="baseline" class="baseline"></section><div id="windows"></div></main><footer>页面每 20 秒扫描 M1、M2、M3 与 Full-head-zero 的 complete.json。Baseline 只显示一次；比较区仅加载当前 case×seed 已完成的视频，不为未生成项保留空卡。</footer><script>
+<title>Top100 Guidance and Direct Flow Comparison</title><style>
+:root{--bg:#dce7e9;--paper:#f5f9f8;--ink:#142a31;--muted:#62747a;--line:#93a8ad;--deep:#173d48;--direct:#0b171a;--cyan:#117f88;--red:#b1455b;--amber:#c2901e;--violet:#6746a5;--complete:#247457}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:linear-gradient(90deg,#173d480c 1px,transparent 1px),linear-gradient(#173d480c 1px,transparent 1px),var(--bg);background-size:22px 22px;color:var(--ink);font-family:"Aptos Narrow","Noto Sans CJK SC",Arial,sans-serif}a{color:var(--cyan);font-weight:800}header,main,footer{width:min(1800px,calc(100% - 28px));margin:auto}header{padding:24px 0 18px}.eyebrow{margin-top:20px;color:var(--red);font:900 11px ui-monospace,monospace;letter-spacing:.18em}.hero{display:grid;grid-template-columns:minmax(380px,.82fr) minmax(560px,1.18fr);gap:34px;align-items:end}h1,h2,h3{font-family:"Arial Black","Noto Sans CJK SC",sans-serif}h1{margin:8px 0 0;font-size:clamp(46px,7vw,96px);line-height:.85;letter-spacing:-.07em}.lead{margin:0;max-width:940px;font-size:17px;line-height:1.65}.equation{margin-top:18px;padding:13px 16px;background:var(--deep);color:#edf8f8;font:13px/1.65 ui-monospace,monospace}.equation b{color:#73d5d5}.equation em{color:#cdb9ff;font-style:normal}.equation .direct-equation{display:block;margin-top:7px;padding-top:7px;border-top:1px solid #edf8f850;color:#fff}.window-ruler{display:grid;grid-template-columns:5fr 5fr 10fr 20fr;margin-top:16px;border:1px solid var(--line);background:var(--paper)}.window-ruler span{position:relative;padding:10px;text-align:center;border-right:1px solid var(--line);font:800 10px ui-monospace,monospace}.window-ruler span:last-child{border:0}.window-ruler span:after{content:"";position:absolute;left:0;bottom:0;height:4px;width:100%;background:var(--cyan);opacity:calc(.35 + var(--i)*.15)}.toolbar{position:sticky;top:0;z-index:6;display:flex;gap:9px;align-items:end;flex-wrap:wrap;padding:11px;margin-top:16px;border:1px solid var(--line);background:#dce7e9ef;backdrop-filter:blur(9px)}label{display:grid;gap:4px;color:var(--muted);font:900 10px ui-monospace,monospace;letter-spacing:.08em}select,button{min-height:37px;padding:7px 10px;border:1px solid var(--line);background:white;color:var(--ink);font-weight:800}select#case{max-width:min(650px,75vw)}button{cursor:pointer}.status{margin-left:auto;font:800 11px ui-monospace,monospace}.summary{display:grid;grid-template-columns:1.35fr repeat(6,1fr);gap:9px;margin:18px 0}.summary article{min-height:100px;padding:13px 15px;border:1px solid var(--line);background:var(--paper)}.summary strong{display:block;font:900 31px "Arial Black",sans-serif}.summary span{color:var(--muted);font:11px/1.5 ui-monospace,monospace}.summary .case-summary strong{font-size:19px;line-height:1.25}.baseline{margin:20px 0 24px;padding:13px;border:1px solid var(--line);background:var(--paper)}.section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:3px solid var(--ink)}.section-head h2{margin:0;font-size:27px}.section-head p{margin:0;color:var(--muted);font:11px ui-monospace,monospace}.baseline-grid{display:grid;grid-template-columns:minmax(300px,580px) 1fr;gap:14px;margin-top:11px}.baseline-copy{padding:8px 5px}.baseline-copy h3{margin:0 0 8px;font-size:20px}.baseline-copy p{margin:5px 0;color:var(--muted);line-height:1.55}.direct-band{margin:26px 0 44px;padding:16px 0 24px;border-top:8px solid var(--direct);border-bottom:1px solid var(--direct)}.direct-head{display:flex;justify-content:space-between;gap:20px;align-items:end;padding:0 4px 13px}.direct-head h2{margin:3px 0;font-size:28px}.direct-head p{max-width:760px;margin:0;color:var(--muted);font:12px/1.55 ui-monospace,monospace}.direct-window{padding:16px 0;border-top:1px solid var(--line)}.direct-window-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:9px}.direct-window-head strong{font:900 17px "Arial Black",sans-serif}.direct-window-head span{color:var(--muted);font:11px ui-monospace,monospace}.window{margin:26px 0 38px}.window-label{display:flex;align-items:end;gap:18px;padding-bottom:9px;border-bottom:3px solid var(--deep)}.window-label .step{font:900 45px/.9 "Arial Black",sans-serif;color:var(--cyan)}.window-label h2{margin:0;font-size:26px}.window-label p{margin:3px 0 0;color:var(--muted)}.compare-head{display:grid;grid-template-columns:120px repeat(2,minmax(280px,1fr));gap:10px;margin-top:11px}.compare-head span{padding:8px 10px;border-bottom:4px solid var(--cyan);font:900 11px ui-monospace,monospace}.compare-head span:last-child{border-color:var(--violet)}.compare-row{display:grid;grid-template-columns:120px 1fr;gap:10px;margin-top:10px}.compare-label{display:grid;place-content:center;padding:10px;border:1px solid var(--line);background:var(--deep);color:white;text-align:center;font:900 12px/1.55 ui-monospace,monospace}.compare-cards{display:grid;grid-template-columns:repeat(4,minmax(250px,1fr));gap:10px}.compare-cards.count-1{grid-template-columns:minmax(280px,1fr)}.compare-cards.count-2{grid-template-columns:repeat(2,minmax(280px,1fr))}.compare-cards.count-3{grid-template-columns:repeat(3,minmax(260px,1fr))}.card{padding:9px;border:1px solid var(--line);border-top:6px solid var(--cyan);background:var(--paper)}.card.m2-multi{border-top-color:var(--amber)}.card.m3-multi{border-top-color:var(--red)}.card.head-zero{border-top-color:var(--violet)}.card.direct{border-bottom:5px solid var(--direct)}.card h3{display:flex;justify-content:space-between;gap:8px;margin:1px 0 8px;font-size:16px}.family{display:block;margin-bottom:6px;color:var(--cyan);font:900 10px ui-monospace,monospace;letter-spacing:.08em}.m2-multi .family{color:var(--amber)}.m3-multi .family{color:var(--red)}.head-zero .family{color:var(--violet)}.badge{color:var(--complete);font:900 10px ui-monospace,monospace}video{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#071318}.facts{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.facts span{padding:4px 6px;background:#e3ebec;font:10px ui-monospace,monospace}.facts .direct-mode{background:var(--direct);color:white}.card details{margin-top:7px;color:var(--muted);font:11px/1.5 ui-monospace,monospace}.empty{margin-top:11px;padding:24px;border:1px dashed var(--line);background:#f5f9f880;color:var(--muted);text-align:center}.case-progress{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin:14px 0 25px}.case-progress a{display:grid;gap:5px;padding:8px;border:1px solid var(--line);background:var(--paper);color:var(--ink);text-decoration:none;font:10px ui-monospace,monospace;overflow:hidden}.case-progress a.active{outline:3px solid var(--cyan);outline-offset:-3px}.case-progress b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.meter{height:4px;background:#d1dcde}.meter i{display:block;height:100%;background:var(--cyan)}.meter.m2 i{background:var(--amber)}.meter.m3 i{background:var(--red)}.meter.zero i{background:var(--violet)}.meter.direct-meter i{background:var(--direct)}footer{padding:0 0 45px;color:var(--muted);font:11px/1.6 ui-monospace,monospace}@media(max-width:1450px){.compare-cards{grid-template-columns:repeat(2,minmax(280px,1fr))}}@media(max-width:1100px){.hero,.summary,.baseline-grid{grid-template-columns:1fr}.case-progress{grid-template-columns:repeat(3,1fr)}.status{width:100%;margin-left:0}}@media(max-width:760px){header,main,footer{width:calc(100% - 12px)}.case-progress{grid-template-columns:1fr}.window-label,.direct-head,.direct-window-head{align-items:start;flex-direction:column}.summary{grid-template-columns:1fr 1fr}.summary .case-summary{grid-column:1/-1}.compare-head{display:none}.compare-row{grid-template-columns:1fr}.compare-cards{grid-template-columns:1fr}.compare-label{place-content:start;text-align:left}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style></head><body><header><a href="/">← 返回 8092 总入口</a> · <a href="/training-free-m1-control?v=2">单对象 M1 控制</a><div class="eyebrow">LATEST3350 TOP100 · GUIDANCE AND DIRECT FLOW CONTROL</div><div class="hero"><h1>对象通信，<br>四种切法</h1><p class="lead">严格固定首帧、prompt、seed、初始噪声、CFG=5 和 40 个采样步。Guidance 用 clean−deleted prediction 差控制方向与强度；Direct 在标准 CFG 的 conditional 与 unconditional 两个 branch 中直接删除同一信息流，不使用 λ。</p></div><div class="equation"><b>M1 · Rᵢ→Rᵢ</b>: εᵤ + 5(εc−εᵤ) + λ(εc−εM1)　|　⋃ᵢ A[Rᵢ,Rᵢ]V[Rᵢ]=0<br><strong style="color:var(--amber)">M2 · Cᵢ→Rᵢ</strong>: εᵤ + 5(εc−εᵤ) + λ(εc−εM2)　|　⋃ᵢ A[Rᵢ,Cᵢ]V[Cᵢ]=0，Cᵢ=Ω∖Rᵢ<br><strong style="color:#ef93a6">M3 · Rᵢ→Cᵢ</strong>: εᵤ + 5(εc−εᵤ) + λ(εc−εM3)　|　⋃ᵢ A[Cᵢ,Rᵢ]V[Rᵢ]=0<br><em>Full-head zero</em>: εᵤ + 5(εc−εᵤ) + λ(εc−εhead-zero)　|　Oₕ=AₕVₕ=0，四类流同时删除<span class="direct-equation">DIRECT · ε = εu,deleted + 5(εc,deleted−εu,deleted) · both CFG branches · no λ</span></div><div class="window-ruler"><span style="--i:0">STEP 0–4</span><span style="--i:1">STEP 0–9</span><span style="--i:2">STEP 0–19</span><span style="--i:3">STEP 0–39</span></div><div class="toolbar"><label>CASE<select id="case"></select></label><label>SEED<select id="seed"></select></label><button id="refresh">刷新已生成结果</button><button id="replay">同步重播</button><span id="status" class="status">读取中…</span></div></header><main><section id="summary" class="summary"></section><nav id="caseProgress" class="case-progress"></nav><section id="baseline" class="baseline"></section><section id="direct"></section><div id="windows"></div></main><footer>页面每 20 秒扫描 Guidance 与 Direct 的 complete.json。Baseline 只显示一次；比较区仅加载当前 case×seed 已完成的视频，不为未生成项保留空卡。</footer><script>
 const api='/api/training-free-m1-multi-object-search',q=new URL(location.href).searchParams,$=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data=null,initialized=false;
 const fmt=v=>(Number(v)>0?'+':'')+Number(v).toFixed(Math.abs(Number(v))===1?0:1);
 function opts(node,items){const old=node.value;node.innerHTML=items.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');if([...node.options].some(o=>o.value===old))node.value=old}
-function url(kind,row,r=null){const p={kind,case:row.case,seed:row.seed};if(r)Object.assign(p,{scale:r.scale,start:r.window[0],end:r.window[1]});return `${api}/asset?${new URLSearchParams(p)}`}
+function url(kind,row,r=null){const p={kind,case:row.case,seed:row.seed};if(r){Object.assign(p,{start:r.window[0],end:r.window[1]});if(r.scale!=null)p.scale=r.scale}return `${api}/asset?${new URLSearchParams(p)}`}
 function lazy(){const io=new IntersectionObserver(xs=>xs.forEach(x=>{if(x.isIntersecting){const v=x.target;v.src=v.dataset.src;v.load();io.unobserve(v)}}),{rootMargin:'650px'});document.querySelectorAll('video[data-src]').forEach(v=>io.observe(v))}
-function syncUrl(){const u=new URL(location.href);u.searchParams.set('case',$('case').value);u.searchParams.set('seed',$('seed').value);u.searchParams.set('v','3');history.replaceState(null,'',u)}
+function syncUrl(){const u=new URL(location.href);u.searchParams.set('case',$('case').value);u.searchParams.set('seed',$('seed').value);u.searchParams.set('v','4');history.replaceState(null,'',u)}
 function card(family,row,r){const meta={m1_multi:{cls:'',label:'M1 MULTI · Rᵢ→Rᵢ'},m2_multi:{cls:'m2-multi',label:'M2 MULTI · Cᵢ→Rᵢ'},m3_multi:{cls:'m3-multi',label:'M3 MULTI · Rᵢ→Cᵢ'},head_zero:{cls:'head-zero',label:'FULL-HEAD ZERO · ALL FLOWS'}}[family],zero=family==='head_zero',direction=r.scale<0?'prediction 靠近对应扰动':'prediction 远离对应扰动',audit=zero?`all query tokens: ${r.all_query_tokens?'YES':'N/A'}<br>removed flows: ${esc((r.removed_flows||[]).join(' / ')||'N/A')}`:`flow: ${esc(r.flow_id||'M1')}<br>deleted pairs/head: ${r.deleted_pairs_per_head||'N/A'}<br>object-specific complements: ${r.object_specific_complements?'YES':'NO'}<br>overlap tokens: ${r.overlap_token_count}<br>duplicate subtraction prevented: ${r.duplicate_pair_subtractions_prevented}`;return `<article class="card ${meta.cls}"><span class="family">${meta.label}</span><h3>λ ${fmt(r.scale)}<span class="badge">COMPLETE</span></h3><video controls muted loop playsinline preload="none" data-src="${esc(url(family,row,r))}"></video><div class="facts"><span>${esc(direction)}</span><span>step ${r.window[0]}–${r.window[1]}</span><span>Top100</span>${r.modified_head_events?`<span>${r.modified_head_events} head-events</span>`:''}</div><details><summary>精确运行审计</summary><div>${audit}<br>mean ‖εc−εperturbed‖₂: ${r.mean_prediction_delta_l2==null?'N/A':Number(r.mean_prediction_delta_l2).toFixed(3)}</div></details></article>`}
+function directCard(family,row,r){const meta={direct_m1:{cls:'',label:'DIRECT M1 · Rᵢ→Rᵢ'},direct_m2:{cls:'m2-multi',label:'DIRECT M2 · Cᵢ→Rᵢ'},direct_m3:{cls:'m3-multi',label:'DIRECT M3 · Rᵢ→Cᵢ'},direct_head_zero:{cls:'head-zero',label:'DIRECT FULL-HEAD ZERO'}}[family],zero=family==='direct_head_zero',audit=zero?`all query tokens: ${r.all_query_tokens?'YES':'N/A'}<br>removed flows: ${esc((r.removed_flows||[]).join(' / ')||'N/A')}`:`flow: ${esc(r.flow_id||'M1')}<br>deleted pairs/head: ${r.deleted_pairs_per_head||'N/A'}<br>object-specific complements: ${r.object_specific_complements?'YES':'NO'}<br>overlap tokens: ${r.overlap_token_count}<br>duplicate subtraction prevented: ${r.duplicate_pair_subtractions_prevented}`;return `<article class="card direct ${meta.cls}"><span class="family">${meta.label}</span><h3>STANDARD CFG<span class="badge">COMPLETE</span></h3><video controls muted loop playsinline preload="none" data-src="${esc(url(family,row,r))}"></video><div class="facts"><span class="direct-mode">NO GUIDANCE · NO λ</span><span>step ${r.window[0]}–${r.window[1]}</span><span>both CFG branches</span><span>Top100</span>${r.modified_head_events?`<span>${r.modified_head_events} head-events</span>`:''}</div><details><summary>精确运行审计</summary><div>${audit}<br>modified branches: ${esc((r.modified_cfg_branches||[]).join(' / ')||'N/A')}</div></details></article>`}
 function render(){
 const caseName=$('case').value,seed=Number($('seed').value),row=data.rows.find(x=>x.case===caseName&&x.seed===seed);if(!row)return;syncUrl();
-const allErrors=data.progress.errors+data.progress.m2_errors+data.progress.m3_errors+data.progress.head_zero_errors;
-$('status').textContent=`M1 ${data.progress.guided_complete}/${data.progress.guided_expected} · M2 ${data.progress.m2_complete}/${data.progress.m2_expected} · M3 ${data.progress.m3_complete}/${data.progress.m3_expected} · Head-zero ${data.progress.head_zero_complete}/${data.progress.head_zero_expected} · errors ${allErrors} · ${new Date(data.generated_at_utc).toLocaleTimeString()}`;
-$('summary').innerHTML=`<article class="case-summary"><strong>${esc(row.case)}</strong><span>${esc(row.objects.join(' + '))}<br>${esc(row.caption)}</span></article><article><strong>${row.progress.complete}/${row.progress.expected}</strong><span>当前 case×seed · M1</span></article><article><strong>${row.progress.m2_complete}/${row.progress.m2_expected||0} · ${row.progress.m3_complete}/${row.progress.m3_expected||0}</strong><span>当前 case×seed · M2 / M3</span></article><article><strong>${row.progress.head_zero_complete}/${row.progress.head_zero_expected||0}</strong><span>当前 case×seed · Full-head zero</span></article><article><strong>${data.progress.m2_complete}/${data.progress.m2_expected} · ${data.progress.m3_complete}/${data.progress.m3_expected}</strong><span>M2 / M3 全局进度</span></article><article><strong>${allErrors}</strong><span>四组错误记录</span></article>`;
-$('caseProgress').innerHTML=data.progress.by_case.map(x=>`<a class="${x.case===row.case?'active':''}" href="?case=${encodeURIComponent(x.case)}&seed=${row.seed}&v=3"><b>${esc(x.case)}</b><span>M1 ${x.complete}/${x.expected}${x.m2_expected?` · M2 ${x.m2_complete}/${x.m2_expected} · M3 ${x.m3_complete}/${x.m3_expected}`:''}${x.head_zero_expected?` · Zero ${x.head_zero_complete}/${x.head_zero_expected}`:''}</span><div class="meter"><i style="width:${100*x.complete/Math.max(1,x.expected)}%"></i></div>${x.m2_expected?`<div class="meter m2"><i style="width:${100*x.m2_complete/x.m2_expected}%"></i></div><div class="meter m3"><i style="width:${100*x.m3_complete/x.m3_expected}%"></i></div>`:''}${x.head_zero_expected?`<div class="meter zero"><i style="width:${100*x.head_zero_complete/x.head_zero_expected}%"></i></div>`:''}</a>`).join('');
+const allErrors=data.progress.errors+data.progress.m2_errors+data.progress.m3_errors+data.progress.head_zero_errors+data.progress.direct_errors;
+$('status').textContent=`Guidance M1 ${data.progress.guided_complete}/${data.progress.guided_expected} · M2 ${data.progress.m2_complete}/${data.progress.m2_expected} · M3 ${data.progress.m3_complete}/${data.progress.m3_expected} · Zero ${data.progress.head_zero_complete}/${data.progress.head_zero_expected} · Direct ${data.progress.direct_complete}/${data.progress.direct_expected} · errors ${allErrors} · ${new Date(data.generated_at_utc).toLocaleTimeString()}`;
+$('summary').innerHTML=`<article class="case-summary"><strong>${esc(row.case)}</strong><span>${esc(row.objects.join(' + '))}<br>${esc(row.caption)}</span></article><article><strong>${row.progress.direct_complete}/${row.progress.direct_expected||0}</strong><span>当前 case×seed · Direct</span></article><article><strong>${row.progress.complete}/${row.progress.expected}</strong><span>当前 case×seed · M1 Guidance</span></article><article><strong>${row.progress.m2_complete}/${row.progress.m2_expected||0} · ${row.progress.m3_complete}/${row.progress.m3_expected||0}</strong><span>当前 case×seed · M2 / M3</span></article><article><strong>${row.progress.head_zero_complete}/${row.progress.head_zero_expected||0}</strong><span>当前 case×seed · Full-head zero</span></article><article><strong>${data.progress.m2_complete}/${data.progress.m2_expected} · ${data.progress.m3_complete}/${data.progress.m3_expected}</strong><span>M2 / M3 全局进度</span></article><article><strong>${allErrors}</strong><span>Guidance + Direct 错误</span></article>`;
+$('caseProgress').innerHTML=data.progress.by_case.map(x=>`<a class="${x.case===row.case?'active':''}" href="?case=${encodeURIComponent(x.case)}&seed=${row.seed}&v=4"><b>${esc(x.case)}</b><span>M1 ${x.complete}/${x.expected}${x.m2_expected?` · M2 ${x.m2_complete}/${x.m2_expected} · M3 ${x.m3_complete}/${x.m3_expected}`:''}${x.head_zero_expected?` · Zero ${x.head_zero_complete}/${x.head_zero_expected}`:''}${x.direct_expected?` · Direct ${x.direct_complete}/${x.direct_expected}`:''}</span><div class="meter"><i style="width:${100*x.complete/Math.max(1,x.expected)}%"></i></div>${x.m2_expected?`<div class="meter m2"><i style="width:${100*x.m2_complete/x.m2_expected}%"></i></div><div class="meter m3"><i style="width:${100*x.m3_complete/x.m3_expected}%"></i></div>`:''}${x.head_zero_expected?`<div class="meter zero"><i style="width:${100*x.head_zero_complete/x.head_zero_expected}%"></i></div>`:''}${x.direct_expected?`<div class="meter direct-meter"><i style="width:${100*x.direct_complete/x.direct_expected}%"></i></div>`:''}</a>`).join('');
 $('baseline').innerHTML=`<div class="section-head"><h2>共同 Baseline · seed ${row.seed}</h2><p>λ=0；同 seed、同首帧、同 prompt、同初始噪声</p></div><div class="baseline-grid">${row.baseline_ready?`<video controls muted loop playsinline preload="metadata" src="${esc(url('baseline',row))}"></video>`:'<div class="empty">Baseline 尚未落盘</div>'}<div class="baseline-copy"><h3>一个 Baseline，四种通信切口</h3><p>青色 M1 删除对象内部 Rᵢ→Rᵢ；琥珀色 M2 删除每个对象从 Cᵢ 接收的输入；红色 M3 删除每个对象向 Cᵢ 的广播；紫色把相同 Top100 heads 的完整 Oₕ=AₕVₕ 置零。</p><p>M2/M3 中 Cᵢ=Ω∖Rᵢ，因此其他对象属于当前对象的 Cᵢ。MSE 与 CoTracker trajectory loss 只用于生成后评价，不进入 guidance。</p></div></div>`;
+const directSpecs=[{family:'direct_m1',label:'M1'},{family:'direct_m2',label:'M2'},{family:'direct_m3',label:'M3'},{family:'direct_head_zero',label:'Zero'}];
+if(row.progress.direct_expected){const directWindows=data.windows.map(w=>{const cards=directSpecs.map(s=>{const r=(row.direct_records[s.family]||[]).find(x=>x.window[0]===w[0]&&x.window[1]===w[1]&&x.ready);return r?directCard(s.family,row,r):''}).filter(Boolean),counts=directSpecs.map(s=>`${s.label} ${(row.direct_records[s.family]||[]).some(r=>r.window[0]===w[0]&&r.window[1]===w[1]&&r.ready)?1:0}/1`).join(' · ');return `<section class="direct-window"><div class="direct-window-head"><strong>STEP ${w[0]}–${w[1]}</strong><span>${counts} · active steps 两个 CFG branch 均直接删除</span></div>${cards.length?`<div class="compare-cards count-${cards.length}">${cards.join('')}</div>`:'<div class="empty">该 window 的 Direct 视频正在生成</div>'}</section>`}).join('');$('direct').innerHTML=`<section class="direct-band"><div class="direct-head"><div><span class="eyebrow">DIRECT ABLATION · NO GUIDANCE</span><h2>删除后的网络直接执行标准 CFG</h2></div><p>εu,deleted + 5(εc,deleted−εu,deleted) · conditional / unconditional 同时干预 · 无 clean−deleted contrast · 无 λ</p></div>${directWindows}</section>`}else{$('direct').innerHTML=''}
 const specs=[{family:'m1_multi',key:'records',label:'M1'},{family:'m2_multi',key:'m2_records',label:'M2'},{family:'m3_multi',key:'m3_records',label:'M3'},{family:'head_zero',key:'head_zero_records',label:'Zero'}].filter(s=>(row[s.key]||[]).length);
 const blocks=data.windows.map((w,i)=>{const rows=data.scales.map(scale=>{const cards=specs.map(s=>{const r=row[s.key].find(x=>x.window[0]===w[0]&&x.window[1]===w[1]&&x.scale===scale&&x.ready);return r?card(s.family,row,r):''}).filter(Boolean);if(!cards.length)return '';return `<section class="compare-row"><div class="compare-label">λ ${fmt(scale)}<br>STEP ${w[0]}–${w[1]}</div><div class="compare-cards count-${cards.length}">${cards.join('')}</div></section>`}).join('');if(!rows)return '';const counts=specs.map(s=>`${s.label} ${row[s.key].filter(r=>r.window[0]===w[0]&&r.window[1]===w[1]&&r.ready).length}/${data.scales.length}`).join(' · ');return `<section class="window"><div class="window-label"><span class="step">${String(i+1).padStart(2,'0')}</span><div><h2>Guidance step ${w[0]}–${w[1]}</h2><p>${counts} · 其余去噪步保持 clean CFG</p></div></div>${rows}</section>`}).join('');
 $('windows').innerHTML=blocks||'<div class="empty">该 case×seed 尚未生成 guidance 视频；Baseline 仍可查看。</div>';lazy()
