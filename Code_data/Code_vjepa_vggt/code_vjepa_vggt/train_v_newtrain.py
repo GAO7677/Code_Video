@@ -1460,6 +1460,7 @@ class WanTrainingModule(DiffusionTrainingModule):
 
     def get_pipeline_inputs(self, data):
         precomputed_input_latents = data.get("precomputed_input_latents")
+        precomputed_prompt_embedding = data.get("precomputed_prompt_embedding")
         if precomputed_input_latents is not None:
             if not isinstance(precomputed_input_latents, torch.Tensor):
                 raise TypeError("precomputed_input_latents must be a torch.Tensor")
@@ -1483,7 +1484,24 @@ class WanTrainingModule(DiffusionTrainingModule):
             prompt = data["caption"]
             video = _tensor_video_to_pil_list(data["video"])
             raw_sample = data
-        inputs_posi = {"prompt": prompt}
+        if precomputed_prompt_embedding is not None:
+            if not isinstance(precomputed_prompt_embedding, torch.Tensor):
+                raise TypeError("precomputed_prompt_embedding must be a torch.Tensor")
+            if precomputed_prompt_embedding.ndim != 2:
+                raise ValueError(
+                    "precomputed_prompt_embedding must be [L,D], "
+                    f"got shape={tuple(precomputed_prompt_embedding.shape)}"
+                )
+            if not getattr(self, "_reported_precomputed_prompt_cache", False):
+                print(
+                    "[pybullet-prompt-cache] using precomputed prompt embeddings; "
+                    "Wan tokenizer/UMT5 encoding is bypassed",
+                    flush=True,
+                )
+                self._reported_precomputed_prompt_cache = True
+            inputs_posi = {"context": precomputed_prompt_embedding.unsqueeze(0)}
+        else:
+            inputs_posi = {"prompt": prompt}
         inputs_nega = {}
         context_spec = self.sample_context_spec(video, raw_sample=raw_sample)
         context_frame_indices = context_spec["frame_indices"]
@@ -1514,6 +1532,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         if raw_sample is not None:
             sampled_raw = dict(raw_sample)
             sampled_raw.pop("precomputed_input_latents", None)
+            sampled_raw.pop("precomputed_prompt_embedding", None)
             if (
                 self.ctx_max_length is not None
                 and "video" in raw_sample
@@ -1568,6 +1587,7 @@ class WanTrainingModule(DiffusionTrainingModule):
                 if context_spec.get("ctx_max_length") is not None:
                     sampled_raw["ctx_max_length"] = int(context_spec["ctx_max_length"])
             sampled_raw.pop("precomputed_input_latents", None)
+            sampled_raw.pop("precomputed_prompt_embedding", None)
             inputs_shared["raw_sample"] = sampled_raw
             context_video = sampled_raw["context_video"]
             inputs_shared["context_video"] = (
@@ -1599,6 +1619,11 @@ class WanTrainingModule(DiffusionTrainingModule):
             inputs, self.pipe.device, self.pipe.torch_dtype
         )
         for unit in self.pipe.units:
+            if (
+                unit.__class__.__name__ == "WanVideoUnit_PromptEmbedder"
+                and "context" in inputs[1]
+            ):
+                continue
             inputs = self.pipe.unit_runner(unit, self.pipe, *inputs)
         if self.enable_object_branch and "raw_sample" in inputs[0]:
             loss, metrics = self._compute_object_losses(self.pipe, inputs[0], inputs[1])

@@ -419,7 +419,7 @@ Case metadata
 训练 smoke test，验证一次真实 optimizer step、显存和 checkpoint 行为；之后
 再比较 Probe `0.1/0.2` 与 loss 权重，而不是直接启动长训练。
 
-## 13. Noise-gated point correspondence case 诊断
+## 13. Conditional spatial correspondence case 诊断
 
 新增 `noise_gated_correspondence.py`、
 `run_pybullet_correspondence_diagnostics.py`、
@@ -429,16 +429,22 @@ trajectory，因此本轮明确使用 F04 SAM2 identity mask 内 8 个点初始�
 CoTracker pseudo-GT，不把它称为 simulator GT；source 固定为 `L01/F04`，
 只监督 `L02/F08–L12/F48` 的未来可见点。
 
-每个 target point 在 `16×28` token grid 上生成 `sigma=1.0` 的连续 Gaussian
-label，Top100 Main Student Q/K attention 按 `pck32` 加权，分别计算 soft-label
-CE 与 PCK aggregate soft-argmax coordinate Huber。noise gate 使用
-`SNR/(SNR+1)`，并在 scheduler `sigma>=0.75` 时归零，因此 `t=900` 会保留原始
-attention 可视化，但不会产生 correspondence loss 梯度。已完成
-`t=100/300/500/700/900` 共 15 个 5B step-0 forward；这仍是 forward-only
-诊断，没有 optimizer step，不能声称模型已经通过该 loss 得到改善。
+严格 review 后已更新为基础版 schema v2：pixel/token 使用 32-pixel
+cell-center 对齐，F04 source Query 从四个相邻 token 双线性采样；每个 target
+point 在 `16×28` grid 上生成 `sigma=0.75` 的 Gaussian label。Top100 head
+probability 先按归一化 `pck32` 混合，再计算 `CE(Y, sum_h w_h A_h)`，不再强迫
+每个 head 单独拟合。默认 loss 为 `0.01 * SNR/(SNR+1) * CE`，删除
+`sigma>=0.75` hard cutoff，并从默认目标移除 coordinate Huber；aggregate
+soft-argmax 只用于 PCK/误差诊断。
 
-报告中每一帧为五栏拼接 overlay：point trajectory、Gaussian target、PCK QK
-attention、gated soft-CE contribution、coordinate-loss sensitivity。输出位置：
+已在 GPU 2 完成 `t=100/300/500/700/900` 共 15 个 5B step-0 forward。新版
+`L_corr` 在低噪声约 `0.031-0.043`、`sigma=0.5` 约 `0.015-0.020`、
+`sigma≈0.9` 约 `0.00037-0.00050`。这仍是 forward-only 诊断，没有 optimizer
+step，不能声称模型已经通过该 loss 得到改善。
+
+报告中每一帧为四栏拼接 overlay：point trajectory、Gaussian target、PCK
+mixture QK attention、实际 `lambda * gate * aggregate CE` contribution。视频
+验收为 `1792×256`、13 帧，现有 8765 服务返回 HTTP 200。输出位置：
 
 ```text
 /data/gaoya/agent-data/outputs/noise_gated_correspondence_diagnostics/index.html

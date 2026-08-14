@@ -2,6 +2,11 @@
 
 > 调研日期：2026-08-14。结论基于 MVTrack4Gen 官方项目页、arXiv v1 论文及官方 GitHub 仓库；本地实现以同目录下的 `noise_gated_correspondence.py` 和 `run_pybullet_correspondence_diagnostics.py` 为准。
 
+> **状态说明：** 本文的本地方案章节记录的是 review 前的 schema v1。当前
+> schema v2 已改为 cell-center 坐标、双线性 source Query、PCK attention
+> mixture CE、`lambda_corr=0.01` 和无 hard cutoff 的 smooth SNR gate，并从
+> 默认目标移除了 coordinate Huber；MVTrack4Gen 部分的文献结论不受影响。
+
 ## 结论
 
 **不是同一个 loss。** 两者共享的核心思想是：从视频 DiT self-attention 的 query/key 构造逐帧空间匹配分布，再用点轨迹提供 correspondence 监督。MVTrack4Gen 的 `L_corr` 因而与本地 Gaussian soft-label CE 是最接近的部分；但 MVTrack4Gen 使用**单个正确 token 的 hard-label CE**，覆盖 reference/target 两个视图和全部共可见帧，并额外训练一个完整的 multi-view tracking head。当前本地方案使用 **Gaussian soft labels、固定单源帧到未来帧、跨层 Top100 PCK 加权、attention soft-argmax coordinate Huber，以及显式 SNR gate/cutoff**。这些关键设计均不是 MVTrack4Gen 论文披露的 `L_corr`。

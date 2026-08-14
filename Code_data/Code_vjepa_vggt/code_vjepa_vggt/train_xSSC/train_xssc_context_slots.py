@@ -624,6 +624,7 @@ def build_parser() -> argparse.ArgumentParser:
     dataset.add_argument("--pybullet0713_init_scan_limit", type=int, default=None)
     dataset.add_argument("--pybullet0713_family", action="append", default=None)
     dataset.add_argument("--pybullet0713_vae_cache_dir", type=str, default=None)
+    dataset.add_argument("--pybullet0713_prompt_cache_dir", type=str, default=None)
     dataset.add_argument("--kubric_root", type=str, default=None)
     dataset.add_argument("--kubric_split", default="train", choices=["train", "val", "test", "all"])
     dataset.add_argument("--kubric_sampling_strategy", default="prefix", choices=["prefix", "uniform"])
@@ -677,6 +678,11 @@ def build_dataset(args: argparse.Namespace):
                 init_scan_limit=args.pybullet0713_init_scan_limit,
                 vae_cache_dir=args.pybullet0713_vae_cache_dir,
                 vae_checkpoint_path=Path(args.wan_root) / "Wan2.2_VAE.pth",
+                prompt_cache_dir=args.pybullet0713_prompt_cache_dir,
+                text_encoder_checkpoint_path=(
+                    Path(args.wan_root) / "models_t5_umt5-xxl-enc-bf16.pth"
+                ),
+                tokenizer_path=args.tokenizer_path,
             )
         )
         source_names.append("pybullet")

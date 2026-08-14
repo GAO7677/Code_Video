@@ -16,6 +16,10 @@ from code_vjepa_vggt.data.pybullet_vae_cache import (
     PyBulletVaeCacheError,
     PyBulletVaeLatentCache,
 )
+from code_vjepa_vggt.data.pybullet_prompt_cache import (
+    PyBulletPromptCacheError,
+    PyBulletPromptEmbeddingCache,
+)
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8, sample_frame_indices
 
 
@@ -159,6 +163,9 @@ class PyBullet0713NoGTBoxDataset(Dataset):
         max_retry_samples: int = 8,
         vae_cache_dir: str | Path | None = None,
         vae_checkpoint_path: str | Path | None = None,
+        prompt_cache_dir: str | Path | None = None,
+        text_encoder_checkpoint_path: str | Path | None = None,
+        tokenizer_path: str | Path | None = None,
     ) -> None:
         self.root = Path(root)
         self.split = str(split).strip().lower()
@@ -178,6 +185,9 @@ class PyBullet0713NoGTBoxDataset(Dataset):
         self.split_val_ratio = float(split_val_ratio)
         self.max_retry_samples = max(1, int(max_retry_samples))
         self.vae_cache_dir = None if vae_cache_dir is None else Path(vae_cache_dir)
+        self.prompt_cache_dir = (
+            None if prompt_cache_dir is None else Path(prompt_cache_dir)
+        )
 
         if not self.root.is_dir():
             raise FileNotFoundError(f"0713 PyBullet root not found: {self.root}")
@@ -229,6 +239,20 @@ class PyBullet0713NoGTBoxDataset(Dataset):
             print(
                 "[pybullet-vae-cache] "
                 f"cache_dir={self.vae_cache.cache_dir} selected={len(self.samples)} "
+                "missing=0 invalid=0",
+                flush=True,
+            )
+        self.prompt_cache = None
+        if self.prompt_cache_dir is not None:
+            self.prompt_cache = PyBulletPromptEmbeddingCache(
+                self.prompt_cache_dir,
+                text_encoder_checkpoint_path=text_encoder_checkpoint_path,
+                tokenizer_path=tokenizer_path,
+            )
+            self.prompt_cache.validate_records(self.samples, self.root)
+            print(
+                "[pybullet-prompt-cache] "
+                f"cache_dir={self.prompt_cache.cache_dir} selected={len(self.samples)} "
                 "missing=0 invalid=0",
                 flush=True,
             )
@@ -392,6 +416,13 @@ class PyBullet0713NoGTBoxDataset(Dataset):
                 "encoding_id": self.vae_cache.encoding_id,
                 "cache_dir": str(self.vae_cache.cache_dir),
             }
+        if self.prompt_cache is not None:
+            sample["precomputed_prompt_embedding"] = self.prompt_cache.load(record.key)
+            metadata["prompt_cache"] = {
+                "hit": True,
+                "encoding_id": self.prompt_cache.encoding_id,
+                "cache_dir": str(self.prompt_cache.cache_dir),
+            }
         return sample
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
@@ -400,7 +431,7 @@ class PyBullet0713NoGTBoxDataset(Dataset):
             record = self.samples[(idx + attempt) % len(self.samples)]
             try:
                 return self._load_sample(record)
-            except PyBulletVaeCacheError:
+            except (PyBulletVaeCacheError, PyBulletPromptCacheError):
                 raise
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
@@ -425,5 +456,10 @@ class PyBullet0713NoGTBoxDataset(Dataset):
             "resolution": list(self.resolution),
             "vae_cache_dir": (
                 str(self.vae_cache.cache_dir) if self.vae_cache is not None else None
+            ),
+            "prompt_cache_dir": (
+                str(self.prompt_cache.cache_dir)
+                if self.prompt_cache is not None
+                else None
             ),
         }

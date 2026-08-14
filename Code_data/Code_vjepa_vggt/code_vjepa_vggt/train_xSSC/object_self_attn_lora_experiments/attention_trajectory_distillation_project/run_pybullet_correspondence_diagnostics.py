@@ -33,9 +33,8 @@ from AAA_my_test import analyze_wan_gt_toy_worker as wan_tools
 import train_xssc_object_self_attn_lora as train_core
 from frozen_motion_probe import load_pck_head_weights, ordered_head_pairs
 from noise_gated_correspondence import (
-    coordinate_loss_sensitivity,
+    conditional_correspondence_objective,
     cross_frame_point_terms,
-    noise_reliability_gate,
     points_to_token_coordinates,
 )
 from run_training_case_diagnostics import add_label, atomic_json, write_video
@@ -83,7 +82,7 @@ PALETTE_RGB = np.asarray(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Noise-gated Gaussian point-correspondence case diagnostic."
+        description="Conditional spatial point-correspondence case diagnostic."
     )
     parser.add_argument("mode", choices=("prepare-tracks", "forward", "render", "all"))
     parser.add_argument("--source-cache", type=Path, default=DEFAULT_SOURCE_CACHE)
@@ -102,11 +101,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-points", type=int, default=8)
     parser.add_argument("--source-pixel-frame", type=int, default=4)
     parser.add_argument("--source-latent-frame", type=int, default=1)
-    parser.add_argument("--label-sigma-tokens", type=float, default=1.0)
+    parser.add_argument("--label-sigma-tokens", type=float, default=0.75)
     parser.add_argument("--gate-gamma", type=float, default=1.0)
-    parser.add_argument("--gate-cutoff", type=float, default=0.75)
-    parser.add_argument("--coordinate-huber-beta", type=float, default=0.5)
-    parser.add_argument("--coordinate-weight", type=float, default=0.25)
+    parser.add_argument("--lambda-corr", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=4200)
     parser.add_argument("--fps", type=float, default=4.0)
     parser.add_argument("--overwrite", action="store_true")
@@ -122,10 +119,8 @@ def check_args(args: argparse.Namespace) -> None:
         raise ValueError("this diagnostic is fixed to F04 / latent-1")
     if float(args.label_sigma_tokens) <= 0.0:
         raise ValueError("label-sigma-tokens must be positive")
-    if float(args.coordinate_huber_beta) <= 0.0:
-        raise ValueError("coordinate-huber-beta must be positive")
-    if float(args.coordinate_weight) < 0.0:
-        raise ValueError("coordinate-weight must be non-negative")
+    if float(args.lambda_corr) <= 0.0:
+        raise ValueError("lambda-corr must be positive")
     for timestep in args.training_timesteps:
         if float(timestep) not in DEFAULT_TIMESTEPS:
             raise ValueError(
@@ -282,7 +277,6 @@ class PCKCorrespondenceCollector:
         point_visibility_tn: torch.Tensor,
         source_frame: int,
         label_sigma_tokens: float,
-        coordinate_huber_beta: float,
     ) -> None:
         self.dit = dit
         self.selected_heads_by_block = {
@@ -307,9 +301,7 @@ class PCKCorrespondenceCollector:
         self.point_visibility_tn = point_visibility_tn
         self.source_frame = int(source_frame)
         self.label_sigma_tokens = float(label_sigma_tokens)
-        self.coordinate_huber_beta = float(coordinate_huber_beta)
         self.attention: torch.Tensor | None = None
-        self.ce_contribution: torch.Tensor | None = None
         self.target: torch.Tensor | None = None
         self.valid: torch.Tensor | None = None
         self.head_count = 0
@@ -338,7 +330,6 @@ class PCKCorrespondenceCollector:
             token_hw=TOKEN_HW,
             source_frame=self.source_frame,
             sigma_tokens=self.label_sigma_tokens,
-            coordinate_huber_beta=self.coordinate_huber_beta,
             future_only=True,
         )
         weights = self.weights_by_block[block_id].to(
@@ -347,18 +338,10 @@ class PCKCorrespondenceCollector:
         weighted_attention = (
             terms["attention"] * weights.reshape(1, 1, -1, 1, 1)
         ).sum(dim=2)
-        weighted_ce = (
-            terms["ce_contribution"] * weights.reshape(1, 1, -1, 1, 1)
-        ).sum(dim=2)
         self.attention = (
             weighted_attention
             if self.attention is None
             else self.attention + weighted_attention
-        )
-        self.ce_contribution = (
-            weighted_ce
-            if self.ce_contribution is None
-            else self.ce_contribution + weighted_ce
         )
         self.target = terms["target"]
         self.valid = terms["valid"]
@@ -394,15 +377,13 @@ class PCKCorrespondenceCollector:
         *,
         scheduler_sigma: float,
         gate_gamma: float,
-        gate_cutoff: float,
-        coordinate_weight: float,
+        lambda_corr: float,
     ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         if self.head_count != 100:
             raise RuntimeError(f"captured {self.head_count} heads, expected 100")
-        if self.attention is None or self.ce_contribution is None:
+        if self.attention is None or self.target is None or self.valid is None:
             raise RuntimeError("collector captured no correspondence maps")
         attention = self.attention[0].float()
-        ce_contribution = self.ce_contribution[0].float()
         target = self.target.float()
         valid = self.valid.bool()
         probability_error = float((attention.sum(dim=-1) - 1.0).abs().max().item())
@@ -418,26 +399,13 @@ class PCKCorrespondenceCollector:
         ).reshape(-1, 2)
         predicted = torch.einsum("tns,sc->tnc", attention, grid)
         coordinate_target = self.point_coordinates_tn2.to(predicted)
-        coordinate_huber = torch.nn.functional.smooth_l1_loss(
-            predicted,
-            coordinate_target,
-            beta=self.coordinate_huber_beta,
-            reduction="none",
-        ).mean(dim=-1)
-        ce = ce_contribution.sum(dim=-1)
-        raw_ce = ce[valid].mean()
-        raw_coordinate = coordinate_huber[valid].mean()
-        gate = noise_reliability_gate(
-            float(scheduler_sigma),
-            gamma=float(gate_gamma),
-            cutoff=float(gate_cutoff),
-        ).to(attention)
-        sensitivity = coordinate_loss_sensitivity(
+        objective = conditional_correspondence_objective(
             attention,
-            predicted,
-            coordinate_target,
-            token_hw=TOKEN_HW,
-            beta=self.coordinate_huber_beta,
+            target,
+            valid,
+            scheduler_sigma=float(scheduler_sigma),
+            gate_gamma=float(gate_gamma),
+            lambda_corr=float(lambda_corr),
         )
         top1 = attention.argmax(dim=-1)
         top1_coordinates = torch.stack(
@@ -446,30 +414,26 @@ class PCKCorrespondenceCollector:
         )
         top1_error = torch.linalg.vector_norm(top1_coordinates - coordinate_target, dim=-1)
         soft_error = torch.linalg.vector_norm(predicted - coordinate_target, dim=-1)
-        total = gate * (raw_ce + float(coordinate_weight) * raw_coordinate)
         maps = {
             "attention_tns": attention.cpu().numpy(),
             "target_tns": target.cpu().numpy(),
-            "ce_contribution_tns": ce_contribution.cpu().numpy(),
-            "coordinate_sensitivity_tns": sensitivity.cpu().numpy(),
+            "ce_contribution_tns": objective["ce_contribution"].cpu().numpy(),
             "predicted_coordinates_tn2": predicted.cpu().numpy(),
             "target_coordinates_tn2": coordinate_target.cpu().numpy(),
             "visibility_tn": self.point_visibility_tn.cpu().numpy().astype(np.uint8),
             "valid_tn": valid.cpu().numpy().astype(np.uint8),
-            "ce_tn": ce.cpu().numpy(),
-            "coordinate_huber_tn": coordinate_huber.cpu().numpy(),
+            "ce_tn": objective["ce"].cpu().numpy(),
             "top1_error_tn": top1_error.cpu().numpy(),
             "softargmax_error_tn": soft_error.cpu().numpy(),
         }
         metrics = {
             "scheduler_sigma": float(scheduler_sigma),
-            "noise_gate": float(gate.item()),
-            "raw_soft_ce": float(raw_ce.item()),
-            "raw_coordinate_huber": float(raw_coordinate.item()),
-            "gated_soft_ce": float((gate * raw_ce).item()),
-            "gated_coordinate_huber": float((gate * raw_coordinate).item()),
-            "coordinate_weight": float(coordinate_weight),
-            "gated_total": float(total.item()),
+            "noise_gate": float(objective["noise_gate"].item()),
+            "raw_soft_ce": float(objective["raw_soft_ce"].item()),
+            "gated_soft_ce": float(objective["gated_soft_ce"].item()),
+            "lambda_corr": float(lambda_corr),
+            "unscaled_gated_total": float(objective["gated_soft_ce"].item()),
+            "correspondence_loss": float(objective["loss"].item()),
             "valid_point_frame_pairs": int(valid.sum().item()),
             "mean_top1_error_tokens": float(top1_error[valid].mean().item()),
             "mean_softargmax_error_tokens": float(soft_error[valid].mean().item()),
@@ -584,7 +548,6 @@ def run_forward(args: argparse.Namespace) -> None:
                     point_visibility_tn=point_visibility,
                     source_frame=int(args.source_latent_frame),
                     label_sigma_tokens=float(args.label_sigma_tokens),
-                    coordinate_huber_beta=float(args.coordinate_huber_beta),
                 )
                 print(
                     f"[forward {case_index}/3] {case_key} {sid} "
@@ -608,13 +571,12 @@ def run_forward(args: argparse.Namespace) -> None:
                 maps, metrics = collector.finalize(
                     scheduler_sigma=sigma,
                     gate_gamma=float(args.gate_gamma),
-                    gate_cutoff=float(args.gate_cutoff),
-                    coordinate_weight=float(args.coordinate_weight),
+                    lambda_corr=float(args.lambda_corr),
                 )
                 np.savez_compressed(stage_output / "loss_maps.npz", **maps)
                 metrics.update(
                     {
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "case_key": case_key,
                         "family": case["family"],
                         "caption": case["caption"],
@@ -630,9 +592,12 @@ def run_forward(args: argparse.Namespace) -> None:
                         "point_count": int(args.num_points),
                         "label_sigma_tokens": float(args.label_sigma_tokens),
                         "gate_gamma": float(args.gate_gamma),
-                        "gate_cutoff": float(args.gate_cutoff),
-                        "coordinate_huber_beta": float(args.coordinate_huber_beta),
-                        "head_weighting": "Top100 normalized pck32",
+                        "lambda_corr": float(args.lambda_corr),
+                        "objective_scope": "conditional spatial correspondence within each target frame",
+                        "head_weighting": "Top100 normalized pck32 attention mixture",
+                        "head_reduction": "CE(target, sum_h weight_h * attention_h)",
+                        "source_query_sampling": "bilinear continuous token coordinates",
+                        "pixel_token_mapping": "cell-center aligned",
                         "pck_score_min": float(pck_audit["score_min"]),
                         "pck_score_max": float(pck_audit["score_max"]),
                         "peak_gpu_memory_mib": float(
@@ -667,8 +632,8 @@ def run_forward(args: argparse.Namespace) -> None:
 def token_to_pixel(coordinates_n2: np.ndarray, pixel_hw: tuple[int, int]) -> np.ndarray:
     pixel_h, pixel_w = pixel_hw
     output = np.asarray(coordinates_n2, dtype=np.float32).copy()
-    output[..., 0] *= float(pixel_w - 1) / float(TOKEN_HW[1] - 1)
-    output[..., 1] *= float(pixel_h - 1) / float(TOKEN_HW[0] - 1)
+    output[..., 0] = (output[..., 0] + 0.5) * float(pixel_w) / TOKEN_HW[1] - 0.5
+    output[..., 1] = (output[..., 1] + 0.5) * float(pixel_h) / TOKEN_HW[0] - 0.5
     return output
 
 
@@ -746,26 +711,19 @@ def render_stage_video(
     metrics: dict[str, Any],
     *,
     fps: float,
-    coordinate_weight: float,
 ) -> None:
     with np.load(stage_output / "loss_maps.npz") as arrays:
         attention = arrays["attention_tns"].astype(np.float32)
         target = arrays["target_tns"].astype(np.float32)
         ce_contribution = arrays["ce_contribution_tns"].astype(np.float32)
-        coordinate_sensitivity_map = arrays["coordinate_sensitivity_tns"].astype(
-            np.float32
-        )
         predicted_token = arrays["predicted_coordinates_tn2"].astype(np.float32)
         valid = arrays["valid_tn"].astype(bool)
-        coordinate_huber = arrays["coordinate_huber_tn"].astype(np.float32)
         top1_error = arrays["top1_error_tn"].astype(np.float32)
     gate = float(metrics["noise_gate"])
+    lambda_corr = float(metrics["lambda_corr"])
     attention_map = average_visible_maps(attention, visibility_tn)
     target_map = average_visible_maps(target, visibility_tn)
-    ce_map = average_visible_maps(ce_contribution * gate, valid)
-    coordinate_map = average_visible_maps(
-        coordinate_sensitivity_map * gate * float(coordinate_weight), valid
-    )
+    ce_map = average_visible_maps(ce_contribution * gate * lambda_corr, valid)
     predicted_pixel = token_to_pixel(predicted_token, frames_thwc.shape[1:3])
 
     def scale(values: np.ndarray, percentile: float = 99.5) -> float:
@@ -776,7 +734,6 @@ def render_stage_video(
         "attention": scale(attention_map),
         "target": scale(target_map),
         "ce": scale(ce_map),
-        "coordinate": scale(coordinate_map),
     }
     rendered = []
     timestep = float(metrics["training_timestep"])
@@ -817,27 +774,7 @@ def render_stage_video(
         ce_panel = draw_points(ce_panel, gt_points, visible)
         ce_panel = add_label(
             ce_panel,
-            f"gated soft-CE contribution | gate {gate:.3f}",
-        )
-        coordinate_panel = overlay_heatmap(
-            frame,
-            coordinate_map[latent_index],
-            vmax=scales["coordinate"],
-        )
-        coordinate_panel = draw_points(
-            coordinate_panel,
-            gt_points,
-            visible,
-            predicted_n2=predicted_pixel[latent_index],
-        )
-        coordinate_value = (
-            float(coordinate_huber[latent_index][valid[latent_index]].mean())
-            if is_valid_target
-            else float("nan")
-        )
-        coordinate_panel = add_label(
-            coordinate_panel,
-            f"coord-loss sensitivity | Huber {coordinate_value:.3f}",
+            f"weighted aggregate CE | gate {gate:.3f} | lambda {lambda_corr:.3f}",
         )
         rendered.append(
             np.concatenate(
@@ -846,7 +783,6 @@ def render_stage_video(
                     resize_panel(target_panel),
                     resize_panel(attention_panel),
                     resize_panel(ce_panel),
-                    resize_panel(coordinate_panel),
                 ],
                 axis=1,
             )
@@ -877,8 +813,7 @@ def build_report(output_root: Path, cases: list[dict[str, Any]]) -> None:
                 f"<td>{stage['scheduler_sigma']:.4f}</td>"
                 f"<td>{stage['noise_gate']:.4f}</td>"
                 f"<td>{stage['raw_soft_ce']:.4f}</td>"
-                f"<td>{stage['raw_coordinate_huber']:.4f}</td>"
-                f"<td>{stage['gated_total']:.4f}</td>"
+                f"<td>{stage['correspondence_loss']:.6f}</td>"
                 f"<td>{stage['mean_top1_error_tokens']:.3f}</td>"
                 f"<td>{stage['pck_at_1_token']:.3f}</td>"
                 "</tr>"
@@ -887,11 +822,11 @@ def build_report(output_root: Path, cases: list[dict[str, Any]]) -> None:
                 f"""<article><div class="stage-title"><h3>t={stage['training_timestep']:.0f}</h3><span>sigma {stage['scheduler_sigma']:.4f} · gate {stage['noise_gate']:.4f}</span></div><video controls muted loop preload="metadata" src="{html.escape(video_path)}"></video><div class="links"><a href="cases/{html.escape(case_key)}/{sid}/metrics.json">metrics.json</a><a href="cases/{html.escape(case_key)}/{sid}/loss_maps.npz">loss_maps.npz</a></div></article>"""
             )
         sections.append(
-            f"""<section><div class="case-heading"><span>{html.escape(case['family'])}</span><div><h2>{html.escape(case['case_key'])}</h2><p>{html.escape(case['caption'])}</p></div></div><table><thead><tr><th>t</th><th>sigma</th><th>gate</th><th>soft CE</th><th>coord Huber</th><th>gated total</th><th>top1 err</th><th>PCK@1</th></tr></thead><tbody>{''.join(rows)}</tbody></table><div class="stages">{''.join(videos)}</div></section>"""
+            f"""<section><div class="case-heading"><span>{html.escape(case['family'])}</span><div><h2>{html.escape(case['case_key'])}</h2><p>{html.escape(case['caption'])}</p></div></div><table><thead><tr><th>t</th><th>sigma</th><th>gate</th><th>aggregate CE</th><th>weighted loss</th><th>top1 err</th><th>PCK@1</th></tr></thead><tbody>{''.join(rows)}</tbody></table><div class="stages">{''.join(videos)}</div></section>"""
         )
-    page = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Noise-gated correspondence diagnostics</title><style>
+    page = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conditional correspondence diagnostics</title><style>
 :root{{--bg:#eef1ef;--paper:#fff;--ink:#17201d;--muted:#64706b;--line:#c7cfcb;--accent:#086b5f;--warm:#a6640b}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans SC","Source Han Sans SC",sans-serif;letter-spacing:0}}header{{background:#17201d;color:#fff;padding:28px max(24px,calc((100vw - 1500px)/2))}}header h1{{font-size:28px;margin:0 0 8px}}header p{{margin:0;color:#c8d1cd;max-width:1000px;line-height:1.6}}main{{max-width:1500px;margin:0 auto;padding:24px}}section{{background:var(--paper);border:1px solid var(--line);margin-bottom:24px;padding:20px}}.case-heading{{display:flex;gap:14px;align-items:start;border-bottom:1px solid var(--line);padding-bottom:14px}}.case-heading>span{{background:var(--accent);color:#fff;padding:4px 8px;font-weight:700}}h2{{font-size:20px;margin:0}}.case-heading p{{margin:5px 0 0;color:var(--muted)}}table{{width:100%;border-collapse:collapse;margin:16px 0;font-variant-numeric:tabular-nums}}th,td{{border-bottom:1px solid var(--line);padding:8px;text-align:right;font-size:13px}}th:first-child,td:first-child{{text-align:left}}.stages{{display:grid;grid-template-columns:repeat(auto-fit,minmax(560px,1fr));gap:16px}}article{{border-top:3px solid var(--accent);background:#f7f9f8;padding:12px}}.stage-title{{display:flex;align-items:baseline;justify-content:space-between;gap:12px}}.stage-title h3{{font-size:16px;margin:0}}.stage-title span{{font-size:12px;color:var(--muted)}}video{{display:block;width:100%;margin-top:10px;background:#111}}.links{{display:flex;gap:14px;margin-top:8px}}a{{color:var(--accent);font-size:12px}}@media(max-width:700px){{main{{padding:10px}}section{{padding:12px}}.stages{{grid-template-columns:1fr}}table{{display:block;overflow-x:auto}}}}
-</style></head><body><header><h1>Noise-gated point correspondence</h1><p>PyBullet train split · F04 SAM2 points tracked by CoTracker · source L01/F04 · future-frame Gaussian labels · Top100 PCK-weighted Main Student QK · forward-only diagnostic</p></header><main>{''.join(sections)}</main></body></html>"""
+</style></head><body><header><h1>Conditional spatial correspondence</h1><p>PyBullet train split · CoTracker pseudo-GT · source L01/F04 · Gaussian sigma 0.75 token · bilinear source Query · Top100 PCK attention mixture · smooth SNR weight · lambda 0.01 · forward-only diagnostic</p></header><main>{''.join(sections)}</main></body></html>"""
     (output_root / "index.html").write_text(page, encoding="utf-8")
 
 
@@ -923,7 +858,6 @@ def run_render(args: argparse.Namespace) -> None:
                 visibility,
                 stage,
                 fps=float(args.fps),
-                coordinate_weight=float(args.coordinate_weight),
             )
         cases.append(case_metrics)
     build_report(output_root, cases)

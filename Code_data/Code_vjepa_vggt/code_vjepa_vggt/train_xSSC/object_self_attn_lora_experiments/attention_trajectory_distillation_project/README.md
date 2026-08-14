@@ -170,17 +170,24 @@ PYTHONPATH=/home/gaoya/Code_Video/DiffTrack-main:/home/gaoya/Code_Video/Code_dat
 run_training_case_diagnostics.py refresh-report --device cpu --pck-weight-power 30
 ```
 
-## Noise-gated point correspondence diagnostic
+## Conditional spatial correspondence diagnostic
 
 `run_pybullet_correspondence_diagnostics.py` evaluates the direct Main Student
-Q/K correspondence proposal on the same three PyBullet train cases. Because the
-dataset adapter does not expose simulator point trajectories, this diagnostic
-labels its supervision explicitly as CoTracker pseudo-GT: eight points are
-sampled inside the frozen F04 SAM2 identity mask and tracked bidirectionally.
-The source is `L01/F04`; future latent frames use continuous Gaussian labels
-with `sigma=1.0` token. Top100 heads are PCK-weighted, coordinate Huber is
-computed from the aggregate soft-argmax, and an SNR gate with `gamma=1.0`
-disables correspondence supervision at scheduler `sigma >= 0.75`.
+Q/K correspondence proposal on the same three PyBullet train cases. This first
+version intentionally supervises conditional spatial correspondence within each
+target frame; it does not claim to reproduce Wan's full-sequence attention
+distribution. Eight points are sampled inside the frozen F04 SAM2 identity mask
+and tracked bidirectionally as CoTracker pseudo-GT. Pixel coordinates use a
+token-cell-center mapping, and the `L01/F04` source Query is sampled bilinearly.
+Future latent frames use Gaussian labels with `sigma=0.75` token. The Top100
+probability maps are mixed with normalized PCK32 weights before CE is computed:
+
+```text
+L_corr = 0.01 * SNR/(SNR+1) * CE(Y, sum_h w_h A_h)
+```
+
+There is no high-noise hard cutoff and no coordinate Huber term in the default
+objective. The report retains aggregate soft-argmax only as a PCK diagnostic.
 
 Run all trajectory preparation, five-stage 5B forward diagnostics, and overlay
 rendering in the foreground on GPU 0 with:
@@ -202,5 +209,6 @@ Serve that page in the foreground with:
 ```
 
 This is a forward-only step-0 diagnostic, not an optimizer run. Differentiable
-Q/K behavior, Gaussian boundary continuity, coordinate mapping, and noise-gate
-behavior are covered by `test_noise_gated_correspondence.py`.
+Q/K behavior, Gaussian boundary continuity, token-cell mapping, bilinear Query
+sampling, aggregate CE gradients, and smooth gate behavior are covered by
+`test_noise_gated_correspondence.py`.
