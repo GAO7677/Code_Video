@@ -460,6 +460,12 @@ FULL_MASK_SIGNATURE_PORTAL_CARD = r'''
 viewer.PORTAL = viewer.PORTAL.replace(
     "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + TRAINING_FREE_M1_CONTROL_PORTAL_CARD + TRAINING_FREE_M1_PHASE_BD_PORTAL_CARD + TRAINING_FREE_M1_MULTI_OBJECT_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + GT_STC_METHOD_COMPARISON_PORTAL_CARD + GT_STC_FIRST10_COMPARISON_PORTAL_CARD + GT_STC_DIRECT_MULTICASE_PORTAL_CARD + GT_STC_HYPERPARAM_SEARCH_PORTAL_CARD + STAGE5_TOKEN_OVERLAP_PORTAL_CARD + FULL_MASK_SIGNATURE_PORTAL_CARD + "</section>", 1
 )
+OBJECT_QUERY_ANTI_DUPLICATION_PORTAL_CARD = r'''
+<a class="card new" href="/object-query-anti-duplication?v=1"><div><span>57 / OBJECT QUERY ANTI-DUPLICATION</span><h2>检测门控的 R→F 去重探索</h2><p>000331 / seed 90094 的宽泛与 RGB 定点方案，以及 PhysicIQ 3 个随机 seed 的误触发/no-op 对照；同时展示 Extra、Missing、ADE 与 MAE。</p></div><span class="go">打开多实例修复对比</span></a>
+'''
+viewer.PORTAL = viewer.PORTAL.replace(
+    "</section>", OBJECT_QUERY_ANTI_DUPLICATION_PORTAL_CARD + "</section>", 1
+)
 
 
 from AAA_my_test import serve_attention_noise_metrics as combined_metrics
@@ -472,6 +478,7 @@ from AAA_my_test.object_query_ablation_metrics import stage5_token_overlap_dashb
 from AAA_my_test.object_query_ablation_metrics import full_mask_signature_dashboard
 from AAA_my_test.object_query_ablation_metrics import top100_m1_guidance_dashboard
 from AAA_my_test.object_query_ablation_metrics import top100_m1_token_communication_dashboard
+from AAA_my_test.object_query_ablation_metrics import object_query_anti_duplication_dashboard
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import dashboard as training_free_m1_control_dashboard
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import phase_bd_dashboard
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import multi_object_search_dashboard
@@ -486,6 +493,31 @@ from AAA_my_test import gt_stc_guidance_results_dashboard
 class MetricsHandler(viewer.Handler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/object-query-anti-duplication":
+            self.send_payload(
+                object_query_anti_duplication_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/object-query-anti-duplication/catalog":
+            payload = json.dumps(
+                object_query_anti_duplication_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/object-query-anti-duplication/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = object_query_anti_duplication_dashboard.asset_path(
+                params.get("key", [""])[0]
+            )
+            if asset is None:
+                raise FileNotFoundError("anti-duplication asset is not ready")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
         if path == "/object-query-ablation-metrics":
             self.send_payload(
                 object_query_metrics_dashboard.page().encode("utf-8"),
