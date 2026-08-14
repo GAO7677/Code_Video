@@ -428,10 +428,10 @@ TRAINING_FREE_M1_CONTROL_PORTAL_CARD = r'''
 <a class="card new" href="/training-free-m1-control?v=1"><div><span>51 / TRAINING-FREE M1 CONTROL</span><h2>M1 Soft Scaling × Contrast Guidance</h2><p>独立展示 3 cases × seeds {47326,42}：α∈{−1,−0.5,0,+0.5,+1} 直接缩放 R→R contribution，并与同刻度 conditional contrast guidance 严格对比。</p></div><span class="go">打开 M1 双向控制台</span></a>
 '''
 TRAINING_FREE_M1_PHASE_BD_PORTAL_CARD = r'''
-<a class="card new" href="/training-free-m1-phase-bd?v=1"><div><span>56 / M1 DIRECT ENHANCEMENT</span><h2>Phase B/D · Case 聚合对比</h2><p>20 cases × 5 seeds；选中 case 后，按 seed 将 Baseline、α=0.1/0.25 Full40 与已生成的 First10/First20 直接增强结果放进同一网格。</p></div><span class="go">打开 Phase B/D 实时页</span></a>
+<a class="card new" href="/training-free-m1-phase-bd?v=2"><div><span>56 / M1 DIRECT ENHANCEMENT</span><h2>Phase B/D · Sparse vs SAM2 Full-mask</h2><p>20 cases × 5 seeds；每行并排展示同 seed Baseline、原 8 点稀疏 tube 与逐帧 SAM2 完整 object_A token 的 Phase B/D 结果。</p></div><span class="go">打开 Full-mask 对照实时页</span></a>
 '''
 TRAINING_FREE_M1_MULTI_OBJECT_PORTAL_CARD = r'''
-<a class="card new" href="/training-free-m1-multi-object-search?v=1"><div><span>55 / MULTI-OBJECT M1 SEARCH</span><h2>20 Cases × 5 Seeds × 16 Guidance 方案</h2><p>同一次生成分别切断每个对象内部 R→R，保留跨对象通信；按 case×seed 将 Baseline 与四个 guidance window、四个 λ 的已生成结果集中展示。</p></div><span class="go">打开多对象 M1 搜索页</span></a>
+<a class="card new" href="/training-free-m1-multi-object-search?v=2"><div><span>55 / TOP100 GUIDANCE FLOW CONTROL</span><h2>M1 R→R vs Full-Head Zero</h2><p>同 case、seed、guidance window 与 λ 下，对照“仅删除各对象内部 R→R”和“Top100 整颗 head 输出置零”；共同 Baseline 与已生成结果按行并排展示。</p></div><span class="go">打开受控对照实时页</span></a>
 '''
 GT_STC_PREFLIGHT_PORTAL_CARD = r'''
 <a class="card new" href="/gt-stc-guidance-preflight?v=1"><div><span>43 / GT-STC PREFLIGHT</span><h2>GT Tube 引导错误预检</h2><p>逐 case 审计 13 个 latent 时刻的 SAM2 region 与 CoTracker 可见性，区分已复现报错、未来必报错、运行中和待运行。</p></div><span class="go">打开 GT Tube 诊断页</span></a>
@@ -454,8 +454,11 @@ GT_STC_HYPERPARAM_SEARCH_PORTAL_CARD = r'''
 STAGE5_TOKEN_OVERLAP_PORTAL_CARD = r'''
 <a class="card new" href="/object-query-stage5-token-overlap?v=1"><div><span>54 / STAGE 5 TOKEN OVERLAP AUDIT</span><h2>多对象 Latent Token 重叠</h2><p>逐帧并排 Baseline 与 22×40 token overlay；红框精确标出两个对象共享的 latent cell，并列出 latent 时刻、网格坐标和全局 token ID。</p></div><span class="go">打开重叠 Token 显微镜</span></a>
 '''
+FULL_MASK_SIGNATURE_PORTAL_CARD = r'''
+<a class="card new" href="/object-query-full-mask-signature?v=1"><div><span>55 / FULL OBJECT MASK ABLATION</span><h2>完整对象区域消融</h2><p>固定 case、seed、head group 与 M1/M2/M3，对比 Baseline、旧 sparse tube 和完整 SAM2 mask signature；共享 R_AB/R_ABC token 单独成块。</p></div><span class="go">打开 Full-mask 对比页</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + TRAINING_FREE_M1_CONTROL_PORTAL_CARD + TRAINING_FREE_M1_PHASE_BD_PORTAL_CARD + TRAINING_FREE_M1_MULTI_OBJECT_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + GT_STC_METHOD_COMPARISON_PORTAL_CARD + GT_STC_FIRST10_COMPARISON_PORTAL_CARD + GT_STC_DIRECT_MULTICASE_PORTAL_CARD + GT_STC_HYPERPARAM_SEARCH_PORTAL_CARD + STAGE5_TOKEN_OVERLAP_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + STEP_ALIGNMENT_PORTAL_CARD + UNLISTED_PORTAL_CARD + INFORMATION_FLOW_VALIDATION_PORTAL_CARD + STAGE4_TEMPORAL_PORTAL_CARD + STAGE4_REPRESENTATIVES_PORTAL_CARD + TOP100_M1_GUIDANCE_PORTAL_CARD + TOP100_M1_TOKEN_COMMUNICATION_PORTAL_CARD + TRAINING_FREE_M1_CONTROL_PORTAL_CARD + TRAINING_FREE_M1_PHASE_BD_PORTAL_CARD + TRAINING_FREE_M1_MULTI_OBJECT_PORTAL_CARD + GT_STC_PREFLIGHT_PORTAL_CARD + GT_STC_RESULTS_PORTAL_CARD + GT_STC_METHOD_COMPARISON_PORTAL_CARD + GT_STC_FIRST10_COMPARISON_PORTAL_CARD + GT_STC_DIRECT_MULTICASE_PORTAL_CARD + GT_STC_HYPERPARAM_SEARCH_PORTAL_CARD + STAGE5_TOKEN_OVERLAP_PORTAL_CARD + FULL_MASK_SIGNATURE_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -466,6 +469,7 @@ from AAA_my_test.object_query_ablation_metrics import information_flow_validatio
 from AAA_my_test.object_query_ablation_metrics import stage4_representatives_dashboard
 from AAA_my_test.object_query_ablation_metrics import stage4_temporal_dashboard
 from AAA_my_test.object_query_ablation_metrics import stage5_token_overlap_dashboard
+from AAA_my_test.object_query_ablation_metrics import full_mask_signature_dashboard
 from AAA_my_test.object_query_ablation_metrics import top100_m1_guidance_dashboard
 from AAA_my_test.object_query_ablation_metrics import top100_m1_token_communication_dashboard
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control import dashboard as training_free_m1_control_dashboard
@@ -509,6 +513,12 @@ class MetricsHandler(viewer.Handler):
         if path == "/object-query-stage5-token-overlap":
             self.send_payload(
                 stage5_token_overlap_dashboard.page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/object-query-full-mask-signature":
+            self.send_payload(
+                full_mask_signature_dashboard.page().encode("utf-8"),
                 "text/html; charset=utf-8",
             )
             return
@@ -797,6 +807,14 @@ class MetricsHandler(viewer.Handler):
             ).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
             return
+        if path == "/api/object-query-full-mask-signature/catalog":
+            payload = json.dumps(
+                full_mask_signature_dashboard.catalog(),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
         if path == "/api/top100-m1-guidance-pilot/catalog":
             payload = json.dumps(
                 top100_m1_guidance_dashboard.catalog(),
@@ -962,6 +980,20 @@ class MetricsHandler(viewer.Handler):
             )
             if asset is None or not asset.is_file():
                 raise FileNotFoundError("Stage-5 token-overlap asset is not ready")
+            viewer.send_file_with_range(self, asset, "video/mp4")
+            return
+        if path == "/api/object-query-full-mask-signature/asset":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = full_mask_signature_dashboard.asset(
+                params.get("kind", [""])[0],
+                params.get("case", [""])[0],
+                params.get("scope", [""])[0],
+                params.get("mode", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("Full-mask signature asset is not ready")
             viewer.send_file_with_range(self, asset, "video/mp4")
             return
         if path == "/api/object-query-information-flow-stage4/dose":

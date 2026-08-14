@@ -207,7 +207,7 @@ def complete25_eligibility(seed_dir: Path, case: str, seed: int) -> tuple[bool, 
     if not frozen_valid:
         return False, frozen_reason
     try:
-        baseline = locate_baseline(case, seed)
+        baseline = locate_baseline(case, seed, seed_dir)
         baseline_manifest = read_json(baseline.parent / "manifest.json")
         input_json = Path(str(baseline_manifest.get("input_json") or "")).expanduser().resolve()
         source_payload = read_json(input_json)
@@ -246,7 +246,7 @@ def baseline_reference_eligibility(
     if not frozen_valid:
         return False, frozen_reason
     try:
-        locate_baseline(case, seed)
+        locate_baseline(case, seed, seed_dir)
     except (FileNotFoundError, OSError) as exc:
         return False, str(exc)
     return True, "eligible"
@@ -255,7 +255,7 @@ def baseline_reference_eligibility(
 def build_dynamic_inventory(
     seed_dir: Path, case: str, seed: int, candidates: list[dict[str, Any]], write: bool
 ) -> tuple[Path, dict[str, Any]]:
-    baseline = locate_baseline(case, seed)
+    baseline = locate_baseline(case, seed, seed_dir)
     videos: list[dict[str, Any]] = [
         {
             "id": "baseline",

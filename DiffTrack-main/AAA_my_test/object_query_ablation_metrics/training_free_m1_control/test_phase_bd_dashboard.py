@@ -12,8 +12,13 @@ class PhaseBDDashboardTest(unittest.TestCase):
         payload = phase_bd_dashboard.catalog()
         self.assertEqual(payload["progress"]["case_count"], 20)
         self.assertEqual(payload["progress"]["sample_count"], 100)
-        self.assertEqual(payload["progress"]["phase_b_total"], 200)
-        self.assertEqual(payload["progress"]["phase_d_total"], 200)
+        for scope in ("sparse", "full_mask"):
+            self.assertEqual(
+                payload["progress"]["by_scope"][scope]["phase_b_total"], 200
+            )
+            self.assertEqual(
+                payload["progress"]["by_scope"][scope]["phase_d_total"], 200
+            )
         self.assertTrue(all(len(case["seeds"]) == 5 for case in payload["cases"]))
 
     def test_asset_rejects_coordinates_outside_manifest(self) -> None:

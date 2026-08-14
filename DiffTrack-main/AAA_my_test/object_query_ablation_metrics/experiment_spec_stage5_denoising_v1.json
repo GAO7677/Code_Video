@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
   "experiment_id": "object_query_information_flow_stage5_denoising_v1",
-  "status": "revised_joint_block_diagonal_not_launched",
-  "revision_note": "2026-08-13 user-confirmed replacement of per-object/all-object targets by one joint block-diagonal target per case-seed. No Stage5 run predates this revision.",
-  "objective": "Localize when, along the 40-step denoising trajectory, joint per-object-internal M1 and global-background M2/M3 contributions in latest3350 Top100 and Bottom100 heads are necessary for object trajectory, identity/survival, and background stability.",
+  "status": "full_mask_signature_alltime_pilot_launched_window_matrix_not_launched",
+  "revision_note": "2026-08-14 user-confirmed full frozen-Baseline SAM2 masks. Latent cells are partitioned by exact nonempty object-membership signature (R_A, R_B, R_AB, ...); M1 deletes only each signature's self block. A 3-case seed-47326 All-time implementation pilot precedes every denoising-window run.",
+  "objective": "Localize when, along the 40-step denoising trajectory, full-visible-object membership-signature M1 and full-object-union M2/M3 contributions in latest3350 Top100 and Bottom100 heads are necessary for object trajectory, identity/survival, and background stability.",
   "scope_boundary": {
     "latent_video_time": "all_time_only",
     "excluded_axes": [
@@ -21,9 +21,9 @@
   "intervention": {
     "operator": "post_softmax_value_contribution_subtraction_without_renormalization",
     "flows": {
-      "M1": "union_i(R_i_KV_to_R_i_Query)_all_latent_times; preserve every R_i_to_R_j edge for i_not_equal_j",
-      "M2": "C_bg_KV_to_union_i(R_i_Query)_all_latent_times; C_bg=Omega_minus_union_i(R_i)",
-      "M3": "union_i(R_i_KV)_to_C_bg_Query_all_latent_times; C_bg=Omega_minus_union_i(R_i)"
+      "M1": "union_over_nonempty_membership_signatures_S(R_S_KV_to_R_S_Query)_all_latent_times; preserve every cross-signature edge",
+      "M2": "C_bg_KV_to_R_all_Query_all_latent_times; R_all=union_S(R_S), C_bg=Omega_minus_R_all",
+      "M3": "R_all_KV_to_C_bg_Query_all_latent_times; R_all=union_S(R_S), C_bg=Omega_minus_R_all"
     },
     "head_scopes": [
       "top100",
@@ -32,10 +32,13 @@
     "head_ranking": "/data/gaoya/agent-data/outputs/wan22_ti2v_legacy_firstlatent_physiciq67_pck50/visual_samples/attention_zero_seed47326/pck_head_scopes_s039_latest3350.json",
     "ranking_tag": "s039r3350",
     "object_partition": {
-      "object_sets": "R_1,...,R_m are mutually exclusive tracked sparse object-token tubes",
-      "all_object_tokens": "R_all=union_i(R_i)",
+      "mask_source": "frozen seed-matched Baseline SAM2 masks at latent anchors F00,F04,...,F48",
+      "cell_membership": "an object is present in a 22x40 latent cell iff any mask pixel intersects that cell",
+      "object_sets": "R_S contains exactly the latent cells whose nonempty object-membership signature is S; all R_S are mutually exclusive",
+      "shared_tokens": "shared cells remain distinct signatures such as R_AB and R_ABC rather than being assigned to one object",
+      "all_object_tokens": "R_all=union_over_nonempty_S(R_S)",
       "global_background": "C_bg=Omega\\R_all",
-      "cross_object_guardrail": "all R_i<->R_j edges for i!=j remain unchanged for M1/M2/M3",
+      "cross_object_guardrail": "all R_S<->R_T edges for S!=T remain unchanged for M1/M2/M3",
       "single_object_degeneracy": "when m=1, the definitions reduce exactly to the prior single-object M1/M2/M3"
     }
   },
@@ -196,9 +199,9 @@
   },
   "implementation_gates": [
     "W0/W1/W2/W3 are disjoint and their union is exactly steps 0 through 39",
-    "object tubes R_i are mutually exclusive after tokenization and C_bg is exactly the complement of their union",
-    "M1 deletion mask equals the union of per-object diagonal blocks and contains zero cross-object R_i-to-R_j entries for every i not equal j",
-    "M2 and M3 use only C_bg as context and preserve every cross-object edge",
+    "membership-signature sets R_S are mutually exclusive after tokenization and C_bg is exactly the complement of their union",
+    "M1 deletion mask equals the union of signature diagonal blocks and contains zero R_S-to-R_T entries for every S not equal T",
+    "M2 and M3 use only C_bg as context and preserve every cross-signature edge",
     "outside the active window the attention output is identical to the unmodified path for the same forward inputs",
     "for one fixed forward input the four removed contribution tensors sum to Wall within frozen tolerance; final video effects are not assumed additive",
     "each 100-head window task has exactly 100 x 10 x 2 = 2000 modified head-step-CFG events",

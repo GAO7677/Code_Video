@@ -46,6 +46,10 @@ FRAME_COUNT = 49
 HEIGHT = 704
 WIDTH = 1280
 DELTA_FRAMES = 4
+REGION_CACHE_ROOT = Path(
+    "/data/gaoya/agent-data/cache/"
+    "wan22_ti2v_legacy_firstlatent_regions_704x1280"
+)
 DEFAULT_OUTPUT_BASE = Path(
     "/data/gaoya/agent-data/outputs/object_query_ablation_metrics/"
     "head_scope_trajectory"
@@ -144,8 +148,18 @@ def signature_text(signature: dict[str, int]) -> str:
     return json.dumps(signature, sort_keys=True, separators=(",", ":"))
 
 
-def locate_baseline(case: str, seed: int) -> Path:
-    candidates = (
+def locate_baseline(case: str, seed: int, seed_dir: Path | None = None) -> Path:
+    manifest_candidates: list[Path] = []
+    if seed_dir is not None:
+        for manifest_path in sorted(seed_dir.glob("*/manifest.json")):
+            try:
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                raw_path = str(payload.get("baseline_video") or "").strip()
+                if raw_path:
+                    manifest_candidates.append(Path(raw_path).expanduser().resolve())
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+    candidates = tuple(dict.fromkeys(manifest_candidates)) + (
         DEFAULT_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",
         PHYSICIQ67_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",
         MULTICASE_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",
@@ -157,6 +171,36 @@ def locate_baseline(case: str, seed: int) -> Path:
             + ", ".join(str(path) for path in candidates)
         )
     return baseline
+
+
+def resolve_region_cache_path(frozen_manifest_path: Path, case: str) -> Path:
+    """Resolve the F00 region cache across old and guidance track schemas."""
+    manifest = json.loads(frozen_manifest_path.read_text(encoding="utf-8"))
+    candidates: list[Path] = []
+    raw_cache = str(manifest.get("query_cache_dir") or "").strip()
+    if raw_cache:
+        candidates.append(Path(raw_cache).expanduser().resolve() / "regions.npz")
+
+    raw_tube = str(manifest.get("source_query_tube") or "").strip()
+    if raw_tube:
+        tube_manifest_path = Path(raw_tube).expanduser().resolve().parent / "manifest.json"
+        if tube_manifest_path.is_file():
+            try:
+                tube_manifest = json.loads(tube_manifest_path.read_text(encoding="utf-8"))
+                prompt_source = str(tube_manifest.get("object_prompt_source") or "").strip()
+                if prompt_source:
+                    candidates.append(
+                        Path(prompt_source).expanduser().resolve().parent / "regions.npz"
+                    )
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                pass
+    candidates.append(REGION_CACHE_ROOT / case / "regions.npz")
+    resolved = next((path for path in candidates if path.is_file()), None)
+    if resolved is None:
+        raise FileNotFoundError(
+            "no F00 region cache; checked " + ", ".join(str(path) for path in candidates)
+        )
+    return resolved
 
 
 def load_track_cache(
@@ -250,8 +294,7 @@ def validate_frozen_baseline_inputs(seed_dir: Path) -> tuple[bool, str]:
             if index and start != ends[index - 1]:
                 return False, f"non-contiguous region slice {index}: starts at {start}"
 
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        region_cache = Path(str(manifest["query_cache_dir"])) / "regions.npz"
+        region_cache = resolve_region_cache_path(manifest_path, seed_dir.parent.name)
         with np.load(region_cache, allow_pickle=False) as arrays:
             masks = arrays["masks_rhw"]
         if masks.ndim != 3 or masks.shape[0] < len(region_names):
@@ -582,7 +625,7 @@ def main() -> None:
     if any(row["case"] != case or int(row["seed"]) != seed for row in candidates):
         raise RuntimeError("trajectory mode accepts exactly one case/seed directory")
 
-    baseline_path = locate_baseline(case, seed)
+    baseline_path = locate_baseline(case, seed, seed_dir)
     baseline_signature = file_signature(baseline_path)
     frozen_path, frozen_manifest_path = resolve_frozen_baseline_inputs(seed_dir)
     frozen_valid, frozen_reason = validate_frozen_baseline_inputs(seed_dir)
@@ -607,10 +650,7 @@ def main() -> None:
         name: slice(start, end)
         for name, start, end in zip(region_names, starts, ends, strict=True)
     }
-    frozen_manifest = json.loads(
-        frozen_manifest_path.read_text(encoding="utf-8")
-    )
-    region_cache = Path(str(frozen_manifest["query_cache_dir"])) / "regions.npz"
+    region_cache = resolve_region_cache_path(frozen_manifest_path, case)
     with np.load(region_cache, allow_pickle=False) as arrays:
         masks = arrays["masks_rhw"].astype(bool)[: len(region_names)]
     diagonals = {

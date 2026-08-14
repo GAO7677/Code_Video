@@ -42,6 +42,12 @@ from AAA_my_test.object_query_ablation_metrics.run_top100_m1_perturbed_attention
     resolve_target,
     scale_tag,
 )
+from AAA_my_test.object_query_ablation_metrics.full_mask_signature_regions import (  # noqa: E402
+    LATENT_GRID,
+    SignaturePartition,
+    build_signature_partition,
+    unpack_mask_cache,
+)
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control.run_m1_soft_scaling import (  # noqa: E402
     DEFAULT_HEAD_RANKING,
     DEFAULT_MANIFEST,
@@ -67,7 +73,9 @@ from AAA_my_test.sam2_region_query_utils import load_region_cache  # noqa: E402
 
 
 PROTOCOL = "wan_top100_m1_direct_scaling_phase_bd_v2"
+FULL_MASK_PROTOCOL = "wan_top100_m1_direct_scaling_phase_bd_sam2_full_mask_v1"
 DEFAULT_OUTPUT_ROOT = EXPERIMENT_ROOT / "training_free_m1_direct_enhancement_v2"
+TOKEN_SOURCES = ("sparse_points", "sam2_full_mask")
 TIME_SCOPE_TO_MASK = {
     "all_time": "self_only",
 }
@@ -246,6 +254,68 @@ class M1DirectScalingAblator(TemporalObjectTubeAblator):
         return arrays
 
 
+class SAM2FullMaskM1DirectScalingAblator(M1DirectScalingAblator):
+    """Use every latent cell intersecting the frozen Baseline SAM2 object mask."""
+
+    def __init__(self, *args, partition: SignaturePartition, **kwargs) -> None:
+        if partition.object_names != ("object_A",):
+            raise ValueError(
+                "full-mask Phase-B/D currently requires a single object_A partition"
+            )
+        super().__init__(*args, **kwargs)
+        self.partition = partition
+
+    def _rows(self, device: torch.device) -> torch.Tensor:
+        if self.current_grid != LATENT_GRID or self.current_grid != self.partition.grid:
+            raise RuntimeError(
+                f"runtime latent grid {self.current_grid} != frozen full-mask grid "
+                f"{self.partition.grid}"
+            )
+        values = list(self.partition.union_rows)
+        rows = torch.as_tensor(values, device=device, dtype=torch.long)
+        spatial_size = self.partition.grid[1] * self.partition.grid[2]
+        by_time = [
+            [value for value in values if value // spatial_size == time_index]
+            for time_index in range(self.partition.grid[0])
+        ]
+        if self.query_token_indices is None:
+            self.query_token_indices = values
+            self.query_token_indices_by_latent_frame = by_time
+        elif self.query_token_indices != values:
+            raise RuntimeError("SAM2 full-mask token mapping changed during generation")
+        return rows
+
+    def audit(self) -> dict:
+        result = super().audit()
+        result.update(
+            {
+                "token_source": "sam2_full_mask",
+                "token_membership_rule": (
+                    "latent cell is active iff any frozen Baseline SAM2 object_A "
+                    "mask pixel intersects it"
+                ),
+                "full_mask_partition": self.partition.audit(),
+            }
+        )
+        return result
+
+
+def full_mask_cache_path(root: Path, case: str, seed: int) -> Path:
+    return root / case / f"seed_{seed:05d}" / "object_A.npz"
+
+
+def load_full_mask_partition(
+    root: Path, case: str, seed: int, baseline_video: Path
+) -> tuple[SignaturePartition, Path]:
+    path = full_mask_cache_path(root, case, seed)
+    if not path.is_file():
+        raise FileNotFoundError(f"frozen Baseline SAM2 full-mask cache missing: {path}")
+    masks = unpack_mask_cache(path, expected_video=baseline_video)
+    if masks.shape[1] != 1:
+        raise RuntimeError(f"expected one object_A mask in {path}, got {masks.shape}")
+    return build_signature_partition(masks, ("object_A",)), path
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run Phase-B/D Top100 M1 direct contribution scaling."
@@ -264,6 +334,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--head-ranking-path", type=Path, default=DEFAULT_HEAD_RANKING)
     parser.add_argument("--tracks-root", type=Path, default=DEFAULT_TRACKS_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--token-source", choices=TOKEN_SOURCES, default="sparse_points")
+    parser.add_argument("--sam2-full-mask-root", type=Path)
     parser.add_argument("--cfg-scale", type=float, default=5.0)
     parser.add_argument("--sampling-steps", type=int, default=40)
     parser.add_argument("--device", default="cuda")
@@ -341,9 +413,21 @@ def main() -> None:
     if anchors.shape != (13,):
         raise RuntimeError(f"expected 13 latent anchors, got {anchors.tolist()}")
 
+    partition = None
+    full_mask_path = None
+    if args.token_source == "sam2_full_mask":
+        if args.sam2_full_mask_root is None:
+            raise ValueError("--sam2-full-mask-root is required for sam2_full_mask")
+        partition, full_mask_path = load_full_mask_partition(
+            args.sam2_full_mask_root,
+            args.case,
+            args.seed,
+            Path(str(sample["baseline_video"])),
+        )
+
     mask_mode = TIME_SCOPE_TO_MASK[args.time_scope]
     configuration = {
-        "protocol": PROTOCOL,
+        "protocol": FULL_MASK_PROTOCOL if partition is not None else PROTOCOL,
         "phase": args.phase_label,
         "case": args.case,
         "seed": int(args.seed),
@@ -369,6 +453,11 @@ def main() -> None:
         "manifest_sha256": sha256_file(args.manifest_path),
         "input_json": str(json_path),
         "query_cache_dir": str(cache_dir),
+        "token_source": args.token_source,
+        "sam2_full_mask_cache": str(full_mask_path) if full_mask_path else None,
+        "sam2_full_mask_cache_sha256": (
+            sha256_file(full_mask_path) if full_mask_path else None
+        ),
         "tracks_npz": str(track_path),
         "latent_anchor_count": int(len(anchors)),
         "sampling_steps": 40,
@@ -394,7 +483,13 @@ def main() -> None:
     wan_args.cfg_scale = 5.0
     wan_args.sampling_steps = 40
     pipe_wrapper = build_wan_ti2v_pipeline(wan_args)
-    ablator = M1DirectScalingAblator(
+    ablator_class = (
+        SAM2FullMaskM1DirectScalingAblator
+        if partition is not None
+        else M1DirectScalingAblator
+    )
+    ablator_kwargs = {"partition": partition} if partition is not None else {}
+    ablator = ablator_class(
         pipe_wrapper.pipe,
         entries,
         points,
@@ -410,6 +505,7 @@ def main() -> None:
         time_scope=args.time_scope,
         denoise_start=int(args.denoise_start),
         denoise_end=int(args.denoise_end),
+        **ablator_kwargs,
     )
     ablator.install()
     try:
@@ -449,7 +545,7 @@ def main() -> None:
     complete_path.write_text(
         json.dumps(
             {
-                "protocol": PROTOCOL,
+                "protocol": configuration["protocol"],
                 "phase": args.phase_label,
                 "case": args.case,
                 "seed": int(args.seed),

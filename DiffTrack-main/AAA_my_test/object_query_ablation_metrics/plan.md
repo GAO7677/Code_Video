@@ -2,10 +2,10 @@
 
 ## 0. 文档状态
 
-- 状态：**Gate 0、Stage 0–3 已完成，Stage 3 discovery 报告已冻结；Stage 4 是 latent-video 时间方向 pilot；Stage 5 已按 2026-08-13 确认改为多对象块对角联合消融，尚未实现或启动**。
-- 下一步：先实现并通过 Stage 5 的对象分区、scheduler、窗口代数、no-op 与单对象退化等价性门槛，再由人工确认是否启动矩阵。Stage 5 不再研究 Same/Future/Past，也不再逐对象分别生成，只改变 denoising-step window。
+- 状态：**Gate 0、Stage 0–3 已完成，Stage 3 discovery 报告已冻结；Stage 4 是 latent-video 时间方向 pilot；Stage 5 已把 R 从稀疏点 tube 修订为冻结 Baseline SAM2 完整 mask 的互斥 membership-signature 分区。当前只运行 3-case、seed=47326 的 All-time Wall 实现 pilot，denoising-window 大矩阵尚未启动**。
+- 下一步：先完成并审计完整 mask signature pilot，再补 Stage 5 的 scheduler、窗口代数、no-op 与单对象退化等价性门槛；window 大矩阵仍需再次人工确认。Stage 5 不再研究 Same/Future/Past，也不再逐对象分别生成，只改变 denoising-step window。
 - 目标：在新的 `latest3350` PCK head 排名下，区分 `R→R`、`C→R`、`R→C` 三类 self-attention 信息流更主要地影响对象轨迹、对象外观，还是对象外区域，并比较 Top100、Bottom100、随机匹配 100 heads 与 All720。
-- 结论边界：`R` 是由追踪点构成的**稀疏 object-token tube**，不是完整对象 mask；因此结论首先针对该 tube 表示，不能直接外推成“完整对象区域的全部信息流”。
+- 结论边界：Stage 3/4 的 `R` 是稀疏 tracked-point tube；Stage 5 新 `R` 是冻结 Baseline SAM2 mask 在 13 个 latent anchors 上的完整可见区域。它仍受 SAM2 分割误差、32×32 pixel token 量化和遮挡可见性限制，不能表述成不可见三维对象的完整体积。
 
 相关入口：
 
@@ -18,6 +18,8 @@
 - Stage 4 详细证据审计：`/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage4_current_analysis/STAGE4_CONTROLLED_VARIABLE_CONCLUSIONS.md`
 - Stage 4 代表性视频：`http://localhost:8092/object-query-information-flow-stage4-representatives?v=2`
 - Stage 5 冻结规格：`experiment_spec_stage5_denoising_v1.json`
+- Stage 5 完整 mask 实现：`run_full_mask_signature_ablations.py`
+- Stage 5 完整 mask 对比页：`http://localhost:8092/object-query-full-mask-signature?v=1`
 - 一键补指标：`bench_missing.sh`
 
 ---
@@ -460,7 +462,7 @@ case，双侧 exact sign-flip 的最小 p 值为 0.25，因此本节不报告显
 `/data/gaoya/agent-data/outputs/object_query_information_flow_redesign/latest3350_v1/stage4_current_analysis/STAGE4_CONTROLLED_VARIABLE_CONCLUSIONS.md`；
 完整数值表见同目录 `STAGE4_THREE_AXIS_FULL_TABLES.md`，原始统计见 `three_axis_report.json`。
 
-### Stage 5 — 多对象块对角联合消融 × denoising-step 窗口定位（规格已修订、未启动）
+### Stage 5 — 完整对象 mask signature 消融 × denoising-step 窗口定位（实现 pilot 运行中，大矩阵未启动）
 
 #### 5.1 目的与结论边界
 
@@ -470,26 +472,29 @@ Stage 3 逐对象或以对象并集删除全部 40 个去噪 step 上的 M1/M2/M
 2. 这种窗口效应在 Top100 与 Bottom100 间是否不同；
 3. 不同窗口优先影响对象轨迹、身份/存活，还是对象外背景。
 
-本阶段固定 latent-video 轴为 **All-time**，即每个有效 step 内保留所有 `t_q,t_k`；不再引入 Same/Future/Past。结果只能说明某个自然存在的 attention contribution 在某个 denoising window 中的**必要性**，不能单靠 knockout 证明它编码了某个唯一语义，也不能把 denoising step 误写成视频帧。Stage 5 明确保留所有跨对象 `R_i↔R_j (i≠j)` 边，因此也不能用本阶段回答“跨对象通信是否必要”。
+本阶段固定 latent-video 轴为 **All-time**，即每个有效 step 内保留所有 `t_q,t_k`；不再引入 Same/Future/Past。结果只能说明某个自然存在的 attention contribution 在某个 denoising window 中的**必要性**，不能单靠 knockout 证明它编码了某个唯一语义，也不能把 denoising step 误写成视频帧。Stage 5 M1 明确保留所有不同 membership signature 之间的边，因此也不能用本阶段回答“跨 signature 通信是否必要”。
 
 #### 5.2 唯一改变的三个实验变量
 
-先冻结每个 case 的互不重叠对象 tube `R_1,...,R_m`，并定义全局背景集合：
+在 Baseline 上冻结每个对象的 49 帧 SAM2 mask，并只在 Wan 的 13 个 latent anchors `F00,F04,...,F48` 量化到 `22×40` 网格。一个 latent cell 只要与某对象 mask 有至少一个像素相交，就具有该对象 membership。对每个非空对象子集/signature `S` 定义：
 
 \[
-R_{\mathrm{all}}=\bigcup_{i=1}^{m}R_i,\qquad
+R_S=\{r:\mathrm{membership}(r)=S\},\qquad
+R_{\mathrm{all}}=\bigcup_{S\ne\varnothing}R_S,\qquad
 C_{\mathrm{bg}}=\Omega\setminus R_{\mathrm{all}}.
 \]
+
+所有 `R_S` 两两互斥。共享 cell 不强行归属单一对象：两对象共享区记作 `R_AB`，三对象共享区记作 `R_ABC`，依此类推。
 
 每个 case-seed 只有一个联合 target。三类删除边固定为：
 
 | Flow | 精确删除集合 | 明确保留 | 诊断含义 |
 |---|---|---|---|
-| M1 | `⋃ᵢ (Rᵢ Query × Rᵢ K/V)` | 所有 `Rᵢ↔Rⱼ, i≠j` 与背景边 | 同时删除每个对象内部自通信；不是对象并集上的完整 `R_all→R_all` |
+| M1 | `⋃_{S≠∅} (R_S Query × R_S K/V)` | 所有不同 signature 间的边与背景边 | 同时删除每个精确 membership 区域的自通信；不是对象并集上的完整 `R_all→R_all` |
 | M2 | `R_all Query × C_bg K/V` | 所有对象间边 | 只删除全局背景向各对象的输入 |
 | M3 | `C_bg Query × R_all K/V` | 所有对象间边 | 只删除各对象向全局背景的输出 |
 
-因此两对象 case 的 M1 精确为 `R_A→R_A` 与 `R_B→R_B` 同时删除，`R_A↔R_B` 不删除。一个对象的 case 退化为普通 single-object 定义，但仍保留用于实现回归和 case 覆盖；不得把旧 `all_objects` 的对象并集 mask 冒充本定义。
+因此两对象且存在共享 cell 的 M1 精确为 `R_A→R_A`、`R_B→R_B`、`R_AB→R_AB` 同时删除；`R_A↔R_B`、`R_A↔R_AB`、`R_B↔R_AB` 均不删除。一个对象的 case 退化为普通 single-object 定义，但仍保留用于实现回归和 case 覆盖；不得把旧 `all_objects` 的稀疏对象并集 mask 冒充本定义。
 
 | 变量 | 水平 | 固定项 |
 |---|---|---|
@@ -627,9 +632,9 @@ Stage 5B 预注册为条件触发的 discovery follow-up：若某个 primary Hea
 
 按以下顺序执行，任何硬门槛失败均不得进入下一步：
 
-1. **Stage 5.0 静态/代数测试**：先核验 `R_i` 两两不重叠、`C_bg` 为对象并集的严格补集，以及 M1 mask 只含各对象块对角、M2/M3 均不删除跨对象边；再核验四窗两两不交且并集严格为 0–39、空窗 no-op、窗口外张量不变，且固定 forward input 上四窗 removed contribution 之和等于 Wall。这里只验证张量代数，不假设最终视频效应可加。
+1. **Stage 5.0 静态/代数测试**：先核验所有非空 membership-signature 集合 `R_S` 两两不重叠、`C_bg` 为其并集的严格补集，以及 M1 mask 只含 signature 对角块、M2/M3 均不删除跨 signature 边；再核验四窗两两不交且并集严格为 0–39、空窗 no-op、窗口外张量不变，且固定 forward input 上四窗 removed contribution 之和等于 Wall。这里只验证张量代数，不假设最终视频效应可加。
 2. **Stage 5.1 scheduler 审计**：冻结 40-step timestep/sigma 数组及 hash，确认所有 task 完全一致。
-3. **Stage 5.2 联合 target 真实 GPU smoke**：一个至少含两个对象的 case-seed 跑完 `2 heads × 3 M × 4 windows=24` 个配置，并验证对象块标签、跨对象边保留、事件数、两条 CFG branch、49 帧视频、manifest/dose/metrics 可读。
+3. **Stage 5.2 完整 mask 真实 GPU smoke**：先在 2/3/4 对象代表 case、seed=47326 上跑 `2 heads × 3 M × All-time=6` 个配置/每 case，验证 signature 标签、跨 signature 边保留、事件数、两条 CFG branch、49 帧视频、manifest/dose 可读；通过后再进入窗口 smoke。
 4. **Stage 5.3 语义/Wall smoke**：在固定 attention 张量上逐元素核验 M1 只删除块对角且跨对象边不变；在单对象 `000301` 上核验新 Wall 与旧 single-object All-time 等价。多对象旧 `all_objects` Wall 不得复用。
 5. **Stage 5.4 Baseline inventory**：补齐 30 个同 case、同 seed Baseline，解决已知缺失；重复唯一键/hash 冲突立即停止。
 6. **Stage 5.5 全矩阵**：只运行联合块对角 target；完成后一次性冻结统计报告。

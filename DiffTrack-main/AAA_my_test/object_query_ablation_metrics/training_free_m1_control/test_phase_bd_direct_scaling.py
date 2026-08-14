@@ -11,11 +11,15 @@ import torch
 
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control.run_m1_direct_scaling_phase_bd import (
     M1DirectScalingAblator,
+    SAM2FullMaskM1DirectScalingAblator,
     TIME_SCOPE_TO_MASK,
     alpha_at_step,
     output_directory,
     validate_denoising_window,
     validate_phase_configuration,
+)
+from AAA_my_test.object_query_ablation_metrics.full_mask_signature_regions import (
+    SignaturePartition,
 )
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control.select_test5_phase_b_alpha import (
     center_ade_d0,
@@ -183,6 +187,47 @@ class PhaseBDDirectScalingTest(unittest.TestCase):
             self.assertIn("m1_all_time__top100", output.name)
             self.assertIn("alpha_0p25", output.name)
             self.assertIn("denoise_00_19", output.name)
+
+    def test_full_mask_rows_use_every_frozen_mask_cell(self) -> None:
+        rows = (0, 1, 880, 11439)
+        partition = SignaturePartition(
+            object_names=("object_A",),
+            anchor_frames=tuple(range(0, 49, 4)),
+            grid=(13, 22, 40),
+            signature_rows={1: rows},
+            signature_rows_by_time={
+                1: tuple(
+                    tuple(value for value in rows if value // 880 == time)
+                    for time in range(13)
+                )
+            },
+            occupancy_by_time=np.zeros((13, 1, 22, 40), dtype=np.float32),
+        )
+        instance = SAM2FullMaskM1DirectScalingAblator(
+            pipe=object(),
+            entries=[{"block": 0, "head": 1}],
+            query_points=np.asarray([[0.0, 0.0]], dtype=np.float32),
+            region_slices={"object_A": slice(0, 1)},
+            pixel_hw=(704, 1280),
+            target_scope="single_object",
+            mask_mode="self_only",
+            region="object_A",
+            tracks=np.zeros((49, 1, 2), dtype=np.float32),
+            anchor_frames=np.arange(13, dtype=np.int64) * 4,
+            record_dose=False,
+            alpha=0.1,
+            time_scope="all_time",
+            denoise_start=0,
+            denoise_end=39,
+            partition=partition,
+        )
+        instance.current_grid = (13, 22, 40)
+        actual = instance._rows(torch.device("cpu"))
+        self.assertEqual(actual.tolist(), list(rows))
+        self.assertEqual(
+            instance.query_token_indices_by_latent_frame,
+            [[0, 1], [880], *([[]] * 10), [11439]],
+        )
 
     def test_mse_is_zero_only_for_identical_frames(self) -> None:
         reference = np.zeros((2, 3, 4, 3), dtype=np.uint8)

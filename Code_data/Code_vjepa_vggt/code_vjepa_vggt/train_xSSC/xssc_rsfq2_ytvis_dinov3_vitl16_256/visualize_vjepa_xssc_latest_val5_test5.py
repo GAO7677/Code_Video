@@ -637,8 +637,12 @@ def main():
                 "aspect_ratio_bucket": bucket,
                 "source_fps": float(video_metadata.get("fps", 0.0)),
                 "input_policy": (
-                    f"all consecutive frames; {args.external_window_frames}-frame "
-                    "non-overlapping forwards; no frame sampling"
+                    "all consecutive frames; one complete forward; no frame sampling"
+                    if args.external_window_frames <= 0
+                    else (
+                        f"all consecutive frames; {args.external_window_frames}-frame "
+                        "non-overlapping forwards; no frame sampling"
+                    )
                 ),
                 "condition_policy": (
                     "cached filtered first-frame SAM2-AMG pseudo boxes"

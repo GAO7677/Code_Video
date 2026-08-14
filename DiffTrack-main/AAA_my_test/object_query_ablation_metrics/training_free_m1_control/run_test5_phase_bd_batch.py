@@ -32,9 +32,13 @@ from code_vjepa_vggt.AAAinfer.utils.wanti2v_runtime import (
 )
 from AAA_my_test.legacy_ti2v_firstlatent_physiciq67_common import CASES
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control.run_m1_direct_scaling_phase_bd import (
+    FULL_MASK_PROTOCOL,
     M1DirectScalingAblator,
     PROTOCOL,
+    SAM2FullMaskM1DirectScalingAblator,
     TIME_SCOPE_TO_MASK,
+    TOKEN_SOURCES,
+    load_full_mask_partition,
     output_directory,
     validate_phase_configuration,
 )
@@ -67,6 +71,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tracks-root", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--selection-path", type=Path)
+    parser.add_argument("--token-source", choices=TOKEN_SOURCES, default="sparse_points")
+    parser.add_argument("--sam2-full-mask-root", type=Path)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -83,7 +89,15 @@ def atomic_json(path: Path, payload: dict) -> None:
 
 
 def phase_args(
-    *, output_root: Path, sample: dict, phase: str, alpha: float, start: int, end: int
+    *,
+    output_root: Path,
+    sample: dict,
+    phase: str,
+    alpha: float,
+    start: int,
+    end: int,
+    token_source: str = "sparse_points",
+    sam2_full_mask_root: Path | None = None,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         sampling_steps=40,
@@ -98,6 +112,8 @@ def phase_args(
         seed=int(sample["seed"]),
         region=str(sample.get("target_region") or "object_A"),
         output_root=output_root,
+        token_source=token_source,
+        sam2_full_mask_root=sam2_full_mask_root,
     )
 
 
@@ -145,6 +161,8 @@ def run_intervention(
         alpha=alpha,
         start=start,
         end=end,
+        token_source=args.token_source,
+        sam2_full_mask_root=args.sam2_full_mask_root,
     )
     validate_phase_configuration(frozen)
     output = output_directory(frozen)
@@ -178,10 +196,28 @@ def run_intervention(
     if anchors.shape != (13,):
         raise RuntimeError(f"expected 13 latent anchors, got {anchors.tolist()}")
 
+    partition = None
+    full_mask_path = None
+    if args.token_source == "sam2_full_mask":
+        if args.sam2_full_mask_root is None:
+            raise ValueError("--sam2-full-mask-root is required for sam2_full_mask")
+        partition, full_mask_path = load_full_mask_partition(
+            args.sam2_full_mask_root,
+            str(sample["case"]),
+            int(sample["seed"]),
+            Path(str(sample["baseline_video"])),
+        )
+
     output.mkdir(parents=True, exist_ok=True)
     (output / "complete.json").unlink(missing_ok=True)
     (output / "error.txt").unlink(missing_ok=True)
-    ablator = M1DirectScalingAblator(
+    ablator_class = (
+        SAM2FullMaskM1DirectScalingAblator
+        if partition is not None
+        else M1DirectScalingAblator
+    )
+    ablator_kwargs = {"partition": partition} if partition is not None else {}
+    ablator = ablator_class(
         pipe_wrapper.pipe,
         entries,
         points,
@@ -197,6 +233,7 @@ def run_intervention(
         time_scope="all_time",
         denoise_start=int(start),
         denoise_end=int(end),
+        **ablator_kwargs,
     )
     ablator.install()
     try:
@@ -223,7 +260,7 @@ def run_intervention(
     temporary.replace(output / "generated.mp4")
     atomic_npz(output / "dose_metrics.npz", **ablator.dose_arrays())
     configuration = {
-        "protocol": PROTOCOL,
+        "protocol": FULL_MASK_PROTOCOL if partition is not None else PROTOCOL,
         "phase": args.mode,
         "case": str(sample["case"]),
         "seed": int(sample["seed"]),
@@ -247,6 +284,11 @@ def run_intervention(
         "manifest_sha256": sha256_file(args.manifest_path),
         "input_json": str(json_path),
         "query_cache_dir": str(cache_dir),
+        "token_source": args.token_source,
+        "sam2_full_mask_cache": str(full_mask_path) if full_mask_path else None,
+        "sam2_full_mask_cache_sha256": (
+            sha256_file(full_mask_path) if full_mask_path else None
+        ),
         "tracks_npz": str(track_path),
         "sampling_steps": 40,
         "cfg_scale": 5.0,
@@ -265,7 +307,7 @@ def run_intervention(
     atomic_json(
         output / "complete.json",
         {
-            "protocol": PROTOCOL,
+            "protocol": configuration["protocol"],
             "phase": args.mode,
             "case": str(sample["case"]),
             "seed": int(sample["seed"]),
@@ -282,7 +324,12 @@ def run_intervention(
 
 
 def register_phase_d_full40(
-    *, sample: dict, alpha: float, output_root: Path
+    *,
+    sample: dict,
+    alpha: float,
+    output_root: Path,
+    token_source: str,
+    sam2_full_mask_root: Path | None,
 ) -> None:
     source_args = phase_args(
         output_root=output_root,
@@ -291,6 +338,8 @@ def register_phase_d_full40(
         alpha=alpha,
         start=0,
         end=39,
+        token_source=token_source,
+        sam2_full_mask_root=sam2_full_mask_root,
     )
     target_args = phase_args(
         output_root=output_root,
@@ -299,6 +348,8 @@ def register_phase_d_full40(
         alpha=alpha,
         start=0,
         end=39,
+        token_source=token_source,
+        sam2_full_mask_root=sam2_full_mask_root,
     )
     source = output_directory(source_args)
     target = output_directory(target_args)
@@ -325,7 +376,7 @@ def register_phase_d_full40(
     atomic_json(
         target / "complete.json",
         {
-            "protocol": PROTOCOL,
+            "protocol": source_manifest.get("protocol", PROTOCOL),
             "phase": "phase_d",
             "case": str(sample["case"]),
             "seed": int(sample["seed"]),
@@ -404,6 +455,8 @@ def main() -> None:
                             alpha=alpha,
                             start=start,
                             end=end,
+                            token_source=args.token_source,
+                            sam2_full_mask_root=args.sam2_full_mask_root,
                         )
                         output = output_directory(frozen)
                         output.mkdir(parents=True, exist_ok=True)
@@ -420,7 +473,13 @@ def main() -> None:
         selection = json.loads(args.selection_path.read_text(encoding="utf-8"))
         alpha = float(selection["selected_alpha"])
         for sample in samples:
-            register_phase_d_full40(sample=sample, alpha=alpha, output_root=args.output_root)
+            register_phase_d_full40(
+                sample=sample,
+                alpha=alpha,
+                output_root=args.output_root,
+                token_source=args.token_source,
+                sam2_full_mask_root=args.sam2_full_mask_root,
+            )
     atomic_json(
         args.output_root / f"{args.mode}_batch_complete.json",
         {

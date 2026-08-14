@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""Run block-diagonal multi-object Top100-M1 contrast guidance.
+"""Run Top100 contrast guidance with an audited attention perturbation.
 
-For object-token tubes R_i, the perturbed conditional forward subtracts
+The default ``m1_multi_object_blockdiag`` mode preserves the original experiment.
+For object-token tubes R_i, its perturbed conditional forward subtracts
 
     sum_i A[R_i, R_i] V[R_i]
 
 from the corresponding query rows.  Cross-object pairs R_i <- R_j (i != j)
 remain untouched.  If two objects map to the same latent token, deleted token
 pairs are set-unioned so no A_qk V_k term is subtracted twice.
+
+The ``full_head_output_zero`` control instead sets the complete post-attention
+output O_h=A_hV_h of every selected physical head to zero at every query token.
+It therefore removes R->R, C->R, R->C, and C->C together before the heads are
+concatenated and passed through the attention output projection.
 """
 
 from __future__ import annotations
@@ -71,6 +77,11 @@ DEFAULT_OUTPUT_ROOT = EXPERIMENT_ROOT / "training_free_m1_multi_object_search_v1
 DEFAULT_MANIFEST = DEFAULT_OUTPUT_ROOT / "search_manifest.json"
 DEFAULT_HEAD_RANKING = EXPERIMENT_ROOT / "head_scopes_latest3350_with_random100.json"
 PROTOCOL = "wan_top100_m1_multi_object_blockdiag_contrast_guidance_v1"
+FULL_HEAD_PROTOCOL = "wan_top100_full_head_output_zero_contrast_guidance_v1"
+PERTURBATION_MODES = (
+    "m1_multi_object_blockdiag",
+    "full_head_output_zero",
+)
 
 
 def atomic_json(path: Path, payload: Any) -> None:
@@ -447,7 +458,7 @@ class WindowedMultiObjectM1Guidance:
         dose_finite = int(np.isfinite(self.ablator.dose_attention_mass).sum())
         if self.ablator.record_dose and dose_finite != expected_events:
             raise RuntimeError(f"dose coverage {dose_finite} != {expected_events}")
-        return {
+        result = {
             "pipeline_calls_by_step": self.pipeline_calls_by_step,
             "guided_calls_by_step": self.guided_calls_by_step,
             "perturbed_calls_by_step": self.ablator.model_call_counts,
@@ -457,8 +468,21 @@ class WindowedMultiObjectM1Guidance:
             "expected_modified_head_events": expected_events,
             "dose_finite_events": dose_finite,
             "perturbation_delta_l2_by_step": self.delta_l2_by_step,
-            "block_diagonal": self.ablator.block_audit(),
         }
+        if hasattr(self.ablator, "block_audit"):
+            result["block_diagonal"] = self.ablator.block_audit()
+        elif (
+            self.ablator.target_scope == "all_tokens"
+            and self.ablator.mask_mode == "full_head_output"
+        ):
+            result["all_token_head_output_zero"] = {
+                "all_query_tokens": True,
+                "selected_head_count": len(self.ablator.entries),
+                "removed_flows": ["R->R", "C->R", "R->C", "C->C"],
+            }
+        else:
+            raise RuntimeError("ablator does not provide an audit for this perturbation")
+        return result
 
 
 def tracks_directory(root: Path, case: str, seed: int) -> Path:
@@ -609,10 +633,16 @@ def variant_directory(
     pag_scale: float,
     denoise_start: int,
     denoise_end: int,
+    perturbation_mode: str = "m1_multi_object_blockdiag",
 ) -> Path:
+    if perturbation_mode == "m1_multi_object_blockdiag":
+        prefix = "multi_object_blockdiag__m1_all_time__top100"
+    elif perturbation_mode == "full_head_output_zero":
+        prefix = "all_token__full_head_output_zero__top100"
+    else:
+        raise ValueError(f"unsupported perturbation mode: {perturbation_mode}")
     variant = (
-        "multi_object_blockdiag__m1_all_time__top100"
-        f"__pag{scale_tag(pag_scale)}"
+        f"{prefix}__pag{scale_tag(pag_scale)}"
         f"__denoise_{denoise_start:02d}_{denoise_end:02d}"
     )
     return output_root / "guided" / case / f"seed_{seed:05d}" / variant
@@ -629,7 +659,13 @@ def process_guided(
 ) -> None:
     case, seed = str(sample["case"]), int(sample["seed"])
     output = variant_directory(
-        args.output_root, case, seed, pag_scale, denoise_start, denoise_end
+        args.output_root,
+        case,
+        seed,
+        pag_scale,
+        denoise_start,
+        denoise_end,
+        args.perturbation_mode,
     )
     required = (output / "generated.mp4", output / "manifest.json", output / "complete.json")
     if all(path.is_file() for path in required) and not args.overwrite:
@@ -640,29 +676,59 @@ def process_guided(
     (output / "error.txt").unlink(missing_ok=True)
     points, region_slices, names = load_source_queries(sample)
     track_path = tracks_directory(args.tracks_root, case, seed) / "tracks.npz"
-    if not track_path.is_file():
-        raise FileNotFoundError(track_path)
-    with np.load(track_path) as arrays:
-        tracks = arrays["tracks"].astype(np.float32)
-        anchors = arrays["anchor_pixel_frames"].astype(np.int64)
+    tracks = None
+    anchors = None
+    if args.perturbation_mode == "m1_multi_object_blockdiag":
+        if not track_path.is_file():
+            raise FileNotFoundError(track_path)
+        with np.load(track_path) as arrays:
+            tracks = arrays["tracks"].astype(np.float32)
+            anchors = arrays["anchor_pixel_frames"].astype(np.int64)
     json_path, _, payload, wan_args, image = generation_inputs(sample, {}, seed)
     wan_args.cfg_scale = 5.0
     wan_args.sampling_steps = 40
-    ablator = MultiObjectBlockDiagonalM1Ablator(
-        pipe_wrapper.pipe,
-        entries,
-        points,
-        region_slices,
-        (704, 1280),
-        "all_objects",
-        "self_only",
-        None,
-        tracks=tracks,
-        anchor_frames=anchors,
-        object_regions=names,
-        group_batch_size=args.group_batch_size,
-        record_dose=bool(args.record_dose),
-    )
+    if args.perturbation_mode == "m1_multi_object_blockdiag":
+        assert tracks is not None and anchors is not None
+        ablator = MultiObjectBlockDiagonalM1Ablator(
+            pipe_wrapper.pipe,
+            entries,
+            points,
+            region_slices,
+            (704, 1280),
+            "all_objects",
+            "self_only",
+            None,
+            tracks=tracks,
+            anchor_frames=anchors,
+            object_regions=names,
+            group_batch_size=args.group_batch_size,
+            record_dose=bool(args.record_dose),
+        )
+        protocol = PROTOCOL
+        target_scope = "all objects, independent block-diagonal M1"
+        perturbation = "subtract union_i A[R_i,R_i]V[R_i] without renormalization"
+        preserved = "A[R_i,R_j]V[R_j] for i != j, except inherently shared token cells"
+        perturbed_symbol = "eps_M1_multi"
+    else:
+        ablator = AttentionMatrixAblator(
+            pipe_wrapper.pipe,
+            entries,
+            points,
+            region_slices,
+            (704, 1280),
+            "all_tokens",
+            "full_head_output",
+            None,
+            record_dose=False,
+        )
+        protocol = FULL_HEAD_PROTOCOL
+        target_scope = "all query tokens and all latent-frame token positions"
+        perturbation = (
+            "set O_h=A_hV_h to zero for every selected head and every query token "
+            "before head concatenation/output projection"
+        )
+        preserved = "unselected 620 physical heads only"
+        perturbed_symbol = "eps_head_zero"
     guidance = WindowedMultiObjectM1Guidance(
         pipe_wrapper.pipe,
         ablator,
@@ -698,28 +764,35 @@ def process_guided(
     if args.record_dose:
         atomic_npz(output / "dose_metrics.npz", **ablator.dose_arrays())
     metadata = {
-        "protocol": PROTOCOL,
+        "protocol": protocol,
         "case": case,
         "seed": seed,
         "input_json": str(json_path),
         "baseline_video": str(sample["baseline_video"]),
-        "tracks_npz": str(track_path),
+        "tracks_npz": str(track_path) if tracks is not None else None,
         "source_query_tube": str(sample["source_query_tube"]),
         "head_scope": "latest3350 Top100",
         "selected_head_count": len(entries),
         "head_ranking_path": str(args.head_ranking_path),
         "head_ranking_sha256": sha256_file(args.head_ranking_path),
-        "target_scope": "all objects, independent block-diagonal M1",
+        "target_scope": target_scope,
         "object_regions": list(names),
         "object_count": len(names),
-        "perturbation": "subtract union_i A[R_i,R_i]V[R_i] without renormalization",
-        "preserved": "A[R_i,R_j]V[R_j] for i != j, except inherently shared token cells",
-        "guidance_equation": "eps_u + 5*(eps_c-eps_u) + lambda*(eps_c-eps_M1_multi)",
+        "perturbation_mode": args.perturbation_mode,
+        "perturbation": perturbation,
+        "preserved": preserved,
+        "guidance_equation": (
+            f"eps_u + 5*(eps_c-eps_u) + lambda*(eps_c-{perturbed_symbol})"
+        ),
         "pag_scale": pag_scale,
         "guidance_step_range_inclusive": [denoise_start, denoise_end],
         "inactive_steps_are_clean_cfg": True,
         "future_source_gt_used_by_guidance": False,
-        "trajectory_source": "same-seed Baseline CoTracker tube",
+        "trajectory_source": (
+            "same-seed Baseline CoTracker tube"
+            if tracks is not None
+            else "not used by all-token full-head perturbation"
+        ),
         "selected_entries": entries,
         "audit": audit,
         "output_video": str(output / "generated.mp4"),
@@ -728,12 +801,13 @@ def process_guided(
     atomic_json(
         output / "complete.json",
         {
-            "protocol": PROTOCOL,
+            "protocol": protocol,
             "case": case,
             "seed": seed,
             "pag_scale": pag_scale,
             "guidance_step_range_inclusive": [denoise_start, denoise_end],
             "object_count": len(names),
+            "perturbation_mode": args.perturbation_mode,
             "modified_head_events": audit["modified_head_events"],
         },
     )
@@ -756,6 +830,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tracks-root", type=Path, default=DEFAULT_OUTPUT_ROOT / "tracks")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--group-batch-size", type=int, default=4)
+    parser.add_argument(
+        "--perturbation-mode",
+        choices=PERTURBATION_MODES,
+        default="m1_multi_object_blockdiag",
+    )
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--seed", type=int, action="append", default=[])
     parser.add_argument("--pag-scale", type=float, action="append", default=[])
@@ -776,6 +855,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.perturbation_mode == "full_head_output_zero" and args.record_dose:
+        raise ValueError(
+            "full_head_output_zero does not expose A-block mass; run without --record-dose"
+        )
     if not 0 <= args.worker_id < args.num_workers:
         raise ValueError("worker-id must be in [0, num-workers)")
     manifest = json.loads(args.manifest_path.read_text(encoding="utf-8"))
@@ -820,6 +903,7 @@ def main() -> None:
         "seeds": sorted({int(row["seed"]) for row in samples}),
         "scales": scales,
         "windows": windows,
+        "perturbation_mode": args.perturbation_mode,
     }
     print(json.dumps(summary, ensure_ascii=False), flush=True)
     if args.dry_run:
@@ -845,7 +929,10 @@ def main() -> None:
                 gc.collect()
                 torch.cuda.empty_cache()
 
-    if args.stage in {"tracks", "all"}:
+    if (
+        args.perturbation_mode == "m1_multi_object_blockdiag"
+        and args.stage in {"tracks", "all"}
+    ):
         missing_tracks = [
             sample
             for sample in samples
@@ -875,14 +962,15 @@ def main() -> None:
         for sample in samples:
             if not baseline_ready(sample):
                 raise FileNotFoundError(sample["baseline_video"])
-            track_path = (
-                tracks_directory(
-                    args.tracks_root, str(sample["case"]), int(sample["seed"])
+            if args.perturbation_mode == "m1_multi_object_blockdiag":
+                track_path = (
+                    tracks_directory(
+                        args.tracks_root, str(sample["case"]), int(sample["seed"])
+                    )
+                    / "tracks.npz"
                 )
-                / "tracks.npz"
-            )
-            if not track_path.is_file():
-                raise FileNotFoundError(track_path)
+                if not track_path.is_file():
+                    raise FileNotFoundError(track_path)
         pipe = build_wan_ti2v_pipeline(
             generation_inputs(samples[0], case_lookup, int(samples[0]["seed"]))[3]
         )
@@ -924,6 +1012,7 @@ def main() -> None:
                                 pag_scale,
                                 denoise_start,
                                 denoise_end,
+                                args.perturbation_mode,
                             )
                             output.mkdir(parents=True, exist_ok=True)
                             (output / "error.txt").write_text(

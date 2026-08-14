@@ -60,6 +60,9 @@ HEAD_SCOPES = (
     "random100_layer_matched_draw0",
     "all720",
 )
+MULTI_OBJECT_M1_GUIDANCE_PROTOCOL = (
+    "wan_top100_m1_multi_object_blockdiag_contrast_guidance_v1"
+)
 CATEGORY_DEFINITIONS = {
     "global_appearance": {
         "name": "全局外观影响",
@@ -198,9 +201,18 @@ def collect_candidates(seed_dir: Path, scopes: set[str]) -> list[dict[str, Any]]
             manifest = read_json(manifest_path)
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-        mode = str(manifest.get("mask_mode") or "")
-        scope = str(manifest.get("head_scope") or "top100")
-        target_scope = str(manifest.get("target_scope") or "")
+        protocol = str(manifest.get("protocol") or "")
+        if protocol == MULTI_OBJECT_M1_GUIDANCE_PROTOCOL:
+            # The training-free search predates the canonical Head-Scope
+            # manifest vocabulary, but its intervention is exactly M1 on the
+            # latest3350 Top100 heads for every object block independently.
+            mode = "self_only"
+            scope = "top100"
+            target_scope = "all_objects"
+        else:
+            mode = str(manifest.get("mask_mode") or "")
+            scope = str(manifest.get("head_scope") or "top100")
+            target_scope = str(manifest.get("target_scope") or "")
         region = str(manifest.get("region") or "")
         if (
             mode not in M123_MODES
@@ -231,6 +243,11 @@ def collect_candidates(seed_dir: Path, scopes: set[str]) -> list[dict[str, Any]]
                 ),
                 "ranking_tag": str(manifest.get("ranking_tag") or ""),
                 "tracks_npz": str(manifest.get("tracks_npz") or ""),
+                "baseline_path": str(manifest.get("baseline_video") or ""),
+                "guidance_scale": manifest.get("pag_scale"),
+                "guidance_step_range_inclusive": manifest.get(
+                    "guidance_step_range_inclusive"
+                ),
                 "path": str(video_path.resolve()),
                 "manifest_path": str(manifest_path.resolve()),
                 "video_signature": file_signature(video_path),
@@ -496,7 +513,14 @@ def compute_seed(
         for row in previous.get("records", [])
         if isinstance(row, dict)
     }
-    baseline_candidates = [
+    manifest_baselines = list(
+        dict.fromkeys(
+            Path(str(row["baseline_path"])).expanduser().resolve()
+            for row in candidates
+            if str(row.get("baseline_path") or "").strip()
+        )
+    )
+    baseline_candidates = manifest_baselines + [
         args.baseline_root / case / f"seed_{seed:05d}" / "generated.mp4",
         PHYSICIQ67_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",
         MULTICASE_BASELINE_ROOT / case / f"seed_{seed:05d}" / "generated.mp4",

@@ -43,6 +43,7 @@ from AAA_my_test.object_query_ablation_metrics.compute_head_scope_trajectory_met
     atomic_npz,
     load_video_frames,
     locate_baseline,
+    resolve_region_cache_path,
     resolve_frozen_baseline_inputs,
     rounded,
     signature_text,
@@ -538,7 +539,7 @@ def main() -> None:
     seed = int(all_candidates[0]["seed"])
     if any(row["case"] != case or int(row["seed"]) != seed for row in all_candidates):
         raise RuntimeError("object-survival mode accepts exactly one case/seed")
-    baseline_path = locate_baseline(case, seed)
+    baseline_path = locate_baseline(case, seed, seed_dir)
     baseline_signature = file_signature(baseline_path)
 
     frozen_path, frozen_manifest_path = resolve_frozen_baseline_inputs(seed_dir)
@@ -553,10 +554,7 @@ def main() -> None:
         name: slice(start, end)
         for name, start, end in zip(object_names, starts, ends, strict=True)
     }
-    frozen_manifest = json.loads(
-        frozen_manifest_path.read_text(encoding="utf-8")
-    )
-    region_cache = Path(str(frozen_manifest["query_cache_dir"])) / "regions.npz"
+    region_cache = resolve_region_cache_path(frozen_manifest_path, case)
     with np.load(region_cache, allow_pickle=False) as arrays:
         prompt_masks = arrays["masks_rhw"].astype(bool)[: len(object_names)]
 

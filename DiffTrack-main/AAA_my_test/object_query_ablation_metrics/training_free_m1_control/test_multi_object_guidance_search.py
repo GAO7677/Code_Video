@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import unittest
 
+import numpy as np
 import torch
 
 from AAA_my_test.object_query_ablation_metrics.training_free_m1_control.run_multi_object_guidance_search import (
+    WindowedMultiObjectM1Guidance,
     apply_grouped_m1_ablation,
     block_diagonal_groups,
     validate_window,
@@ -118,6 +120,39 @@ class WindowValidationTest(unittest.TestCase):
         for start, end in ((-1, 4), (5, 4), (0, 40)):
             with self.assertRaises(ValueError):
                 validate_window(start, end)
+
+
+class FullHeadAuditTest(unittest.TestCase):
+    def test_all_token_ablator_does_not_require_block_diagonal_audit(self) -> None:
+        class FakeAllTokenAblator:
+            entries = [{"block": 0, "head": 0}, {"block": 1, "head": 1}]
+            model_call_counts = {0: 1}
+            modified_head_events = 2
+            dose_attention_mass = np.full((40, 2, 30, 24), np.nan, dtype=np.float32)
+            record_dose = False
+            mask_mode = "full_head_output"
+            target_scope = "all_tokens"
+
+        guidance = WindowedMultiObjectM1Guidance(
+            None,
+            FakeAllTokenAblator(),
+            cfg_scale=5.0,
+            pag_scale=1.0,
+            denoise_start=0,
+            denoise_end=0,
+        )
+        guidance.pipeline_calls_by_step = {step: 2 for step in range(40)}
+        guidance.guided_calls_by_step = {0: 1}
+        report = guidance.audit()
+        self.assertNotIn("block_diagonal", report)
+        self.assertEqual(
+            report["all_token_head_output_zero"],
+            {
+                "all_query_tokens": True,
+                "selected_head_count": 2,
+                "removed_flows": ["R->R", "C->R", "R->C", "C->C"],
+            },
+        )
 
 
 if __name__ == "__main__":
