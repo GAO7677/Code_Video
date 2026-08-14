@@ -1,0 +1,19 @@
+{
+  "extends": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000.json",
+  "experiment": {
+    "description": "Resume Full-SA + Object + Slot-Dedup (xSSC-50k) + DINOv3 MOVi-C xSSC loss from the complete step-000500 training state on GPUs 5 and 6"
+  },
+  "launch": {
+    "gpu_set": "5,6",
+    "num_processes": 2,
+    "main_process_port": 29556
+  },
+  "checkpointing": {
+    "resume_from": "/data/gaoya/agent-data/checkpoints/xssc_feature_loss/full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000/formal_gpu01/checkpoints/step-000500/training_state.pt"
+  },
+  "logging": {
+    "wandb_name": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
+    "wandb_run_id": "mayn8por",
+    "wandb_resume": "must"
+  }
+}
