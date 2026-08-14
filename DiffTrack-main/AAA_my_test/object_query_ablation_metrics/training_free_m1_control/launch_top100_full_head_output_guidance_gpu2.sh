@@ -36,20 +36,29 @@ export PYTHONNOUSERSITE=1
 export TOKENIZERS_PARALLELISM=false
 
 LOG="${LOG_ROOT}/gpu${GPU_ID}_worker0.log"
-echo "[$(date -u +%FT%TZ)] start GPU=${GPU_ID} strict_0613_5cases_x_5seeds" | tee -a "${LOG}"
-"${PYTHON_BIN}" -u "${RUNNER}" \
-  --worker-id 0 \
-  --num-workers 1 \
-  --stage guidance \
-  --manifest-path "${MANIFEST}" \
-  --output-root "${OUTPUT_ROOT}" \
-  --tracks-root "${TRACKS_ROOT}" \
-  --device cuda \
-  --perturbation-mode full_head_output_zero \
+run_guidance() {
+  "${PYTHON_BIN}" -u "${RUNNER}" \
+    --worker-id 0 \
+    --num-workers 1 \
+    --stage guidance \
+    --manifest-path "${MANIFEST}" \
+    --output-root "${OUTPUT_ROOT}" \
+    --tracks-root "${TRACKS_ROOT}" \
+    --device cuda \
+    --perturbation-mode full_head_output_zero \
+    "$@" \
+    "${DRY_RUN[@]}" 2>&1 | tee -a "${LOG}"
+}
+
+echo "[$(date -u +%FT%TZ)] start GPU=${GPU_ID} priority=0613pybullet_sample_001460_w002" | tee -a "${LOG}"
+run_guidance \
+  --case 0613pybullet_sample_001460_w002
+
+echo "[$(date -u +%FT%TZ)] continue GPU=${GPU_ID} remaining_4cases" | tee -a "${LOG}"
+run_guidance \
   --case 0613pybullet_sample_000301_w000 \
   --case 0613pybullet_sample_000331_w001 \
   --case 0613pybullet_sample_000336_w001 \
-  --case 0613pybullet_sample_001455_w000 \
-  --case 0613pybullet_sample_001460_w002 \
-  "${DRY_RUN[@]}" 2>&1 | tee -a "${LOG}"
+  --case 0613pybullet_sample_001455_w000
+
 echo "[$(date -u +%FT%TZ)] complete GPU=${GPU_ID} strict_0613_5cases_x_5seeds" | tee -a "${LOG}"

@@ -73,6 +73,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--selection-path", type=Path)
     parser.add_argument("--token-source", choices=TOKEN_SOURCES, default="sparse_points")
     parser.add_argument("--sam2-full-mask-root", type=Path)
+    parser.add_argument(
+        "--priority-case",
+        help="Run all samples for this case first while preserving manifest order otherwise.",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -395,6 +399,10 @@ def main() -> None:
     samples = list(manifest.get("samples") or [])
     if len(samples) != 100:
         raise RuntimeError(f"expected 100 manifest samples, got {len(samples)}")
+    if args.priority_case:
+        if not any(str(sample.get("case")) == args.priority_case for sample in samples):
+            raise ValueError(f"priority case is absent from manifest: {args.priority_case}")
+        samples.sort(key=lambda sample: str(sample.get("case")) != args.priority_case)
     entries, ranking = load_protocol(args, manifest)
     variants = variant_list(args)
     if args.mode != "baselines":

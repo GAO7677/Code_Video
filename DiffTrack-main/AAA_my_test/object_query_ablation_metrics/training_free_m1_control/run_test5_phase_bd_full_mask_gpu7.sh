@@ -24,6 +24,7 @@ TRACKS="${SPARSE_ROOT}/frozen_baseline_tracks"
 MASK_ROOT="${OUTPUT_ROOT}/baseline_sam2_full_masks"
 SELECTION="${OUTPUT_ROOT}/phase_b_selection.json"
 STATUS="${OUTPUT_ROOT}/pipeline_status.json"
+PRIORITY_CASE="0613pybullet_sample_001460_w002"
 
 export CUDA_VISIBLE_DEVICES="${GPU_ID}"
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
@@ -96,6 +97,7 @@ run_stage 01_phase_b_full_object \
     --output-root "${OUTPUT_ROOT}" \
     --token-source sam2_full_mask \
     --sam2-full-mask-root "${MASK_ROOT}" \
+    --priority-case "${PRIORITY_CASE}" \
     --device cuda
 
 run_stage 02_phase_b_post_generation_selection \
@@ -115,6 +117,7 @@ run_stage 03_phase_d_full_object \
     --selection-path "${SELECTION}" \
     --token-source sam2_full_mask \
     --sam2-full-mask-root "${MASK_ROOT}" \
+    --priority-case "${PRIORITY_CASE}" \
     --device cuda
 
 write_status all complete "$(date -u +%FT%TZ)"
