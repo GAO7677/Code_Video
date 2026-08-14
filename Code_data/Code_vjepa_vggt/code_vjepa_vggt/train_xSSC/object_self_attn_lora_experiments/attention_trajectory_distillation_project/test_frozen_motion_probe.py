@@ -129,6 +129,15 @@ def test_gt_mask_and_points_map_to_fixed_query_frame():
     assert mask_rows.numel() == 4
     assert bool((mask_rows < 16).all())
 
+    thin_mask = torch.zeros(8, 8)
+    thin_mask[1, 1] = 1
+    thin_rows = query_rows_from_mask(
+        thin_mask,
+        grid=(13, 4, 4),
+        query_latent_frame=1,
+    )
+    assert thin_rows.tolist() == [16]
+
     points = torch.tensor([[0.25, 0.25], [0.75, 0.75]])
     point_rows = query_rows_from_points(
         points,

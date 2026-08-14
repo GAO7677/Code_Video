@@ -230,6 +230,8 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
         )
         self._motion_probe_forward_count = 0
 
+        if not 0.0 <= self.motion_probe_timestep <= 1000.0:
+            raise ValueError("motion_probe_timestep must be in [0,1000]")
         if not 0.0 <= self.motion_probe_noise_level <= 1.0:
             raise ValueError("motion_probe_noise_level must be in [0,1]")
         if self.motion_probe_heatmap_weight < 0.0:

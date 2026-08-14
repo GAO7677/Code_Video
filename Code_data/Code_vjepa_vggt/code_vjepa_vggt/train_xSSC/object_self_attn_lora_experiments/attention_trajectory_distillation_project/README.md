@@ -20,8 +20,8 @@ adapter.
 
 ## Data contract for the fixed GT query
 
-Every raw sample must contain exactly one usable GT query source, directly or
-under `metadata`:
+Every raw sample must contain at least one usable GT query source, directly or
+under `metadata` (the priority is token indices, mask, then points):
 
 1. `object_query_token_indices`: exact flattened Wan rows from one fixed latent
    frame; or
@@ -75,6 +75,16 @@ The probe is kept outside the parent module registry, has
 DDP state, and Student checkpoints.  Block checkpoints explicitly return both
 the block state and selected Q/K maps; Q/K capture is not a non-reproducible
 Python side effect.
+
+## Difference from the old Scheme B
+
+| Item | Old Scheme B | Frozen Motion Probe entry |
+|---|---|---|
+| Student measurement pass | Trainable Student DiT | Separate pretrained DiT, fully frozen |
+| Teacher/Student instrument | Teacher/EMA vs Student parameters | Exactly the same frozen parameters |
+| Query used by Student map | Could move with Student Q representation | Detached GT Teacher Q at fixed GT rows |
+| Permitted loss shortcut | Update probe Q/K weights | Probe weights cannot update; loss must change `x0_pred` |
+| Main optimization target | Flow plus attention auxiliary | Same flow loss plus KL and trajectory Huber |
 
 ## Command pattern
 
