@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Evaluate main and experiment-specific losses on the fixed 30-case manifest."""
 from __future__ import annotations
-import argparse, json, os, statistics, time
+import argparse, copy, json, os, statistics, time
 from pathlib import Path
 import torch
 
@@ -13,10 +13,28 @@ def atomic(path: Path, payload: dict) -> None:
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
+def normalize_case_seeds(manifest: dict) -> tuple[dict, bool]:
+    normalized = copy.deepcopy(manifest)
+    global_seed = int(normalized["seed"])
+    changed = False
+    for case in normalized["cases"]:
+        if "case_seed" in case:
+            continue
+        case["case_seed"] = ev.stable_case_seed(
+            global_seed,
+            str(case["source"]),
+            int(case["source_index"]),
+        )
+        changed = True
+    return normalized, changed
+
 def main() -> None:
     p=argparse.ArgumentParser(); p.add_argument("--config",type=Path,required=True); p.add_argument("--gpu",type=int,required=True); p.add_argument("--entry-id"); args=p.parse_args()
     if args.gpu == 4: raise SystemExit("GPU4 prohibited")
-    cfg=json.loads(args.config.read_text()); root=Path(cfg["output_root"]); case_manifest=json.loads(Path(cfg["cases_manifest"]).read_text())
+    cfg=json.loads(args.config.read_text()); root=Path(cfg["output_root"]); case_manifest_path=Path(cfg["cases_manifest"]); case_manifest=json.loads(case_manifest_path.read_text())
+    case_manifest, manifest_changed = normalize_case_seeds(case_manifest)
+    if manifest_changed:
+        atomic(case_manifest_path, case_manifest)
     entries=[e for e in cfg["entries"] if not args.entry_id or e["entry_id"]==args.entry_id]
     status_path=root/"loss_status.json"; status=json.loads(status_path.read_text()) if status_path.is_file() else {"state":"running","entries":{}}
     datasets=None

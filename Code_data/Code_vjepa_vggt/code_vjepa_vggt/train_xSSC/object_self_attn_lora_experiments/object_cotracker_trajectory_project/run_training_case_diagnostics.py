@@ -74,8 +74,22 @@ DEFAULT_OUTPUT_ROOT = Path(
 DEFAULT_COTRACKER_CHECKPOINT = Path(
     "/data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth"
 )
+DEFAULT_MULTI_OBJECT_CACHE = Path(
+    "/data/gaoya/agent-data/cache/uniform_multiobject_correspondence_diagnostics"
+)
 TRACK_HEIGHT = 256
 TRACK_WIDTH = 448
+OBJECT_COLORS = np.asarray(
+    [
+        (238, 75, 71),
+        (17, 150, 141),
+        (45, 107, 185),
+        (226, 167, 36),
+        (154, 83, 170),
+        (80, 170, 80),
+    ],
+    dtype=np.uint8,
+)
 PALETTE = np.asarray(
     [
         (255, 214, 51),
@@ -113,6 +127,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_COTRACKER_CHECKPOINT,
     )
+    parser.add_argument(
+        "--multiobject-cache",
+        type=Path,
+        default=None,
+        help="Prepared per-object F04 masks; when set, aggregate loss per object.",
+    )
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--training-timestep", type=float, default=500.0)
     parser.add_argument("--num-points", type=int, default=24)
@@ -144,6 +164,10 @@ def validate_args(args: argparse.Namespace) -> None:
     ):
         if not path.expanduser().resolve().is_file():
             raise FileNotFoundError(path)
+    if args.multiobject_cache is not None:
+        cache_root = args.multiobject_cache.expanduser().resolve()
+        if not (cache_root / "objects_status.json").is_file():
+            raise FileNotFoundError(cache_root / "objects_status.json")
 
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -507,12 +531,177 @@ def track_video(predictor, video: torch.Tensor, queries: torch.Tensor):
     return predictor(video, queries=queries, backward_tracking=False)
 
 
+def load_object_specs(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    identity_mask: np.ndarray | None = None,
+) -> tuple[list[str], np.ndarray]:
+    """Return F04 per-object masks and stable captions for query grouping."""
+    if args.multiobject_cache is None:
+        if identity_mask is None:
+            raise ValueError("identity_mask is required without multiobject-cache")
+        return ["selected object"], identity_mask[None].astype(np.uint8)
+
+    case_cache = args.multiobject_cache / "cases" / case["case_key"]
+    metadata = json.loads(
+        (case_cache / "objects_complete.json").read_text(encoding="utf-8")
+    )
+    with np.load(case_cache / "object_masks.npz") as archive:
+        masks_othw = archive["masks_othw"].astype(np.uint8)
+    f04_masks = masks_othw[:, int(args.anchor_frame)]
+    phrases = [str(value) for value in metadata["object_phrases"]]
+    if f04_masks.shape[0] != len(phrases):
+        raise RuntimeError(
+            f"object mask/phrase mismatch for {case['case_key']}: "
+            f"{f04_masks.shape[0]} masks/{len(phrases)} phrases"
+        )
+    if not bool(f04_masks.any(axis=(1, 2)).all()):
+        raise RuntimeError(f"empty F04 object mask in {case['case_key']}")
+    return phrases, f04_masks
+
+
+def aggregate_object_trajectory_losses(
+    pred_tracks: torch.Tensor,
+    gt_tracks: torch.Tensor,
+    gt_visibility: torch.Tensor,
+    *,
+    object_count: int,
+    points_per_object: int,
+    height: int,
+    width: int,
+    anchor_frame: int,
+    future_start_frame: int,
+    huber_delta: float,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor], list[dict[str, torch.Tensor]]]:
+    """Compute point means inside each object, then an equal object mean."""
+    if pred_tracks.shape[2] != int(object_count) * int(points_per_object):
+        raise ValueError(
+            "track query count does not match object grouping: "
+            f"{pred_tracks.shape[2]} vs {object_count}x{points_per_object}"
+        )
+    all_losses = []
+    visible_losses = []
+    all_diagnostics = []
+    visible_diagnostics = []
+    object_rows = []
+    for object_index in range(int(object_count)):
+        start = object_index * int(points_per_object)
+        stop = start + int(points_per_object)
+        pred_object = pred_tracks[:, :, start:stop]
+        gt_object = gt_tracks[:, :, start:stop]
+        visibility_object = gt_visibility[:, :, start:stop]
+        object_loss, object_diag = object_trajectory_loss(
+            pred_object,
+            gt_object,
+            torch.ones_like(visibility_object, dtype=torch.bool),
+            height=height,
+            width=width,
+            anchor_frame=anchor_frame,
+            future_start_frame=future_start_frame,
+            huber_delta=huber_delta,
+        )
+        visible_loss, visible_diag = object_trajectory_loss(
+            pred_object,
+            gt_object,
+            visibility_object,
+            height=height,
+            width=width,
+            anchor_frame=anchor_frame,
+            future_start_frame=future_start_frame,
+            huber_delta=huber_delta,
+        )
+        all_losses.append(object_loss)
+        visible_losses.append(visible_loss)
+        all_diagnostics.append(object_diag)
+        visible_diagnostics.append(visible_diag)
+        object_rows.append(
+            {
+                "object_index": torch.tensor(object_index),
+                "loss": object_loss,
+                "loss_gt_visible": visible_loss,
+                "raw_huber": object_diag["raw_huber"],
+                "raw_huber_gt_visible": visible_diag["raw_huber"],
+                "normalized_ade": object_diag["normalized_ade"],
+                "normalized_ade_gt_visible": visible_diag["normalized_ade"],
+                "normalized_rmse": object_diag["normalized_rmse"],
+                "normalized_gt_motion": object_diag["normalized_gt_motion"],
+                "gt_visible_fraction": visible_diag["valid_fraction"],
+                "all_future_point_frames": object_diag["valid_count"],
+                "gt_visible_future_point_frames": visible_diag["valid_count"],
+            }
+        )
+
+    def mean_diagnostic(name: str) -> torch.Tensor:
+        return torch.stack([item[name] for item in all_diagnostics]).mean(dim=0)
+
+    def mean_visible_diagnostic(name: str) -> torch.Tensor:
+        return torch.stack([item[name] for item in visible_diagnostics]).mean(dim=0)
+
+    diagnostics = {
+        "normalized_ade": mean_diagnostic("normalized_ade"),
+        "normalized_rmse": mean_diagnostic("normalized_rmse"),
+        "normalized_gt_motion": mean_diagnostic("normalized_gt_motion"),
+        "raw_huber": torch.stack(
+            [item["raw_huber"] for item in all_diagnostics]
+        ).mean(),
+        "valid_fraction": torch.stack(
+            [item["valid_fraction"] for item in all_diagnostics]
+        ).mean(),
+        "valid_count": torch.stack(
+            [item["valid_count"] for item in all_diagnostics]
+        ).sum(),
+        "per_frame_loss": torch.stack(
+            [item["per_frame_loss"] for item in all_diagnostics]
+        ).mean(dim=0),
+        "per_frame_raw_huber": torch.stack(
+            [item["per_frame_raw_huber"] for item in all_diagnostics]
+        ).mean(dim=0),
+        "per_frame_ade": torch.stack(
+            [item["per_frame_ade"] for item in all_diagnostics]
+        ).mean(dim=0),
+        "per_point_distance": torch.cat(
+            [item["per_point_distance"] for item in all_diagnostics], dim=-1
+        ),
+        "valid_future": torch.cat(
+            [item["valid_future"] for item in all_diagnostics], dim=-1
+        ),
+    }
+    visible_loss = torch.stack(visible_losses).mean()
+    visible_aggregate = {
+        "normalized_ade": mean_visible_diagnostic("normalized_ade"),
+        "normalized_rmse": mean_visible_diagnostic("normalized_rmse"),
+        "normalized_gt_motion": mean_visible_diagnostic("normalized_gt_motion"),
+        "raw_huber": torch.stack(
+            [item["raw_huber"] for item in visible_diagnostics]
+        ).mean(),
+        "valid_fraction": torch.stack(
+            [item["valid_fraction"] for item in visible_diagnostics]
+        ).mean(),
+        "valid_count": torch.stack(
+            [item["valid_count"] for item in visible_diagnostics]
+        ).sum(),
+        "per_frame_loss": torch.stack(
+            [item["per_frame_loss"] for item in visible_diagnostics]
+        ).mean(dim=0),
+        "per_frame_raw_huber": torch.stack(
+            [item["per_frame_raw_huber"] for item in visible_diagnostics]
+        ).mean(dim=0),
+        "per_frame_ade": torch.stack(
+            [item["per_frame_ade"] for item in visible_diagnostics]
+        ).mean(dim=0),
+    }
+    diagnostics["visible_aggregate"] = visible_aggregate
+    return torch.stack(all_losses).mean(), diagnostics, object_rows
+
+
 def tracker_input_gradient_audit(
     predictor,
     pred_frames: np.ndarray,
     points_xy: np.ndarray,
     gt_tracks: torch.Tensor,
     gt_visibility: torch.Tensor,
+    object_count: int,
+    points_per_object: int,
     args: argparse.Namespace,
 ) -> float:
     device = torch.device(args.device)
@@ -529,10 +718,12 @@ def tracker_input_gradient_audit(
         add_support_grid=True,
         backward_tracking=False,
     )
-    loss, _ = object_trajectory_loss(
+    loss, _, _ = aggregate_object_trajectory_losses(
         pred_tracks,
         gt_tracks,
-        gt_visibility,
+        torch.ones_like(gt_visibility, dtype=torch.bool),
+        object_count=object_count,
+        points_per_object=points_per_object,
         height=TRACK_HEIGHT,
         width=TRACK_WIDTH,
         anchor_frame=args.anchor_frame,
@@ -583,13 +774,30 @@ def run_tracks(args: argparse.Namespace) -> None:
                 pred_frames = archive["frames"].astype(np.uint8)
             with np.load(Path(case["cache_dir"]) / "sam2_masks.npz") as archive:
                 identity_mask = archive["selected_identity_mask"].astype(np.uint8)
-            points_xy = sample_points_from_mask(
+            object_phrases, object_masks_f04 = load_object_specs(
+                args,
+                case,
                 identity_mask,
-                int(args.num_points),
-                avoid_edges=True,
             )
-            if points_xy.shape != (int(args.num_points), 2):
-                raise RuntimeError(f"invalid object query shape: {points_xy.shape}")
+            points_on2 = np.stack(
+                [
+                    sample_points_from_mask(
+                        object_mask,
+                        int(args.num_points),
+                        avoid_edges=True,
+                    )
+                    for object_mask in object_masks_f04
+                ]
+            ).astype(np.float32)
+            object_count = int(len(object_phrases))
+            if points_on2.shape != (object_count, int(args.num_points), 2):
+                raise RuntimeError(f"invalid object query shape: {points_on2.shape}")
+            points_xy = points_on2.reshape(-1, 2)
+            print(
+                f"[tracks {position}/{len(manifest['cases'])}] "
+                f"{object_count} objects x {args.num_points} points",
+                flush=True,
+            )
             gt_video, queries = prepare_tracker_inputs(
                 source_frames,
                 points_xy,
@@ -609,27 +817,23 @@ def run_tracks(args: argparse.Namespace) -> None:
                     pred_video,
                     pred_queries,
                 )
-            visible_loss, visible_diagnostics = object_trajectory_loss(
+            loss, diagnostics, object_rows = aggregate_object_trajectory_losses(
                 pred_tracks,
                 gt_tracks,
                 gt_visibility,
+                object_count=object_count,
+                points_per_object=int(args.num_points),
                 height=TRACK_HEIGHT,
                 width=TRACK_WIDTH,
                 anchor_frame=args.anchor_frame,
                 future_start_frame=args.future_start_frame,
                 huber_delta=args.huber_delta,
             )
+            visible_loss = torch.stack(
+                [row["loss_gt_visible"] for row in object_rows]
+            ).mean()
+            visible_diagnostics = diagnostics["visible_aggregate"]
             all_point_visibility = torch.ones_like(gt_visibility, dtype=torch.bool)
-            loss, diagnostics = object_trajectory_loss(
-                pred_tracks,
-                gt_tracks,
-                all_point_visibility,
-                height=TRACK_HEIGHT,
-                width=TRACK_WIDTH,
-                anchor_frame=args.anchor_frame,
-                future_start_frame=args.future_start_frame,
-                huber_delta=args.huber_delta,
-            )
             gradient_norm = None
             if args.gradient_audit and not gradient_audited:
                 print("[tracks] auditing dL/d(predicted RGB video)", flush=True)
@@ -639,6 +843,8 @@ def run_tracks(args: argparse.Namespace) -> None:
                     points_xy,
                     gt_tracks.detach(),
                     all_point_visibility,
+                    object_count,
+                    int(args.num_points),
                     args,
                 )
                 gradient_audited = True
@@ -659,6 +865,50 @@ def run_tracks(args: argparse.Namespace) -> None:
             )
             pred_visible_future = pred_visibility[:, args.future_start_frame :]
             joint_visible = valid & pred_visible_future
+            object_metrics = []
+            for object_index, (phrase, row) in enumerate(
+                zip(object_phrases, object_rows)
+            ):
+                start = object_index * int(args.num_points)
+                stop = start + int(args.num_points)
+                object_valid = valid[:, :, start:stop]
+                object_pred_visible = pred_visible_future[:, :, start:stop]
+                object_joint = object_valid & object_pred_visible
+                object_metrics.append(
+                    {
+                        "object_index": object_index,
+                        "phrase": phrase,
+                        "query_points": int(args.num_points),
+                        "trajectory_loss": float(row["loss"].item()),
+                        "trajectory_loss_gt_visible": float(
+                            row["loss_gt_visible"].item()
+                        ),
+                        "trajectory_huber": float(row["raw_huber"].item()),
+                        "normalized_ade": float(row["normalized_ade"].item()),
+                        "normalized_ade_gt_visible": float(
+                            row["normalized_ade_gt_visible"].item()
+                        ),
+                        "normalized_rmse": float(row["normalized_rmse"].item()),
+                        "normalized_gt_motion": float(
+                            row["normalized_gt_motion"].item()
+                        ),
+                        "gt_visible_fraction": float(
+                            row["gt_visible_fraction"].item()
+                        ),
+                        "pred_visible_fraction": float(
+                            object_pred_visible.float().mean().item()
+                        ),
+                        "joint_visible_fraction": float(
+                            object_joint.float().mean().item()
+                        ),
+                        "all_future_point_frames": int(
+                            row["all_future_point_frames"].item()
+                        ),
+                        "gt_visible_future_point_frames": int(
+                            row["gt_visible_future_point_frames"].item()
+                        ),
+                    }
+                )
             forward_metrics = json.loads(
                 (case_root / "forward_metrics.json").read_text(encoding="utf-8")
             )
@@ -666,8 +916,16 @@ def run_tracks(args: argparse.Namespace) -> None:
                 **forward_metrics,
                 "trajectory_extractor": "frozen CoTracker3 scaled_offline",
                 "trajectory_checkpoint": str(args.cotracker_checkpoint.resolve()),
-                "object_query_source": "cached GT F04 SAM2 identity mask",
+                "object_query_source": (
+                    "PyBullet dynamic phrases -> GroundingDINO -> SAM2 F04 identity masks"
+                    if args.multiobject_cache is not None
+                    else "cached GT F04 SAM2 identity mask"
+                ),
+                "object_count": object_count,
+                "object_query_points_per_object": int(args.num_points),
                 "object_query_points": int(points_xy.shape[0]),
+                "loss_aggregation": "point/time mean per object -> equal object mean",
+                "objects": object_metrics,
                 "anchor_frame": int(args.anchor_frame),
                 "future_frames": [int(args.future_start_frame), 48],
                 "trajectory_definition": "normalized displacement relative to F04",
@@ -711,6 +969,12 @@ def run_tracks(args: argparse.Namespace) -> None:
             np.savez_compressed(
                 case_root / "trajectories.npz",
                 query_points_xy_native=points_xy.astype(np.float32),
+                query_points_on2=points_on2.astype(np.float32),
+                object_ids_per_point=np.repeat(
+                    np.arange(object_count, dtype=np.int32), int(args.num_points)
+                ),
+                object_masks_f04=object_masks_f04.astype(np.uint8),
+                object_phrases=np.asarray(object_phrases),
                 identity_mask=identity_mask.astype(np.uint8),
                 gt_tracks_trackres=gt_tracks[0].float().cpu().numpy(),
                 pred_tracks_trackres=pred_tracks[0].float().cpu().numpy(),
@@ -800,6 +1064,33 @@ def draw_track_history(
                 cv2.circle(frame, point, 7, (10, 10, 10), 1, cv2.LINE_AA)
 
 
+def overlay_object_masks(
+    frame: np.ndarray,
+    masks: np.ndarray,
+    colors: np.ndarray,
+) -> np.ndarray:
+    output = frame.copy()
+    for object_index, mask in enumerate(masks.astype(bool)):
+        color = colors[object_index % len(colors)].astype(np.float32)
+        output[mask] = np.clip(
+            0.60 * output[mask].astype(np.float32) + 0.40 * color,
+            0,
+            255,
+        ).astype(np.uint8)
+        contours, _ = cv2.findContours(
+            mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        cv2.drawContours(
+            output,
+            contours,
+            -1,
+            tuple(int(value) for value in color),
+            2,
+            cv2.LINE_AA,
+        )
+    return output
+
+
 def add_panel_label(frame: np.ndarray, title: str, detail: str) -> None:
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, 0), (frame.shape[1], 56), (8, 12, 16), -1)
@@ -837,6 +1128,8 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
         pred_tracks = archive["pred_tracks_trackres"].astype(np.float32)
         gt_visibility = archive["gt_visibility"].astype(bool)
         pred_visibility = archive["pred_visibility"].astype(bool)
+        object_masks_f04 = archive["object_masks_f04"].astype(bool)
+        object_ids_per_point = archive["object_ids_per_point"].astype(np.int32)
         per_frame_loss = archive["per_frame_trajectory_loss"].astype(np.float32)
         per_frame_huber_raw = archive["per_frame_huber_raw"].astype(np.float32)
         per_frame_ade = archive["per_frame_ade"].astype(np.float32)
@@ -844,25 +1137,22 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
     height, width = source_frames.shape[1:3]
     gt_native = trackres_to_native(gt_tracks, height, width)
     pred_native = trackres_to_native(pred_tracks, height, width)
+    point_colors = OBJECT_COLORS[object_ids_per_point % len(OBJECT_COLORS)]
+    object_count = int(object_masks_f04.shape[0])
     frames = []
     for frame_id in range(source_frames.shape[0]):
         gt_panel = source_frames[frame_id].copy()
         pred_panel = pred_frames[frame_id].copy()
         compare_panel = pred_frames[frame_id].copy()
         if frame_id == int(args.anchor_frame):
-            tint = np.asarray((45, 210, 128), dtype=np.float32)
-            gt_panel[identity_mask] = np.clip(
-                0.60 * gt_panel[identity_mask].astype(np.float32) + 0.40 * tint,
-                0,
-                255,
-            ).astype(np.uint8)
+            gt_panel = overlay_object_masks(gt_panel, object_masks_f04, OBJECT_COLORS)
         draw_track_history(
             gt_panel,
             gt_native,
             gt_visibility,
             frame_id,
             anchor_frame=args.anchor_frame,
-            colors=PALETTE,
+            colors=point_colors,
         )
         draw_track_history(
             pred_panel,
@@ -870,7 +1160,7 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
             pred_visibility,
             frame_id,
             anchor_frame=args.anchor_frame,
-            colors=PALETTE,
+            colors=point_colors,
         )
         draw_track_history(
             compare_panel,
@@ -878,7 +1168,7 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
             gt_visibility,
             frame_id,
             anchor_frame=args.anchor_frame,
-            colors=PALETTE,
+            colors=point_colors,
             ring=True,
         )
         draw_track_history(
@@ -887,7 +1177,7 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
             pred_visibility,
             frame_id,
             anchor_frame=args.anchor_frame,
-            colors=PALETTE,
+            colors=point_colors,
         )
         if frame_id >= int(args.future_start_frame):
             for point_id in range(gt_native.shape[1]):
@@ -911,11 +1201,15 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
                 f"Lclip={metrics['trajectory_loss']:.5f} | "
                 f"raw={raw_value:.2e} | ADE={ade_value:.4f}"
             )
-        add_panel_label(gt_panel, "GT RGB + GT CoTracker", f"F{frame_id:02d} | object points")
+        add_panel_label(
+            gt_panel,
+            "GT RGB + GT CoTracker",
+            f"F{frame_id:02d} | {object_count} objects | {gt_tracks.shape[1]} object points",
+        )
         add_panel_label(
             pred_panel,
             "Tiny-VAE x0_pred + Pred CoTracker",
-            f"F{frame_id:02d} | colored predicted tracks",
+            f"F{frame_id:02d} | {object_count} objects | object-colored tracks",
         )
         add_panel_label(
             compare_panel,

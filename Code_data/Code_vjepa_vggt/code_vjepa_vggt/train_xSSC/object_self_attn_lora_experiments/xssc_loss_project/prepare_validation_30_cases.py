@@ -39,6 +39,13 @@ def sample_key(index: int, metadata: dict) -> str:
     return raw.replace("/", "_").replace(" ", "_")[:180]
 
 
+def stable_case_seed(global_seed: int, source: str, source_index: int) -> int:
+    digest = hashlib.sha256(
+        f"{global_seed}|{source}|{source_index}".encode("utf-8")
+    ).digest()
+    return int(global_seed) + int.from_bytes(digest[:4], "big") % 1_000_000_000
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
@@ -87,6 +94,7 @@ def main() -> None:
         input_paths.append(input_path)
         records.append({
             "case_id": case_id, "source": "pybullet", "source_index": int(index),
+            "case_seed": stable_case_seed(args.seed, "pybullet", int(index)),
             "sample_key": str(metadata.get("sample_key", case_id)),
             "prompt": str(sample["caption"]), "input_json": str(input_path),
             "gt_video": str(gt), "context_video": str(context),
