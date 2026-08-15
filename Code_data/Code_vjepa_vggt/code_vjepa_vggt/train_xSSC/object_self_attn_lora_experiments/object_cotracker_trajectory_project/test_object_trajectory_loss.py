@@ -204,3 +204,25 @@ def test_query_score_replacement_preserves_autograd() -> None:
     assert tracks.grad is not None
     assert visibility_logits.grad is not None
     assert confidence_logits.grad is not None
+
+
+def test_geometric_visibility_uses_corresponding_object_mask() -> None:
+    import numpy as np
+    from run_training_case_diagnostics import tracks_inside_object_masks
+
+    masks = np.zeros((2, 3, 256, 448), dtype=bool)
+    masks[0, :, 20:40, 30:50] = True
+    masks[1, :, 100:120, 200:220] = True
+    tracks = torch.tensor(
+        [[
+            [[40.0, 30.0], [40.0, 30.0], [300.0, 200.0], [205.0, 110.0]],
+            [[40.0, 30.0], [40.0, 30.0], [300.0, 200.0], [205.0, 110.0]],
+            [[40.0, 30.0], [40.0, 30.0], [300.0, 200.0], [205.0, 110.0]],
+        ]]
+    )
+    visible = tracks_inside_object_masks(tracks, masks, points_per_object=2)
+    assert visible.shape == (1, 3, 4)
+    assert bool(visible[:, :, 0].all())
+    assert bool(visible[:, :, 1].all())
+    assert not bool(visible[:, :, 2].any())
+    assert bool(visible[:, :, 3].all())

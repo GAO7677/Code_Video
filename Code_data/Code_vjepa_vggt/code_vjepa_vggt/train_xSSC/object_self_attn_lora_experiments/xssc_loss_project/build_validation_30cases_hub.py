@@ -12,6 +12,7 @@ def main():
     c=read(args.config,{}) ; root=Path(c["output_root"]); manifest=read(Path(c["cases_manifest"]),{"cases":[]}); video=read(root/"video_status.json",{"state":"queued","entries":{}}); loss=read(root/"loss_status.json",{"state":"queued","entries":{}})
     cases=manifest.get("cases",[]); entries=c.get("entries",[])
     site=root/"hub"; media=site/"media"; media.mkdir(parents=True,exist_ok=True)
+    entry_losses={e["entry_id"]:read(root/"losses"/f"{e['entry_id']}.json",{}) for e in entries}
     rows=[]; ready_v=ready_l=0
     for case in cases:
         panels=[]
@@ -19,7 +20,7 @@ def main():
             vroot=root/"videos"/e["entry_id"]
             candidates=list(vroot.glob(f"{case['case_id']}*.mp4"))+list(vroot.glob(f"*/{case['case_id']}*.mp4"))
             v=next(iter(candidates),None)
-            l=read(root/"losses"/f"{e['entry_id']}.json",{})
+            l=entry_losses[e["entry_id"]]
             rec=next((x for x in l.get("cases",[]) if x.get("case_id")==case["case_id"]),None)
             if v and v.is_file():
                 target=media/f"{case['case_id']}__{e['entry_id']}.mp4"
@@ -45,6 +46,46 @@ def main():
         f'{index:02d} · {html.escape(str(case["prompt"]))}</option>'
         for index, case in enumerate(cases, start=1)
     )
+    case_ids=[case["case_id"] for case in cases]
+    ranking=[]
+    for e in entries:
+        records={rec.get("case_id"):rec for rec in entry_losses[e["entry_id"]].get("cases",[])}
+        values=[]
+        for case_id in case_ids:
+            value=records.get(case_id,{}).get("loss_main")
+            if isinstance(value,(int,float)):
+                values.append(float(value))
+        mean_loss=sum(values)/len(values) if values else None
+        ranking.append({"entry":e,"count":len(values),"mean":mean_loss,"complete":bool(case_ids) and len(values)==len(case_ids)})
+    completed=sorted((item for item in ranking if item["complete"]),key=lambda item:(item["mean"],item["entry"]["entry_id"]))
+    incomplete=sorted((item for item in ranking if not item["complete"]),key=lambda item:(-item["count"],item["mean"] if item["mean"] is not None else float("inf"),item["entry"]["entry_id"]))
+    ordered_ranking=completed+incomplete
+    ranks={item["entry"]["entry_id"]:index for index,item in enumerate(completed,start=1)}
+    complete_means=[item["mean"] for item in completed]
+    best_mean=min(complete_means) if complete_means else None
+    worst_mean=max(complete_means) if complete_means else None
+    ranking_rows=[]
+    for item in ordered_ranking:
+        e=item["entry"]; rank=ranks.get(e["entry_id"]); mean_loss=item["mean"]
+        rank_html=f'<span class="rank-number rank-{rank if rank and rank<=3 else "other"}">{rank}</span>' if rank else '<span class="rank-pending">—</span>'
+        mean_html=f'{mean_loss:.8f}' if mean_loss is not None else '—'
+        delta_html=f'+{mean_loss-best_mean:.8f}' if rank and best_mean is not None else '—'
+        coverage_class='coverage-complete' if item["complete"] else 'coverage-pending'
+        coverage=f'<span class="coverage {coverage_class}">{item["count"]}/{len(case_ids)}</span>'
+        if rank and worst_mean is not None and best_mean is not None:
+            span=worst_mean-best_mean
+            bar_width=18.0 if span==0 else 18.0+82.0*(mean_loss-best_mean)/span
+            bar=f'<span class="loss-track" aria-label="mean loss_main {mean_loss:.8f}"><span class="loss-bar" style="width:{bar_width:.2f}%"></span></span>'
+        else:
+            bar='<span class="loss-track loss-track-pending" aria-hidden="true"></span>'
+        method=(f'<span class="method-name"><span class="method-swatch" style="background:{html.escape(str(e.get("color","#8ca0af")),quote=True)}"></span>'
+                f'{html.escape(e["method_label"])}</span><span class="method-meta">{html.escape(e["version"])} · step-{int(e["step"]):04d}</span>')
+        ranking_rows.append(f'<tr><td>{rank_html}</td><td>{method}</td><td>{coverage}</td><td class="metric">{mean_html}</td><td class="metric delta">{delta_html}</td><td>{bar}</td></tr>')
+    ranking_html=(f'<section class="ranking" aria-labelledby="ranking-title"><div class="ranking-heading"><div><h2 id="ranking-title">Val loss 排名</h2>'
+                  f'<p>30 个固定 case 的平均 <code>loss_main</code>，越低越好；仅完成 30/30 的 checkpoint 参与正式排名。</p></div>'
+                  f'<span class="ranking-count">已排名 {len(completed)}/{len(entries)}</span></div><div class="ranking-table-wrap"><table><thead><tr>'
+                  f'<th scope="col">排名</th><th scope="col">方法 / checkpoint</th><th scope="col">case</th><th scope="col">mean loss_main</th><th scope="col">相对最佳</th><th scope="col">loss 刻度（短 = 好）</th>'
+                  f'</tr></thead><tbody>{"".join(ranking_rows)}</tbody></table></div></section>')
     replay_script='''<script>
 (() => {
   const button = document.getElementById('sync-replay');
@@ -140,6 +181,34 @@ h1{font-size:32px}
 .summary,.case,.panel{background:#18232d;border:1px solid #304454;border-radius:12px;padding:14px}
 .summary{position:sticky;top:0;z-index:2}
 .case{margin:18px 0}
+.ranking{margin:18px 0 24px;padding:18px 0;border-top:1px solid #304454;border-bottom:1px solid #304454}
+.ranking-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:0 2px 12px}
+.ranking-heading h2{margin:0 0 4px;font-size:20px}
+.ranking-heading p{margin:0}
+.ranking-count{flex:none;padding:5px 8px;border:1px solid #4e6877;border-radius:4px;color:#c8d8e3;font:700 12px ui-monospace,SFMono-Regular,Consolas,monospace}
+.ranking-table-wrap{overflow-x:auto;border:1px solid #304454;border-radius:6px;background:#131d25}
+table{width:100%;min-width:940px;border-collapse:collapse;font-size:12px}
+th,td{padding:9px 10px;border-bottom:1px solid #263846;text-align:left;vertical-align:middle}
+th{background:#1d2a34;color:#9fb3c2;font-size:11px;text-transform:uppercase}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:#1a2731}
+.rank-number{display:inline-grid;width:25px;height:25px;place-items:center;border:1px solid #496171;border-radius:4px;color:#d9e7ef;font:800 12px ui-monospace,SFMono-Regular,Consolas,monospace}
+.rank-1{border-color:#f2c14e;background:#66501b;color:#fff8df}
+.rank-2{border-color:#b9c6cf;background:#46535d;color:#f6fbff}
+.rank-3{border-color:#c58a5a;background:#5e3f2b;color:#fff3e8}
+.rank-pending{display:inline-block;width:25px;text-align:center;color:#637988}
+.method-name{display:flex;align-items:center;gap:7px;color:#edf4fa;font-weight:700}
+.method-swatch{display:inline-block;width:9px;height:9px;flex:none;border-radius:2px}
+.method-meta{display:block;margin:3px 0 0 16px;color:#7f96a5;font:11px ui-monospace,SFMono-Regular,Consolas,monospace}
+.coverage{display:inline-block;min-width:44px;padding:3px 5px;border-radius:3px;text-align:center;font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace}
+.coverage-complete{background:#173c37;color:#74d4c4}
+.coverage-pending{background:#3a3020;color:#e8bd6d}
+.metric{color:#e5eef4;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;font-variant-numeric:tabular-nums}
+.delta{color:#91a6b5}
+.loss-track{display:block;width:100%;min-width:120px;height:8px;overflow:hidden;border-radius:2px;background:#263846}
+.loss-bar{display:block;height:100%;background:#58b6a9}
+.loss-track-pending{background:repeating-linear-gradient(90deg,#263846 0,#263846 6px,#1a2731 6px,#1a2731 10px)}
+code{color:#d4e3ec;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}
 .grid{display:grid;grid-template-columns:repeat(6,minmax(200px,1fr));gap:8px}
 .panel{padding:8px}
 h3{font-size:12px;min-height:34px;margin:0 0 6px}
@@ -155,9 +224,9 @@ p{color:#a9bac8;font-size:12px}
 .sync-replay:focus-visible{outline:3px solid #f2c14e;outline-offset:3px}
 .sync-replay:disabled{cursor:wait;opacity:.72}
 @media(max-width:1200px){.grid{grid-template-columns:repeat(3,minmax(200px,1fr))}}
-@media(max-width:700px){main{padding:12px}.grid{grid-template-columns:1fr}.case-picker{align-items:stretch;flex-direction:column;gap:6px}.case-picker select{width:100%;min-width:0}.sync-replay{right:12px;bottom:max(12px,env(safe-area-inset-bottom))}}
+@media(max-width:700px){main{padding:12px}.grid{grid-template-columns:1fr}.ranking-heading{align-items:stretch;flex-direction:column}.ranking-count{align-self:flex-start}.case-picker{align-items:stretch;flex-direction:column;gap:6px}.case-picker select{width:100%;min-width:0}.sync-replay{right:12px;bottom:max(12px,env(safe-area-inset-bottom))}}
 </style>"""
-    page=f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{refresh}<title>30-case validation · method comparison</title>{style}</head><body><button id="sync-replay" class="sync-replay" type="button" title="同步重播当前 case 的所有对比视频" aria-live="polite">同步重播</button><main><div class="summary"><h1>30-case train validation · {len(entries)} checkpoints</h1><p>{html.escape(c.get('title',''))}</p><p><b>{status}</b> · 固定 seed {manifest.get('seed')} · PyBullet train · 49f · context 8f · 40 steps</p><div class="case-picker"><label for="case-select">选择 case</label><select id="case-select" aria-label="选择要查看的 case">{case_options}</select></div><p><a href="../">返回项目 Hub</a> · <a href="../project-info/">项目说明</a></p></div>{''.join(rows)}</main>{replay_script}</body></html>'''
+    page=f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{refresh}<title>30-case validation · method comparison</title>{style}</head><body><button id="sync-replay" class="sync-replay" type="button" title="同步重播当前 case 的所有对比视频" aria-live="polite">同步重播</button><main><div class="summary"><h1>30-case train validation · {len(entries)} checkpoints</h1><p>{html.escape(c.get('title',''))}</p><p><b>{status}</b> · 固定 seed {manifest.get('seed')} · PyBullet train · 49f · context 8f · 40 steps</p><div class="case-picker"><label for="case-select">选择 case</label><select id="case-select" aria-label="选择要查看的 case">{case_options}</select></div><p><a href="../">返回项目 Hub</a> · <a href="../project-info/">项目说明</a></p></div>{ranking_html}{''.join(rows)}</main>{replay_script}</body></html>'''
     (site/"index.html").write_text(page,encoding="utf-8")
     print(site)
 

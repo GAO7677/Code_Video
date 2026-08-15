@@ -121,6 +121,12 @@ class _Accelerator:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("forward", "tracks", "render", "all"))
+    parser.add_argument(
+        "--manifest-override",
+        type=Path,
+        default=None,
+        help="Use a small manifest with staged pred_x0/GT paths for a noise run.",
+    )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--source-cache", type=Path, default=DEFAULT_SOURCE_CACHE)
     parser.add_argument("--source-output", type=Path, default=DEFAULT_SOURCE_OUTPUT)
@@ -190,6 +196,8 @@ def atomic_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def load_manifest(args: argparse.Namespace) -> dict[str, Any]:
+    if args.manifest_override is not None:
+        return json.loads(args.manifest_override.read_text(encoding="utf-8"))
     return json.loads(
         (args.source_cache.resolve() / "manifest.json").read_text(encoding="utf-8")
     )
@@ -647,6 +655,122 @@ def load_object_specs(
     return phrases, f04_masks
 
 
+def load_object_masks_over_time(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    identity_mask: np.ndarray,
+) -> np.ndarray:
+    """Load per-frame masks used to determine physical GT point visibility."""
+    if args.multiobject_cache is None:
+        # The single-object cache only contains an F04 mask; do not incorrectly
+        # reuse it after motion. In that mode, rely on in-bounds coordinates and
+        # confidence weighting until a temporal mask cache is available.
+        return np.ones((1, 49, 512, 896), dtype=bool)
+    case_cache = args.multiobject_cache / "cases" / case["case_key"]
+    with np.load(case_cache / "object_masks.npz") as archive:
+        masks = archive["masks_othw"].astype(bool)
+    if masks.shape != (masks.shape[0], 49, 512, 896):
+        raise RuntimeError(
+            f"unexpected object mask shape for {case['case_key']}: {masks.shape}"
+        )
+    return masks
+
+
+def tracks_inside_object_masks(
+    tracks: torch.Tensor,
+    object_masks: np.ndarray,
+    *,
+    points_per_object: int,
+) -> torch.Tensor:
+    """Sample the corresponding per-frame object mask at each GT track point."""
+    object_count, frames, mask_height, mask_width = object_masks.shape
+    expected_points = object_count * int(points_per_object)
+    if tracks.shape[1] != frames or tracks.shape[2] != expected_points:
+        raise ValueError(
+            f"track/mask shape mismatch: tracks={tuple(tracks.shape)} "
+            f"masks={object_masks.shape} points={points_per_object}"
+        )
+    xy = tracks.detach().float().clone()
+    xy[..., 0] *= float(mask_width - 1) / float(TRACK_WIDTH - 1)
+    xy[..., 1] *= float(mask_height - 1) / float(TRACK_HEIGHT - 1)
+    x = xy[..., 0].round().long()
+    y = xy[..., 1].round().long()
+    in_bounds = (x >= 0) & (x < mask_width) & (y >= 0) & (y < mask_height)
+    mask_tensor = torch.from_numpy(object_masks).to(device=tracks.device)
+    result = torch.zeros(
+        (tracks.shape[0], frames, expected_points),
+        dtype=torch.bool,
+        device=tracks.device,
+    )
+    for object_index in range(object_count):
+        start = object_index * int(points_per_object)
+        stop = start + int(points_per_object)
+        x_object = x[:, :, start:stop].clamp(0, mask_width - 1)
+        y_object = y[:, :, start:stop].clamp(0, mask_height - 1)
+        frame_mask = mask_tensor[object_index]
+        batch_index = torch.arange(tracks.shape[0], device=tracks.device)[:, None, None]
+        frame_index = torch.arange(frames, device=tracks.device)[None, :, None]
+        sampled = frame_mask[batch_index, frame_index, y_object, x_object]
+        result[:, :, start:stop] = sampled & in_bounds[:, :, start:stop]
+    return result
+
+
+def load_object_masks_over_time(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    identity_mask: np.ndarray,
+) -> np.ndarray:
+    """Load per-frame object masks used for physical GT visibility."""
+    if args.multiobject_cache is None:
+        return np.repeat(identity_mask[None, None].astype(bool), 49, axis=1)
+    case_cache = args.multiobject_cache / "cases" / case["case_key"]
+    with np.load(case_cache / "object_masks.npz") as archive:
+        masks = archive["masks_othw"].astype(bool)
+    if masks.ndim != 4 or masks.shape[1:] != (49, 512, 896):
+        raise RuntimeError(f"unexpected object mask shape for {case['case_key']}: {masks.shape}")
+    return masks
+
+
+def tracks_inside_object_masks(
+    tracks: torch.Tensor,
+    object_masks: np.ndarray,
+    *,
+    points_per_object: int,
+) -> torch.Tensor:
+    """Return a [B,T,N] physical visibility mask from per-frame object masks."""
+    if object_masks.ndim != 4:
+        raise ValueError(f"expected O,T,H,W object masks, got {object_masks.shape}")
+    object_count, frames, mask_height, mask_width = object_masks.shape
+    if tracks.shape[1] != frames or tracks.shape[2] != object_count * int(points_per_object):
+        raise ValueError(
+            "track/mask shape mismatch: "
+            f"tracks={tuple(tracks.shape)} masks={object_masks.shape} points={points_per_object}"
+        )
+    xy = tracks.detach().float().clone()
+    xy[..., 0] *= float(mask_width - 1) / float(TRACK_WIDTH - 1)
+    xy[..., 1] *= float(mask_height - 1) / float(TRACK_HEIGHT - 1)
+    x = xy[..., 0].round().long()
+    y = xy[..., 1].round().long()
+    in_bounds = (x >= 0) & (x < mask_width) & (y >= 0) & (y < mask_height)
+    result = torch.zeros(
+        (tracks.shape[0], frames, tracks.shape[2]),
+        dtype=torch.bool,
+        device=tracks.device,
+    )
+    mask_tensor = torch.from_numpy(object_masks).to(device=tracks.device)
+    for object_index in range(object_count):
+        start = object_index * int(points_per_object)
+        stop = start + int(points_per_object)
+        x_object = x[:, :, start:stop].clamp(0, mask_width - 1)
+        y_object = y[:, :, start:stop].clamp(0, mask_height - 1)
+        frame_mask = mask_tensor[object_index]
+        batch_index = torch.arange(tracks.shape[0], device=tracks.device)[:, None, None]
+        frame_index = torch.arange(frames, device=tracks.device)[None, :, None]
+        sampled = frame_mask[frame_index, y_object, x_object]
+        result[:, :, start:stop] = sampled & in_bounds[:, :, start:stop]
+    return result
+
+
 def aggregate_object_trajectory_losses(
     pred_tracks: torch.Tensor,
     gt_tracks: torch.Tensor,
@@ -790,6 +914,7 @@ def aggregate_visibility_aware_object_losses(
     gt_visibility_probability: torch.Tensor,
     gt_confidence_probability: torch.Tensor,
     pred_visibility_probability: torch.Tensor,
+    gt_geometric_visibility: torch.Tensor,
     *,
     object_count: int,
     points_per_object: int,
@@ -819,6 +944,7 @@ def aggregate_visibility_aware_object_losses(
             huber_delta=huber_delta,
             visibility_threshold=visibility_threshold,
             visibility_loss_weight=visibility_loss_weight,
+            gt_geometric_visibility=gt_geometric_visibility[:, :, start:stop],
         )
         totals.append(total)
         rows.append({"object_index": object_index, **diagnostics})
@@ -871,6 +997,7 @@ def tracker_input_gradient_audit(
     gt_tracks: torch.Tensor,
     gt_visibility_probability: torch.Tensor,
     gt_confidence_probability: torch.Tensor,
+    gt_geometric_visibility: torch.Tensor,
     object_count: int,
     points_per_object: int,
     args: argparse.Namespace,
@@ -904,6 +1031,7 @@ def tracker_input_gradient_audit(
         gt_visibility_probability,
         gt_confidence_probability,
         pred_visibility_probability,
+        gt_geometric_visibility,
         object_count=object_count,
         points_per_object=points_per_object,
         height=TRACK_HEIGHT,
@@ -971,6 +1099,11 @@ def run_tracks(args: argparse.Namespace) -> None:
                 case,
                 identity_mask,
             )
+            object_masks_over_time = load_object_masks_over_time(
+                args,
+                case,
+                identity_mask,
+            )
             points_on2 = np.stack(
                 [
                     sample_points_from_mask(
@@ -1018,6 +1151,11 @@ def run_tracks(args: argparse.Namespace) -> None:
             gt_visibility = (
                 gt_visibility_probability > float(args.visibility_threshold)
             )
+            gt_geometric_visibility = tracks_inside_object_masks(
+                gt_tracks,
+                object_masks_over_time,
+                points_per_object=int(args.num_points),
+            )
             pred_visibility = (
                 pred_visibility_probability > float(args.visibility_threshold)
             )
@@ -1047,6 +1185,7 @@ def run_tracks(args: argparse.Namespace) -> None:
                 gt_visibility_probability,
                 gt_confidence_probability,
                 pred_visibility_probability,
+                gt_geometric_visibility,
                 object_count=object_count,
                 points_per_object=int(args.num_points),
                 height=TRACK_HEIGHT,
@@ -1068,13 +1207,15 @@ def run_tracks(args: argparse.Namespace) -> None:
                     gt_tracks.detach(),
                     gt_visibility_probability.detach(),
                     gt_confidence_probability.detach(),
+                    gt_geometric_visibility.detach(),
                     object_count,
                     int(args.num_points),
                     args,
                 )
                 gradient_audited = True
 
-            valid = visible_diagnostics["valid_future"]
+            # New coordinate/visibility-aware terms use physical mask visibility.
+            valid = visibility_aware_diagnostics["valid_future"]
             gt_norm = gt_tracks.float() / gt_tracks.new_tensor(
                 (TRACK_WIDTH - 1, TRACK_HEIGHT - 1)
             )
@@ -1146,6 +1287,9 @@ def run_tracks(args: argparse.Namespace) -> None:
                             row["normalized_gt_motion"].item()
                         ),
                         "gt_visible_fraction": float(
+                            visibility_row["valid_fraction"].item()
+                        ),
+                        "gt_cotracker_visible_fraction": float(
                             row["gt_visible_fraction"].item()
                         ),
                         "pred_visible_fraction": float(
@@ -1158,7 +1302,7 @@ def run_tracks(args: argparse.Namespace) -> None:
                             row["all_future_point_frames"].item()
                         ),
                         "gt_visible_future_point_frames": int(
-                            row["gt_visible_future_point_frames"].item()
+                            visibility_row["valid_count"].item()
                         ),
                     }
                 )
@@ -1184,18 +1328,19 @@ def run_tracks(args: argparse.Namespace) -> None:
                 "trajectory_definition": "normalized displacement relative to F04",
                 "old_loss_definition": "all future point frames, no visibility gating",
                 "new_loss_definition": (
-                    "GT visibility > threshold x GT confidence coordinate weighting "
+                    "GT point inside per-frame object mask x GT confidence coordinate weighting "
                     "+ weighted prediction visibility preservation"
                 ),
-                "new_coordinate_validity": (
-                    "GT raw visibility/confidence only; predicted visibility never "
-                    "masks coordinate loss"
-                ),
+                "new_coordinate_validity": "GT track coordinate inside per-frame object mask",
                 "loss_primary_validity": (
-                    "GT visibility > threshold x GT confidence; predicted visibility "
-                    "is a separate preservation penalty"
+                    "GT point inside per-frame object mask x GT CoTracker confidence; "
+                    "predicted visibility is a separate preservation penalty"
                 ),
-                "loss_audit_validity": "GT CoTracker visibility > 0.9",
+                "loss_audit_validity": "diagnostic only: GT CoTracker visibility > 0.9",
+                "gt_geometric_visibility_definition": (
+                    "rounded GT CoTracker point sampled in its corresponding "
+                    "per-frame SAM2 object mask"
+                ),
                 "trajectory_loss_type": "smooth_l1",
                 "trajectory_loss_beta": float(args.huber_delta),
                 "visibility_threshold": float(args.visibility_threshold),
@@ -1261,6 +1406,9 @@ def run_tracks(args: argparse.Namespace) -> None:
                     diagnostics["normalized_gt_motion"].item()
                 ),
                 "gt_visible_fraction": float(
+                    visibility_aware_diagnostics["valid_fraction"].item()
+                ),
+                "gt_cotracker_visible_fraction": float(
                     visible_diagnostics["valid_fraction"].item()
                 ),
                 "pred_visible_on_gt_valid_fraction": float(
@@ -1295,11 +1443,16 @@ def run_tracks(args: argparse.Namespace) -> None:
                     np.arange(object_count, dtype=np.int32), int(args.num_points)
                 ),
                 object_masks_f04=object_masks_f04.astype(np.uint8),
+                object_masks_over_time=object_masks_over_time.astype(np.uint8),
                 object_phrases=np.asarray(object_phrases),
                 identity_mask=identity_mask.astype(np.uint8),
                 gt_tracks_trackres=gt_tracks[0].float().cpu().numpy(),
                 pred_tracks_trackres=pred_tracks[0].float().cpu().numpy(),
                 gt_visibility=gt_visibility[0].cpu().numpy().astype(np.uint8),
+                gt_geometric_visibility=gt_geometric_visibility[0]
+                .cpu()
+                .numpy()
+                .astype(np.uint8),
                 pred_visibility=pred_visibility[0].cpu().numpy().astype(np.uint8),
                 gt_visibility_probability=gt_visibility_probability[0]
                 .float()
@@ -1356,6 +1509,7 @@ def run_tracks(args: argparse.Namespace) -> None:
                 source_frames,
                 pred_frames,
                 identity_mask,
+                object_masks_over_time,
                 gt_video,
                 pred_video,
                 queries,
@@ -1363,6 +1517,7 @@ def run_tracks(args: argparse.Namespace) -> None:
                 gt_tracks,
                 pred_tracks,
                 gt_visibility,
+                gt_geometric_visibility,
                 pred_visibility,
                 gt_visibility_probability,
                 gt_confidence_probability,
@@ -1490,6 +1645,7 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
         gt_tracks = archive["gt_tracks_trackres"].astype(np.float32)
         pred_tracks = archive["pred_tracks_trackres"].astype(np.float32)
         gt_visibility = archive["gt_visibility"].astype(bool)
+        gt_geometric_visibility = archive["gt_geometric_visibility"].astype(bool)
         pred_visibility = archive["pred_visibility"].astype(bool)
         gt_visibility_probability = archive[
             "gt_visibility_probability"
@@ -1528,7 +1684,7 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
         draw_track_history(
             gt_panel,
             gt_native,
-            gt_visibility,
+            gt_geometric_visibility,
             frame_id,
             anchor_frame=args.anchor_frame,
             colors=point_colors,
@@ -1544,7 +1700,7 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
         draw_track_history(
             compare_panel,
             gt_native,
-            gt_visibility,
+            gt_geometric_visibility,
             frame_id,
             anchor_frame=args.anchor_frame,
             colors=point_colors,
@@ -1560,7 +1716,7 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
         )
         if frame_id >= int(args.future_start_frame):
             for point_id in range(gt_native.shape[1]):
-                if not bool(gt_visibility[frame_id, point_id]):
+                if not bool(gt_geometric_visibility[frame_id, point_id]):
                     continue
                 start = tuple(np.rint(gt_native[frame_id, point_id]).astype(int))
                 stop = tuple(np.rint(pred_native[frame_id, point_id]).astype(int))
@@ -1584,13 +1740,15 @@ def render_case(args: argparse.Namespace, case: dict[str, Any]) -> None:
                 f"{args.visibility_loss_weight:g}*vis="
                 f"{weighted_visibility_value:.5f} | new={new_total_value:.5f}"
             )
-        gt_reliable = int(
+        gt_reliable = int(gt_geometric_visibility[frame_id].sum())
+        gt_tracker_reliable = int(
             (gt_visibility_probability[frame_id] > args.visibility_threshold).sum()
         )
         add_panel_label(
             gt_panel,
-            "GT RGB + reliability-gated CoTracker",
-            f"F{frame_id:02d} | reliable {gt_reliable}/{gt_tracks.shape[1]} | "
+            "GT RGB + mask-visible CoTracker tracks",
+            f"F{frame_id:02d} | mask-visible {gt_reliable}/{gt_tracks.shape[1]} | "
+            f"CoTracker>0.9 {gt_tracker_reliable}/{gt_tracks.shape[1]} | "
             f"mean vis={gt_visibility_probability[frame_id].mean():.2f} | "
             f"conf={gt_confidence_probability[frame_id].mean():.2f}",
         )
@@ -1664,7 +1822,8 @@ def render_report(args: argparse.Namespace) -> Path:
             f"<span><b>{item['weighted_visibility_preservation_loss']:.6f}</b>"
             f"{args.visibility_loss_weight:g} × visibility</span>"
             f"<span><b>{item['visibility_aware_total_loss']:.6f}</b>new total</span>"
-            f"<span><b>{item['gt_visible_fraction']:.1%}</b>GT visible</span>"
+            f"<span><b>{item['gt_visible_fraction']:.1%}</b>mask-visible</span>"
+            f"<span><b>{item['gt_cotracker_visible_fraction']:.1%}</b>CoTracker &gt;0.9</span>"
             f"<span><b>{item['gt_reliable_weight_fraction']:.1%}</b>GT weighted coverage</span>"
             f"<span><b>{item['mean_pred_visibility_probability']:.1%}</b>pred visibility</span>"
             f"</div></article>"
@@ -1682,7 +1841,8 @@ def render_report(args: argparse.Namespace) -> Path:
     <span><b>{metrics['visibility_aware_coordinate_loss']:.6f}</b>GT-weighted coordinate</span>
     <span><b>{metrics['weighted_visibility_preservation_loss']:.6f}</b>{args.visibility_loss_weight:g} × pred visibility</span>
     <span><b>{metrics['visibility_aware_total_loss']:.6f}</b>new total</span>
-    <span><b>{metrics['gt_visible_fraction']:.1%}</b>GT visible</span>
+    <span><b>{metrics['gt_visible_fraction']:.1%}</b>mask-visible</span>
+    <span><b>{metrics['gt_cotracker_visible_fraction']:.1%}</b>CoTracker &gt;0.9</span>
     <span><b>{metrics['gt_reliable_weight_fraction']:.1%}</b>GT weighted coverage</span>
     <span><b>{metrics['mean_pred_visibility_probability']:.1%}</b>pred visibility probability</span>
     <span><b>{metrics['normalized_ade_gt_visible']:.4f}</b>GT-visible ADE</span>
@@ -1736,7 +1896,7 @@ main{{max-width:1500px;margin:auto;padding:22px 28px 80px}}.case{{padding:25px 0
 video,img{{display:block;width:100%;background:#050708}}.case>video{{border:1px solid #29383f;aspect-ratio:21/4;object-fit:contain}}.media-row{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px}}figure{{margin:0;background:var(--paper);border:1px solid var(--line)}}figure video,figure img{{aspect-ratio:16/9;object-fit:contain}}figcaption{{padding:8px 10px;color:var(--muted)}}.links{{display:flex;gap:16px;margin-top:10px}}a{{color:var(--blue);font-weight:700}}
 #replay{{position:fixed;right:22px;bottom:20px;border:1px solid #0e4d3d;background:var(--green);color:white;padding:11px 17px;font-weight:750;cursor:pointer}}
 @media(max-width:1100px){{.comparison-metrics{{grid-template-columns:repeat(4,1fr)}}}}@media(max-width:900px){{.mast{{grid-template-columns:1fr}}.summary{{display:grid;grid-template-columns:repeat(2,1fr)}}.metrics{{grid-template-columns:repeat(2,1fr)}}.metrics span{{border-bottom:1px solid var(--line)}}.media-row{{grid-template-columns:1fr}}.case-head{{display:block}}.loss-pair{{text-align:left;margin-top:12px}}.loss-pair>div{{min-width:0;flex:1}}.case>video{{aspect-ratio:16/9}}.object-metrics{{grid-template-columns:repeat(2,1fr)}}}}
-</style></head><body><header><div class="mast"><div><h1>Visibility-aware Object Trajectory Loss</h1><p>PyBullet 100% · high-noise x_t t={args.training_timestep:g} · F04 object queries n={args.num_points}/object · F08–F48 displacement · GT visibility &gt; {args.visibility_threshold:g} × confidence · Lnew = Lcoord + {args.visibility_loss_weight:g} Lvis · equal-object mean</p></div><div class="summary"><div><small>MEAN OLD</small><strong>{mean_loss:.6f}</strong></div><div><small>MEAN NEW COORD</small><strong>{mean_new_coordinate:.6f}</strong></div><div><small>MEAN {args.visibility_loss_weight:g} × VIS</small><strong>{mean_visibility_penalty:.6f}</strong></div><div><small>MEAN NEW TOTAL</small><strong>{mean_new_total:.6f}</strong></div></div></div></header><main>{''.join(rows)}</main><button id="replay">Replay all</button><script>
+</style></head><body><header><div class="mast"><div><h1>Visibility-aware Object Trajectory Loss</h1><p>PyBullet 100% · high-noise x_t t={args.training_timestep:g} · F04 object queries n={args.num_points}/object · F08–F48 displacement · per-frame object-mask visibility × GT confidence · CoTracker visibility is diagnostic · Lnew = Lcoord + {args.visibility_loss_weight:g} Lvis · equal-object mean</p></div><div class="summary"><div><small>MEAN OLD</small><strong>{mean_loss:.6f}</strong></div><div><small>MEAN NEW COORD</small><strong>{mean_new_coordinate:.6f}</strong></div><div><small>MEAN {args.visibility_loss_weight:g} × VIS</small><strong>{mean_visibility_penalty:.6f}</strong></div><div><small>MEAN NEW TOTAL</small><strong>{mean_new_total:.6f}</strong></div></div></div></header><main>{''.join(rows)}</main><button id="replay">Replay all</button><script>
 document.getElementById('replay').onclick=()=>document.querySelectorAll('video').forEach(v=>{{v.currentTime=0;v.play().catch(()=>{{}})}});
 </script></body></html>"""
     args.output_root.mkdir(parents=True, exist_ok=True)

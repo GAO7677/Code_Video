@@ -124,8 +124,15 @@ def visibility_aware_trajectory_loss(
     huber_delta: float,
     visibility_threshold: float,
     visibility_loss_weight: float,
+    gt_geometric_visibility: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """Weight coordinate targets by frozen GT reliability, never predicted visibility."""
+    """Use geometric GT visibility, with CoTracker confidence as a soft weight.
+
+    ``gt_geometric_visibility`` is derived from the object mask at each frame.
+    The CoTracker visibility score is retained as a diagnostic rather than being
+    treated as physical object occlusion.  For backwards compatibility, callers
+    that omit the geometric mask fall back to the historical score threshold.
+    """
     if pred_tracks.shape != gt_tracks.shape:
         raise ValueError(
             f"pred/GT track shape mismatch: {pred_tracks.shape}/{gt_tracks.shape}"
@@ -140,6 +147,11 @@ def visibility_aware_trajectory_loss(
             raise ValueError(
                 f"{name} shape mismatch: expected {expected_scores}, got {value.shape}"
             )
+    if gt_geometric_visibility is not None and gt_geometric_visibility.shape != expected_scores:
+        raise ValueError(
+            "gt_geometric_visibility shape mismatch: "
+            f"expected {expected_scores}, got {gt_geometric_visibility.shape}"
+        )
     if not 0.0 < float(visibility_threshold) < 1.0:
         raise ValueError("visibility_threshold must be in (0, 1)")
     if float(visibility_loss_weight) < 0.0:
@@ -165,7 +177,10 @@ def visibility_aware_trajectory_loss(
         reduction="none",
     )
     per_point_coordinate = per_coordinate.mean(dim=-1)
-    gt_visible = gt_visibility_probability[:, start:] > float(visibility_threshold)
+    if gt_geometric_visibility is None:
+        gt_visible = gt_visibility_probability[:, start:] > float(visibility_threshold)
+    else:
+        gt_visible = gt_geometric_visibility.detach().bool()[:, start:]
     weights = (
         gt_visible.float()
         * gt_confidence_probability[:, start:].clamp(0.0, 1.0)

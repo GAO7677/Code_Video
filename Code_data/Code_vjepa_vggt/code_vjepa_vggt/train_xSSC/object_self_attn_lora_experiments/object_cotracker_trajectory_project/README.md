@@ -14,13 +14,15 @@ the predicted video. The report keeps the old all-point objective and compares
 it with the visibility-aware objective:
 
 ```text
-w_gt = 1(gt_visibility > 0.9) * gt_confidence
+w_gt = 1(gt_track_xy in per-frame object mask) * gt_confidence
 L_coord = weighted SmoothL1(predicted displacement, GT displacement; w_gt)
 L_vis = weighted -log(pred_visibility)
 L_new = L_coord + 0.05 * L_vis
 ```
 
-GT visibility and confidence are detached reliability targets. Predicted
+The per-frame object mask is the physical GT visibility gate; CoTracker
+confidence is only a detached soft reliability weight. CoTracker visibility is
+reported as a point-identity diagnostic, not as object occlusion. Predicted
 visibility never masks coordinate supervision, so hiding an object cannot evade
 the coordinate term; it is penalized separately by `L_vis`. For multiple
 objects, point/time means are computed within each object and then averaged
