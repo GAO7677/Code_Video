@@ -230,6 +230,85 @@ def visibility_aware_trajectory_loss(
     return total, diagnostics
 
 
+def object_equal_visibility_aware_trajectory_loss(
+    pred_tracks: torch.Tensor,
+    gt_tracks: torch.Tensor,
+    gt_visibility_probability: torch.Tensor,
+    gt_confidence_probability: torch.Tensor,
+    pred_visibility_probability: torch.Tensor,
+    gt_geometric_visibility: torch.Tensor,
+    *,
+    object_count: int,
+    points_per_object: int,
+    height: int,
+    width: int,
+    anchor_frame: int,
+    future_start_frame: int,
+    huber_delta: float,
+    visibility_threshold: float,
+    visibility_loss_weight: float,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Average point/time losses per object, then weight objects equally."""
+    expected_points = int(object_count) * int(points_per_object)
+    if int(object_count) <= 0 or int(points_per_object) <= 0:
+        raise ValueError("object_count and points_per_object must be positive")
+    if int(pred_tracks.shape[2]) != expected_points:
+        raise ValueError(
+            "track query count does not match object grouping: "
+            f"{pred_tracks.shape[2]} vs {object_count}x{points_per_object}"
+        )
+
+    rows = []
+    for object_index in range(int(object_count)):
+        start = object_index * int(points_per_object)
+        stop = start + int(points_per_object)
+        total, diagnostics = visibility_aware_trajectory_loss(
+            pred_tracks[:, :, start:stop],
+            gt_tracks[:, :, start:stop],
+            gt_visibility_probability[:, :, start:stop],
+            gt_confidence_probability[:, :, start:stop],
+            pred_visibility_probability[:, :, start:stop],
+            height=height,
+            width=width,
+            anchor_frame=anchor_frame,
+            future_start_frame=future_start_frame,
+            huber_delta=huber_delta,
+            visibility_threshold=visibility_threshold,
+            visibility_loss_weight=visibility_loss_weight,
+            gt_geometric_visibility=gt_geometric_visibility[:, :, start:stop],
+        )
+        rows.append({"total": total, **diagnostics})
+
+    def object_mean(name: str) -> torch.Tensor:
+        return torch.stack([row[name] for row in rows]).mean()
+
+    aggregate = {
+        "coordinate_loss": object_mean("coordinate_loss"),
+        "visibility_loss": object_mean("visibility_loss"),
+        "total_loss": object_mean("total_loss"),
+        "raw_huber": object_mean("raw_huber"),
+        "normalized_ade": object_mean("normalized_ade"),
+        "normalized_rmse": object_mean("normalized_rmse"),
+        "normalized_gt_motion": object_mean("normalized_gt_motion"),
+        "valid_fraction": object_mean("valid_fraction"),
+        "effective_weight_fraction": object_mean("effective_weight_fraction"),
+        "mean_gt_visibility_probability": object_mean(
+            "mean_gt_visibility_probability"
+        ),
+        "mean_gt_confidence_probability": object_mean(
+            "mean_gt_confidence_probability"
+        ),
+        "mean_pred_visibility_probability": object_mean(
+            "mean_pred_visibility_probability"
+        ),
+        "valid_count": torch.stack([row["valid_count"] for row in rows]).sum(),
+        "effective_weight_sum": torch.stack(
+            [row["effective_weight_sum"] for row in rows]
+        ).sum(),
+    }
+    return torch.stack([row["total"] for row in rows]).mean(), aggregate
+
+
 def _masked_frame_mean(values: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
     numerator = (values * valid).sum(dim=-1)
     denominator = valid.sum(dim=-1).clamp_min(1)

@@ -1609,6 +1609,7 @@ def main(
     *,
     build_parser_fn=build_parser,
     build_model_fn=build_model,
+    build_dataset_fn=base.build_dataset,
     log_stage_summary_fn=_log_stage_summary,
     require_pretrained_lora: bool = True,
 ) -> None:
@@ -1650,7 +1651,7 @@ def main(
     set_seed(int(args.experiment_seed), device_specific=True)
     tvn.init_trackers(accelerator, args)
 
-    dataset = base.build_dataset(args)
+    dataset = build_dataset_fn(args)
     raw_train_dataset = dataset
     if int(args.train_batch_size) > 1:
         dataset = base.GroupedBatchDataset(dataset, args.train_batch_size)

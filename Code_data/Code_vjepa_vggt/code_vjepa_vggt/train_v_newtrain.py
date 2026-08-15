@@ -352,6 +352,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         train_object_adapter=True,
         train_object_dit_branch=True,
         freeze_non_object_trainables=False,
+        load_tokenizer=True,
     ):
         super().__init__()
         if not use_gradient_checkpointing:
@@ -367,14 +368,16 @@ class WanTrainingModule(DiffusionTrainingModule):
             offload_models=offload_models,
             device=device,
         )
-        tokenizer_config = (
-            ModelConfig(
-                model_id="Wan-AI/Wan2.1-T2V-1.3B",
-                origin_file_pattern="google/umt5-xxl/",
+        tokenizer_config = None
+        if load_tokenizer:
+            tokenizer_config = (
+                ModelConfig(
+                    model_id="Wan-AI/Wan2.1-T2V-1.3B",
+                    origin_file_pattern="google/umt5-xxl/",
+                )
+                if tokenizer_path is None
+                else ModelConfig(tokenizer_path)
             )
-            if tokenizer_path is None
-            else ModelConfig(tokenizer_path)
-        )
         audio_processor_config = self.parse_path_or_model_id(audio_processor_path)
         self.pipe = ContextAwareWanVideoPipeline.from_pretrained(
             torch_dtype=torch.bfloat16,

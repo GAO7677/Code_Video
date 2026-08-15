@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from object_trajectory_loss import (
+    object_equal_visibility_aware_trajectory_loss,
     object_trajectory_loss,
     visibility_aware_trajectory_loss,
 )
@@ -175,6 +176,62 @@ def test_prediction_visibility_penalizes_without_masking_coordinate_loss() -> No
     assert pred.grad is not None and float(pred.grad.abs().sum()) > 0.0
     assert pred_visibility.grad is not None
     assert float(pred_visibility.grad.abs().sum()) > 0.0
+
+
+def test_visibility_aware_multiobject_loss_is_object_equal() -> None:
+    pred = torch.zeros((1, 3, 4, 2), requires_grad=True)
+    gt = torch.zeros_like(pred)
+    gt[:, 2, 2:, 0] = 2.0
+    scores = torch.ones((1, 3, 4))
+    total, diagnostics = object_equal_visibility_aware_trajectory_loss(
+        pred,
+        gt,
+        scores,
+        scores,
+        scores * 0.95,
+        scores.bool(),
+        object_count=2,
+        points_per_object=2,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=0.01,
+        visibility_threshold=0.9,
+        visibility_loss_weight=0.0,
+    )
+    object_one, _ = visibility_aware_trajectory_loss(
+        pred[:, :, :2],
+        gt[:, :, :2],
+        scores[:, :, :2],
+        scores[:, :, :2],
+        scores[:, :, :2] * 0.95,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=0.01,
+        visibility_threshold=0.9,
+        visibility_loss_weight=0.0,
+        gt_geometric_visibility=scores[:, :, :2].bool(),
+    )
+    object_two, _ = visibility_aware_trajectory_loss(
+        pred[:, :, 2:],
+        gt[:, :, 2:],
+        scores[:, :, 2:],
+        scores[:, :, 2:],
+        scores[:, :, 2:] * 0.95,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=0.01,
+        visibility_threshold=0.9,
+        visibility_loss_weight=0.0,
+        gt_geometric_visibility=scores[:, :, 2:].bool(),
+    )
+    torch.testing.assert_close(total, (object_one + object_two) / 2)
+    torch.testing.assert_close(total, diagnostics["coordinate_loss"])
 
 
 def test_query_score_replacement_preserves_autograd() -> None:

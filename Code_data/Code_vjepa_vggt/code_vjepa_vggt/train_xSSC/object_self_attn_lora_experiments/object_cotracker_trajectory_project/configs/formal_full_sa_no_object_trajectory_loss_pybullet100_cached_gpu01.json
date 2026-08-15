@@ -1,0 +1,44 @@
+{
+  "extends": "../../xssc_loss_project/configs/resume_full_sa_no_object_xssc_loss_pybullet100_cached_step1000_gpu01.json",
+  "experiment": {
+    "name": "full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached",
+    "description": "Step-0 Full-SA no-object training initialized from OpenVid LoRA step 10000 with frozen CoTracker object-trajectory loss and precomputed PyBullet conditioning"
+  },
+  "launch": {
+    "gpu_set": "0,1",
+    "num_processes": 2,
+    "main_process_port": 29535
+  },
+  "paths": {
+    "output_root": "/data/gaoya/agent-data/checkpoints/object_cotracker_trajectory_loss"
+  },
+  "checkpointing": {
+    "resume_from": null
+  },
+  "logging": {
+    "report_to": "wandb",
+    "wandb_project": "xssc_wan_head_sparse_training",
+    "wandb_name": "full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached_step0",
+    "wandb_mode": "online"
+  },
+  "xssc_loss": {
+    "enabled": false
+  },
+  "trajectory_loss": {
+    "enabled": true,
+    "weight": 0.1,
+    "anchor_frame": 4,
+    "future_start_frame": 8,
+    "points_per_object": 24,
+    "huber_delta": 0.01,
+    "visibility_threshold": 0.9,
+    "visibility_loss_weight": 0.05,
+    "cache_dir": "/data/gaoya/agent-data/cache/pybullet0713_object_cotracker_trajectory_v1",
+    "cotracker_checkpoint": "/data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth",
+    "tiny_vae_root": "/home/gaoya/Code_Video/taehv",
+    "tiny_vae_checkpoint": "/data/gaoya/ckpt/taew2_2.pth",
+    "tiny_vae_parallel": false,
+    "gradient_checkpointing_offload": true,
+    "gradient_diagnostics_every_n_forwards": 400
+  }
+}
