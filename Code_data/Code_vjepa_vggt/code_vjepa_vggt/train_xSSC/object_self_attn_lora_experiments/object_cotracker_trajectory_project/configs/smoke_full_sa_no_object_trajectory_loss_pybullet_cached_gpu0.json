@@ -26,6 +26,9 @@
     "max_checkpoints_keep": 1,
     "resume_from": null
   },
+  "trajectory_loss": {
+    "gradient_diagnostics_every_n_forwards": 1
+  },
   "logging": {
     "report_to": "none",
     "wandb_name": "smoke_full_sa_no_object_cotracker_trajectory_loss_pybullet_cached_gpu0",

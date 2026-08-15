@@ -252,7 +252,7 @@ class TrajectoryLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 # indices directly from input_latents, so no VAE prefix encode is needed.
                 continue
             if (
-                "vae" in tuple(getattr(unit, "onload_model_names", ()))
+                "vae" in tuple(getattr(unit, "onload_model_names", None) or ())
                 and unit_name != "WanVideoUnit_InputVideoEmbedder"
             ):
                 # Cached input_latents already contain every training frame. The
@@ -552,6 +552,25 @@ class TrajectoryLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 "train/loss_total": float(total.detach().item()),
             }
         )
+        if self._trajectory_forward_count == 1:
+            grad_summary = ""
+            if metrics["train/trajectory_grad_diag_applied"]:
+                grad_summary = (
+                    f", grad_flow={metrics['train/grad_v_main_norm']:.6g}, "
+                    f"grad_trajectory={metrics['train/grad_v_trajectory_norm']:.6g}, "
+                    "grad_ratio="
+                    f"{metrics['train/grad_v_trajectory_to_main_ratio']:.6g}"
+                )
+            print(
+                "[trajectory-loss] first forward: "
+                f"flow={metrics['train/loss_main']:.6g}, "
+                f"trajectory={metrics['train/loss_trajectory']:.6g}, "
+                f"timestep_weight={metrics['train/trajectory_timestep_weight']:.6g}, "
+                "weighted_contribution="
+                f"{metrics['train/trajectory_weighted_contribution']:.6g}"
+                f"{grad_summary}",
+                flush=True,
+            )
         return total, metrics
 
 
