@@ -40,6 +40,7 @@ for path in (HERE, EXPERIMENT_ROOT, TRAIN_XSSC_ROOT, PACKAGE_ROOT, DIFFSYNTH_ROO
 import train_xssc_object_self_attn_lora as core
 import train_xssc_object_self_attn_lora_physrvg_dit as physrvg_train
 import train_xssc_object_self_attn_lora_slot_dedup as slot_dedup_train
+import vjepa_loss_project.train_xssc_object_self_attn_lora_vjepa_loss as vjepa_train
 from code_vjepa_vggt.data.mixed_replay_no_gt_box_dataset import (
     KubricReplayNoGTBoxDataset,
     OpenVidNoGTBoxDataset,
@@ -141,6 +142,9 @@ def launch_argv(manifest_path: Path) -> list[str]:
 
 
 def model_kind(config: dict[str, Any]) -> str:
+    script = str(config.get("experiment", {}).get("script", ""))
+    if "vjepa_loss" in script or "vjepa" in str(config.get("experiment", {}).get("name", "")).lower():
+        return "vjepa"
     initialization = str(config.get("initialization", {}).get("type", "openvid_lora"))
     if initialization == "physrvg_dit":
         return "physrvg"
@@ -157,6 +161,7 @@ def parse_model_args(manifest_path: Path) -> tuple[argparse.Namespace, dict[str,
         "core": core.build_parser,
         "physrvg": physrvg_train.build_parser,
         "slot_dedup": slot_dedup_train.build_parser,
+        "vjepa": vjepa_train.build_parser,
     }[kind]()
     args, _unknown = parser.parse_known_args(launch_argv(manifest_path))
     if kind == "physrvg" and not getattr(args, "physrvg_dit_checkpoint", None):
@@ -286,6 +291,7 @@ def build_model(
         "core": core,
         "physrvg": physrvg_train,
         "slot_dedup": slot_dedup_train,
+        "vjepa": vjepa_train,
     }[kind]
     model = implementation.build_model(args, accelerator)
     model.to(device)
@@ -385,14 +391,10 @@ def evaluate_prepared(
     seed_all(case_seed)
     shared, positive, negative = transfer_prepared(model, prepared_cpu)
     with torch.inference_mode():
-        if model.enable_object_branch and "raw_sample" in shared:
-            loss, metrics = model._compute_object_losses(model.pipe, shared, positive)
-        else:
-            loss = model.task_to_loss[model.task](model.pipe, shared, positive, negative)
-            metrics = {
-                "train/loss_main": float(loss.detach().item()),
-                "train/loss_total": float(loss.detach().item()),
-            }
+        # Auxiliary-loss subclasses override this path even when the object
+        # branch is disabled. Calling task_to_loss directly would silently
+        # drop their xSSC/V-JEPA validation terms.
+        loss, metrics = model._compute_object_losses(model.pipe, shared, positive)
     loss_main = float(metrics.get("train/loss_main", loss.detach().item()))
     numeric = {
         key: float(value)

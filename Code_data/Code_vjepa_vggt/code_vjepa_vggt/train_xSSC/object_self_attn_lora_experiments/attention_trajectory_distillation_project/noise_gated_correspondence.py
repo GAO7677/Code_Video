@@ -159,6 +159,45 @@ def conditional_correspondence_objective(
     }
 
 
+def uniform_object_correspondence_objective(
+    probability: torch.Tensor,
+    target: torch.Tensor,
+    valid: torch.Tensor,
+    *,
+    lambda_corr: float,
+) -> dict[str, torch.Tensor]:
+    """Compute uniform CE after averaging valid pairs within each object."""
+    if probability.shape != target.shape or probability.ndim != 4:
+        raise ValueError(
+            "expected matching [O,T,N,S] probability/target tensors, got "
+            f"{probability.shape}/{target.shape}"
+        )
+    if valid.shape != probability.shape[:-1]:
+        raise ValueError(f"valid mask shape mismatch: {valid.shape}/{probability.shape[:-1]}")
+    if not math.isfinite(float(lambda_corr)) or float(lambda_corr) <= 0.0:
+        raise ValueError("lambda_corr must be positive and finite")
+
+    valid_mask = valid.to(device=probability.device, dtype=torch.bool)
+    valid_per_object = valid_mask.flatten(1).sum(dim=1)
+    if bool((valid_per_object == 0).any()):
+        invalid = (valid_per_object == 0).nonzero(as_tuple=False).flatten().tolist()
+        raise RuntimeError(f"objects contain no valid correspondence targets: {invalid}")
+
+    ce_contribution = -target.to(probability) * probability.clamp_min(1.0e-12).log()
+    ce = ce_contribution.sum(dim=-1)
+    masked_ce = ce * valid_mask.to(ce.dtype)
+    raw_soft_ce_per_object = masked_ce.flatten(1).sum(dim=1) / valid_per_object.to(ce.dtype)
+    raw_soft_ce = raw_soft_ce_per_object.mean()
+    return {
+        "ce_contribution": ce_contribution,
+        "ce": ce,
+        "valid_per_object": valid_per_object,
+        "raw_soft_ce_per_object": raw_soft_ce_per_object,
+        "raw_soft_ce": raw_soft_ce,
+        "loss": float(lambda_corr) * raw_soft_ce,
+    }
+
+
 def cross_frame_point_terms(
     q_bshd: torch.Tensor,
     k_bshd: torch.Tensor,

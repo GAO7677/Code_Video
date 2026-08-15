@@ -9,6 +9,7 @@ from noise_gated_correspondence import (
     gaussian_soft_targets,
     noise_reliability_gate,
     points_to_token_coordinates,
+    uniform_object_correspondence_objective,
 )
 
 
@@ -104,3 +105,50 @@ def test_aggregate_soft_correspondence_loss_reaches_query_and_key():
     objective["loss"].backward()
     assert q.grad is not None and float(q.grad.norm()) > 0.0
     assert k.grad is not None and float(k.grad.norm()) > 0.0
+
+
+def test_uniform_object_loss_averages_objects_after_valid_pairs():
+    logits = torch.tensor(
+        [
+            [[[3.0, 0.0], [0.0, 3.0]]],
+            [[[1.0, 0.0], [0.0, 1.0]]],
+        ],
+        requires_grad=True,
+    )
+    probability = logits.softmax(dim=-1)
+    target = torch.tensor(
+        [
+            [[[1.0, 0.0], [0.0, 1.0]]],
+            [[[1.0, 0.0], [0.0, 1.0]]],
+        ]
+    )
+    valid = torch.tensor([[[True, False]], [[True, True]]])
+    objective = uniform_object_correspondence_objective(
+        probability,
+        target,
+        valid,
+        lambda_corr=0.01,
+    )
+    expected = objective["raw_soft_ce_per_object"].mean()
+    assert torch.allclose(objective["raw_soft_ce"], expected)
+    assert objective["valid_per_object"].tolist() == [1, 2]
+    assert torch.allclose(objective["loss"], 0.01 * expected)
+    objective["loss"].backward()
+    assert logits.grad is not None and float(logits.grad.norm()) > 0.0
+
+
+def test_uniform_object_loss_rejects_object_without_valid_pairs():
+    probability = torch.full((2, 1, 1, 2), 0.5)
+    target = torch.full((2, 1, 1, 2), 0.5)
+    valid = torch.tensor([[[True]], [[False]]])
+    try:
+        uniform_object_correspondence_objective(
+            probability,
+            target,
+            valid,
+            lambda_corr=0.01,
+        )
+    except RuntimeError as error:
+        assert "objects contain no valid" in str(error)
+    else:
+        raise AssertionError("expected empty-object validation failure")
