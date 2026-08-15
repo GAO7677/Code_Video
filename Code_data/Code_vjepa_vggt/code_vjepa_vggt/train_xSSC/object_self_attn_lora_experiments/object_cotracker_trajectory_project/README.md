@@ -10,13 +10,27 @@ x_t -> Full-SA No-Object Wan -> x0_pred -> frozen Tiny-VAE
 
 The GT trajectory is extracted from the original PyBullet RGB video. Twenty-four
 query points are sampled from the cached F04 SAM2 identity mask and reused for
-the predicted video. The report compares loss over all selected object tracks
-with a stricter GT-visible-only audit. Prediction visibility is recorded but
-never removes a primary loss term.
+the predicted video. The report keeps the old all-point objective and compares
+it with the visibility-aware objective:
 
-The training-scale loss is Smooth L1, equivalent to raw Huber divided by its
-beta. Reports retain raw Huber for comparison with earlier diagnostics and
-overlay clip loss, per-frame loss, raw Huber, and ADE on the trajectory video.
+```text
+w_gt = 1(gt_visibility > 0.9) * gt_confidence
+L_coord = weighted SmoothL1(predicted displacement, GT displacement; w_gt)
+L_vis = weighted -log(pred_visibility)
+L_new = L_coord + 0.05 * L_vis
+```
+
+GT visibility and confidence are detached reliability targets. Predicted
+visibility never masks coordinate supervision, so hiding an object cannot evade
+the coordinate term; it is penalized separately by `L_vis`. For multiple
+objects, point/time means are computed within each object and then averaged
+equally across objects.
+
+The training-scale coordinate loss is Smooth L1, equivalent to raw Huber divided
+by its beta. Reports retain the old raw Huber/ADE diagnostics and overlay old
+loss, new coordinate loss, the weighted visibility penalty, and new total loss
+on the trajectory video. Raw CoTracker visibility and confidence probabilities
+are saved in `trajectories.npz`.
 
 Run the three cached F1/F2/F3 training cases on GPU 0:
 
@@ -27,9 +41,12 @@ PYTHONPATH=/home/gaoya/Code_Video/DiffTrack-main:/home/gaoya/Code_Video/Code_dat
 run_training_case_diagnostics.py all --device cuda:0
 ```
 
-Run the high-noise `t=900` comparison in a separate output directory:
+Run the high-noise `t=900` comparison in a separate output directory (the
+command below maps physical GPU 2 to `cuda:0`; GPU 4 is intentionally unused):
 
 ```bash
+CUDA_VISIBLE_DEVICES=2 \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 PYTHONNOUSERSITE=1 \
 PYTHONPATH=/home/gaoya/Code_Video/DiffTrack-main:/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main:/home/gaoya/Code_Video/co-tracker-main \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
@@ -38,19 +55,22 @@ run_training_case_diagnostics.py all \
   --training-timestep 900 \
   --num-points 24 \
   --gradient-audit \
-  --output-root /data/gaoya/agent-data/outputs/object_cotracker_trajectory_diagnostics_t900_p24
+  --visibility-threshold 0.9 \
+  --visibility-loss-weight 0.05 \
+  --multiobject-cache /data/gaoya/agent-data/cache/uniform_multiobject_correspondence_diagnostics \
+  --output-root /data/gaoya/agent-data/outputs/object_cotracker_trajectory_diagnostics_t900_p24_visibility_compare
 ```
 
-Large outputs are written under:
+The completed comparison report is written under:
 
 ```text
-/data/gaoya/agent-data/outputs/object_cotracker_trajectory_diagnostics
+/data/gaoya/agent-data/outputs/object_cotracker_trajectory_diagnostics_t900_p24_visibility_compare
 ```
 
 Serve the static report in the foreground:
 
 ```bash
-/home/gaoya/miniconda3/envs/wan-cu128/bin/python -m http.server 8950 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python -m http.server 8769 \
   --bind 0.0.0.0 \
-  --directory /data/gaoya/agent-data/outputs/object_cotracker_trajectory_diagnostics
+  --directory /data/gaoya/agent-data/outputs/object_cotracker_trajectory_diagnostics_t900_p24_visibility_compare
 ```

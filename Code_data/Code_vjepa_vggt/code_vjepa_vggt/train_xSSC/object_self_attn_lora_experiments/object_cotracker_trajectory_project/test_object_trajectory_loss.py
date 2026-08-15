@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import torch
 
-from object_trajectory_loss import object_trajectory_loss
+from object_trajectory_loss import (
+    object_trajectory_loss,
+    visibility_aware_trajectory_loss,
+)
 
 
 def test_zero_loss_for_equal_tracks() -> None:
@@ -117,3 +120,87 @@ def test_multiobject_loss_is_an_equal_object_mean() -> None:
     assert len(rows) == 2
     assert float(rows[0]["loss"]) == 0.0
     assert float(rows[1]["loss"]) > 0.0
+
+
+def test_visibility_aware_loss_ignores_occluded_coordinates() -> None:
+    pred = torch.zeros((1, 3, 2, 2), requires_grad=True)
+    gt = torch.zeros_like(pred)
+    gt[:, 2, 1, 0] = 10.0
+    gt_visibility = torch.ones((1, 3, 2))
+    gt_visibility[:, 2, 1] = 0.1
+    gt_confidence = torch.ones_like(gt_visibility)
+    pred_visibility = torch.ones_like(gt_visibility) * 0.95
+    loss, diagnostics = visibility_aware_trajectory_loss(
+        pred,
+        gt,
+        gt_visibility,
+        gt_confidence,
+        pred_visibility,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=0.01,
+        visibility_threshold=0.9,
+        visibility_loss_weight=0.0,
+    )
+    assert float(loss) == 0.0
+    assert int(diagnostics["valid_count"]) == 1
+
+
+def test_prediction_visibility_penalizes_without_masking_coordinate_loss() -> None:
+    pred = torch.zeros((1, 3, 1, 2), requires_grad=True)
+    gt = torch.zeros_like(pred)
+    gt[:, 2, 0, 0] = 2.0
+    gt_visibility = torch.ones((1, 3, 1))
+    gt_confidence = torch.ones_like(gt_visibility)
+    pred_visibility = torch.full_like(gt_visibility, 0.1, requires_grad=True)
+    total, diagnostics = visibility_aware_trajectory_loss(
+        pred,
+        gt,
+        gt_visibility,
+        gt_confidence,
+        pred_visibility,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=0.01,
+        visibility_threshold=0.9,
+        visibility_loss_weight=0.05,
+    )
+    assert float(diagnostics["coordinate_loss"]) > 0.0
+    assert float(diagnostics["visibility_loss"]) > 0.0
+    total.backward()
+    assert pred.grad is not None and float(pred.grad.abs().sum()) > 0.0
+    assert pred_visibility.grad is not None
+    assert float(pred_visibility.grad.abs().sum()) > 0.0
+
+
+def test_query_score_replacement_preserves_autograd() -> None:
+    from run_training_case_diagnostics import replace_query_predictions
+
+    tracks = torch.zeros((1, 3, 1, 2), requires_grad=True)
+    visibility_logits = torch.zeros((1, 3, 1), requires_grad=True)
+    confidence_logits = torch.zeros((1, 3, 1), requires_grad=True)
+    queries = torch.tensor([[[1.0, 4.0, 5.0]]])
+    replaced_tracks, replaced_visibility, replaced_confidence = (
+        replace_query_predictions(
+            tracks,
+            visibility_logits.sigmoid(),
+            confidence_logits.sigmoid(),
+            queries,
+        )
+    )
+    assert float(replaced_visibility[0, 1, 0]) == 1.0
+    assert float(replaced_confidence[0, 1, 0]) == 1.0
+    torch.testing.assert_close(replaced_tracks[0, 1, 0], queries[0, 0, 1:])
+    loss = (
+        replaced_tracks[:, 2:].sum()
+        + replaced_visibility[:, 2:].sum()
+        + replaced_confidence[:, 2:].sum()
+    )
+    loss.backward()
+    assert tracks.grad is not None
+    assert visibility_logits.grad is not None
+    assert confidence_logits.grad is not None
