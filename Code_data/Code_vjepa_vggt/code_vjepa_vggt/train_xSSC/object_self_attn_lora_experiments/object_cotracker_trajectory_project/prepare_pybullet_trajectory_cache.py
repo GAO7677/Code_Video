@@ -9,6 +9,7 @@ import gc
 import itertools
 import json
 import math
+import os
 from pathlib import Path
 import sys
 import traceback
@@ -82,12 +83,15 @@ def parse_args() -> argparse.Namespace:
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=True, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=True, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def build_dataset(args: argparse.Namespace) -> PyBullet0713NoGTBoxDataset:

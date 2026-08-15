@@ -6,6 +6,7 @@ import torch
 from prepare_pybullet_trajectory_cache import (
     TRACK_HEIGHT,
     TRACK_WIDTH,
+    atomic_json,
     prepare_tracker_inputs,
 )
 
@@ -37,3 +38,11 @@ def test_prepare_tracker_inputs_scales_each_axis_once() -> None:
         ]
     )
     torch.testing.assert_close(queries[0, :, 1:], expected)
+
+
+def test_atomic_json_uses_process_scoped_temporary_file(tmp_path) -> None:
+    target = tmp_path / "cache_config.json"
+    atomic_json(target, {"status": "complete", "count": 3})
+
+    assert target.read_text(encoding="utf-8").endswith("\n")
+    assert not list(tmp_path.glob(".cache_config.json.*.tmp"))
