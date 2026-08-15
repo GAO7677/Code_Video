@@ -91,3 +91,29 @@ def test_gt_visibility_is_the_only_validity_gate() -> None:
     assert pred.grad is not None
     assert float(pred.grad[:, 3, 0].abs().sum()) > 0.0
     assert float(pred.grad[:, 3, 1].abs().sum()) == 0.0
+
+
+def test_multiobject_loss_is_an_equal_object_mean() -> None:
+    from run_training_case_diagnostics import aggregate_object_trajectory_losses
+
+    pred = torch.zeros((1, 3, 4, 2), requires_grad=True)
+    gt = torch.zeros_like(pred)
+    gt[:, 2, 2:, 0] = 2.0
+    visibility = torch.ones((1, 3, 4), dtype=torch.bool)
+    aggregate, _, rows = aggregate_object_trajectory_losses(
+        pred,
+        gt,
+        visibility,
+        object_count=2,
+        points_per_object=2,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=0.01,
+    )
+    expected = torch.stack([row["loss"] for row in rows]).mean()
+    torch.testing.assert_close(aggregate, expected)
+    assert len(rows) == 2
+    assert float(rows[0]["loss"]) == 0.0
+    assert float(rows[1]["loss"]) > 0.0

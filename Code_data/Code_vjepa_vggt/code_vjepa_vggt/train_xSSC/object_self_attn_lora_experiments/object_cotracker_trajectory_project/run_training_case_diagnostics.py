@@ -689,6 +689,9 @@ def aggregate_object_trajectory_losses(
         "per_frame_ade": torch.stack(
             [item["per_frame_ade"] for item in visible_diagnostics]
         ).mean(dim=0),
+        "valid_future": torch.cat(
+            [item["valid_future"] for item in visible_diagnostics], dim=-1
+        ),
     }
     diagnostics["visible_aggregate"] = visible_aggregate
     return torch.stack(all_losses).mean(), diagnostics, object_rows
@@ -1256,11 +1259,20 @@ def render_report(args: argparse.Namespace) -> Path:
         relative = case_root.relative_to(args.output_root)
         gradient = metrics.get("tracker_input_gradient_norm")
         gradient_text = "not run" if gradient is None else f"{float(gradient):.3e}"
+        object_cards = "".join(
+            f"<article><b>O{item['object_index'] + 1}</b> "
+            f"{html.escape(item['phrase'])}<br>"
+            f"<span>L={item['trajectory_loss']:.5f} · "
+            f"ADE={item['normalized_ade']:.4f} · "
+            f"motion={item['normalized_gt_motion']:.4f} · "
+            f"GT vis={item['gt_visible_fraction']:.1%}</span></article>"
+            for item in metrics.get("objects", [])
+        )
         rows.append(
             f"""
 <section class="case">
   <div class="case-head"><div><span class="case-index">CASE {position:02d}</span>
-  <h2>{html.escape(case['case_key'])}</h2><p>{html.escape(case['caption'])}</p></div>
+  <h2>{html.escape(case['case_key'])} · {metrics.get('object_count', 1)} objects</h2><p>{html.escape(case['caption'])}</p></div>
   <div class="loss"><small>ALL-POINT SMOOTH L1</small><strong>{metrics['trajectory_loss']:.6f}</strong><small>visible {metrics['trajectory_loss_gt_visible']:.6f} · raw Huber {metrics['trajectory_huber']:.2e}</small></div></div>
   <div class="metrics">
     <span><b>{metrics['normalized_ade']:.4f}</b> all-point ADE</span>
@@ -1270,6 +1282,7 @@ def render_report(args: argparse.Namespace) -> Path:
     <span><b>{metrics['gt_visible_fraction']:.1%}</b> GT visible</span>
     <span><b>{metrics['trajectory_huber']:.2e}</b> raw Huber · grad {gradient_text}</span>
   </div>
+  <div class="object-grid">{object_cards}</div>
   <video controls muted loop playsinline preload="metadata" poster="{relative}/trajectory_future_preview.jpg" src="{relative}/object_trajectory_overlay.mp4"></video>
   <div class="media-row">
     <figure><img src="{relative}/object_query_preview.jpg"><figcaption>F04 object queries</figcaption></figure>
@@ -1296,10 +1309,11 @@ header{{background:#172329;color:#f6fafb;border-bottom:5px solid var(--green)}}.
 h1{{font:700 34px/1.1 "IBM Plex Sans Condensed","Noto Sans SC",sans-serif;margin:0 0 8px;letter-spacing:0}}header p{{margin:0;color:#b9c7cb}}.summary{{display:flex;gap:28px}}.summary small,.loss small{{display:block;color:#91a3a8;font-size:11px}}.summary strong{{font-size:25px}}
 main{{max-width:1500px;margin:auto;padding:22px 28px 80px}}.case{{padding:25px 0 34px;border-bottom:1px solid var(--line)}}.case-head{{display:flex;justify-content:space-between;gap:24px;align-items:end;margin-bottom:14px}}.case-index{{font-size:11px;color:var(--green);font-weight:800}}h2{{margin:2px 0 2px;font-size:23px}}.case-head p{{margin:0;color:var(--muted)}}.loss{{text-align:right}}.loss strong{{display:block;color:var(--red);font-size:27px}}
 .metrics{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border:1px solid var(--line);background:var(--paper);margin-bottom:14px}}.metrics span{{padding:10px 12px;border-right:1px solid var(--line);color:var(--muted)}}.metrics span:last-child{{border:0}}.metrics b{{display:block;color:var(--ink);font-size:17px}}
+.object-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:8px;margin:0 0 14px}}.object-grid article{{background:var(--paper);border-left:4px solid var(--green);padding:9px 12px;color:var(--ink)}}.object-grid article span{{color:var(--muted);font-size:13px}}
 video,img{{display:block;width:100%;background:#050708}}.case>video{{border:1px solid #29383f;aspect-ratio:21/4;object-fit:contain}}.media-row{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px}}figure{{margin:0;background:var(--paper);border:1px solid var(--line)}}figure video,figure img{{aspect-ratio:16/9;object-fit:contain}}figcaption{{padding:8px 10px;color:var(--muted)}}.links{{display:flex;gap:16px;margin-top:10px}}a{{color:var(--blue);font-weight:700}}
 #replay{{position:fixed;right:22px;bottom:20px;border:1px solid #0e4d3d;background:var(--green);color:white;padding:11px 17px;font-weight:750;cursor:pointer}}
 @media(max-width:900px){{.mast{{grid-template-columns:1fr}}.summary{{justify-content:flex-start}}.metrics{{grid-template-columns:repeat(2,1fr)}}.metrics span{{border-bottom:1px solid var(--line)}}.media-row{{grid-template-columns:1fr}}.case-head{{display:block}}.loss{{text-align:left;margin-top:10px}}.case>video{{aspect-ratio:16/9}}}}
-</style></head><body><header><div class="mast"><div><h1>PyBullet Object Trajectory Loss</h1><p>Full-SA No-Object · merged OpenVid initialization · t={args.training_timestep:g} · F04 SAM2 object points n={args.num_points} · F08–F48 displacement · Smooth L1 β={args.huber_delta:g} · all points vs GT-visible audit</p></div><div class="summary"><div><small>MEAN SMOOTH L1</small><strong>{mean_loss:.6f}</strong></div><div><small>MEAN RAW HUBER</small><strong>{mean_raw_huber:.2e}</strong></div><div><small>MEAN ADE</small><strong>{mean_ade:.4f}</strong></div></div></div></header><main>{''.join(rows)}</main><button id="replay">Replay all</button><script>
+</style></head><body><header><div class="mast"><div><h1>PyBullet Object Trajectory Loss</h1><p>Full-SA No-Object · merged OpenVid initialization · t={args.training_timestep:g} · F04 per-object SAM2 identity points n={args.num_points} · F08–F48 displacement · Smooth L1 β={args.huber_delta:g} · equal-object aggregation</p></div><div class="summary"><div><small>MEAN SMOOTH L1</small><strong>{mean_loss:.6f}</strong></div><div><small>MEAN RAW HUBER</small><strong>{mean_raw_huber:.2e}</strong></div><div><small>MEAN ADE</small><strong>{mean_ade:.4f}</strong></div></div></div></header><main>{''.join(rows)}</main><button id="replay">Replay all</button><script>
 document.getElementById('replay').onclick=()=>document.querySelectorAll('video').forEach(v=>{{v.currentTime=0;v.play().catch(()=>{{}})}});
 </script></body></html>"""
     args.output_root.mkdir(parents=True, exist_ok=True)
