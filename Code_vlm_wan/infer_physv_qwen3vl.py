@@ -16,6 +16,7 @@ os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("USE_FLAX", "0")
 os.environ.setdefault("TRANSFORMERS_NO_FLAX", "1")
 os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+os.environ.setdefault("VLLM_ATTENTION_BACKEND", "TORCH_SDPA")
 # Avoid a runtime FlashInfer JIT build in this environment; vLLM's native
 # sampler is sufficient for the single-sequence probe.
 os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
@@ -47,9 +48,9 @@ def parse_args():
     parser.add_argument("--fps", type=float, default=20.0)
     parser.add_argument("--max-frames", type=int, default=64)
     parser.add_argument("--max-pixels", type=int, default=360 * 640)
-    parser.add_argument("--max-new-tokens", type=int, default=512)
+    parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--max-model-len", type=int, default=8192)
-    parser.add_argument("--gpu-memory-utilization", type=float, default=0.92)
+    parser.add_argument("--gpu-memory-utilization", type=float, default=0.94)
     return parser.parse_args()
 
 

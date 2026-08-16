@@ -7,6 +7,14 @@ import build_xssc_lora_checkpoint_dashboard as dashboard
 
 
 class PendingPhysicIQDashboardTests(unittest.TestCase):
+    def test_cotracker_trajectory_method_is_visible_in_merged_test5(self) -> None:
+        method_keys = {method["key"] for method in dashboard.MERGED_METHODS}
+
+        self.assertIn(
+            "full_sa_no_object_cotracker_trajectory_loss",
+            method_keys,
+        )
+
     def test_static_checkpoint_is_visible_in_test5_before_generation(self) -> None:
         with tempfile.TemporaryDirectory() as output_root:
             checkpoint = Path(output_root) / "checkpoints" / "step-000000"
