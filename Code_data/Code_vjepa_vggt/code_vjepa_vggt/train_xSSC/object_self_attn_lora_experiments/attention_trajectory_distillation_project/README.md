@@ -156,7 +156,9 @@ The per-sample offline cache contract is:
 ```text
 <mask_cache_root>/cases/<metadata.sample_key>/object_masks.npz
   masks_othw:   [objects, mask_frames, pixel_height, pixel_width], values in [0,1]
-  frame_indices: optional [mask_frames] source-video frame indices
+  frame_indices: [mask_frames] source-video frame indices
+<mask_cache_root>/cases/<metadata.sample_key>/entry.json
+  logical key, shape, object phrase, source identity, and reverse-mapping audit
 ```
 
 Alternatively, the same tensors may be supplied directly as
@@ -168,37 +170,36 @@ Every forward also expands latent support back to pixel space and requires zero
 missed GT foreground pixels. Reverse recall, precision, IoU, and missed-pixel
 count are logged.
 
-Use the normal dataset, optimizer, and checkpoint arguments with this entry:
+The formal run is initialized from the same merged OpenVid step-10000 LoRA as
+the CoTracker reference, injects the same rank-32 Full-SA adapter, and uses the
+same precomputed PyBullet VAE/prompt caches with per-GPU batch size 2. Prepare
+the complete 1617-sample GroundingDINO + SAM2 cache first. Multiple workers may
+share the same cache because entries are written atomically:
 
 ```bash
-PYTHONNOUSERSITE=1 \
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/attention_trajectory_distillation_project/train_xssc_object_self_attn_lora_frozen_motion_probe_latent_mask.py \
-  <existing dataset, optimizer, checkpoint and Wan arguments> \
-  --output_path /data/gaoya/agent-data/checkpoints/frozen_motion_probe_latent_mask \
-  --disable_object_branch \
-  --train_batch_size 1 \
-  --self_attn_adaptation_mode t_head \
-  --head_selection_config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/configs/physiciq67_pck32_s039_latest3350_top100_heads.json \
-  --head_selection_subset_id T_physiciq67_pck32_s039_latest3350_top100 \
-  --head_selection_expected_role T \
-  --head_selection_feature_subtype physiciq67_pck32_s039_latest3350 \
-  --head_selection_expected_num_heads 100 \
-  --probe_timestep 500 \
-  --probe_noise_level 0.5 \
-  --motion_probe_pck_weight_power 30 \
-  --motion_probe_query_latent_frame 1 \
-  --motion_probe_query_object_index 0 \
-  --motion_probe_latent_mask_weight 0.01 \
-  --motion_probe_mask_cache_root /data/gaoya/agent-data/cache/uniform_multiobject_correspondence_diagnostics
+/data/gaoya/miniconda3/envs/vjepa2/bin/python \
+  attention_trajectory_distillation_project/prepare_pybullet_latent_mask_cache.py \
+  --device cuda:0 --worker-id 0 --num-workers 1
+
+/data/gaoya/miniconda3/envs/vjepa2/bin/python \
+  attention_trajectory_distillation_project/prepare_pybullet_latent_mask_cache.py \
+  --finalize-only
 ```
 
-Configuration uses the existing CLI rather than a separate YAML/JSON loader.
-The default cache currently contains only the three diagnostic cases F1-F3;
-the trainer intentionally fails on a missing sample instead of silently
-dropping the mask loss. Precompute GroundingDINO + SAM2 tracked masks for every
-sample selected by the formal training dataset before launching a full run.
+Validate the inherited formal configuration and its field-level fairness check
+against the recorded CoTracker run, then launch it with the same command without
+`--dry-run`:
+
+```bash
+/home/gaoya/miniconda3/envs/wan/bin/python \
+  attention_trajectory_distillation_project/launch_latent_mask_from_config.py \
+  attention_trajectory_distillation_project/configs/formal_full_sa_no_object_latent_mask_loss_pybullet100_cached_gpu01.json \
+  --dry-run
+```
+
+The launcher refuses to start if any selected sample lacks a valid cache entry,
+if reverse recall is below 1, or if any non-loss training field differs from the
+recorded CoTracker reference outside the documented run-name/output/port fields.
 
 ## Training-case diagnostic and noise sweep
 

@@ -97,7 +97,9 @@ def audit_latent_mapping(
     }
 
 
-def detect_and_track_gt_role_object(provider, frames_tchw_01, phrases, anchor_frame: int):
+def detect_and_track_gt_role_object(
+    provider, frames_tchw_01, phrases, anchor_frame: int
+):
     detections = []
     for phrase in phrases:
         output = provider.detector.detect(
