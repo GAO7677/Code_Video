@@ -1,0 +1,40 @@
+{
+  "extends": "formal_full_sa_no_object_latent_mask_loss_pybullet100_cached_gpu67.json",
+  "experiment": {
+    "name": "smoke_full_sa_no_object_gt_latent_mask_loss_batch2_gpu67",
+    "description": "One-step two-GPU DDP smoke for GT latent-mask CE with per-GPU batch 2"
+  },
+  "launch": {
+    "gpu_set": "6,7",
+    "num_processes": 2,
+    "main_process_port": 29539
+  },
+  "paths": {
+    "output_root": "/data/gaoya/agent-data/checkpoints/gt_latent_mask_loss_smoke"
+  },
+  "data": {
+    "pybullet_init_scan_limit": 4
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 2,
+    "gradient_accumulation_steps": 1,
+    "max_train_steps": 1,
+    "num_epochs": 1
+  },
+  "checkpointing": {
+    "save_steps": 1,
+    "max_checkpoints_keep": 1,
+    "resume_from": null
+  },
+  "logging": {
+    "report_to": "none",
+    "wandb_name": "smoke_full_sa_no_object_gt_latent_mask_loss_batch2_gpu67",
+    "wandb_mode": "disabled"
+  },
+  "latent_mask_loss": {
+    "gradient_diagnostics_every_n_forwards": 1
+  },
+  "comparison": {
+    "enforce_fairness": false
+  }
+}

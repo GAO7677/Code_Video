@@ -1,0 +1,18 @@
+{
+  "extends": "formal_full_sa_no_object_latent_mask_loss_pybullet100_cached_gpu01.json",
+  "experiment": {
+    "name": "full_sa_no_object_gt_latent_mask_loss_pybullet100_cached_gpu67",
+    "description": "GPU 6/7 resource allocation for the fair step-0 Full-SA no-object GT latent-mask CE training"
+  },
+  "launch": {
+    "gpu_set": "6,7",
+    "num_processes": 2,
+    "main_process_port": 29538
+  },
+  "logging": {
+    "wandb_name": "full_sa_no_object_gt_latent_mask_loss_pybullet100_cached_step0_gpu67"
+  },
+  "comparison": {
+    "allow_gpu_set_override": true
+  }
+}

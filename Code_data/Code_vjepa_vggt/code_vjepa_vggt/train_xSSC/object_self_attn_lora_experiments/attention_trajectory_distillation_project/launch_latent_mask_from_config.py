@@ -30,13 +30,15 @@ def require_latent_mask(config: dict, key: str):
     return shared.require(config, f"latent_mask_loss.{key}")
 
 
-def _fairness_payload(config: dict) -> dict:
+def _fairness_payload(config: dict, *, allow_gpu_set_override: bool = False) -> dict:
     payload = deepcopy(config)
     payload.pop("experiment", None)
     payload.pop("trajectory_loss", None)
     payload.pop("latent_mask_loss", None)
     payload.pop("comparison", None)
     payload.get("launch", {}).pop("main_process_port", None)
+    if allow_gpu_set_override:
+        payload.get("launch", {}).pop("gpu_set", None)
     payload.get("paths", {}).pop("output_root", None)
     payload.get("logging", {}).pop("wandb_name", None)
     return payload
@@ -57,11 +59,14 @@ def _collect_differences(left, right, prefix: str = "") -> list[str]:
     return []
 
 
-def validate_fairness(config: dict, reference_path: Path) -> None:
+def validate_fairness(
+    config: dict, reference_path: Path, *, allow_gpu_set_override: bool = False
+) -> None:
     manifest = json.loads(reference_path.read_text(encoding="utf-8"))
     reference = manifest.get("resolved_config", manifest)
     differences = _collect_differences(
-        _fairness_payload(config), _fairness_payload(reference)
+        _fairness_payload(config, allow_gpu_set_override=allow_gpu_set_override),
+        _fairness_payload(reference, allow_gpu_set_override=allow_gpu_set_override),
     )
     if differences:
         raise ValueError(
@@ -118,8 +123,15 @@ def validate_config(raw: dict, config_dir: Path) -> dict:
         )
     config["comparison"]["reference_resolved_config"] = str(reference_path)
     enforce_fairness = bool(config["comparison"].get("enforce_fairness", True))
+    allow_gpu_set_override = bool(
+        config["comparison"].get("allow_gpu_set_override", False)
+    )
     if enforce_fairness:
-        validate_fairness(config, reference_path)
+        validate_fairness(
+            config,
+            reference_path,
+            allow_gpu_set_override=allow_gpu_set_override,
+        )
     elif not str(config["experiment"]["name"]).startswith("smoke_"):
         raise ValueError("only smoke_* experiments may disable the fairness check")
     return config
@@ -188,6 +200,15 @@ def main() -> None:
         * int(config["optimization"]["train_batch_size_per_gpu"])
         * int(config["optimization"]["gradient_accumulation_steps"])
     )
+    allow_gpu_set_override = bool(
+        config["comparison"].get("allow_gpu_set_override", False)
+    )
+    reference_manifest = json.loads(
+        Path(config["comparison"]["reference_resolved_config"]).read_text(
+            encoding="utf-8"
+        )
+    )
+    reference_config = reference_manifest.get("resolved_config", reference_manifest)
     summary = {
         "experiment": config["experiment"]["name"],
         "mode": config["adaptation"]["mode"],
@@ -196,9 +217,21 @@ def main() -> None:
         "latent_mask_loss_enabled": True,
         "fairness_reference": config["comparison"]["reference_resolved_config"],
         "fairness_check": (
-            "passed"
+            (
+                "passed_with_gpu_resource_override"
+                if allow_gpu_set_override
+                else "passed"
+            )
             if bool(config["comparison"].get("enforce_fairness", True))
             else "smoke_override"
+        ),
+        "gpu_resource_override": (
+            {
+                "reference": reference_config["launch"]["gpu_set"],
+                "actual": config["launch"]["gpu_set"],
+            }
+            if allow_gpu_set_override
+            else None
         ),
         "start_step": 0,
         "config_sources": sources,

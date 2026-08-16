@@ -280,26 +280,30 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
             probe_heads_by_block,
             weight_power=self.motion_probe_pck_weight_power,
         )
+        probe_device = torch.device(motion_probe_device)
         self.register_buffer(
             "motion_probe_pck_linear_weights",
             torch.tensor(
-                pck_audit["linear_normalized_weights"], dtype=torch.float32
+                pck_audit["linear_normalized_weights"],
+                dtype=torch.float32,
+                device=probe_device,
             ),
             persistent=True,
         )
         self.register_buffer(
             "motion_probe_pck_weights",
-            pck_weights,
+            pck_weights.to(device=probe_device),
             persistent=True,
         )
         self.register_buffer(
             "motion_probe_pck_head_identity",
-            torch.tensor(pck_audit["head_pairs"], dtype=torch.int32),
+            torch.tensor(
+                pck_audit["head_pairs"], dtype=torch.int32, device=probe_device
+            ),
             persistent=True,
         )
         self.motion_probe_pck_audit = pck_audit
 
-        probe_device = torch.device(motion_probe_device)
         probe_pipe = context_wan.ContextAwareWanVideoPipeline.from_pretrained(
             torch_dtype=torch.bfloat16,
             device=probe_device,
