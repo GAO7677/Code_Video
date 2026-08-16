@@ -259,9 +259,19 @@ def object_equal_visibility_aware_trajectory_loss(
         )
 
     rows = []
+    skipped_object_count = 0
     for object_index in range(int(object_count)):
         start = object_index * int(points_per_object)
         stop = start + int(points_per_object)
+        geometric = gt_geometric_visibility[:, :, start:stop]
+        confidence = gt_confidence_probability[:, :, start:stop]
+        effective_weight = (
+            geometric.detach().bool()[:, int(future_start_frame) :].float()
+            * confidence.detach().float()[:, int(future_start_frame) :].clamp(0.0, 1.0)
+        )
+        if not bool(effective_weight.sum() > 0):
+            skipped_object_count += 1
+            continue
         total, diagnostics = visibility_aware_trajectory_loss(
             pred_tracks[:, :, start:stop],
             gt_tracks[:, :, start:stop],
@@ -275,9 +285,41 @@ def object_equal_visibility_aware_trajectory_loss(
             huber_delta=huber_delta,
             visibility_threshold=visibility_threshold,
             visibility_loss_weight=visibility_loss_weight,
-            gt_geometric_visibility=gt_geometric_visibility[:, :, start:stop],
+            gt_geometric_visibility=geometric,
         )
         rows.append({"total": total, **diagnostics})
+
+    valid_object_count = len(rows)
+    if not rows:
+        zero = pred_tracks.sum() * 0.0 + pred_visibility_probability.sum() * 0.0
+        future = slice(int(future_start_frame), None)
+        return zero, {
+            "coordinate_loss": zero,
+            "visibility_loss": zero,
+            "total_loss": zero,
+            "raw_huber": zero,
+            "normalized_ade": zero,
+            "normalized_rmse": zero,
+            "normalized_gt_motion": zero,
+            "valid_fraction": zero,
+            "effective_weight_fraction": zero,
+            "mean_gt_visibility_probability": gt_visibility_probability[:, future]
+            .detach()
+            .float()
+            .mean(),
+            "mean_gt_confidence_probability": gt_confidence_probability[:, future]
+            .detach()
+            .float()
+            .mean(),
+            "mean_pred_visibility_probability": pred_visibility_probability[:, future]
+            .float()
+            .mean(),
+            "valid_count": pred_tracks.new_zeros(()),
+            "effective_weight_sum": pred_tracks.new_zeros(()),
+            "valid_object_count": pred_tracks.new_zeros(()),
+            "skipped_object_count": pred_tracks.new_tensor(float(skipped_object_count)),
+            "valid_object_fraction": pred_tracks.new_zeros(()),
+        }
 
     def object_mean(name: str) -> torch.Tensor:
         return torch.stack([row[name] for row in rows]).mean()
@@ -305,6 +347,11 @@ def object_equal_visibility_aware_trajectory_loss(
         "effective_weight_sum": torch.stack(
             [row["effective_weight_sum"] for row in rows]
         ).sum(),
+        "valid_object_count": pred_tracks.new_tensor(float(valid_object_count)),
+        "skipped_object_count": pred_tracks.new_tensor(float(skipped_object_count)),
+        "valid_object_fraction": pred_tracks.new_tensor(
+            float(valid_object_count) / float(object_count)
+        ),
     }
     return torch.stack([row["total"] for row in rows]).mean(), aggregate
 

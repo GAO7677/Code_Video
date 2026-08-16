@@ -234,6 +234,85 @@ def test_visibility_aware_multiobject_loss_is_object_equal() -> None:
     torch.testing.assert_close(total, diagnostics["coordinate_loss"])
 
 
+def test_multiobject_loss_skips_object_without_future_supervision() -> None:
+    pred = torch.zeros((1, 3, 4, 2), requires_grad=True)
+    gt = torch.zeros_like(pred)
+    gt[:, 2, 2:, 0] = 2.0
+    scores = torch.ones((1, 3, 4))
+    geometric = scores.bool()
+    geometric[:, 2:, :2] = False
+
+    total, diagnostics = object_equal_visibility_aware_trajectory_loss(
+        pred,
+        gt,
+        scores,
+        scores,
+        scores * 0.95,
+        geometric,
+        object_count=2,
+        points_per_object=2,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=0.01,
+        visibility_threshold=0.9,
+        visibility_loss_weight=0.0,
+    )
+
+    valid_object, _ = visibility_aware_trajectory_loss(
+        pred[:, :, 2:],
+        gt[:, :, 2:],
+        scores[:, :, 2:],
+        scores[:, :, 2:],
+        scores[:, :, 2:] * 0.95,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=0.01,
+        visibility_threshold=0.9,
+        visibility_loss_weight=0.0,
+        gt_geometric_visibility=geometric[:, :, 2:],
+    )
+    torch.testing.assert_close(total, valid_object)
+    assert int(diagnostics["valid_object_count"]) == 1
+    assert int(diagnostics["skipped_object_count"]) == 1
+
+
+def test_multiobject_loss_returns_differentiable_zero_when_all_objects_invalid() -> None:
+    pred = torch.zeros((1, 3, 2, 2), requires_grad=True)
+    gt = torch.zeros_like(pred)
+    scores = torch.ones((1, 3, 2))
+    geometric = torch.ones_like(scores, dtype=torch.bool)
+    geometric[:, 2:] = False
+
+    total, diagnostics = object_equal_visibility_aware_trajectory_loss(
+        pred,
+        gt,
+        scores,
+        scores,
+        scores * 0.95,
+        geometric,
+        object_count=1,
+        points_per_object=2,
+        height=11,
+        width=21,
+        anchor_frame=1,
+        future_start_frame=2,
+        huber_delta=0.01,
+        visibility_threshold=0.9,
+        visibility_loss_weight=0.0,
+    )
+
+    assert float(total) == 0.0
+    assert int(diagnostics["valid_object_count"]) == 0
+    assert int(diagnostics["skipped_object_count"]) == 1
+    total.backward()
+    assert pred.grad is not None
+    assert float(pred.grad.abs().sum()) == 0.0
+
+
 def test_query_score_replacement_preserves_autograd() -> None:
     from run_training_case_diagnostics import replace_query_predictions
 

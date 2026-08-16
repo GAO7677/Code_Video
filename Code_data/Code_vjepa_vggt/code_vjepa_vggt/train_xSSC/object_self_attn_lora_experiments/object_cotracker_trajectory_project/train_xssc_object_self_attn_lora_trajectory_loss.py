@@ -505,6 +505,12 @@ class TrajectoryLossWanModule(core.DINOv3XSSCContextSlotsWanModule):
                 "train/trajectory_effective_weight_fraction": batch_metric(
                     "effective_weight_fraction"
                 ),
+                "train/trajectory_valid_object_fraction": batch_metric(
+                    "valid_object_fraction"
+                ),
+                "train/trajectory_skipped_object_count": batch_metric(
+                    "skipped_object_count"
+                ),
                 "train/trajectory_pred_visibility": batch_metric(
                     "mean_pred_visibility_probability"
                 ),
