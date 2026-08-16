@@ -188,7 +188,6 @@ def run_metric_unlocked(
         f"PhysicIQ parallel metric complete worker={worker_label} "
         f"method={method_key} step={step} metric={metric}"
     )
-    refresh_dashboard(config)
     refresh_plots_if_complete(config, manifest)
 
 

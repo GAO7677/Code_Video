@@ -390,7 +390,7 @@ def run_metric(
         },
     )
     log(f"PhysicIQ metric complete method={method_key} step={step} metric={metric}")
-    refresh_plots(config, manifest)
+    refresh_plots_if_complete(config, manifest)
 
 
 def refresh_plots(
@@ -404,23 +404,29 @@ def refresh_plots(
     )
     leaf_values = [config["physiciq"]["leaf_folders"]]
     leaf_values.extend(config["physiciq"].get("additional_leaf_folders", []))
+    plot_failures = []
     with exclusive_lock(phys_state_root(config) / "plot.lock"):
         with plot_log.open("a", encoding="utf-8") as log_handle:
             for leaf_value in leaf_values:
                 leaf_path = Path(leaf_value).resolve()
                 if not leaf_path.is_file():
                     continue
-                subprocess.run(
-                    [
-                        "bash",
-                        config["physiciq"]["plot_script"],
-                        str(leaf_path),
-                    ],
-                    check=True,
-                    stdout=log_handle,
-                    stderr=subprocess.STDOUT,
-                )
+                try:
+                    subprocess.run(
+                        [
+                            "bash",
+                            config["physiciq"]["plot_script"],
+                            str(leaf_path),
+                        ],
+                        check=True,
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                    )
+                except subprocess.CalledProcessError as exc:
+                    plot_failures.append(f"{leaf_path}: exit {exc.returncode}")
     refresh_dashboard(config)
+    if plot_failures:
+        log("Legacy PhysicIQ plot refresh skipped failures: " + "; ".join(plot_failures))
     log(
         "PhysicIQ plots refreshed with "
         + ", ".join(str(Path(leaf).resolve()) for leaf in leaf_values)
@@ -445,7 +451,7 @@ def refresh_plots_if_complete(
 
 
 def refresh_dashboard(config: dict[str, Any]) -> None:
-    """Rebuild the dashboard after one PhysicIQ metric is committed."""
+    """Rebuild the dashboard after a complete PhysicIQ metric set is committed."""
     lock_path = phys_state_root(config) / "dashboard_refresh.lock"
     with exclusive_lock(lock_path):
         subprocess.run(
