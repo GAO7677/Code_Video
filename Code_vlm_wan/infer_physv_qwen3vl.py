@@ -30,7 +30,7 @@ from vllm import LLM, SamplingParams
 DEFAULT_MODEL = "/data/gaoya/ckpt/Qwen-Qwen3-VL-32B-Thinking-FP8"
 DEFAULT_DATASET = "/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5"
 DEFAULT_OUTPUT = "/data/gaoya/agent-data/outputs/physv_qwen3vl/cases.jsonl"
-QUESTION = """你是一个视频物理动态分析器。
+ANALYSIS_PROMPT = """你是一个视频物理动态分析器。
 
 分析这段视频中可观察到的物理动态，重点关注物体的平移、旋转、接触和相互作用，以及运动方向、速度、强度和运动模式随时间的变化。特别关注碰撞、反弹、滑动、滚动、摇摆、加速、减速、反向和趋于稳定等动态过程，以及视频结束时仍然存在的运动状态。
 
@@ -60,7 +60,42 @@ def find_videos(dataset_root, num_cases):
     return videos[:num_cases]
 
 
-def build_messages(video_path, args):
+def load_original_prompt(video_path):
+    case_dir = video_path.parent.parent
+    metadata_paths = [
+        case_dir / "case_manifest.json",
+        case_dir / "meta" / f"{video_path.stem}.json",
+    ]
+    for metadata_path in metadata_paths:
+        if not metadata_path.is_file():
+            continue
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        prompt = (
+            metadata.get("caption")
+            or metadata.get("input_caption")
+            or metadata.get("short_caption")
+        )
+        if prompt:
+            return {"text": prompt, "source": str(metadata_path)}
+    return {"text": "", "source": None}
+
+
+def build_question(original_prompt):
+    prompt_text = original_prompt["text"]
+    if not prompt_text:
+        return ANALYSIS_PROMPT
+    return (
+        f"{ANALYSIS_PROMPT}\n\n"
+        "本视频数据集的原始场景描述（仅作辅助上下文，必须以视频实际观察为准）：\n"
+        f"{prompt_text}\n\n"
+        "请核对上述描述与视频内容；如果不一致，以视频中实际观察到的内容为准。"
+    )
+
+
+def build_messages(video_path, args, question):
     return [
         {
             "role": "user",
@@ -72,7 +107,7 @@ def build_messages(video_path, args):
                     "max_frames": args.max_frames,
                     "max_pixels": args.max_pixels,
                 },
-                {"type": "text", "text": QUESTION},
+                {"type": "text", "text": question},
             ],
         }
     ]
@@ -176,8 +211,15 @@ def main():
     with output_path.open("w", encoding="utf-8") as output_file:
         for index, video_path in enumerate(videos, start=1):
             case_id = video_path.parent.parent.name
-            messages = build_messages(video_path, args)
+            original_prompt = load_original_prompt(video_path)
+            question = build_question(original_prompt)
+            messages = build_messages(video_path, args, question)
             print(f"[{index}/{len(videos)}] preparing {case_id}", flush=True)
+            print(
+                f"[{index}/{len(videos)}] original_prompt="
+                f"{original_prompt['text']!r} source={original_prompt['source']}",
+                flush=True,
+            )
             started = time.time()
             try:
                 vllm_input, video_inputs = prepare_vllm_input(messages, processor)
@@ -190,7 +232,10 @@ def main():
                 result = {
                     "case_id": case_id,
                     "video": str(video_path),
-                    "question": QUESTION,
+                    "question": question,
+                    "analysis_prompt": ANALYSIS_PROMPT,
+                    "original_prompt": original_prompt["text"],
+                    "original_prompt_source": original_prompt["source"],
                     "video_params": {
                         "fps": args.fps,
                         "max_frames": args.max_frames,
@@ -207,7 +252,10 @@ def main():
                 result = {
                     "case_id": case_id,
                     "video": str(video_path),
-                    "question": QUESTION,
+                    "question": question,
+                    "analysis_prompt": ANALYSIS_PROMPT,
+                    "original_prompt": original_prompt["text"],
+                    "original_prompt_source": original_prompt["source"],
                     "video_params": {
                         "fps": args.fps,
                         "max_frames": args.max_frames,
