@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import torch
+import torch.nn.functional as F
 
 
 def points_to_token_coordinates(
@@ -102,6 +103,51 @@ def gaussian_soft_targets(
     return target / target.sum(dim=-1, keepdim=True).clamp_min(1.0e-12)
 
 
+def masks_to_token_occupancy(
+    masks_othw: torch.Tensor,
+    *,
+    token_hw: tuple[int, int],
+) -> torch.Tensor:
+    """Area-pool pixel masks into per-token foreground occupancy in ``[0,1]``."""
+    if masks_othw.ndim != 4:
+        raise ValueError(f"expected [O,T,H,W] masks, got {masks_othw.shape}")
+    object_count, time_count, pixel_h, pixel_w = masks_othw.shape
+    token_h, token_w = map(int, token_hw)
+    if min(object_count, time_count, pixel_h, pixel_w, token_h, token_w) <= 0:
+        raise ValueError(f"invalid mask/token geometry: {masks_othw.shape}/{token_hw}")
+    masks = masks_othw.float()
+    if not bool(torch.isfinite(masks).all()):
+        raise ValueError("masks must be finite")
+    if bool((masks < 0).any()) or bool((masks > 1).any()):
+        raise ValueError("masks must lie in [0,1]")
+    occupancy = F.adaptive_avg_pool2d(
+        masks.reshape(object_count * time_count, 1, pixel_h, pixel_w),
+        output_size=(token_h, token_w),
+    )
+    return occupancy.reshape(object_count, time_count, token_h, token_w)
+
+
+def token_occupancy_to_pixel(
+    occupancy_othw: torch.Tensor,
+    *,
+    pixel_hw: tuple[int, int],
+) -> torch.Tensor:
+    """Expand token-cell occupancy back to pixel space for geometry auditing."""
+    if occupancy_othw.ndim != 4:
+        raise ValueError(f"expected [O,T,H,W] occupancy, got {occupancy_othw.shape}")
+    object_count, time_count, token_h, token_w = occupancy_othw.shape
+    pixel_h, pixel_w = map(int, pixel_hw)
+    if min(object_count, time_count, token_h, token_w, pixel_h, pixel_w) <= 0:
+        raise ValueError(f"invalid occupancy/pixel geometry: {occupancy_othw.shape}/{pixel_hw}")
+    occupancy = occupancy_othw.float()
+    expanded = F.interpolate(
+        occupancy.reshape(object_count * time_count, 1, token_h, token_w),
+        size=(pixel_h, pixel_w),
+        mode="nearest",
+    )
+    return expanded.reshape(object_count, time_count, pixel_h, pixel_w)
+
+
 def noise_reliability_gate(
     sigma: torch.Tensor | float,
     *,
@@ -195,6 +241,133 @@ def uniform_object_correspondence_objective(
         "raw_soft_ce_per_object": raw_soft_ce_per_object,
         "raw_soft_ce": raw_soft_ce,
         "loss": float(lambda_corr) * raw_soft_ce,
+    }
+
+
+def uniform_object_region_correspondence_objective(
+    probability: torch.Tensor,
+    target: torch.Tensor,
+    valid: torch.Tensor,
+    *,
+    lambda_corr: float,
+) -> dict[str, torch.Tensor]:
+    """Average region CE over valid frames per object, then equally over objects."""
+    if probability.shape != target.shape or probability.ndim != 3:
+        raise ValueError(
+            "expected matching [O,T,S] probability/target tensors, got "
+            f"{probability.shape}/{target.shape}"
+        )
+    if valid.shape != probability.shape[:-1]:
+        raise ValueError(f"valid mask shape mismatch: {valid.shape}/{probability.shape[:-1]}")
+    if not math.isfinite(float(lambda_corr)) or float(lambda_corr) <= 0.0:
+        raise ValueError("lambda_corr must be positive and finite")
+
+    valid_mask = valid.to(device=probability.device, dtype=torch.bool)
+    valid_per_object = valid_mask.sum(dim=1)
+    if bool((valid_per_object == 0).any()):
+        invalid = (valid_per_object == 0).nonzero(as_tuple=False).flatten().tolist()
+        raise RuntimeError(f"objects contain no valid region targets: {invalid}")
+
+    ce_contribution = -target.to(probability) * probability.clamp_min(1.0e-12).log()
+    ce = ce_contribution.sum(dim=-1)
+    raw_soft_ce_per_object = (
+        (ce * valid_mask.to(ce.dtype)).sum(dim=1) / valid_per_object.to(ce.dtype)
+    )
+    raw_soft_ce = raw_soft_ce_per_object.mean()
+    return {
+        "ce_contribution": ce_contribution,
+        "ce": ce,
+        "valid_per_object": valid_per_object,
+        "raw_soft_ce_per_object": raw_soft_ce_per_object,
+        "raw_soft_ce": raw_soft_ce,
+        "loss": float(lambda_corr) * raw_soft_ce,
+    }
+
+
+def cross_frame_mask_terms(
+    q_bshd: torch.Tensor,
+    k_bshd: torch.Tensor,
+    *,
+    object_token_occupancy_othw: torch.Tensor,
+    source_frame: int,
+    future_only: bool = True,
+) -> dict[str, torch.Tensor]:
+    """Compute region-to-region correspondence from source-mask Q to framewise K.
+
+    Q/K use ``[B,T*H*W,H_selected,D]`` and occupancy uses ``[O,T,H,W]``.
+    Each covered source token produces its own attention distribution; those
+    distributions are averaged with the source token occupancy as weights.
+    """
+    if q_bshd.ndim != 4 or q_bshd.shape != k_bshd.shape:
+        raise ValueError(f"expected matching [B,S,H,D] Q/K, got {q_bshd.shape}/{k_bshd.shape}")
+    if q_bshd.shape[0] != 1:
+        raise ValueError("object masks are unbatched; expected Q/K batch size 1")
+    if object_token_occupancy_othw.ndim != 4:
+        raise ValueError(
+            "expected [O,T,H,W] object occupancy, got "
+            f"{object_token_occupancy_othw.shape}"
+        )
+    object_count, time_count, token_h, token_w = object_token_occupancy_othw.shape
+    frame_tokens = token_h * token_w
+    if q_bshd.shape[1] != time_count * frame_tokens:
+        raise ValueError(
+            f"Q/K token count {q_bshd.shape[1]} does not match "
+            f"T={time_count}, token_hw={(token_h, token_w)}"
+        )
+    if not 0 <= int(source_frame) < time_count:
+        raise ValueError(f"source_frame={source_frame} outside T={time_count}")
+
+    occupancy = object_token_occupancy_othw.to(device=q_bshd.device, dtype=torch.float32)
+    if not bool(torch.isfinite(occupancy).all()):
+        raise ValueError("object token occupancy must be finite")
+    if bool((occupancy < 0).any()) or bool((occupancy > 1).any()):
+        raise ValueError("object token occupancy must lie in [0,1]")
+    flat_occupancy = occupancy.flatten(2)
+    occupancy_sum = flat_occupancy.sum(dim=-1)
+    source_sum = occupancy_sum[:, int(source_frame)]
+    if bool((source_sum <= 0).any()):
+        invalid = (source_sum <= 0).nonzero(as_tuple=False).flatten().tolist()
+        raise RuntimeError(f"objects contain no source-mask tokens: {invalid}")
+
+    q = q_bshd.reshape(
+        q_bshd.shape[0], time_count, frame_tokens, q_bshd.shape[2], q_bshd.shape[3]
+    )
+    k = k_bshd.reshape(
+        k_bshd.shape[0], time_count, frame_tokens, k_bshd.shape[2], k_bshd.shape[3]
+    )
+    object_attention = []
+    source_token_count = []
+    for object_index in range(object_count):
+        source_weights = flat_occupancy[object_index, int(source_frame)]
+        source_indices = (source_weights > 0).nonzero(as_tuple=False).flatten()
+        normalized_weights = source_weights[source_indices]
+        normalized_weights = normalized_weights / normalized_weights.sum()
+        query = q[:, int(source_frame), source_indices].float()
+        logits = torch.einsum("bqhd,btkhd->bthqk", query, k.float())
+        logits = logits / math.sqrt(float(q_bshd.shape[-1]))
+        probability = logits.softmax(dim=-1)
+        aggregate = (
+            probability * normalized_weights[None, None, None, :, None]
+        ).sum(dim=3)
+        object_attention.append(aggregate)
+        source_token_count.append(source_indices.numel())
+
+    target = flat_occupancy / occupancy_sum[..., None].clamp_min(1.0e-12)
+    valid = occupancy_sum > 0
+    frame_ids = torch.arange(time_count, device=q_bshd.device)[None, :]
+    if future_only:
+        valid = valid & (frame_ids > int(source_frame))
+    else:
+        valid = valid & (frame_ids != int(source_frame))
+    if bool((valid.sum(dim=1) == 0).any()):
+        invalid = (valid.sum(dim=1) == 0).nonzero(as_tuple=False).flatten().tolist()
+        raise RuntimeError(f"objects contain no valid cross-frame masks: {invalid}")
+
+    return {
+        "attention": torch.stack(object_attention, dim=1),
+        "target": target,
+        "valid": valid,
+        "source_token_count": torch.tensor(source_token_count, device=q_bshd.device),
     }
 
 

@@ -219,8 +219,10 @@ def predict_x0(
 def evaluate_trajectory(
     predictor,
     pred_raw: torch.Tensor,
+    source_frames: np.ndarray,
     cache_record: dict[str, Any],
     device: torch.device,
+    cache_dir: Path,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     object_count = int(cache_record["object_count"])
     points_per_object = int(cache_record["points_per_object"])
@@ -235,21 +237,30 @@ def evaluate_trajectory(
     )
     queries = torch.cat((frame_ids, query_points), dim=-1).unsqueeze(0)
     # The project CoTracker wrapper follows the training path and accepts
-    # [B, C, T, H, W], while the tracker itself flattens C*T internally.
-    tracker_video = pred_raw.float().mul(255.0)
-    with torch.inference_mode():
-        pred_tracks, pred_visibility_probability, pred_confidence_probability = (
-            differentiable_track_video_with_scores(predictor, tracker_video, queries)
-        )
-    gt_tracks = cache_record["gt_tracks"].to(device=device, dtype=torch.float32).reshape(
-        1, 49, object_count * points_per_object, 2
+    # [B, T, C, H, W], while the tracker itself flattens B*T internally. Run
+    # GT and prediction in one batch so preprocessing, resizing, queries, and
+    # tracker state are exactly the same for both videos.
+    gt_video = (
+        torch.from_numpy(source_frames)
+        .to(device=device, dtype=torch.float32)
+        .permute(0, 3, 1, 2)
+        .unsqueeze(0)
     )
-    gt_visibility_probability = cache_record["gt_visibility_probability"].to(
-        device=device, dtype=torch.float32
-    ).reshape(1, 49, object_count * points_per_object)
-    gt_confidence_probability = cache_record["gt_confidence_probability"].to(
-        device=device, dtype=torch.float32
-    ).reshape(1, 49, object_count * points_per_object)
+    pred_video = pred_raw.float().clamp(0.0, 1.0).mul(255.0)
+    tracker_video = torch.cat((gt_video, pred_video), dim=0)
+    tracker_queries = queries.expand(2, -1, -1).contiguous()
+    with torch.inference_mode():
+        all_tracks, all_visibility_probability, all_confidence_probability = (
+            differentiable_track_video_with_scores(
+                predictor, tracker_video, tracker_queries
+            )
+        )
+    gt_tracks = all_tracks[:1]
+    pred_tracks = all_tracks[1:]
+    gt_visibility_probability = all_visibility_probability[:1]
+    pred_visibility_probability = all_visibility_probability[1:]
+    gt_confidence_probability = all_confidence_probability[:1]
+    pred_confidence_probability = all_confidence_probability[1:]
     gt_geometric_visibility = cache_record["gt_geometric_visibility"].to(
         device=device
     ).bool().reshape(1, 49, object_count * points_per_object)
@@ -290,7 +301,13 @@ def evaluate_trajectory(
         "trajectory_object_count": object_count,
         "trajectory_points_per_object": points_per_object,
         "trajectory_definition": "F04-relative displacement, F08-F48, equal-object visibility-aware SmoothL1",
-        "trajectory_cache": str(DEFAULT_TRAJECTORY_CACHE),
+        "trajectory_gt_extraction": "GT and prediction tracked together with identical CoTracker preprocessing",
+        "trajectory_video_preprocess": (
+            "both videos use float32 [0,255] RGB, [B,T,C,H,W] layout, the same "
+            "256x448 bilinear resize, F04 queries, and one batched CoTracker3 forward"
+        ),
+        "trajectory_gt_cache_role": "query points and physical geometric visibility only; cached GT tracks are not used",
+        "trajectory_cache": str(cache_dir),
         "trajectory_cotracker_checkpoint": str(DEFAULT_COTRACKER),
         "trajectory_huber_delta": HUBER_DELTA,
         "trajectory_visibility_loss_weight": VISIBILITY_LOSS_WEIGHT,
@@ -299,8 +316,12 @@ def evaluate_trajectory(
         "query_points": query_points.detach().cpu().numpy().astype(np.float32),
         "gt_tracks": gt_tracks[0].detach().cpu().numpy().astype(np.float32),
         "pred_tracks": pred_tracks[0].detach().cpu().numpy().astype(np.float32),
+        "gt_visibility_probability": gt_visibility_probability[0].float().cpu().numpy(),
+        "gt_confidence_probability": gt_confidence_probability[0].float().cpu().numpy(),
+        "gt_visibility": (gt_visibility_probability[0] > VISIBILITY_THRESHOLD).cpu().numpy().astype(np.uint8),
         "gt_geometric_visibility": gt_geometric_visibility[0].cpu().numpy().astype(np.uint8),
         "pred_visibility_probability": pred_visibility_probability[0].float().cpu().numpy(),
+        "pred_confidence_probability": pred_confidence_probability[0].float().cpu().numpy(),
         "pred_visibility": (pred_visibility_probability[0] > VISIBILITY_THRESHOLD).cpu().numpy().astype(np.uint8),
         "object_ids_per_point": np.repeat(np.arange(object_count, dtype=np.int32), points_per_object),
     }
@@ -358,6 +379,8 @@ def render_overlay(
     pred_frames: np.ndarray,
     arrays: dict[str, np.ndarray],
     metrics: dict[str, Any],
+    *,
+    prediction_label: str = "Tiny-VAE x0_pred + predicted tracks",
 ) -> None:
     height, width = source_frames.shape[1:3]
     gt_native = trackres_to_native(arrays["gt_tracks"], height, width)
@@ -365,7 +388,9 @@ def render_overlay(
     point_colors = OBJECT_COLORS[
         arrays["object_ids_per_point"] % len(OBJECT_COLORS)
     ]
-    gt_visible = arrays["gt_geometric_visibility"].astype(bool)
+    gt_visible = arrays.get(
+        "gt_visibility", arrays["gt_geometric_visibility"]
+    ).astype(bool)
     pred_visible = arrays["pred_visibility"].astype(bool)
     frames = []
     for frame_id in range(source_frames.shape[0]):
@@ -384,7 +409,7 @@ def render_overlay(
                     cv2.line(compare_panel, start, stop, (255, 72, 72), 1, cv2.LINE_AA)
         detail = f"F{frame_id:02d} | trajectory={metrics['trajectory_loss']:.5f}"
         add_panel_label(gt_panel, "GT RGB + GT geometric tracks", detail)
-        add_panel_label(pred_panel, "Tiny-VAE x0_pred + predicted tracks", detail)
+        add_panel_label(pred_panel, prediction_label, detail)
         add_panel_label(compare_panel, "white=GT, color=pred, red=error", detail)
         frames.append(np.concatenate((gt_panel, pred_panel, compare_panel), axis=1))
     rendered = np.stack(frames).astype(np.uint8)
@@ -401,12 +426,12 @@ def build_html(output_root: Path, entry: dict[str, Any], cases: list[dict[str, A
     for index, case in enumerate(cases, start=1):
         rel = Path("cases") / case["case_id"]
         cards.append(
-            f"""<section class=case><div class=head><div><small>CASE {index:02d}</small><h2>{html.escape(case['case_id'])}</h2><p>{html.escape(case.get('prompt',''))}</p></div><div class=loss><b>{case['metrics']['trajectory_loss']:.6f}</b><span>trajectory loss</span></div></div>
-<div class=metrics><span><b>{case['metrics']['trajectory_coordinate_loss']:.6f}</b>coordinate</span><span><b>{case['metrics']['trajectory_visibility_penalty']:.6f}</b>visibility penalty</span><span><b>{case['metrics']['trajectory_normalized_ade']:.5f}</b>normalized ADE</span><span><b>{case['metrics']['trajectory_valid_fraction']:.1%}</b>GT valid fraction</span><span><b>{case['metrics']['trajectory_object_count']}</b>objects</span></div>
+            f"""<section class=case><div class=head><div><small>CASE {index:02d}</small><h2>{html.escape(case['case_id'])}</h2><p>{html.escape(case.get('prompt',''))}</p></div><div class=loss><b>{case['trajectory_loss']:.6f}</b><span>trajectory loss</span></div></div>
+<div class=metrics><span><b>{case['trajectory_coordinate_loss']:.6f}</b>coordinate</span><span><b>{case['trajectory_visibility_penalty']:.6f}</b>visibility penalty</span><span><b>{case['trajectory_normalized_ade']:.5f}</b>normalized ADE</span><span><b>{case['trajectory_valid_fraction']:.1%}</b>GT valid fraction</span><span><b>{case['trajectory_object_count']}</b>objects</span></div>
 <video controls muted loop playsinline preload=metadata poster="{rel}/trajectory_preview.jpg" src="{rel}/trajectory_overlay.mp4"></video><p><a href="{rel}/metrics.json">metrics.json</a> · <a href="{rel}/trajectories.npz">tracks</a></p></section>"""
         )
     document = f"""<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content=width=device-width,initial-scale=1><title>Trajectory loss preview</title><style>
-:root{{--bg:#101719;--panel:#182326;--ink:#ecf4f1;--muted:#9aada8;--line:#30413e;--accent:#62d0b3;--gold:#f3bd58}}*{{box-sizing:border-box}}body{{margin:0;background:linear-gradient(145deg,#091014,#16231f);color:var(--ink);font:14px/1.5 system-ui,sans-serif}}main{{max-width:1500px;margin:auto;padding:28px 24px 70px}}h1{{font:500 42px Georgia,serif;margin:0 0 8px}}p{{color:var(--muted)}}.summary{{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}}.pill{{padding:9px 13px;border:1px solid var(--line);background:var(--panel);border-radius:8px}}.case{{padding:24px 0 32px;border-top:1px solid var(--line)}}.head{{display:flex;justify-content:space-between;gap:18px;align-items:end}}h2{{margin:3px 0;font-size:22px}}small{{color:var(--accent);font-weight:700;letter-spacing:0}}.loss{{border-left:4px solid var(--gold);padding:4px 12px;text-align:right}}.loss b{{display:block;color:var(--gold);font-size:25px}}.loss span{{color:var(--muted)}}.metrics{{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);background:var(--panel);margin:14px 0}}.metrics span{{padding:10px 12px;border-right:1px solid var(--line);color:var(--muted)}}.metrics span:last-child{{border:0}}.metrics b{{display:block;color:var(--ink);font-size:17px}}video{{display:block;width:100%;aspect-ratio:21/4;object-fit:contain;background:#050708;border:1px solid var(--line)}}a{{color:var(--accent)}}@media(max-width:850px){{h1{{font-size:34px}}.head{{display:block}}.loss{{text-align:left;margin-top:10px}}.metrics{{grid-template-columns:repeat(2,1fr)}}.metrics span{{border-bottom:1px solid var(--line)}}video{{aspect-ratio:16/9}}}}</style></head><body><main><h1>Trajectory loss · overlay preview</h1><p>Current validation-page inputs · frozen CoTracker3 scaled_offline · F04-relative displacement · F08–F48 · equal-object visibility-aware SmoothL1.</p><div class=summary><span class=pill>checkpoint <b>{html.escape(entry['method_label'])}</b></span><span class=pill>step <b>{entry['step']}</b></span><span class=pill>cases <b>{len(cases)}</b></span><span class=pill>ranking direction <b>lower is better</b></span></div>{''.join(cards)}</main></body></html>"""
+:root{{--bg:#101719;--panel:#182326;--ink:#ecf4f1;--muted:#9aada8;--line:#30413e;--accent:#62d0b3;--gold:#f3bd58}}*{{box-sizing:border-box}}body{{margin:0;background:linear-gradient(145deg,#091014,#16231f);color:var(--ink);font:14px/1.5 system-ui,sans-serif}}main{{max-width:1500px;margin:auto;padding:28px 24px 70px}}h1{{font:500 42px Georgia,serif;margin:0 0 8px}}p{{color:var(--muted)}}.summary{{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}}.pill{{padding:9px 13px;border:1px solid var(--line);background:var(--panel);border-radius:8px}}.case{{padding:24px 0 32px;border-top:1px solid var(--line)}}.head{{display:flex;justify-content:space-between;gap:18px;align-items:end}}h2{{margin:3px 0;font-size:22px}}small{{color:var(--accent);font-weight:700;letter-spacing:0}}.loss{{border-left:4px solid var(--gold);padding:4px 12px;text-align:right}}.loss b{{display:block;color:var(--gold);font-size:25px}}.loss span{{color:var(--muted)}}.metrics{{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);background:var(--panel);margin:14px 0}}.metrics span{{padding:10px 12px;border-right:1px solid var(--line);color:var(--muted)}}.metrics span:last-child{{border:0}}.metrics b{{display:block;color:var(--ink);font-size:17px}}video{{display:block;width:100%;aspect-ratio:21/4;object-fit:contain;background:#050708;border:1px solid var(--line)}}a{{color:var(--accent)}}@media(max-width:850px){{h1{{font-size:34px}}.head{{display:block}}.loss{{text-align:left;margin-top:10px}}.metrics{{grid-template-columns:repeat(2,1fr)}}.metrics span{{border-bottom:1px solid var(--line)}}video{{aspect-ratio:16/9}}}}</style></head><body><main><h1>Trajectory loss · overlay preview</h1><p>GT 与生成视频采用相同的 float32 [0,255] RGB、[B,T,C,H,W]、256x448 resize、F04 query 和 batched CoTracker3；冻结 CoTracker3 scaled_offline · F04-relative displacement · F08–F48 · equal-object visibility-aware SmoothL1。</p><div class=summary><span class=pill>checkpoint <b>{html.escape(entry['method_label'])}</b></span><span class=pill>step <b>{entry['step']}</b></span><span class=pill>cases <b>{len(cases)}</b></span><span class=pill>ranking direction <b>lower is better</b></span></div>{''.join(cards)}</main></body></html>"""
     path = output_root / "index.html"
     path.write_text(document, encoding="utf-8")
     return path
@@ -503,10 +528,15 @@ def main() -> None:
                 pred_frames = video_to_uint8(pred_raw)
             if pred_frames.shape != (49, 512, 896, 3):
                 raise RuntimeError(f"unexpected decoded video shape: {pred_frames.shape}")
-            trajectory_metrics, arrays = evaluate_trajectory(
-                predictor, pred_raw, cache.load(case["sample_key"]), device
-            )
             source_frames = read_video(Path(case["gt_video"]))
+            trajectory_metrics, arrays = evaluate_trajectory(
+                predictor,
+                pred_raw,
+                source_frames,
+                cache.load(case["sample_key"]),
+                device,
+                args.trajectory_cache,
+            )
             case_dir.mkdir(parents=True, exist_ok=True)
             write_mp4(case_dir / "pred_x0.mp4", pred_frames)
             write_mp4(case_dir / "gt.mp4", source_frames)

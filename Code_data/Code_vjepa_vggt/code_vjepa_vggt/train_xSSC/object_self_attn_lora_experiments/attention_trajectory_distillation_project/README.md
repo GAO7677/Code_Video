@@ -212,3 +212,49 @@ This is a forward-only step-0 diagnostic, not an optimizer run. Differentiable
 Q/K behavior, Gaussian boundary continuity, token-cell mapping, bilinear Query
 sampling, aggregate CE gradients, and smooth gate behavior are covered by
 `test_noise_gated_correspondence.py`.
+
+## GT latent-mask correspondence diagnostic
+
+`run_pybullet_latent_mask_correspondence_diagnostics.py` replaces point-track
+supervision with each object's full per-frame supervision mask. The current
+PyBullet cases do not export native simulator instance masks, so the cached
+GroundingDINO + SAM2 tracked masks are pseudo-labels treated as GT-role
+supervision by this diagnostic. Pixel masks at
+`F00,F04,...,F48` are area-pooled from `512x896` to `13x16x28`, so each spatial
+token stores the foreground fraction of its exact `32x32` pixel footprint. The
+normalized target-frame occupancy is the soft region label. At `F04/L01`, every
+occupied source token supplies a post-RoPE Query; per-token attention maps are
+weighted by source occupancy before the Top100 PCK32 head mixture and CE:
+
+```text
+L_corr = 0.01 * mean_objects(mean_future_frames(CE(Y_mask, A_mask)))
+```
+
+The mapping audit expands each occupied token back to its pixel footprint and
+requires zero missed GT pixels. This hard support is intentionally a superset
+of the original contour, so its precision and IoU report token quantization;
+it is not presented as a lossless inverse mask reconstruction.
+
+Run the mapping audit, all 15 controlled 5B forwards, and report rendering in
+the foreground on an idle non-4 GPU with:
+
+```bash
+GPU_ID=2 ./run_pybullet_latent_mask_correspondence_diagnostics_gpu.sh all --overwrite
+```
+
+The generated page and artifacts are stored under:
+
+```text
+/data/gaoya/agent-data/outputs/latent_mask_correspondence_diagnostics/
+```
+
+Serve the report in the foreground with:
+
+```bash
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python -m http.server 8771 --bind 0.0.0.0 --directory /data/gaoya/agent-data/outputs/latent_mask_correspondence_diagnostics
+```
+
+This remains a forward-only preflight diagnostic with no optimizer step. The
+area mapping, reverse-support invariant, region-attention normalization,
+equal-object reduction, and Q/K gradients are covered by
+`test_latent_mask_correspondence.py`.

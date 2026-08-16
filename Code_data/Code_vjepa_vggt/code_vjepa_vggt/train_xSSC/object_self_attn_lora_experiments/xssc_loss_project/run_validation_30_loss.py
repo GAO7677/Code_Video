@@ -81,11 +81,22 @@ def main() -> None:
             value=getattr(args_ns,name,None)
             if value is None or not str(value): setattr(args_ns,name,str(Path(cache_root)/suffix))
         datasets=ev.build_source_datasets(config)
+        trajectory_cache_store=ev.build_trajectory_cache(config)
         load_info=ev.load_checkpoint(model,Path(entry["checkpoint"]))
         result={"schema_version":1,"entry_id":entry["entry_id"],"method_label":entry["method_label"],"version":entry["version"],"step":entry["step"],"checkpoint":entry["checkpoint"],"config":entry["config"],"metric":"fixed_pybullet_train_30case_eval","state":"running","cases":[]}
         for case in case_manifest["cases"]:
             prepared=ev.prepare_inputs(model,datasets[case["source"]],case,root)
-            loss,metrics=ev.evaluate_prepared(model,prepared,int(case.get("case_seed",42)))
+            trajectory_cache=(
+                trajectory_cache_store.load(str(case["sample_key"]))
+                if trajectory_cache_store is not None
+                else None
+            )
+            loss,metrics=ev.evaluate_prepared(
+                model,
+                prepared,
+                int(case.get("case_seed",42)),
+                trajectory_cache=trajectory_cache,
+            )
             result["cases"].append({**case,"loss_main":loss,"metrics":metrics})
             atomic(out,result)
             print(f"[{entry['entry_id']}] {len(result['cases'])}/{len(case_manifest['cases'])} main={loss:.8f}",flush=True)

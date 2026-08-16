@@ -43,6 +43,7 @@ import train_xssc_object_self_attn_lora_slot_dedup as slot_dedup_train
 import xssc_loss_project.train_full_sa_object_slot_dedup_xssc_loss as slot_dedup_xssc_train
 import xssc_loss_project.train_xssc_object_self_attn_lora_xssc_loss as xssc_train
 import vjepa_loss_project.train_xssc_object_self_attn_lora_vjepa_loss as vjepa_train
+import object_cotracker_trajectory_project.train_xssc_object_self_attn_lora_trajectory_loss as trajectory_train
 from code_vjepa_vggt.data.mixed_replay_no_gt_box_dataset import (
     KubricReplayNoGTBoxDataset,
     OpenVidNoGTBoxDataset,
@@ -153,6 +154,9 @@ def launch_argv(manifest_path: Path) -> list[str]:
 
 def model_kind(config: dict[str, Any]) -> str:
     script = str(config.get("experiment", {}).get("script", ""))
+    trajectory_enabled = bool(config.get("trajectory_loss", {}).get("enabled", False))
+    if trajectory_enabled or "trajectory_loss" in script:
+        return "trajectory"
     if "vjepa_loss" in script or "vjepa" in str(config.get("experiment", {}).get("name", "")).lower():
         return "vjepa"
     initialization = str(config.get("initialization", {}).get("type", "openvid_lora"))
@@ -182,6 +186,7 @@ def parse_model_args(manifest_path: Path) -> tuple[argparse.Namespace, dict[str,
         "slot_dedup_xssc": slot_dedup_xssc_train.build_parser,
         "xssc": xssc_train.build_parser,
         "vjepa": vjepa_train.build_parser,
+        "trajectory": trajectory_train.build_parser,
     }[kind]()
     args, _unknown = parser.parse_known_args(launch_argv(manifest_path))
     if kind == "physrvg" and not getattr(args, "physrvg_dit_checkpoint", None):
@@ -340,12 +345,28 @@ def build_model(
         "slot_dedup_xssc": slot_dedup_xssc_train,
         "xssc": xssc_train,
         "vjepa": vjepa_train,
+        "trajectory": trajectory_train,
     }[kind]
     model = implementation.build_model(args, accelerator)
     model.to(device)
     model.pipe.to(device=device, dtype=model.pipe.torch_dtype)
     model.eval()
     return model, args, config, kind
+
+
+def build_trajectory_cache(config: dict[str, Any]):
+    settings = config.get("trajectory_loss", {})
+    if not settings.get("enabled", False):
+        return None
+    model = config["model"]
+    return trajectory_train.PyBulletTrajectoryCache(
+        settings["cache_dir"],
+        num_frames=int(model["num_frames"]),
+        anchor_frame=int(settings["anchor_frame"]),
+        points_per_object=int(settings["points_per_object"]),
+        track_height=trajectory_train.TRACK_HEIGHT,
+        track_width=trajectory_train.TRACK_WIDTH,
+    )
 
 
 def load_checkpoint(model: torch.nn.Module, checkpoint: Path) -> dict[str, Any]:
@@ -435,14 +456,26 @@ def evaluate_prepared(
     model: torch.nn.Module,
     prepared_cpu: tuple[dict, dict, dict],
     case_seed: int,
+    trajectory_cache: dict[str, Any] | None = None,
 ) -> tuple[float, dict[str, float]]:
     seed_all(case_seed)
     shared, positive, negative = transfer_prepared(model, prepared_cpu)
-    with torch.inference_mode():
-        # Auxiliary-loss subclasses override this path even when the object
-        # branch is disabled. Calling task_to_loss directly would silently
-        # drop their xSSC/V-JEPA validation terms.
-        loss, metrics = model._compute_object_losses(model.pipe, shared, positive)
+    is_trajectory_model = hasattr(model, "_trajectory_batch")
+    if is_trajectory_model and trajectory_cache is None:
+        raise ValueError("trajectory validation requires a cached trajectory target")
+    if trajectory_cache is not None and not is_trajectory_model:
+        raise ValueError("trajectory cache was provided to a non-trajectory model")
+    if is_trajectory_model:
+        model._trajectory_batch = [trajectory_cache]
+    try:
+        with torch.inference_mode():
+            # Auxiliary-loss subclasses override this path even when the object
+            # branch is disabled. Calling task_to_loss directly would silently
+            # drop their xSSC/V-JEPA/trajectory validation terms.
+            loss, metrics = model._compute_object_losses(model.pipe, shared, positive)
+    finally:
+        if is_trajectory_model:
+            model._trajectory_batch = None
     loss_main = float(metrics.get("train/loss_main", loss.detach().item()))
     numeric = {
         key: float(value)
@@ -475,6 +508,7 @@ def evaluate_entry(
     load_info: dict[str, Any],
     manifest_path: Path,
     kind: str,
+    trajectory_cache_store: Any | None = None,
 ) -> dict[str, Any]:
     path = result_path(output_root, entry)
     if path.is_file():
@@ -507,9 +541,24 @@ def evaluate_entry(
             case,
             output_root,
         )
-        loss_main, metrics = evaluate_prepared(model, prepared, int(case["case_seed"]))
+        trajectory_cache = (
+            trajectory_cache_store.load(str(case["sample_key"]))
+            if trajectory_cache_store is not None
+            else None
+        )
+        loss_main, metrics = evaluate_prepared(
+            model,
+            prepared,
+            int(case["case_seed"]),
+            trajectory_cache=trajectory_cache,
+        )
         if repeat_check and not result["cases"]:
-            repeated, _ = evaluate_prepared(model, prepared, int(case["case_seed"]))
+            repeated, _ = evaluate_prepared(
+                model,
+                prepared,
+                int(case["case_seed"]),
+                trajectory_cache=trajectory_cache,
+            )
             if abs(loss_main - repeated) > max(1e-7, abs(loss_main) * 1e-6):
                 raise RuntimeError(
                     f"Determinism check failed: first={loss_main}, repeat={repeated}"
@@ -607,7 +656,8 @@ def run_worker(args: argparse.Namespace) -> None:
             if not method_entries:
                 continue
             manifest_path = find_manifest(Path(method_entries[0]["checkpoint"]))
-            model, _model_args, _config, kind = build_model(manifest_path, device)
+            model, _model_args, model_config, kind = build_model(manifest_path, device)
+            trajectory_cache_store = build_trajectory_cache(model_config)
             for entry in method_entries:
                 info = load_checkpoint(model, Path(entry["checkpoint"]))
                 evaluate_entry(
@@ -620,6 +670,7 @@ def run_worker(args: argparse.Namespace) -> None:
                     load_info=info,
                     manifest_path=manifest_path,
                     kind=kind,
+                    trajectory_cache_store=trajectory_cache_store,
                 )
                 torch.cuda.empty_cache()
             del model
