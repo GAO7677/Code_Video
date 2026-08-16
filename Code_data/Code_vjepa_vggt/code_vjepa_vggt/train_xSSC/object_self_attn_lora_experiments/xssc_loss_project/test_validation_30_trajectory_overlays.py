@@ -4,10 +4,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import torch
+
 import run_validation_30_trajectory_overlays as overlays
+import trajectory_validation_preview as preview
 
 
 class Validation30TrajectoryOverlayTests(unittest.TestCase):
+    def test_tracker_video_is_resized_to_the_query_coordinate_system(self) -> None:
+        video = torch.rand(1, 2, 3, 8, 12)
+
+        resized = preview.resize_tracker_video(video)
+
+        self.assertEqual(tuple(resized.shape), (1, 2, 3, 256, 448))
+
     def test_find_generated_video_supports_nested_entry_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

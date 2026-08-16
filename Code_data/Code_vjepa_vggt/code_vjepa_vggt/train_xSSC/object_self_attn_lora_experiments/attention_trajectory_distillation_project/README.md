@@ -129,6 +129,77 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 The entry currently enforces per-GPU batch size 1 so every loss has one
 unambiguous fixed object query set.
 
+## Formal GT latent-mask CE training entry
+
+`train_xssc_object_self_attn_lora_frozen_motion_probe_latent_mask.py` is the
+formal training entry for the GroundingDINO + SAM2 GT-role latent-mask scheme.
+It reuses the original flow-matching pass and the same frozen Wan2.2 Motion
+Probe, but it does not optimize the old Teacher/Student attention KL or the
+trajectory Huber term:
+
+```text
+L = L_flow + motion_probe_latent_mask_weight * CE(Y_mask, A_student)
+
+A_student = sum_h normalize(PCK_h^gamma) * A_h(Teacher post-RoPE Q, Student K)
+```
+
+`Y_mask` is the normalized soft occupancy obtained by area-pooling the tracked
+pixel mask to the Wan latent token grid. Pixel anchors `F00,F04,...,F48` map to
+`L00,L01,...,L12`; the default source is `F04/L01`, and the loss is averaged
+over valid future frames `L02-L12`. All occupied source tokens contribute Query
+vectors, weighted by their fractional source-mask occupancy. Teacher attention
+is computed only as a stop-gradient diagnostic; it is not a target in this
+objective.
+
+The per-sample offline cache contract is:
+
+```text
+<mask_cache_root>/cases/<metadata.sample_key>/object_masks.npz
+  masks_othw:   [objects, mask_frames, pixel_height, pixel_width], values in [0,1]
+  frame_indices: optional [mask_frames] source-video frame indices
+```
+
+Alternatively, the same tensors may be supplied directly as
+`raw_sample.object_tracking_masks` and
+`raw_sample.object_tracking_masks_frame_indices`. A non-identity sampled video
+must have explicit `frame_indices`, or a full source-timeline mask whose length
+equals `metadata.source_frame_count`; ambiguous alignment is a hard error.
+Every forward also expands latent support back to pixel space and requires zero
+missed GT foreground pixels. Reverse recall, precision, IoU, and missed-pixel
+count are logged.
+
+Use the normal dataset, optimizer, and checkpoint arguments with this entry:
+
+```bash
+PYTHONNOUSERSITE=1 \
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/attention_trajectory_distillation_project/train_xssc_object_self_attn_lora_frozen_motion_probe_latent_mask.py \
+  <existing dataset, optimizer, checkpoint and Wan arguments> \
+  --output_path /data/gaoya/agent-data/checkpoints/frozen_motion_probe_latent_mask \
+  --disable_object_branch \
+  --train_batch_size 1 \
+  --self_attn_adaptation_mode t_head \
+  --head_selection_config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/configs/physiciq67_pck32_s039_latest3350_top100_heads.json \
+  --head_selection_subset_id T_physiciq67_pck32_s039_latest3350_top100 \
+  --head_selection_expected_role T \
+  --head_selection_feature_subtype physiciq67_pck32_s039_latest3350 \
+  --head_selection_expected_num_heads 100 \
+  --probe_timestep 500 \
+  --probe_noise_level 0.5 \
+  --motion_probe_pck_weight_power 30 \
+  --motion_probe_query_latent_frame 1 \
+  --motion_probe_query_object_index 0 \
+  --motion_probe_latent_mask_weight 0.01 \
+  --motion_probe_mask_cache_root /data/gaoya/agent-data/cache/uniform_multiobject_correspondence_diagnostics
+```
+
+Configuration uses the existing CLI rather than a separate YAML/JSON loader.
+The default cache currently contains only the three diagnostic cases F1-F3;
+the trainer intentionally fails on a missing sample instead of silently
+dropping the mask loss. Precompute GroundingDINO + SAM2 tracked masks for every
+sample selected by the formal training dataset before launching a full run.
+
 ## Training-case diagnostic and noise sweep
 
 The completed report retains the original `training t=500 / Probe=0.5`

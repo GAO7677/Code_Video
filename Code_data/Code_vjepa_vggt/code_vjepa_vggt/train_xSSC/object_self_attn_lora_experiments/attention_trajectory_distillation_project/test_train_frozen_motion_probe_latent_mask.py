@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from train_xssc_object_self_attn_lora_frozen_motion_probe_latent_mask import (
+    build_parser,
     build_latent_mask_supervision,
     compute_latent_mask_training_objective,
     load_sample_gt_role_masks,
@@ -72,11 +73,40 @@ def test_load_sample_gt_role_masks_rejects_ambiguous_frame_alignment():
             raise AssertionError("ambiguous mask/frame alignment must fail")
 
 
+def test_load_sample_gt_role_masks_uses_explicit_cache_frame_indices():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        case_root = root / "cases" / "F3" / "case003"
+        case_root.mkdir(parents=True)
+        frame_indices = np.arange(0, 98, 2, dtype=np.int64)
+        masks = np.zeros((1, 49, 64, 96), dtype=np.uint8)
+        for position in range(49):
+            masks[0, position, 8:20, position : position + 8] = 1
+        np.savez_compressed(
+            case_root / "object_masks.npz",
+            masks_othw=masks,
+            frame_indices=frame_indices,
+        )
+        sample = _raw_sample("F3/case003", frame_indices=frame_indices.tolist())
+        sample["metadata"]["source_frame_count"] = 100
+
+        selected, audit = load_sample_gt_role_masks(
+            sample,
+            cache_root=root,
+            mask_key="object_tracking_masks",
+            object_index=0,
+            expected_frames=49,
+        )
+
+        assert np.array_equal(selected, masks[0])
+        assert audit["frame_alignment"] == "explicit_frame_indices"
+
+
 def test_build_latent_mask_supervision_maps_f04_to_latent_one():
     masks = np.zeros((49, 64, 96), dtype=np.uint8)
     masks[:, 16:48, 24:72] = 1
 
-    occupancy, query_rows, query_weights, valid = build_latent_mask_supervision(
+    occupancy, query_rows, query_weights, valid, audit = build_latent_mask_supervision(
         masks,
         grid=(13, 2, 3),
         source_frame=1,
@@ -90,6 +120,8 @@ def test_build_latent_mask_supervision_maps_f04_to_latent_one():
     assert torch.allclose(query_weights.sum(), torch.tensor(1.0))
     support = occupancy[0, 1].flatten() > 0
     assert torch.equal(torch.sort(query_rows % 6).values, support.nonzero().flatten())
+    assert audit["reverse_recall"] == 1.0
+    assert audit["missed_gt_pixels"] == 0.0
 
 
 def test_latent_mask_training_objective_reaches_student_frame_heads():
@@ -119,3 +151,10 @@ def test_latent_mask_training_objective_reaches_student_frame_heads():
     result["loss"].backward()
     assert student_logits.grad is not None
     assert float(student_logits.grad.norm()) > 0.0
+
+
+def test_parser_exposes_only_the_new_formal_probe_loss():
+    destinations = {action.dest for action in build_parser()._actions}
+    assert "motion_probe_latent_mask_weight" in destinations
+    assert "motion_probe_heatmap_weight" not in destinations
+    assert "motion_probe_trajectory_weight" not in destinations

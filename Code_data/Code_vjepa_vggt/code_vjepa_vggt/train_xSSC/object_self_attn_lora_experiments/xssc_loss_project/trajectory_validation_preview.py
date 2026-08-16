@@ -138,6 +138,19 @@ def video_to_uint8(video: torch.Tensor) -> np.ndarray:
     return (item * 255.0).round().to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
 
 
+def resize_tracker_video(video: torch.Tensor) -> torch.Tensor:
+    if video.ndim != 5:
+        raise ValueError(f"tracker video must be [B,T,C,H,W], got {video.shape}")
+    batch, frames, channels, _height, _width = video.shape
+    resized = F.interpolate(
+        video.reshape(batch * frames, channels, video.shape[-2], video.shape[-1]),
+        size=(TRACK_HEIGHT, TRACK_WIDTH),
+        mode="bilinear",
+        align_corners=True,
+    )
+    return resized.reshape(batch, frames, channels, TRACK_HEIGHT, TRACK_WIDTH)
+
+
 def write_mp4(path: Path, frames: np.ndarray, fps: float = FPS) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     container = av.open(str(path), mode="w")
@@ -238,7 +251,9 @@ def evaluate_trajectory(
         dtype=query_points.dtype,
     )
     queries = torch.cat((frame_ids, query_points), dim=-1).unsqueeze(0)
-    pred_video = pred_raw.float().clamp(0.0, 1.0).mul(255.0)
+    pred_video = resize_tracker_video(
+        pred_raw.float().clamp(0.0, 1.0).mul(255.0)
+    )
     if use_cached_gt:
         with torch.inference_mode():
             pred_tracks, pred_visibility_probability, pred_confidence_probability = (
@@ -274,6 +289,7 @@ def evaluate_trajectory(
             .permute(0, 3, 1, 2)
             .unsqueeze(0)
         )
+        gt_video = resize_tracker_video(gt_video)
         tracker_video = torch.cat((gt_video, pred_video), dim=0)
         tracker_queries = queries.expand(2, -1, -1).contiguous()
         with torch.inference_mode():
