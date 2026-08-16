@@ -138,6 +138,7 @@ def run_metric_unlocked(
         command.extend(["--wmreward-reset-interval", "1000000"])
 
     environment = os.environ.copy()
+    environment["PYTHONNOUSERSITE"] = "1"
     environment["PYTHONPATH"] = (
         "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:"
         "/home/gaoya/Code_Video/Code_data/Code_try0526"

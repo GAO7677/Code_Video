@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from train_xssc_object_self_attn_lora_frozen_motion_probe_latent_mask import (
+    FrozenMotionProbeLatentMaskWanModule,
     build_parser,
     build_latent_mask_supervision,
     compute_latent_mask_training_objective,
@@ -102,6 +103,32 @@ def test_load_sample_gt_role_masks_uses_explicit_cache_frame_indices():
         assert audit["frame_alignment"] == "explicit_frame_indices"
 
 
+def test_empty_future_masks_are_excluded_instead_of_rejecting_the_sample():
+    sample = _raw_sample("F1/case004")
+    masks = np.zeros((1, 49, 64, 96), dtype=np.uint8)
+    masks[:, :, 16:32, 24:48] = 1
+    masks[:, 8] = 0
+    sample["object_tracking_masks"] = masks
+
+    selected, mask_audit = load_sample_gt_role_masks(
+        sample,
+        cache_root=Path("/unused"),
+        mask_key="object_tracking_masks",
+        object_index=0,
+        expected_frames=49,
+    )
+    _, _, _, valid, _ = build_latent_mask_supervision(
+        selected,
+        grid=(13, 2, 3),
+        source_frame=1,
+        device=torch.device("cpu"),
+    )
+
+    assert mask_audit["empty_frame_count"] == 1
+    assert not bool(valid[0, 2])
+    assert int(valid.sum()) == 10
+
+
 def test_build_latent_mask_supervision_maps_f04_to_latent_one():
     masks = np.zeros((49, 64, 96), dtype=np.uint8)
     masks[:, 16:48, 24:72] = 1
@@ -151,6 +178,22 @@ def test_latent_mask_training_objective_reaches_student_frame_heads():
     result["loss"].backward()
     assert student_logits.grad is not None
     assert float(student_logits.grad.norm()) > 0.0
+
+
+def test_probe_inputs_are_sliced_per_sample_for_batch_two():
+    inputs = {
+        "context": torch.arange(12).reshape(2, 2, 3),
+        "y": torch.arange(8).reshape(2, 1, 2, 2),
+        "context_frame_indices": torch.arange(8),
+        "num_frames": 49,
+    }
+
+    second = FrozenMotionProbeLatentMaskWanModule._slice_probe_inputs(inputs, 1, 2)
+
+    assert second["context"].shape == (1, 2, 3)
+    assert torch.equal(second["context"], inputs["context"][1:2])
+    assert torch.equal(second["y"], inputs["y"][1:2])
+    assert torch.equal(second["context_frame_indices"], torch.arange(8))
 
 
 def test_parser_exposes_only_the_new_formal_probe_loss():

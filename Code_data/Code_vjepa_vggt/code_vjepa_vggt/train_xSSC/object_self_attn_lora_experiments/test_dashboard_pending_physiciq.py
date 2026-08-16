@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,16 @@ class PendingPhysicIQDashboardTests(unittest.TestCase):
             "full_sa_no_object_cotracker_trajectory_loss",
             method_keys,
         )
+
+    def test_cotracker_trajectory_method_is_watched_by_both_pipelines(self) -> None:
+        config_path = Path(__file__).with_name(
+            "xssc_lora_three_train_watch_config_with_t_head.json"
+        )
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        method_key = "full_sa_no_object_cotracker_trajectory_loss"
+
+        self.assertIn(method_key, {method["key"] for method in config["methods"]})
+        self.assertIn(method_key, config["physiciq"]["method_keys"])
 
     def test_static_checkpoint_is_visible_in_test5_before_generation(self) -> None:
         with tempfile.TemporaryDirectory() as output_root:

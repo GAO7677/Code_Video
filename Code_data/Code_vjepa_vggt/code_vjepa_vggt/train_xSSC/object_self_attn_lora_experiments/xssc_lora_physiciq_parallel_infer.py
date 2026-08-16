@@ -215,6 +215,7 @@ def run_task(
     environment = os.environ.copy()
     environment.update(
         {
+            "PYTHONNOUSERSITE": "1",
             "TEST_LIST": str(shard_file),
             "NUM_INFERENCE_STEPS": str(phys["num_inference_steps"]),
             "STEP_OUTPUT_DIR_NAME": name,

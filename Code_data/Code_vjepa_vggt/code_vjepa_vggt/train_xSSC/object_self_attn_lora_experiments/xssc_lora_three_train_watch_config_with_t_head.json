@@ -70,6 +70,7 @@
       "t_head100_lora_pck32_no_object",
       "full_sa_no_object_vjepa_loss",
       "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
+      "full_sa_no_object_cotracker_trajectory_loss",
       "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
       "t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000",
       "wan22_openvid_lora_baseline",

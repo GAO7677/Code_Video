@@ -1,0 +1,47 @@
+{
+  "extends": "../../object_cotracker_trajectory_project/configs/formal_full_sa_no_object_trajectory_loss_pybullet100_cached_gpu01.json",
+  "experiment": {
+    "name": "full_sa_no_object_gt_latent_mask_loss_pybullet100_cached",
+    "description": "Step-0 Full-SA no-object training initialized from OpenVid LoRA step 10000 with frozen Wan GT latent-mask CE and precomputed PyBullet conditioning"
+  },
+  "launch": {
+    "gpu_set": "0,1",
+    "num_processes": 2,
+    "main_process_port": 29536
+  },
+  "paths": {
+    "output_root": "/data/gaoya/agent-data/checkpoints/gt_latent_mask_loss"
+  },
+  "logging": {
+    "report_to": "wandb",
+    "wandb_project": "xssc_wan_head_sparse_training",
+    "wandb_name": "full_sa_no_object_gt_latent_mask_loss_pybullet100_cached_step0",
+    "wandb_mode": "online"
+  },
+  "trajectory_loss": {
+    "enabled": false
+  },
+  "latent_mask_loss": {
+    "enabled": true,
+    "weight": 0.01,
+    "cache_dir": "/data/gaoya/agent-data/cache/pybullet0713_gt_latent_mask_v1",
+    "head_config": "../../configs/physiciq67_pck32_s039_latest3350_top100_heads.json",
+    "head_subset_id": "T_physiciq67_pck32_s039_latest3350_top100",
+    "head_feature_subtype": "physiciq67_pck32_s039_latest3350",
+    "probe_timestep": 500.0,
+    "probe_noise_level": 0.5,
+    "pck_weight_power": 30.0,
+    "tracking_mask_key": "object_tracking_masks",
+    "query_latent_frame": 1,
+    "object_index": 0,
+    "expected_latent_frames": 13,
+    "expected_pixel_frames": 49,
+    "main_gradient_checkpointing_offload": true,
+    "probe_gradient_checkpointing_offload": true,
+    "gradient_diagnostics_every_n_forwards": 400
+  },
+  "comparison": {
+    "enforce_fairness": true,
+    "reference_resolved_config": "/data/gaoya/agent-data/checkpoints/object_cotracker_trajectory_loss/full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached/step000000_gpu01_20260816T020512Z/resolved_experiment_config.json"
+  }
+}

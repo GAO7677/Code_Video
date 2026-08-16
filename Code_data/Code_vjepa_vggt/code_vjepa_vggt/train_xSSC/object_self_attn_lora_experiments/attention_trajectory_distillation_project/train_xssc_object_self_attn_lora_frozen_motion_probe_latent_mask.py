@@ -11,6 +11,7 @@ targets. The probe is frozen; only the main Student adapter is optimized.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from pathlib import Path
 import sys
@@ -29,6 +30,7 @@ for _path in (EXPERIMENT_ROOT, TRAIN_XSSC_ROOT, REPOSITORY_ROOT):
         sys.path.insert(0, str(_path))
 
 import code_vjepa_vggt.context_wan_v_newtrain as context_wan
+import train_xssc_context_slots as official_xssc
 import train_xssc_object_self_attn_lora as core
 import train_xssc_object_self_attn_lora_frozen_motion_probe as legacy
 from attention_trajectory_distillation_project.frozen_motion_probe import (
@@ -38,6 +40,10 @@ from attention_trajectory_distillation_project.noise_gated_correspondence import
     masks_to_token_occupancy,
     token_occupancy_to_pixel,
     uniform_object_region_correspondence_objective,
+)
+from attention_trajectory_distillation_project.latent_mask_cache import (
+    LatentMaskCachedDataset,
+    PyBulletLatentMaskCache,
 )
 
 
@@ -104,10 +110,19 @@ def _align_masks_to_sampled_frames(
                 "tracked mask frame_indices length does not match mask frames: "
                 f"{mask_indices.size}/{masks_othw.shape[1]}"
             )
-        if np.any(mask_indices < 0) or np.unique(mask_indices).size != mask_indices.size:
-            raise ValueError("tracked mask frame_indices must be unique and non-negative")
-        positions = {int(frame_id): position for position, frame_id in enumerate(mask_indices)}
-        missing = [int(frame_id) for frame_id in indices if int(frame_id) not in positions]
+        if (
+            np.any(mask_indices < 0)
+            or np.unique(mask_indices).size != mask_indices.size
+        ):
+            raise ValueError(
+                "tracked mask frame_indices must be unique and non-negative"
+            )
+        positions = {
+            int(frame_id): position for position, frame_id in enumerate(mask_indices)
+        }
+        missing = [
+            int(frame_id) for frame_id in indices if int(frame_id) not in positions
+        ]
         if missing:
             raise ValueError(
                 "tracked masks do not cover sampled frame indices: "
@@ -164,7 +179,9 @@ def load_sample_gt_role_masks(
             raise KeyError(
                 "raw_sample.metadata.sample_key is required to locate tracked masks"
             )
-        source_path = _cache_case_root(Path(cache_root), sample_key) / "object_masks.npz"
+        source_path = (
+            _cache_case_root(Path(cache_root), sample_key) / "object_masks.npz"
+        )
         if not source_path.is_file():
             raise FileNotFoundError(
                 f"missing GroundingDINO + SAM2 mask cache for {sample_key}: {source_path}"
@@ -198,11 +215,6 @@ def load_sample_gt_role_masks(
             f"mask={selected.shape[-2:]}, video={tuple(video.shape[-2:])}"
         )
     frame_area = selected.reshape(selected.shape[0], -1).sum(axis=1)
-    if np.any(frame_area <= 0.0):
-        invalid = np.flatnonzero(frame_area <= 0.0).tolist()
-        raise RuntimeError(
-            f"tracked object {object_index} has empty sampled masks at frames {invalid}"
-        )
     return selected, {
         "sample_key": sample_key,
         "source": source,
@@ -214,6 +226,7 @@ def load_sample_gt_role_masks(
         "pixel_width": int(selected.shape[2]),
         "min_frame_area": float(frame_area.min()),
         "max_frame_area": float(frame_area.max()),
+        "empty_frame_count": int(np.count_nonzero(frame_area <= 0.0)),
     }
 
 
@@ -313,7 +326,9 @@ def compute_latent_mask_training_objective(
     if batch != 1:
         raise ValueError("latent-mask training currently requires batch size 1")
     if object_token_occupancy_bthw.shape[:2] != (batch, frames):
-        raise ValueError("occupancy and frame-head maps use different batch/time geometry")
+        raise ValueError(
+            "occupancy and frame-head maps use different batch/time geometry"
+        )
     if math.prod(object_token_occupancy_bthw.shape[-2:]) != spatial:
         raise ValueError("occupancy and frame-head maps use different spatial geometry")
     weights = torch.as_tensor(
@@ -326,12 +341,8 @@ def compute_latent_mask_training_objective(
     if not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
         raise ValueError("head weights must be finite and non-negative")
     weights = weights / weights.sum().clamp_min(1.0e-12)
-    teacher_attention = (
-        teacher * weights.reshape(1, heads, 1, 1)
-    ).sum(dim=1)
-    student_attention = (
-        student * weights.reshape(1, heads, 1, 1)
-    ).sum(dim=1)
+    teacher_attention = (teacher * weights.reshape(1, heads, 1, 1)).sum(dim=1)
+    student_attention = (student * weights.reshape(1, heads, 1, 1)).sum(dim=1)
     teacher_attention = teacher_attention / teacher_attention.sum(
         dim=-1, keepdim=True
     ).clamp_min(1.0e-12)
@@ -383,6 +394,9 @@ def compute_latent_mask_training_objective(
 class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
     """Formal flow + GT-role latent-mask CE training module."""
 
+    def _initialize_frozen_dit(self, dit: torch.nn.Module) -> list[str]:
+        return core.DINOv3XSSCContextSlotsWanModule._initialize_frozen_dit(self, dit)
+
     def __init__(
         self,
         *args,
@@ -392,10 +406,11 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
         motion_probe_expected_pixel_frames: int,
         **kwargs,
     ) -> None:
+        kwargs["load_tokenizer"] = False
         self.motion_probe_latent_mask_weight = float(motion_probe_latent_mask_weight)
-        self.motion_probe_mask_cache_root = Path(
-            motion_probe_mask_cache_root
-        ).expanduser().resolve()
+        self.motion_probe_mask_cache_root = (
+            Path(motion_probe_mask_cache_root).expanduser().resolve()
+        )
         self.motion_probe_tracking_mask_key = str(motion_probe_tracking_mask_key)
         self.motion_probe_expected_pixel_frames = int(
             motion_probe_expected_pixel_frames
@@ -404,14 +419,219 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
             not math.isfinite(self.motion_probe_latent_mask_weight)
             or self.motion_probe_latent_mask_weight <= 0.0
         ):
-            raise ValueError("motion_probe_latent_mask_weight must be positive and finite")
+            raise ValueError(
+                "motion_probe_latent_mask_weight must be positive and finite"
+            )
         if self.motion_probe_expected_pixel_frames <= 0:
             raise ValueError("motion_probe_expected_pixel_frames must be positive")
         if not self.motion_probe_mask_cache_root.is_dir():
             raise FileNotFoundError(
                 f"tracked mask cache does not exist: {self.motion_probe_mask_cache_root}"
             )
+        self._latent_mask_samples: list[Mapping[str, Any]] | None = None
         super().__init__(*args, **kwargs)
+
+        if self.self_attn_adaptation_mode != "full_sa":
+            raise ValueError("formal GT latent-mask training requires full_sa")
+        if any(
+            getattr(self.pipe, name, None) is not None
+            for name in ("vae", "text_encoder", "tokenizer")
+        ):
+            raise RuntimeError(
+                "precomputed-only training must not construct Wan VAE, UMT5, or tokenizer"
+            )
+
+    def _prepare_pipeline_sample(self, sample):
+        inputs = self.get_pipeline_inputs(sample)
+        inputs = self.transfer_data_to_device(
+            inputs, self.pipe.device, self.pipe.torch_dtype
+        )
+        for unit in self.pipe.units:
+            unit_name = unit.__class__.__name__
+            if unit_name == "WanVideoUnit_PromptEmbedder" and "context" in inputs[1]:
+                continue
+            if unit_name == "WanVideoUnit_ContextVideoEmbedder":
+                if not isinstance(inputs[0].get("input_latents"), torch.Tensor):
+                    raise RuntimeError(
+                        "DiT-only latent-mask training requires cached input_latents"
+                    )
+                continue
+            if (
+                "vae" in tuple(getattr(unit, "onload_model_names", None) or ())
+                and unit_name != "WanVideoUnit_InputVideoEmbedder"
+            ):
+                continue
+            if unit_name == "WanVideoUnit_NoiseInitializer":
+                input_latents = inputs[0].get("input_latents")
+                if not isinstance(input_latents, torch.Tensor):
+                    raise RuntimeError(
+                        "DiT-only latent-mask training requires precomputed input_latents"
+                    )
+                inputs[0]["noise"] = self.pipe.generate_noise(
+                    tuple(input_latents.shape),
+                    seed=inputs[0].get("seed"),
+                    rand_device=inputs[0].get("rand_device", self.pipe.device),
+                ).to(device=self.pipe.device, dtype=self.pipe.torch_dtype)
+                continue
+            inputs = self.pipe.unit_runner(unit, self.pipe, *inputs)
+        return inputs
+
+    def forward(self, data, inputs=None):
+        if inputs is not None:
+            raise ValueError("GT latent-mask training requires raw cached samples")
+        samples = data if isinstance(data, list) else [data]
+        self._latent_mask_samples = samples
+        try:
+            return self._forward_sample_batch(samples)
+        finally:
+            self._latent_mask_samples = None
+
+    @staticmethod
+    def _slice_probe_inputs(
+        captured_inputs: Mapping[str, Any], index: int, batch_size: int
+    ) -> dict[str, Any]:
+        batched_keys = {
+            "latents",
+            "context",
+            "y",
+            "clip_feature",
+            "reference_latents",
+            "clean_prefix_latents",
+            "first_frame_latents",
+            "control_camera_latents_input",
+        }
+        result = dict(captured_inputs)
+        for key in batched_keys:
+            value = result.get(key)
+            if (
+                isinstance(value, torch.Tensor)
+                and value.ndim > 0
+                and int(value.shape[0]) == int(batch_size)
+            ):
+                result[key] = value[index : index + 1]
+        return result
+
+    def _latent_mask_loss_for_sample(
+        self,
+        *,
+        target_x0: torch.Tensor,
+        pred_x0: torch.Tensor,
+        captured_inputs: dict[str, Any],
+        raw_sample: Mapping[str, Any],
+        grid: tuple[int, int, int],
+        pipe,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        masks_thw, mask_audit = load_sample_gt_role_masks(
+            raw_sample,
+            cache_root=self.motion_probe_mask_cache_root,
+            mask_key=self.motion_probe_tracking_mask_key,
+            object_index=self.motion_probe_query_object_index,
+            expected_frames=self.motion_probe_expected_pixel_frames,
+        )
+        occupancy, query_rows, query_weights, valid, mapping_audit = (
+            build_latent_mask_supervision(
+                masks_thw,
+                grid=grid,
+                source_frame=self.motion_probe_query_latent_frame,
+                device=target_x0.device,
+            )
+        )
+
+        epsilon_p = torch.randn_like(target_x0)
+        teacher_probe_input = blend_with_fixed_probe_noise(
+            target_x0, epsilon_p, noise_level=self.motion_probe_noise_level
+        )
+        student_probe_input = blend_with_fixed_probe_noise(
+            pred_x0, epsilon_p, noise_level=self.motion_probe_noise_level
+        )
+        teacher_probe_input = self._restore_condition_latents(
+            teacher_probe_input, target_x0, captured_inputs
+        )
+        student_probe_input = self._restore_condition_latents(
+            student_probe_input, target_x0, captured_inputs
+        )
+        probe_timestep = torch.full(
+            (1,),
+            self.motion_probe_timestep,
+            device=target_x0.device,
+            dtype=pipe.torch_dtype,
+        )
+        with torch.no_grad():
+            teacher_heatmap, _, gt_query_by_block, teacher_frame_heads = (
+                self._run_frozen_probe(
+                    latents=teacher_probe_input,
+                    timestep=probe_timestep,
+                    captured_inputs=captured_inputs,
+                    query_rows=query_rows,
+                    frame_query_weights=query_weights,
+                    return_frame_head_probabilities=True,
+                    grid=grid,
+                    retain_input_gradient=False,
+                    fixed_query_by_block=None,
+                )
+            )
+            teacher_frame_heads = teacher_frame_heads.detach()
+            gt_query_by_block = {
+                block_id: query.detach()
+                for block_id, query in gt_query_by_block.items()
+            }
+        student_heatmap, _, _, student_frame_heads = self._run_frozen_probe(
+            latents=student_probe_input,
+            timestep=probe_timestep,
+            captured_inputs=captured_inputs,
+            query_rows=query_rows,
+            frame_query_weights=query_weights,
+            return_frame_head_probabilities=True,
+            grid=grid,
+            retain_input_gradient=True,
+            fixed_query_by_block=gt_query_by_block,
+        )
+        if teacher_heatmap.requires_grad:
+            raise RuntimeError(
+                "teacher Frozen Motion Probe branch must be stop-gradient"
+            )
+        if not student_heatmap.requires_grad or not student_frame_heads.requires_grad:
+            raise RuntimeError(
+                "latent-mask Student attention lost its gradient to x0_pred"
+            )
+
+        objective = compute_latent_mask_training_objective(
+            teacher_frame_heads,
+            student_frame_heads,
+            object_token_occupancy_bthw=occupancy,
+            valid_frames=valid,
+            head_weights=self.motion_probe_pck_weights,
+            lambda_mask=self.motion_probe_latent_mask_weight,
+        )
+        selected = objective["valid"]
+        student_mass = objective["student_attention_mass_in_support"][selected]
+        teacher_mass = objective["teacher_attention_mass_in_support"][selected]
+        student_top1 = objective["student_top1_in_support"][selected].float()
+        teacher_top1 = objective["teacher_top1_in_support"][selected].float()
+        return objective["loss"], {
+            "raw_soft_ce": float(objective["raw_soft_ce"].detach().item()),
+            "teacher_raw_soft_ce": float(
+                objective["teacher_raw_soft_ce"].detach().item()
+            ),
+            "valid_target_frames": float(selected.sum().item()),
+            "query_token_count": float(query_rows.numel()),
+            "student_attention_mass_in_mask": float(
+                student_mass.mean().detach().item()
+            ),
+            "teacher_attention_mass_in_mask": float(
+                teacher_mass.mean().detach().item()
+            ),
+            "student_top1_in_mask_rate": float(student_top1.mean().detach().item()),
+            "teacher_top1_in_mask_rate": float(teacher_top1.mean().detach().item()),
+            "mask_source_cache": float(mask_audit["source"] == "cache"),
+            "mask_min_frame_area": float(mask_audit["min_frame_area"]),
+            "mask_max_frame_area": float(mask_audit["max_frame_area"]),
+            "mask_empty_frame_count": float(mask_audit["empty_frame_count"]),
+            "mask_reverse_recall": mapping_audit["reverse_recall"],
+            "mask_reverse_precision": mapping_audit["reverse_precision"],
+            "mask_reverse_iou": mapping_audit["reverse_iou"],
+            "mask_reverse_missed_gt_pixels": mapping_audit["missed_gt_pixels"],
+        }
 
     def _compute_object_losses(self, pipe, inputs_shared, inputs_posi):
         captured: list[dict[str, Any]] = []
@@ -431,11 +651,13 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
 
         pipe.model_fn = capture_main_model_fn
         try:
-            flow_loss, metrics = core.DINOv3XSSCContextSlotsWanModule._compute_object_losses(
-                self,
-                pipe,
-                inputs_shared,
-                inputs_posi,
+            flow_loss, metrics = (
+                core.DINOv3XSSCContextSlotsWanModule._compute_object_losses(
+                    self,
+                    pipe,
+                    inputs_shared,
+                    inputs_posi,
+                )
             )
         finally:
             pipe.model_fn = original_model_fn
@@ -449,9 +671,17 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
         if not isinstance(latent_xt, torch.Tensor) or not isinstance(
             model_output, torch.Tensor
         ):
-            raise RuntimeError("main Student capture did not contain latent x_t and v_pred")
-        if latent_xt.shape[0] != 1:
-            raise RuntimeError("latent-mask training currently requires batch size 1")
+            raise RuntimeError(
+                "main Student capture did not contain latent x_t and v_pred"
+            )
+        batch_size = int(latent_xt.shape[0])
+        if self._latent_mask_samples is None:
+            raise RuntimeError("latent-mask samples were not attached before forward")
+        if batch_size != len(self._latent_mask_samples):
+            raise RuntimeError(
+                f"latent-mask batch mismatch: latents={batch_size}, "
+                f"samples={len(self._latent_mask_samples)}"
+            )
 
         sigma = context_wan._diffsynth_sigma_for_timestep(
             pipe.scheduler,
@@ -472,107 +702,23 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
                 f"Frozen Motion Probe expected {self.motion_probe_expected_latent_frames} "
                 f"latent frames, got grid={grid}"
             )
-        raw_sample = inputs_shared.get("raw_sample")
-        masks_thw, mask_audit = load_sample_gt_role_masks(
-            raw_sample,
-            cache_root=self.motion_probe_mask_cache_root,
-            mask_key=self.motion_probe_tracking_mask_key,
-            object_index=self.motion_probe_query_object_index,
-            expected_frames=self.motion_probe_expected_pixel_frames,
-        )
-        (
-            occupancy,
-            query_rows,
-            query_weights,
-            valid,
-            mapping_audit,
-        ) = build_latent_mask_supervision(
-            masks_thw,
-            grid=grid,
-            source_frame=self.motion_probe_query_latent_frame,
-            device=target_x0.device,
-        )
-
-        epsilon_p = torch.randn_like(target_x0)
-        teacher_probe_input = blend_with_fixed_probe_noise(
-            target_x0,
-            epsilon_p,
-            noise_level=self.motion_probe_noise_level,
-        )
-        student_probe_input = blend_with_fixed_probe_noise(
-            pred_x0,
-            epsilon_p,
-            noise_level=self.motion_probe_noise_level,
-        )
-        teacher_probe_input = self._restore_condition_latents(
-            teacher_probe_input,
-            target_x0,
-            record["inputs"],
-        )
-        student_probe_input = self._restore_condition_latents(
-            student_probe_input,
-            target_x0,
-            record["inputs"],
-        )
-        probe_timestep = torch.full(
-            (target_x0.shape[0],),
-            self.motion_probe_timestep,
-            device=target_x0.device,
-            dtype=pipe.torch_dtype,
-        )
-
-        with torch.no_grad():
-            (
-                teacher_heatmap,
-                _,
-                gt_query_by_block,
-                teacher_frame_heads,
-            ) = self._run_frozen_probe(
-                latents=teacher_probe_input,
-                timestep=probe_timestep,
-                captured_inputs=record["inputs"],
-                query_rows=query_rows,
-                frame_query_weights=query_weights,
-                return_frame_head_probabilities=True,
-                grid=grid,
-                retain_input_gradient=False,
-                fixed_query_by_block=None,
+        sample_losses: list[torch.Tensor] = []
+        sample_metrics: list[dict[str, float]] = []
+        for index, raw_sample in enumerate(self._latent_mask_samples):
+            captured_inputs = self._slice_probe_inputs(
+                record["inputs"], index, batch_size
             )
-            teacher_frame_heads = teacher_frame_heads.detach()
-            gt_query_by_block = {
-                block_id: query.detach()
-                for block_id, query in gt_query_by_block.items()
-            }
-        (
-            student_heatmap,
-            _,
-            _,
-            student_frame_heads,
-        ) = self._run_frozen_probe(
-            latents=student_probe_input,
-            timestep=probe_timestep,
-            captured_inputs=record["inputs"],
-            query_rows=query_rows,
-            frame_query_weights=query_weights,
-            return_frame_head_probabilities=True,
-            grid=grid,
-            retain_input_gradient=True,
-            fixed_query_by_block=gt_query_by_block,
-        )
-        if teacher_heatmap.requires_grad:
-            raise RuntimeError("teacher Frozen Motion Probe branch must be stop-gradient")
-        if not student_heatmap.requires_grad or not student_frame_heads.requires_grad:
-            raise RuntimeError("latent-mask Student attention lost its gradient to x0_pred")
-
-        objective = compute_latent_mask_training_objective(
-            teacher_frame_heads,
-            student_frame_heads,
-            object_token_occupancy_bthw=occupancy,
-            valid_frames=valid,
-            head_weights=self.motion_probe_pck_weights,
-            lambda_mask=self.motion_probe_latent_mask_weight,
-        )
-        mask_loss = objective["loss"]
+            sample_loss, diagnostics = self._latent_mask_loss_for_sample(
+                target_x0=target_x0[index : index + 1],
+                pred_x0=pred_x0[index : index + 1],
+                captured_inputs=captured_inputs,
+                raw_sample=raw_sample,
+                grid=grid,
+                pipe=pipe,
+            )
+            sample_losses.append(sample_loss)
+            sample_metrics.append(diagnostics)
+        mask_loss = torch.stack(sample_losses).mean()
         self._motion_probe_forward_count += 1
         metrics["train/motion_probe_grad_diag_applied"] = 0.0
         if (
@@ -597,11 +743,17 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
             )
 
         total = flow_loss + mask_loss
-        selected = objective["valid"]
-        student_mass = objective["student_attention_mass_in_support"][selected]
-        teacher_mass = objective["teacher_attention_mass_in_support"][selected]
-        student_top1 = objective["student_top1_in_support"][selected].float()
-        teacher_top1 = objective["teacher_top1_in_support"][selected].float()
+
+        def batch_metric(name: str) -> float:
+            return float(
+                sum(item[name] for item in sample_metrics) / len(sample_metrics)
+            )
+
+        probe_timestep = torch.tensor(
+            [self.motion_probe_timestep],
+            device=target_x0.device,
+            dtype=pipe.torch_dtype,
+        )
         scheduler_sigma = context_wan._diffsynth_sigma_for_timestep(
             pipe.scheduler,
             probe_timestep,
@@ -610,51 +762,58 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
             {
                 "train/loss_flow": float(flow_loss.detach().item()),
                 "train/loss_motion_probe_latent_mask_ce_raw": float(
-                    objective["raw_soft_ce"].detach().item()
+                    batch_metric("raw_soft_ce")
                 ),
                 "train/loss_motion_probe_latent_mask_ce_weighted": float(
                     mask_loss.detach().item()
                 ),
                 "train/loss_motion_probe_teacher_mask_ce_raw": float(
-                    objective["teacher_raw_soft_ce"].detach().item()
+                    batch_metric("teacher_raw_soft_ce")
                 ),
                 "train/motion_probe_latent_mask_weight": (
                     self.motion_probe_latent_mask_weight
                 ),
-                "train/motion_probe_valid_target_frames": float(selected.sum().item()),
-                "train/motion_probe_query_token_count": float(query_rows.numel()),
-                "train/motion_probe_student_attention_mass_in_mask": float(
-                    student_mass.mean().detach().item()
+                "train/motion_probe_valid_target_frames": batch_metric(
+                    "valid_target_frames"
                 ),
-                "train/motion_probe_teacher_attention_mass_in_mask": float(
-                    teacher_mass.mean().detach().item()
+                "train/motion_probe_query_token_count": batch_metric(
+                    "query_token_count"
                 ),
-                "train/motion_probe_student_top1_in_mask_rate": float(
-                    student_top1.mean().detach().item()
+                "train/motion_probe_student_attention_mass_in_mask": batch_metric(
+                    "student_attention_mass_in_mask"
                 ),
-                "train/motion_probe_teacher_top1_in_mask_rate": float(
-                    teacher_top1.mean().detach().item()
+                "train/motion_probe_teacher_attention_mass_in_mask": batch_metric(
+                    "teacher_attention_mass_in_mask"
+                ),
+                "train/motion_probe_student_top1_in_mask_rate": batch_metric(
+                    "student_top1_in_mask_rate"
+                ),
+                "train/motion_probe_teacher_top1_in_mask_rate": batch_metric(
+                    "teacher_top1_in_mask_rate"
                 ),
                 "train/motion_probe_uses_teacher_q_for_student_map": 1.0,
-                "train/motion_probe_mask_source_cache": float(
-                    mask_audit["source"] == "cache"
+                "train/motion_probe_mask_source_cache": batch_metric(
+                    "mask_source_cache"
                 ),
-                "train/motion_probe_mask_min_frame_area": float(
-                    mask_audit["min_frame_area"]
+                "train/motion_probe_mask_min_frame_area": batch_metric(
+                    "mask_min_frame_area"
                 ),
-                "train/motion_probe_mask_max_frame_area": float(
-                    mask_audit["max_frame_area"]
+                "train/motion_probe_mask_max_frame_area": batch_metric(
+                    "mask_max_frame_area"
                 ),
-                "train/motion_probe_mask_reverse_recall": mapping_audit[
-                    "reverse_recall"
-                ],
-                "train/motion_probe_mask_reverse_precision": mapping_audit[
-                    "reverse_precision"
-                ],
-                "train/motion_probe_mask_reverse_iou": mapping_audit["reverse_iou"],
-                "train/motion_probe_mask_reverse_missed_gt_pixels": mapping_audit[
-                    "missed_gt_pixels"
-                ],
+                "train/motion_probe_mask_empty_frame_count": batch_metric(
+                    "mask_empty_frame_count"
+                ),
+                "train/motion_probe_mask_reverse_recall": batch_metric(
+                    "mask_reverse_recall"
+                ),
+                "train/motion_probe_mask_reverse_precision": batch_metric(
+                    "mask_reverse_precision"
+                ),
+                "train/motion_probe_mask_reverse_iou": batch_metric("mask_reverse_iou"),
+                "train/motion_probe_mask_reverse_missed_gt_pixels": batch_metric(
+                    "mask_reverse_missed_gt_pixels"
+                ),
                 "train/motion_probe_timestep": self.motion_probe_timestep,
                 "train/motion_probe_noise_level": self.motion_probe_noise_level,
                 "train/motion_probe_scheduler_sigma": float(
@@ -727,13 +886,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_dit_only_model_paths(wan_root: str | Path) -> str:
+    root = Path(wan_root).expanduser().resolve()
+    shards = [
+        root / f"diffusion_pytorch_model-{index:05d}-of-00003.safetensors"
+        for index in range(1, 4)
+    ]
+    if all(path.is_file() for path in shards):
+        return json.dumps([[str(path) for path in shards]])
+    single = root / "diffusion_pytorch_model.safetensors"
+    if single.is_file():
+        return json.dumps([str(single)])
+    raise FileNotFoundError(f"Wan DiT checkpoint not found under {root}")
+
+
+def build_dataset(args: argparse.Namespace):
+    dataset = official_xssc.build_dataset(args)
+    cache = PyBulletLatentMaskCache(
+        args.motion_probe_mask_cache_root,
+        num_frames=args.num_frames,
+        anchor_frame=args.motion_probe_query_latent_frame * 4,
+        native_height=args.height,
+        native_width=args.width,
+    )
+    return LatentMaskCachedDataset(dataset, cache)
+
+
 def build_model(args: argparse.Namespace, accelerator):
-    legacy._reject_loaded_lora(args)
+    args.model_paths = build_dit_only_model_paths(args.wan_root)
+    args.model_id_with_origin_paths = None
     legacy._assert_main_student_uses_same_baseline(args)
     if not args.disable_object_branch:
         raise ValueError("GT latent-mask entry requires --disable_object_branch")
-    if int(args.train_batch_size) != 1:
-        raise ValueError("GT latent-mask entry currently requires --train_batch_size 1")
+    if args.self_attn_adaptation_mode != "full_sa":
+        raise ValueError(
+            "formal GT latent-mask training requires --self_attn_adaptation_mode full_sa"
+        )
+    if not args.lora_checkpoint:
+        raise ValueError(
+            "formal GT latent-mask training requires OpenVid --lora_checkpoint"
+        )
     return core.build_model(
         args,
         accelerator,
@@ -782,8 +974,8 @@ def log_stage_summary(accelerator, model, args: argparse.Namespace) -> None:
     core._log_stage_summary(accelerator, model, args)
     if accelerator.is_main_process:
         accelerator.print(
-            "Frozen Motion Probe GT latent-mask CE: official Wan2.2 baseline; "
-            "loaded LoRA=none; trainable probe params=0; "
+            "Frozen Motion Probe GT latent-mask CE: main Student initialized from "
+            "Wan2.2 + merged OpenVid LoRA; trainable probe params=0; "
             f"probe_timestep={args.probe_timestep:g}; "
             f"probe_noise_level={args.probe_noise_level:g}; "
             f"PCK power={args.motion_probe_pck_weight_power:g}; "
@@ -797,8 +989,8 @@ def main() -> None:
     core.main(
         build_parser_fn=build_parser,
         build_model_fn=build_model,
+        build_dataset_fn=build_dataset,
         log_stage_summary_fn=log_stage_summary,
-        require_pretrained_lora=False,
     )
 
 
