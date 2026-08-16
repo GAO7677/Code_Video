@@ -129,6 +129,22 @@ def test_empty_future_masks_are_excluded_instead_of_rejecting_the_sample():
     assert int(valid.sum()) == 10
 
 
+def test_source_only_track_has_no_valid_auxiliary_targets():
+    masks = np.zeros((49, 64, 96), dtype=np.uint8)
+    masks[4, 16:32, 24:48] = 1
+
+    _, query_rows, _, valid, audit = build_latent_mask_supervision(
+        masks,
+        grid=(13, 2, 3),
+        source_frame=1,
+        device=torch.device("cpu"),
+    )
+
+    assert query_rows.numel() > 0
+    assert not bool(valid.any())
+    assert audit["reverse_recall"] == 1.0
+
+
 def test_build_latent_mask_supervision_maps_f04_to_latent_one():
     masks = np.zeros((49, 64, 96), dtype=np.uint8)
     masks[:, 16:48, 24:72] = 1

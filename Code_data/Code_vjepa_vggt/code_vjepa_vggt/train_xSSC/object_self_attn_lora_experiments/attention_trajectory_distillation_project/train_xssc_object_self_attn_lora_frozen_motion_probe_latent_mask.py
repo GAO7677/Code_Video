@@ -295,8 +295,6 @@ def build_latent_mask_supervision(
     query_weights = query_weights / query_weights.sum().clamp_min(1.0e-12)
     frame_ids = torch.arange(latent_frames, device=device)[None]
     valid = (occupancy_sum > 0) & (frame_ids > source_frame)
-    if int(valid.sum().item()) == 0:
-        raise RuntimeError("GT-role mask has no valid future latent-frame targets")
     return occupancy, query_rows, query_weights, valid, mapping_audit
 
 
@@ -537,6 +535,27 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
             )
         )
 
+        if not bool(valid.any()):
+            return pred_x0.sum() * 0.0, {
+                "raw_soft_ce": 0.0,
+                "teacher_raw_soft_ce": 0.0,
+                "has_valid_future": 0.0,
+                "valid_target_frames": 0.0,
+                "query_token_count": float(query_rows.numel()),
+                "student_attention_mass_in_mask": 0.0,
+                "teacher_attention_mass_in_mask": 0.0,
+                "student_top1_in_mask_rate": 0.0,
+                "teacher_top1_in_mask_rate": 0.0,
+                "mask_source_cache": float(mask_audit["source"] == "cache"),
+                "mask_min_frame_area": float(mask_audit["min_frame_area"]),
+                "mask_max_frame_area": float(mask_audit["max_frame_area"]),
+                "mask_empty_frame_count": float(mask_audit["empty_frame_count"]),
+                "mask_reverse_recall": mapping_audit["reverse_recall"],
+                "mask_reverse_precision": mapping_audit["reverse_precision"],
+                "mask_reverse_iou": mapping_audit["reverse_iou"],
+                "mask_reverse_missed_gt_pixels": mapping_audit["missed_gt_pixels"],
+            }
+
         epsilon_p = torch.randn_like(target_x0)
         teacher_probe_input = blend_with_fixed_probe_noise(
             target_x0, epsilon_p, noise_level=self.motion_probe_noise_level
@@ -613,6 +632,7 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
             "teacher_raw_soft_ce": float(
                 objective["teacher_raw_soft_ce"].detach().item()
             ),
+            "has_valid_future": 1.0,
             "valid_target_frames": float(selected.sum().item()),
             "query_token_count": float(query_rows.numel()),
             "student_attention_mass_in_mask": float(
@@ -775,6 +795,9 @@ class FrozenMotionProbeLatentMaskWanModule(legacy.FrozenMotionProbeWanModule):
                 ),
                 "train/motion_probe_valid_target_frames": batch_metric(
                     "valid_target_frames"
+                ),
+                "train/motion_probe_valid_sample_fraction": batch_metric(
+                    "has_valid_future"
                 ),
                 "train/motion_probe_query_token_count": batch_metric(
                     "query_token_count"

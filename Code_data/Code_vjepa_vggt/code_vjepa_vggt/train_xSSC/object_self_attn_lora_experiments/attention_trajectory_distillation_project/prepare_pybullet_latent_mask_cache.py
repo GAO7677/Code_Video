@@ -87,8 +87,6 @@ def audit_latent_mapping(
     if float(occupancy_sum[1].item()) <= 0.0:
         raise RuntimeError("GT-role object0 mask is empty at source latent frame F04")
     valid = (occupancy_sum > 0) & (torch.arange(13) > 1)
-    if not bool(valid.any()):
-        raise RuntimeError("GT-role object0 has no valid future latent-frame targets")
     return valid, {
         "reverse_recall": float(intersection / gt_area.clamp_min(1)),
         "reverse_precision": float(intersection / reverse_area.clamp_min(1)),
