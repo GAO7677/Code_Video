@@ -137,7 +137,10 @@ def cache_config(args: argparse.Namespace, selected_count: int, status: str) -> 
         "track_width": TRACK_WIDTH,
         "native_height": int(args.height),
         "native_width": int(args.width),
-        "query_source": "dynamic_object_phrases -> GroundingDINO F04 -> SAM2 masks",
+        "query_source": (
+            "dynamic_object_phrases -> maximum distinct visible GroundingDINO "
+            "boxes at F04 -> SAM2 masks"
+        ),
         "trajectory_source": "frozen CoTracker3 scaled_offline",
         "cotracker_checkpoint": str(args.cotracker_checkpoint.expanduser().resolve()),
     }
@@ -196,6 +199,40 @@ def containment(box_a: np.ndarray, box_b: np.ndarray) -> float:
     return max(intersection / max(area_a, 1.0e-6), intersection / max(area_b, 1.0e-6))
 
 
+def select_maximum_distinct_detections(detections):
+    """Select the largest conflict-free phrase/candidate assignment."""
+    best = None
+    phrase_count = len(detections)
+    for selected_count in range(phrase_count, 0, -1):
+        for phrase_indices in itertools.combinations(range(phrase_count), selected_count):
+            candidate_ranges = [range(len(detections[index])) for index in phrase_indices]
+            for candidate_indices in itertools.product(*candidate_ranges):
+                selected = [
+                    detections[phrase_index][candidate_index]
+                    for phrase_index, candidate_index in zip(
+                        phrase_indices, candidate_indices
+                    )
+                ]
+                conflict = any(
+                    box_iou(selected[i]["box"], selected[j]["box"]) >= 0.50
+                    or containment(selected[i]["box"], selected[j]["box"]) >= 0.85
+                    for i in range(len(selected))
+                    for j in range(i + 1, len(selected))
+                )
+                if conflict:
+                    continue
+                score = sum(
+                    math.log(max(item["score"], 1.0e-8)) for item in selected
+                )
+                if best is None or score > best[0]:
+                    best = (score, phrase_indices, candidate_indices, selected)
+        if best is not None:
+            break
+    if best is None:
+        raise RuntimeError("GroundingDINO produced no usable F04 object assignment")
+    return best[1:]
+
+
 def detect_and_track_objects(provider, frames_tchw_01, phrases, anchor_frame: int):
     detections = []
     for phrase in phrases:
@@ -212,33 +249,15 @@ def detect_and_track_objects(provider, frames_tchw_01, phrases, anchor_frame: in
                 output.boxes_xyxy, output.scores, output.phrases
             )
         ]
-        if not candidates:
-            raise RuntimeError(f"GroundingDINO found no F04 candidate for {phrase!r}")
         detections.append(candidates)
 
-    best = None
-    for indices in itertools.product(*(range(len(items)) for items in detections)):
-        selected = [detections[index][candidate] for index, candidate in enumerate(indices)]
-        conflict = any(
-            box_iou(selected[i]["box"], selected[j]["box"]) >= 0.50
-            or containment(selected[i]["box"], selected[j]["box"]) >= 0.85
-            for i in range(len(selected))
-            for j in range(i + 1, len(selected))
-        )
-        if conflict:
-            continue
-        score = sum(math.log(max(item["score"], 1.0e-8)) for item in selected)
-        if best is None or score > best[0]:
-            best = (score, indices, selected)
-    if best is None:
-        raise RuntimeError(
-            "could not assign distinct GroundingDINO boxes; "
-            f"candidates={[len(items) for items in detections]}"
-        )
+    selected_phrase_indices, selected_indices, selected = (
+        select_maximum_distinct_detections(detections)
+    )
+    selected_phrases = [phrases[index] for index in selected_phrase_indices]
 
-    _, selected_indices, selected = best
     tracks = []
-    for phrase, candidate in zip(phrases, selected):
+    for phrase, candidate in zip(selected_phrases, selected):
         output = provider.tracker.track(
             frames_tchw_01,
             prompt_frame_idx=int(anchor_frame),
@@ -260,10 +279,17 @@ def detect_and_track_objects(provider, frames_tchw_01, phrases, anchor_frame: in
         )
     return SimpleNamespace(
         object_tracks=tracks,
+        selected_phrases=selected_phrases,
         debug={
-            "mode": "per_phrase_global_distinct_box_assignment_at_f04",
+            "mode": "maximum_distinct_visible_box_assignment_at_f04",
+            "selected_phrase_indices": list(selected_phrase_indices),
             "selected_candidate_indices": list(selected_indices),
             "selected_scores": [float(item["score"]) for item in selected],
+            "dropped_phrases": [
+                phrase
+                for index, phrase in enumerate(phrases)
+                if index not in selected_phrase_indices
+            ],
         },
     )
 
@@ -478,11 +504,18 @@ def main() -> None:
             print(f"[{position}/{len(pending)}] {record.key}", flush=True)
             try:
                 frames = load_frames(record, args)
-                phrases = dynamic_object_phrases(record)
+                requested_phrases = dynamic_object_phrases(record)
                 frames_tchw_01 = frames.astype(np.float32).transpose(0, 3, 1, 2) / 255.0
                 objects = detect_and_track_objects(
-                    provider, frames_tchw_01, phrases, int(args.anchor_frame)
+                    provider, frames_tchw_01, requested_phrases, int(args.anchor_frame)
                 )
+                phrases = objects.selected_phrases
+                if len(phrases) != len(requested_phrases):
+                    print(
+                        f"[anchor-visible] {record.key}: kept={phrases} "
+                        f"dropped={objects.debug['dropped_phrases']}",
+                        flush=True,
+                    )
                 masks_othw = np.stack(
                     [np.asarray(track.masks_thw, dtype=np.uint8) for track in objects.object_tracks]
                 )
@@ -496,7 +529,7 @@ def main() -> None:
                         for mask in masks_othw
                     ]
                 ).astype(np.float32)
-                object_count = len(phrases)
+                object_count = len(objects.object_tracks)
                 if points_on2.shape != (
                     object_count,
                     int(args.points_per_object),
