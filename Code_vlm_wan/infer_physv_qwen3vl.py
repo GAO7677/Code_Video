@@ -9,6 +9,17 @@ import os
 import time
 from pathlib import Path
 
+# Keep the inference process on the PyTorch path in environments that also
+# contain TensorFlow or Flax installations.
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_FLAX", "0")
+os.environ.setdefault("TRANSFORMERS_NO_FLAX", "1")
+os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+# Avoid a runtime FlashInfer JIT build in this environment; vLLM's native
+# sampler is sufficient for the single-sequence probe.
+os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
+
 import torch
 from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor

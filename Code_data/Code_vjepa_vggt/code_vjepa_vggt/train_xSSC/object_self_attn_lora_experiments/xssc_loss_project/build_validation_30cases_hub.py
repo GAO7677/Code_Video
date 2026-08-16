@@ -13,6 +13,7 @@ def main():
     cases=manifest.get("cases",[]); entries=c.get("entries",[])
     site=root/"hub"; media=site/"media"; media.mkdir(parents=True,exist_ok=True)
     entry_losses={e["entry_id"]:read(root/"losses"/f"{e['entry_id']}.json",{}) for e in entries}
+    loss_status_entries=loss.get("entries",{})
     rows=[]; ready_v=ready_l=0
     for case in cases:
         panels=[]
@@ -34,13 +35,24 @@ def main():
                 if 'train/loss_vjepa' in m: loss_html+=f" · V-JEPA {float(m['train/loss_vjepa']):.6f}"
                 if 'train/loss_total' in m: loss_html+=f" · total {float(m['train/loss_total']):.6f}"
                 ready_l+=1
-            else: loss_html='loss 待完成'
+            else:
+                entry_status=loss_status_entries.get(e["entry_id"],{})
+                state=str(entry_status.get("state","pending"))
+                reason=str(entry_status.get("error","")).strip()
+                if state in {"blocked","failed"}:
+                    detail=f" · {reason[:240]}" if reason else ""
+                    loss_html=f"loss {state}{detail}"
+                else:
+                    loss_html='loss 待完成'
             panels.append(f'<article class="panel"><h3>{html.escape(e["method_label"])} · {html.escape(e["version"])} · step-{int(e["step"]):04d}</h3>{vhtml}<p>{html.escape(loss_html)}</p></article>')
         hidden = "" if not rows else " hidden"
         rows.append(f'<section class="case" data-case-id="{html.escape(case["case_id"], quote=True)}"{hidden}><h2>{html.escape(case["case_id"])}</h2><p>{html.escape(case["prompt"])}</p><div class="grid">{"".join(panels)}</div></section>')
     expected=len(cases)*len(entries)
     refresh='<meta http-equiv="refresh" content="60">' if ready_v<expected or ready_l<expected else ''
-    status=f"视频 {ready_v}/{expected} · loss {ready_l}/{expected} · video={html.escape(str(video.get('state')))} · loss={html.escape(str(loss.get('state')))}"
+    loss_state=str(loss.get("state"))
+    if ready_l<expected and loss_state=="complete":
+        loss_state="partial"
+    status=f"视频 {ready_v}/{expected} · loss {ready_l}/{expected} · video={html.escape(str(video.get('state')))} · loss={html.escape(loss_state)}"
     case_options="".join(
         f'<option value="{html.escape(case["case_id"], quote=True)}">'
         f'{index:02d} · {html.escape(str(case["prompt"]))}</option>'

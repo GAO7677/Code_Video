@@ -70,6 +70,14 @@ SOURCE_LABELS = {
     "kubric": "Kubric train",
     "openvid": "OpenVid train",
 }
+DATASET_PATH_FALLBACKS = {
+    "pybullet_root": (
+        "/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5",
+    ),
+    "openvid_root": (
+        "/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train",
+    ),
+}
 
 
 class AcceleratorStub:
@@ -178,6 +186,19 @@ def parse_model_args(manifest_path: Path) -> tuple[argparse.Namespace, dict[str,
     args, _unknown = parser.parse_known_args(launch_argv(manifest_path))
     if kind == "physrvg" and not getattr(args, "physrvg_dit_checkpoint", None):
         args.physrvg_dit_checkpoint = config["paths"]["physrvg_dit_checkpoint"]
+    # Older resolved launch commands can retain a host-local LoRA path even
+    # though the resolved paths section records the canonical shared copy.
+    # Use that copy only when the command path is stale; this keeps evaluation
+    # reproducible while allowing archived experiments to be re-evaluated.
+    configured_lora = config.get("paths", {}).get("pretrained_lora_checkpoint")
+    command_lora = getattr(args, "lora_checkpoint", None)
+    if (
+        configured_lora
+        and command_lora
+        and not Path(str(command_lora)).is_file()
+        and Path(str(configured_lora)).is_file()
+    ):
+        args.lora_checkpoint = str(configured_lora)
     args.train_batch_size = 1
     args.no_context_ratio = 0.0
     args.xssc_slot_track_dropout = 0.0
@@ -190,7 +211,20 @@ def parse_model_args(manifest_path: Path) -> tuple[argparse.Namespace, dict[str,
 
 
 def build_source_datasets(config: dict[str, Any]) -> dict[str, Any]:
-    paths = config["paths"]
+    paths = dict(config["paths"])
+    # A few archived SSH-118 manifests retain paths from a host-specific
+    # mount. Prefer the manifest value, then use the canonical local dataset
+    # copy when that value no longer exists.
+    for key, candidates in DATASET_PATH_FALLBACKS.items():
+        value = paths.get(key)
+        if value and Path(str(value)).is_dir():
+            continue
+        replacement = next(
+            (candidate for candidate in candidates if Path(candidate).is_dir()),
+            None,
+        )
+        if replacement is not None:
+            paths[key] = replacement
     data = config["data"]
     model = config["model"]
     resolution = (int(model["height"]), int(model["width"]))

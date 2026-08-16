@@ -37,12 +37,39 @@ def main() -> None:
         atomic(case_manifest_path, case_manifest)
     entries=[e for e in cfg["entries"] if not args.entry_id or e["entry_id"]==args.entry_id]
     status_path=root/"loss_status.json"; status=json.loads(status_path.read_text()) if status_path.is_file() else {"state":"running","entries":{}}
+    total_cases = len(case_manifest["cases"])
+    for configured_entry in cfg["entries"]:
+        entry_id = configured_entry["entry_id"]
+        status.setdefault("entries", {}).setdefault(entry_id, {
+            "state": "pending",
+            "completed_cases": 0,
+            "total_cases": total_cases,
+            "checkpoint": configured_entry.get("checkpoint"),
+        })
+    status["state"] = "complete" if all(
+        value.get("state") == "complete" for value in status["entries"].values()
+    ) else "partial"
+    atomic(status_path, status)
     datasets=None
     for entry in entries:
         out=root/"losses"/f"{entry['entry_id']}.json"
         if out.is_file():
             old=json.loads(out.read_text()); done=len(old.get("cases",[]))
             if old.get("state")=="complete" and done==len(case_manifest["cases"]): status["entries"][entry["entry_id"]]={"state":"complete","completed_cases":done,"total_cases":done}; atomic(status_path,status); continue
+        checkpoint = entry.get("checkpoint")
+        checkpoint_path = Path(str(checkpoint)) if checkpoint else None
+        if checkpoint_path is None or not checkpoint_path.exists():
+            error = f"checkpoint not found: {checkpoint or '<unset>'}"
+            status["entries"][entry["entry_id"]] = {
+                "state": "blocked",
+                "completed_cases": 0,
+                "total_cases": total_cases,
+                "checkpoint": checkpoint,
+                "error": error,
+            }
+            atomic(status_path, status)
+            print(f"[{entry['entry_id']}] BLOCKED: {error}", flush=True)
+            continue
         status["entries"][entry["entry_id"]]={"state":"running","completed_cases":0,"total_cases":len(case_manifest["cases"]),"checkpoint":entry["checkpoint"]}; status["current_entry"]=entry["entry_id"]; atomic(status_path,status)
         manifest_path=Path(entry["config"])
         kind=ev.model_kind(ev.load_resolved(manifest_path))

@@ -329,6 +329,17 @@
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_physrvg_dit_gpu12_formal/formal_20260808T142258Z_physrvg_dit/checkpoints"
       ]
+    },
+    {
+      "key": "full_sa_no_object_cotracker_trajectory_loss",
+      "label": "Full-SA + No-Object + CoTracker Trajectory Loss",
+      "color": "#A23B72",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/object_cotracker_trajectory_loss/full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached/step000000_gpu01_20260816T020512Z/checkpoints"
+      ],
+      "bootstrap_result_roots": {
+        "1000": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_three_run_watch/results/full_sa_no_object_cotracker_trajectory_loss/step-001000_steps8_512x896_ctx08_49f"
+      }
     }
   ]
 }
