@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import torch
@@ -13,6 +14,7 @@ from frozen_motion_probe import (
     blend_with_fixed_probe_noise,
     capture_wan_self_attention_qk,
     fixed_query_head_probabilities,
+    fixed_query_frame_head_probabilities,
     load_pck_head_weights,
     pck_weighted_teacher_student_head_kl,
     power_sharpen_head_weights,
@@ -187,6 +189,64 @@ def test_student_map_reuses_exact_teacher_query_representation():
     map_a[..., 0].sum().backward()
     assert student_k.grad is not None
     assert float(student_k.grad.abs().sum()) > 0.0
+
+
+def test_fixed_query_map_uses_fractional_mask_occupancy_weights():
+    q = torch.tensor(
+        [[[3.0, 0.0], [0.0, 3.0], [0.0, 0.0], [0.0, 0.0]]]
+    )
+    k = torch.tensor(
+        [[[2.0, 0.0], [0.0, 2.0], [1.0, 1.0], [-1.0, -1.0]]]
+    )
+    rows = torch.tensor([0, 1])
+    weights = torch.tensor([0.25, 0.75])
+
+    weighted = fixed_query_head_probabilities(
+        q,
+        k,
+        head_indices=(0,),
+        query_rows=rows,
+        query_weights=weights,
+        num_heads=1,
+    )
+    q_rows = q[:, rows]
+    per_query = (
+        torch.matmul(q_rows, k.transpose(-1, -2)) / math.sqrt(q.shape[-1])
+    ).softmax(dim=-1)
+    expected = (per_query * weights.reshape(1, 2, 1)).sum(dim=1, keepdim=True)
+
+    assert torch.allclose(weighted, expected)
+    assert not torch.allclose(weighted, per_query.mean(dim=1, keepdim=True))
+
+
+def test_fixed_query_frame_map_softmaxes_each_target_frame_before_query_mixing():
+    q = torch.tensor(
+        [[[3.0, 0.0], [0.0, 3.0], [0.0, 0.0], [0.0, 0.0]]]
+    )
+    k = torch.tensor(
+        [[[2.0, 0.0], [0.0, 2.0], [1.0, 1.0], [-1.0, -1.0]]]
+    )
+    rows = torch.tensor([0, 1])
+    weights = torch.tensor([0.25, 0.75])
+
+    actual = fixed_query_frame_head_probabilities(
+        q,
+        k,
+        head_indices=(0,),
+        query_rows=rows,
+        query_weights=weights,
+        grid=(2, 1, 2),
+        num_heads=1,
+    )
+    logits = torch.matmul(q[:, rows], k.transpose(-1, -2)) / math.sqrt(q.shape[-1])
+    per_query_frame = logits.reshape(1, 2, 2, 2).softmax(dim=-1)
+    expected = (
+        per_query_frame * weights.reshape(1, 2, 1, 1)
+    ).sum(dim=1, keepdim=True)
+
+    assert actual.shape == (1, 1, 2, 2)
+    assert torch.allclose(actual, expected)
+    assert torch.allclose(actual.sum(dim=-1), torch.ones(1, 1, 2))
 
 
 def test_fixed_teacher_query_loss_reaches_first_pass_v_prediction():

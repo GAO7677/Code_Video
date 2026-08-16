@@ -160,6 +160,7 @@ def main() -> None:
                     cache.load(case["sample_key"]),
                     device,
                     cache_root,
+                    use_cached_gt=True,
                 )
                 case_dir.mkdir(parents=True, exist_ok=True)
                 np.savez_compressed(case_dir / "trajectories.npz", **arrays)

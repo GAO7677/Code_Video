@@ -223,6 +223,8 @@ def evaluate_trajectory(
     cache_record: dict[str, Any],
     device: torch.device,
     cache_dir: Path,
+    *,
+    use_cached_gt: bool = False,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     object_count = int(cache_record["object_count"])
     points_per_object = int(cache_record["points_per_object"])
@@ -236,31 +238,67 @@ def evaluate_trajectory(
         dtype=query_points.dtype,
     )
     queries = torch.cat((frame_ids, query_points), dim=-1).unsqueeze(0)
-    # The project CoTracker wrapper follows the training path and accepts
-    # [B, T, C, H, W], while the tracker itself flattens B*T internally. Run
-    # GT and prediction in one batch so preprocessing, resizing, queries, and
-    # tracker state are exactly the same for both videos.
-    gt_video = (
-        torch.from_numpy(source_frames)
-        .to(device=device, dtype=torch.float32)
-        .permute(0, 3, 1, 2)
-        .unsqueeze(0)
-    )
     pred_video = pred_raw.float().clamp(0.0, 1.0).mul(255.0)
-    tracker_video = torch.cat((gt_video, pred_video), dim=0)
-    tracker_queries = queries.expand(2, -1, -1).contiguous()
-    with torch.inference_mode():
-        all_tracks, all_visibility_probability, all_confidence_probability = (
-            differentiable_track_video_with_scores(
-                predictor, tracker_video, tracker_queries
+    if use_cached_gt:
+        with torch.inference_mode():
+            pred_tracks, pred_visibility_probability, pred_confidence_probability = (
+                differentiable_track_video_with_scores(
+                    predictor, pred_video, queries
+                )
             )
+        point_count = object_count * points_per_object
+        gt_tracks = cache_record["gt_tracks"].to(
+            device=device, dtype=torch.float32
+        ).reshape(1, 49, point_count, 2)
+        gt_visibility_probability = cache_record["gt_visibility_probability"].to(
+            device=device, dtype=torch.float32
+        ).reshape(1, 49, point_count)
+        gt_confidence_probability = cache_record["gt_confidence_probability"].to(
+            device=device, dtype=torch.float32
+        ).reshape(1, 49, point_count)
+        gt_extraction = "precomputed frozen-CoTracker GT tracks used by training"
+        video_preprocess = (
+            "prediction uses float32 [0,255] RGB, [B,T,C,H,W], 256x448 bilinear "
+            "resize, F04 queries, and the training CoTracker3 forward"
         )
-    gt_tracks = all_tracks[:1]
-    pred_tracks = all_tracks[1:]
-    gt_visibility_probability = all_visibility_probability[:1]
-    pred_visibility_probability = all_visibility_probability[1:]
-    gt_confidence_probability = all_confidence_probability[:1]
-    pred_confidence_probability = all_confidence_probability[1:]
+        cache_role = (
+            "training GT tracks, GT confidence, physical geometric visibility, "
+            "and F04 query points"
+        )
+    else:
+        # This diagnostic mode recomputes GT and prediction together to isolate
+        # differences caused by the two input videos.
+        gt_video = (
+            torch.from_numpy(source_frames)
+            .to(device=device, dtype=torch.float32)
+            .permute(0, 3, 1, 2)
+            .unsqueeze(0)
+        )
+        tracker_video = torch.cat((gt_video, pred_video), dim=0)
+        tracker_queries = queries.expand(2, -1, -1).contiguous()
+        with torch.inference_mode():
+            all_tracks, all_visibility_probability, all_confidence_probability = (
+                differentiable_track_video_with_scores(
+                    predictor, tracker_video, tracker_queries
+                )
+            )
+        gt_tracks = all_tracks[:1]
+        pred_tracks = all_tracks[1:]
+        gt_visibility_probability = all_visibility_probability[:1]
+        pred_visibility_probability = all_visibility_probability[1:]
+        gt_confidence_probability = all_confidence_probability[:1]
+        pred_confidence_probability = all_confidence_probability[1:]
+        gt_extraction = (
+            "GT and prediction tracked together with identical CoTracker preprocessing"
+        )
+        video_preprocess = (
+            "both videos use float32 [0,255] RGB, [B,T,C,H,W], 256x448 bilinear "
+            "resize, F04 queries, and one batched CoTracker3 forward"
+        )
+        cache_role = (
+            "query points and physical geometric visibility only; cached GT tracks "
+            "are not used"
+        )
     gt_geometric_visibility = cache_record["gt_geometric_visibility"].to(
         device=device
     ).bool().reshape(1, 49, object_count * points_per_object)
@@ -301,12 +339,9 @@ def evaluate_trajectory(
         "trajectory_object_count": object_count,
         "trajectory_points_per_object": points_per_object,
         "trajectory_definition": "F04-relative displacement, F08-F48, equal-object visibility-aware SmoothL1",
-        "trajectory_gt_extraction": "GT and prediction tracked together with identical CoTracker preprocessing",
-        "trajectory_video_preprocess": (
-            "both videos use float32 [0,255] RGB, [B,T,C,H,W] layout, the same "
-            "256x448 bilinear resize, F04 queries, and one batched CoTracker3 forward"
-        ),
-        "trajectory_gt_cache_role": "query points and physical geometric visibility only; cached GT tracks are not used",
+        "trajectory_gt_extraction": gt_extraction,
+        "trajectory_video_preprocess": video_preprocess,
+        "trajectory_gt_cache_role": cache_role,
         "trajectory_cache": str(cache_dir),
         "trajectory_cotracker_checkpoint": str(DEFAULT_COTRACKER),
         "trajectory_huber_delta": HUBER_DELTA,
@@ -388,9 +423,7 @@ def render_overlay(
     point_colors = OBJECT_COLORS[
         arrays["object_ids_per_point"] % len(OBJECT_COLORS)
     ]
-    gt_visible = arrays.get(
-        "gt_visibility", arrays["gt_geometric_visibility"]
-    ).astype(bool)
+    gt_visible = arrays["gt_geometric_visibility"].astype(bool)
     pred_visible = arrays["pred_visibility"].astype(bool)
     frames = []
     for frame_id in range(source_frames.shape[0]):

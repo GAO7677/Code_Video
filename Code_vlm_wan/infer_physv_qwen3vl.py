@@ -30,13 +30,11 @@ from vllm import LLM, SamplingParams
 DEFAULT_MODEL = "/data/gaoya/ckpt/Qwen-Qwen3-VL-32B-Thinking-FP8"
 DEFAULT_DATASET = "/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5"
 DEFAULT_OUTPUT = "/data/gaoya/agent-data/outputs/physv_qwen3vl/cases.jsonl"
-QUESTION = """Analyze the physical process.
+QUESTION = """你是一个视频物理动态分析器。
 
-Identify:
-1. objects and their trajectories,
-2. interactions between objects,
-3. collision/contact events,
-4. whether the motion follows physics."""
+分析这段视频中可观察到的物理动态，重点关注物体的平移、旋转、接触和相互作用，以及运动方向、速度、强度和运动模式随时间的变化。特别关注碰撞、反弹、滑动、滚动、摇摆、加速、减速、反向和趋于稳定等动态过程，以及视频结束时仍然存在的运动状态。
+
+弱化与物理行为无关的颜色、纹理和语义外观信息，只依据视频中实际观察到的内容进行分析，不要预测视频结束后的事件。"""
 
 
 def parse_args():

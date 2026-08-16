@@ -173,6 +173,7 @@ def fixed_query_head_probabilities(
     *,
     head_indices: Sequence[int],
     query_rows: torch.Tensor,
+    query_weights: torch.Tensor | None = None,
     num_heads: int,
     fixed_query: torch.Tensor | None = None,
 ) -> torch.Tensor:
@@ -220,7 +221,94 @@ def fixed_query_head_probabilities(
     selected_k = kh.index_select(1, heads)
     logits = torch.matmul(selected_q.float(), selected_k.float().transpose(-1, -2))
     probabilities = torch.softmax(logits / math.sqrt(float(head_dim)), dim=-1)
-    return probabilities.mean(dim=2)
+    if query_weights is None:
+        return probabilities.mean(dim=2)
+    weights = torch.as_tensor(
+        query_weights,
+        device=probabilities.device,
+        dtype=probabilities.dtype,
+    ).flatten()
+    if weights.numel() != rows.numel():
+        raise ValueError(
+            f"query weight/row mismatch: {weights.numel()}/{rows.numel()}"
+        )
+    if not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
+        raise ValueError("query weights must be finite and non-negative")
+    if float(weights.sum().item()) <= 0.0:
+        raise ValueError("query weights must have positive mass")
+    weights = weights / weights.sum()
+    return (probabilities * weights.reshape(1, 1, -1, 1)).sum(dim=2)
+
+
+def fixed_query_frame_head_probabilities(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    *,
+    head_indices: Sequence[int],
+    query_rows: torch.Tensor,
+    query_weights: torch.Tensor,
+    grid: tuple[int, int, int],
+    num_heads: int,
+    fixed_query: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Return occupancy-weighted per-frame Q->K maps as ``[B,H,T,S]``."""
+    if q.ndim != 3 or k.shape != q.shape:
+        raise ValueError(f"expected matching [B,S,D] Q/K, got {q.shape}/{k.shape}")
+    frames, height, width = map(int, grid)
+    spatial = height * width
+    if q.shape[1] != frames * spatial:
+        raise ValueError(f"Q/K token count {q.shape[1]} does not match grid={grid}")
+    if not head_indices:
+        raise ValueError("head_indices must not be empty")
+    if q.shape[-1] % int(num_heads):
+        raise ValueError(
+            f"Q/K width {q.shape[-1]} is not divisible by num_heads={num_heads}"
+        )
+    rows = torch.as_tensor(query_rows, dtype=torch.long, device=q.device).flatten()
+    weights = torch.as_tensor(
+        query_weights, device=q.device, dtype=torch.float32
+    ).flatten()
+    if rows.numel() == 0 or weights.numel() != rows.numel():
+        raise ValueError(
+            f"query weight/row mismatch: {weights.numel()}/{rows.numel()}"
+        )
+    if int(rows.min()) < 0 or int(rows.max()) >= q.shape[1]:
+        raise IndexError(
+            f"query rows [{int(rows.min())}, {int(rows.max())}] outside S={q.shape[1]}"
+        )
+    if not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
+        raise ValueError("query weights must be finite and non-negative")
+    if float(weights.sum().item()) <= 0.0:
+        raise ValueError("query weights must have positive mass")
+    weights = weights / weights.sum()
+    heads = torch.as_tensor(head_indices, dtype=torch.long, device=q.device)
+    if int(heads.min()) < 0 or int(heads.max()) >= int(num_heads):
+        raise IndexError(
+            f"selected heads [{int(heads.min())}, {int(heads.max())}] "
+            f"outside num_heads={num_heads}"
+        )
+    head_dim = q.shape[-1] // int(num_heads)
+    qh = q.reshape(q.shape[0], q.shape[1], num_heads, head_dim).permute(0, 2, 1, 3)
+    kh = k.reshape(k.shape[0], k.shape[1], num_heads, head_dim).permute(0, 2, 1, 3)
+    selected_q = qh.index_select(1, heads).index_select(2, rows)
+    if fixed_query is not None:
+        fixed_query = torch.as_tensor(fixed_query, device=q.device)
+        if fixed_query.shape != selected_q.shape:
+            raise ValueError(
+                "fixed GT query representation shape mismatch: "
+                f"expected {selected_q.shape}, got {fixed_query.shape}"
+            )
+        selected_q = fixed_query.to(dtype=selected_q.dtype)
+    selected_k = kh.index_select(1, heads).reshape(
+        q.shape[0], len(head_indices), frames, spatial, head_dim
+    )
+    logits = torch.einsum(
+        "bhqd,bhtkd->bhqtk", selected_q.float(), selected_k.float()
+    )
+    probabilities = torch.softmax(logits / math.sqrt(float(head_dim)), dim=-1)
+    return (
+        probabilities * weights.reshape(1, 1, -1, 1, 1)
+    ).sum(dim=2)
 
 
 class TopHeadQKCollector:
@@ -231,6 +319,8 @@ class TopHeadQKCollector:
         *,
         selected_heads_by_block: Mapping[int, Sequence[int]],
         query_rows: torch.Tensor,
+        query_weights: torch.Tensor | None = None,
+        frame_query_weights: torch.Tensor | None = None,
         grid: tuple[int, int, int],
         expected_num_heads: int,
         fixed_query_by_block: Mapping[int, torch.Tensor] | None = None,
@@ -241,6 +331,16 @@ class TopHeadQKCollector:
             if heads
         }
         self.query_rows = torch.as_tensor(query_rows, dtype=torch.long).flatten()
+        self.query_weights = (
+            None
+            if query_weights is None
+            else torch.as_tensor(query_weights, dtype=torch.float32).flatten()
+        )
+        self.frame_query_weights = (
+            None
+            if frame_query_weights is None
+            else torch.as_tensor(frame_query_weights, dtype=torch.float32).flatten()
+        )
         self.grid = tuple(map(int, grid))
         self.expected_num_heads = int(expected_num_heads)
         self.fixed_query_by_block = {
@@ -248,6 +348,7 @@ class TopHeadQKCollector:
             for block, query in (fixed_query_by_block or {}).items()
         }
         self._head_probabilities: list[torch.Tensor] = []
+        self._frame_head_probabilities: list[torch.Tensor] = []
         self._query_representations: list[torch.Tensor] = []
         self._captured_heads = 0
 
@@ -255,6 +356,20 @@ class TopHeadQKCollector:
             raise ValueError(f"invalid probe token grid: {self.grid}")
         if self.query_rows.numel() == 0:
             raise ValueError("query_rows must not be empty")
+        if (
+            self.query_weights is not None
+            and self.query_weights.numel() != self.query_rows.numel()
+        ):
+            raise ValueError(
+                "query_weights must contain one value for each query row"
+            )
+        if (
+            self.frame_query_weights is not None
+            and self.frame_query_weights.numel() != self.query_rows.numel()
+        ):
+            raise ValueError(
+                "frame_query_weights must contain one value for each query row"
+            )
         selected_count = sum(len(heads) for heads in self.selected_heads_by_block.values())
         if selected_count <= 0:
             raise ValueError("selected_heads_by_block is empty")
@@ -273,6 +388,7 @@ class TopHeadQKCollector:
             k,
             head_indices=heads,
             query_rows=self.query_rows,
+            query_weights=self.query_weights,
             num_heads=self.expected_num_heads,
             fixed_query=self.fixed_query_by_block.get(int(block_id)),
         )
@@ -289,6 +405,19 @@ class TopHeadQKCollector:
             qh.index_select(1, head_tensor).index_select(2, rows)
         )
         self._head_probabilities.append(probabilities)
+        if self.frame_query_weights is not None:
+            self._frame_head_probabilities.append(
+                fixed_query_frame_head_probabilities(
+                    q,
+                    k,
+                    head_indices=heads,
+                    query_rows=self.query_rows,
+                    query_weights=self.frame_query_weights,
+                    grid=self.grid,
+                    num_heads=self.expected_num_heads,
+                    fixed_query=self.fixed_query_by_block.get(int(block_id)),
+                )
+            )
         self._captured_heads += len(heads)
 
     def finalize(self) -> torch.Tensor:
@@ -312,6 +441,12 @@ class TopHeadQKCollector:
         if not self._head_probabilities:
             raise RuntimeError("frozen probe captured no Q/K maps")
         return torch.cat(self._head_probabilities, dim=1)
+
+    def finalize_frame_head_probabilities(self) -> torch.Tensor:
+        """Return per-frame selected-head maps as ``[B,H,T,H*W]``."""
+        if not self._frame_head_probabilities:
+            raise RuntimeError("collector captured no framewise head probabilities")
+        return torch.cat(self._frame_head_probabilities, dim=1)
 
     def finalize_query_representations(self) -> torch.Tensor:
         """Return selected fixed-row Q vectors as ``[B,H,Q,D]``."""

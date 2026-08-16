@@ -2526,7 +2526,8 @@ def build_master_hub(
     {physrvg_worst_case_entry}
     <section class="entry"><div><h2>30-case train validation · 方法对比</h2>
       <div class="meta">固定 PyBullet train 30-case；当前三种方法 resume/latest 与标准 18-method inventory 的其他最新权重，包含视频同步对比和 validation loss</div>
-      <a href="train-validation-30cases/">进入 30-case validation</a></div>
+      <a href="train-validation-30cases/">进入 30-case validation</a>
+      <a href="cotracker-trajectory-overlay-5cases/">CoTracker 轨迹 Overlay · 5 case</a></div>
       <div class="status">固定验证集<strong>21 组方法权重</strong><small>视频与 val loss 持续补全</small></div>
     </section>
     <section class="entry"><div><h2>初始四方案 case 对比</h2>

@@ -61,6 +61,11 @@ from attention_trajectory_distillation_project.frozen_motion_probe import (
     teacher_student_head_kl,
     trajectory_huber_loss,
 )
+from attention_trajectory_distillation_project.noise_gated_correspondence import (
+    masks_to_token_occupancy,
+    token_occupancy_to_pixel,
+    uniform_object_region_correspondence_objective,
+)
 from attention_trajectory_distillation_project.train_xssc_object_self_attn_lora_frozen_motion_probe import (
     FrozenMotionProbeWanModule,
     _probe_grid,
@@ -75,6 +80,9 @@ DEFAULT_OUTPUT_ROOT = Path(
 )
 DEFAULT_CACHE_ROOT = Path(
     "/data/gaoya/agent-data/cache/frozen_motion_probe_training_diagnostics"
+)
+DEFAULT_TRACKED_MASK_CACHE = Path(
+    "/data/gaoya/agent-data/cache/uniform_multiobject_correspondence_diagnostics"
 )
 DEFAULT_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
 DEFAULT_SAM2_CONFIG = Path(
@@ -127,6 +135,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
+    parser.add_argument(
+        "--tracked-mask-cache", type=Path, default=DEFAULT_TRACKED_MASK_CACHE
+    )
     parser.add_argument("--wan-root", type=Path, default=DEFAULT_WAN_ROOT)
     parser.add_argument("--sam2-config", type=Path, default=DEFAULT_SAM2_CONFIG)
     parser.add_argument("--sam2-checkpoint", type=Path, default=DEFAULT_SAM2_CHECKPOINT)
@@ -163,6 +174,7 @@ def parse_args() -> argparse.Namespace:
         default=list(DEFAULT_SWEEP_PROBE_TIMESTEPS),
     )
     parser.add_argument("--heatmap-weight", type=float, default=0.1)
+    parser.add_argument("--latent-mask-weight", type=float, default=0.01)
     parser.add_argument("--trajectory-weight", type=float, default=0.1)
     parser.add_argument("--trajectory-huber-delta", type=float, default=0.05)
     parser.add_argument(
@@ -232,6 +244,8 @@ def check_common_args(args: argparse.Namespace) -> None:
         raise ValueError("probe-noise-level must be in [0,1]")
     if not math.isfinite(float(args.pck_weight_power)) or float(args.pck_weight_power) <= 0.0:
         raise ValueError("pck-weight-power must be positive and finite")
+    if not math.isfinite(float(args.latent_mask_weight)) or float(args.latent_mask_weight) <= 0.0:
+        raise ValueError("latent-mask-weight must be positive and finite")
     noise_sweep_config(args)
 
 
@@ -816,6 +830,204 @@ def compute_probe_weighting_comparison(
     }
 
 
+def conditional_frame_head_mixture(
+    head_probabilities_bhs: torch.Tensor,
+    *,
+    grid: tuple[int, int, int],
+    head_weights: torch.Tensor,
+) -> torch.Tensor:
+    """Convert full-sequence head maps to a per-frame spatial mixture."""
+    if head_probabilities_bhs.ndim not in (3, 4):
+        raise ValueError(
+            "expected [B,H,T*S] or [B,H,T,S] head probabilities, got "
+            f"{head_probabilities_bhs.shape}"
+        )
+    frames, height, width = map(int, grid)
+    spatial = height * width
+    if head_probabilities_bhs.ndim == 3 and head_probabilities_bhs.shape[-1] != frames * spatial:
+        raise ValueError(
+            f"head map length {head_probabilities_bhs.shape[-1]} does not match grid={grid}"
+        )
+    if head_probabilities_bhs.ndim == 4 and head_probabilities_bhs.shape[2:] != (
+        frames,
+        spatial,
+    ):
+        raise ValueError(
+            "frame head geometry mismatch: "
+            f"{head_probabilities_bhs.shape[2:]}/{(frames, spatial)}"
+        )
+    weights = torch.as_tensor(
+        head_weights,
+        device=head_probabilities_bhs.device,
+        dtype=head_probabilities_bhs.dtype,
+    ).flatten()
+    if weights.numel() != head_probabilities_bhs.shape[1]:
+        raise ValueError(
+            f"head weight/count mismatch: {weights.numel()}/{head_probabilities_bhs.shape[1]}"
+        )
+    if not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
+        raise ValueError("head weights must be finite and non-negative")
+    weights = weights / weights.sum().clamp_min(1.0e-12)
+    per_frame = head_probabilities_bhs.reshape(
+        head_probabilities_bhs.shape[0],
+        head_probabilities_bhs.shape[1],
+        frames,
+        spatial,
+    )
+    per_frame = per_frame / per_frame.sum(dim=-1, keepdim=True).clamp_min(1.0e-12)
+    return (per_frame * weights.reshape(1, -1, 1, 1)).sum(dim=1)
+
+
+def compute_latent_mask_comparison(
+    teacher_head_probabilities: torch.Tensor,
+    student_head_probabilities: torch.Tensor,
+    *,
+    object_token_occupancy_bthw: torch.Tensor,
+    grid: tuple[int, int, int],
+    head_weights: torch.Tensor,
+    source_frame: int,
+    lambda_mask: float,
+) -> dict[str, torch.Tensor]:
+    """Compare fixed-Teacher-Q region attention with GT-role latent masks."""
+    if teacher_head_probabilities.shape != student_head_probabilities.shape:
+        raise ValueError("teacher/student head probability shape mismatch")
+    if object_token_occupancy_bthw.ndim != 4:
+        raise ValueError(
+            "expected [B,T,H,W] token occupancy, got "
+            f"{object_token_occupancy_bthw.shape}"
+        )
+    frames, height, width = map(int, grid)
+    if object_token_occupancy_bthw.shape != (
+        teacher_head_probabilities.shape[0],
+        frames,
+        height,
+        width,
+    ):
+        raise ValueError(
+            "occupancy/probe geometry mismatch: "
+            f"{object_token_occupancy_bthw.shape}/{grid}"
+        )
+    if not 0 <= int(source_frame) < frames:
+        raise ValueError(f"source_frame={source_frame} outside T={frames}")
+
+    teacher_attention = conditional_frame_head_mixture(
+        teacher_head_probabilities,
+        grid=grid,
+        head_weights=head_weights,
+    )
+    student_attention = conditional_frame_head_mixture(
+        student_head_probabilities,
+        grid=grid,
+        head_weights=head_weights,
+    )
+    occupancy = object_token_occupancy_bthw.to(
+        device=student_attention.device,
+        dtype=student_attention.dtype,
+    ).flatten(2)
+    occupancy_sum = occupancy.sum(dim=-1)
+    target = occupancy / occupancy_sum[..., None].clamp_min(1.0e-12)
+    frame_ids = torch.arange(frames, device=student_attention.device)[None, :]
+    source_valid = occupancy_sum[:, int(source_frame)] > 0
+    valid = (
+        (occupancy_sum > 0)
+        & source_valid[:, None]
+        & (frame_ids > int(source_frame))
+    )
+    student_objective = uniform_object_region_correspondence_objective(
+        student_attention,
+        target,
+        valid,
+        lambda_corr=float(lambda_mask),
+    )
+    teacher_objective = uniform_object_region_correspondence_objective(
+        teacher_attention,
+        target,
+        valid,
+        lambda_corr=float(lambda_mask),
+    )
+    support = occupancy > 0
+    teacher_mass = (teacher_attention * support.to(teacher_attention.dtype)).sum(-1)
+    student_mass = (student_attention * support.to(student_attention.dtype)).sum(-1)
+    teacher_top1 = support.gather(
+        dim=-1, index=teacher_attention.argmax(dim=-1, keepdim=True)
+    ).squeeze(-1)
+    student_top1 = support.gather(
+        dim=-1, index=student_attention.argmax(dim=-1, keepdim=True)
+    ).squeeze(-1)
+    return {
+        "teacher_region_attention": teacher_attention,
+        "student_region_attention": student_attention,
+        "target": target,
+        "valid": valid,
+        "ce_contribution": student_objective["ce_contribution"],
+        "ce": student_objective["ce"],
+        "raw_soft_ce": student_objective["raw_soft_ce"],
+        "teacher_raw_soft_ce": teacher_objective["raw_soft_ce"],
+        "loss": student_objective["loss"],
+        "teacher_attention_mass_in_support": teacher_mass,
+        "student_attention_mass_in_support": student_mass,
+        "teacher_top1_in_support": teacher_top1,
+        "student_top1_in_support": student_top1,
+    }
+
+
+def load_tracked_target_mask(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+) -> np.ndarray:
+    case_root = args.tracked_mask_cache.resolve() / "cases" / case["case_key"]
+    metadata_path = case_root / "objects_complete.json"
+    mask_path = case_root / "object_masks.npz"
+    if not metadata_path.is_file() or not mask_path.is_file():
+        raise FileNotFoundError(f"missing tracked SAM2 masks for {case['case_key']}")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    phrases = [str(value) for value in metadata["object_phrases"]]
+    if not phrases or phrases[0] != str(case["target_phrase"]):
+        raise RuntimeError(
+            f"{case['case_key']}: target phrase does not match tracked object 0: "
+            f"{case['target_phrase']!r}/{phrases[:1]!r}"
+        )
+    with np.load(mask_path) as arrays:
+        masks = arrays["masks_othw"].astype(np.uint8)
+    if masks.ndim != 4 or masks.shape[0] < 1:
+        raise RuntimeError(f"{case['case_key']}: invalid tracked mask shape {masks.shape}")
+    return masks[0]
+
+
+def latent_mask_query_supervision(
+    masks_thw: np.ndarray,
+    *,
+    grid: tuple[int, int, int],
+    query_rows: torch.Tensor,
+    source_frame: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    anchors = anchor_frame_indices(int(grid[0]), int(masks_thw.shape[0]))
+    aligned = torch.from_numpy(np.asarray(masks_thw)[anchors]).unsqueeze(0)
+    occupancy = masks_to_token_occupancy(
+        aligned,
+        token_hw=(int(grid[1]), int(grid[2])),
+    ).to(device)
+    spatial = int(grid[1] * grid[2])
+    rows = torch.as_tensor(query_rows, dtype=torch.long)
+    row_frames = torch.div(rows, spatial, rounding_mode="floor")
+    if not bool((row_frames == int(source_frame)).all()):
+        raise ValueError("query rows are not confined to the source latent frame")
+    spatial_rows = rows % spatial
+    support_rows = (
+        occupancy[0, int(source_frame)].flatten().detach().cpu() > 0
+    ).nonzero(as_tuple=False).flatten()
+    if not torch.equal(torch.sort(spatial_rows).values, support_rows):
+        raise RuntimeError(
+            "tracked source-mask occupancy does not match the fixed query row set"
+        )
+    query_weights = occupancy[0, int(source_frame)].flatten()[
+        spatial_rows.to(device)
+    ]
+    query_weights = query_weights / query_weights.sum().clamp_min(1.0e-12)
+    return occupancy, query_weights
+
+
 def run_forward(args: argparse.Namespace) -> None:
     cache_root = args.cache_root.resolve()
     output_root = args.output_root.resolve()
@@ -942,6 +1154,44 @@ def run_forward(args: argparse.Namespace) -> None:
             grid=grid,
             query_latent_frame=int(args.query_latent_frame),
         )
+        tracked_masks = load_tracked_target_mask(args, case)
+        if tracked_masks.shape[0] != int(args.num_frames):
+            raise RuntimeError(
+                f"{case_key}: tracked mask has {tracked_masks.shape[0]} frames, "
+                f"expected {args.num_frames}"
+            )
+        tracked_source_mask = tracked_masks[int(args.query_pixel_frame)] > 0
+        if not np.array_equal(tracked_source_mask, selected_mask > 0):
+            raise RuntimeError(
+                f"{case_key}: tracked F{args.query_pixel_frame:02d} mask does not "
+                "match the fixed-query identity mask"
+            )
+        object_token_occupancy, query_weights = latent_mask_query_supervision(
+            tracked_masks,
+            grid=grid,
+            query_rows=query_rows,
+            source_frame=int(args.query_latent_frame),
+            device=device,
+        )
+        reverse_pixel_occupancy = token_occupancy_to_pixel(
+            object_token_occupancy,
+            pixel_hw=tracked_masks.shape[-2:],
+        )
+        reverse_source_occupancy = reverse_pixel_occupancy[
+            0, int(args.query_latent_frame)
+        ].detach().cpu().numpy()
+        reverse_source_support = reverse_source_occupancy > 0.0
+        reverse_support_iou = mask_iou(
+            tracked_source_mask, reverse_source_support
+        )
+        reverse_support_recall = float(
+            np.logical_and(tracked_source_mask, reverse_source_support).sum()
+            / max(int(tracked_source_mask.sum()), 1)
+        )
+        reverse_mass_ratio = float(
+            reverse_source_occupancy.sum()
+            / max(float(tracked_source_mask.sum()), 1.0)
+        )
         probe_generator = torch.Generator(device=device)
         probe_generator.manual_seed(int(args.seed) + 1000 + case_position)
         probe_noise = torch.randn(
@@ -970,18 +1220,22 @@ def run_forward(args: argparse.Namespace) -> None:
                 teacher_heatmap,
                 teacher_head_maps,
                 fixed_query_by_block,
+                teacher_frame_head_maps,
             ) = FrozenMotionProbeWanModule._run_frozen_probe(
                     runner,
                     latents=teacher_probe_input,
                     timestep=probe_timestep,
                     captured_inputs=captured_inputs,
                     query_rows=query_rows,
+                    frame_query_weights=query_weights,
+                    return_frame_head_probabilities=True,
                     grid=grid,
                     retain_input_gradient=False,
                     fixed_query_by_block=None,
                 )
             teacher_heatmap = teacher_heatmap.detach()
             teacher_head_maps = teacher_head_maps.detach()
+            teacher_frame_head_maps = teacher_frame_head_maps.detach()
             fixed_query_by_block = {
                 block: value.detach() for block, value in fixed_query_by_block.items()
             }
@@ -1001,12 +1255,19 @@ def run_forward(args: argparse.Namespace) -> None:
             captured_inputs,
         )
         with torch.enable_grad():
-            student_heatmap, student_head_maps, _ = FrozenMotionProbeWanModule._run_frozen_probe(
+            (
+                student_heatmap,
+                student_head_maps,
+                _,
+                student_frame_head_maps,
+            ) = FrozenMotionProbeWanModule._run_frozen_probe(
                 runner,
                 latents=student_probe_input,
                 timestep=probe_timestep,
                 captured_inputs=captured_inputs,
                 query_rows=query_rows,
+                frame_query_weights=query_weights,
+                return_frame_head_probabilities=True,
                 grid=grid,
                 retain_input_gradient=True,
                 fixed_query_by_block=fixed_query_by_block,
@@ -1023,10 +1284,32 @@ def run_forward(args: argparse.Namespace) -> None:
             trajectory_loss = comparison["trajectory_loss"]
             student_trajectory = comparison["student_trajectory"]
             teacher_trajectory = comparison["teacher_trajectory"]
+            latent_mask_comparison = compute_latent_mask_comparison(
+                teacher_frame_head_maps,
+                student_frame_head_maps,
+                object_token_occupancy_bthw=object_token_occupancy,
+                grid=grid,
+                head_weights=pck_weights,
+                source_frame=int(args.query_latent_frame),
+                lambda_mask=float(args.latent_mask_weight),
+            )
+            old_kl_only_loss = float(args.heatmap_weight) * heatmap_loss
             auxiliary_loss = (
-                float(args.heatmap_weight) * heatmap_loss
+                old_kl_only_loss
                 + float(args.trajectory_weight) * trajectory_loss
             )
+            old_kl_gradient = torch.autograd.grad(
+                old_kl_only_loss,
+                velocity_leaf,
+                retain_graph=True,
+                create_graph=False,
+            )[0]
+            latent_mask_gradient = torch.autograd.grad(
+                latent_mask_comparison["loss"],
+                velocity_leaf,
+                retain_graph=True,
+                create_graph=False,
+            )[0]
             velocity_gradient = torch.autograd.grad(
                 auxiliary_loss,
                 velocity_leaf,
@@ -1078,8 +1361,36 @@ def run_forward(args: argparse.Namespace) -> None:
             pck_weights_sharpened=pck_weights.detach().cpu().float().numpy(),
             pck_weight_power=np.asarray(float(args.pck_weight_power), dtype=np.float32),
             query_rows=query_rows.cpu().numpy(),
+            query_weights=query_weights.detach().cpu().float().numpy(),
             selected_mask=selected_mask,
+            latent_mask_occupancy=object_token_occupancy.detach().cpu().float().numpy(),
+            latent_mask_target=latent_mask_comparison["target"].detach().cpu().float().reshape(1, *grid).numpy(),
+            latent_mask_teacher_attention=latent_mask_comparison["teacher_region_attention"].detach().cpu().float().reshape(1, *grid).numpy(),
+            latent_mask_student_attention=latent_mask_comparison["student_region_attention"].detach().cpu().float().reshape(1, *grid).numpy(),
+            latent_mask_ce_contribution=latent_mask_comparison["ce_contribution"].detach().cpu().float().reshape(1, *grid).numpy(),
+            latent_mask_valid=latent_mask_comparison["valid"].detach().cpu().numpy(),
+            latent_mask_teacher_mass_in_support=latent_mask_comparison["teacher_attention_mass_in_support"].detach().cpu().float().numpy(),
+            latent_mask_student_mass_in_support=latent_mask_comparison["student_attention_mass_in_support"].detach().cpu().float().numpy(),
+            latent_mask_teacher_top1_in_support=latent_mask_comparison["teacher_top1_in_support"].detach().cpu().numpy(),
+            latent_mask_student_top1_in_support=latent_mask_comparison["student_top1_in_support"].detach().cpu().numpy(),
+            latent_mask_teacher_frame_head_probabilities=teacher_frame_head_maps.detach().cpu().float().numpy(),
+            latent_mask_student_frame_head_probabilities=student_frame_head_maps.detach().cpu().float().numpy(),
+            latent_mask_reverse_source_occupancy=reverse_source_occupancy,
         )
+        latent_valid = latent_mask_comparison["valid"]
+        valid_count = int(latent_valid.sum().item())
+        teacher_mass_mean = latent_mask_comparison[
+            "teacher_attention_mass_in_support"
+        ][latent_valid].float().mean()
+        student_mass_mean = latent_mask_comparison[
+            "student_attention_mass_in_support"
+        ][latent_valid].float().mean()
+        teacher_top1_rate = latent_mask_comparison[
+            "teacher_top1_in_support"
+        ][latent_valid].float().mean()
+        student_top1_rate = latent_mask_comparison[
+            "student_top1_in_support"
+        ][latent_valid].float().mean()
         metrics = {
             "schema_version": 1,
             "case_key": case_key,
@@ -1155,6 +1466,76 @@ def run_forward(args: argparse.Namespace) -> None:
                     velocity_gradient.detach().float().abs().mean().item()
                 ),
                 "probe_trainable_parameters": 0,
+                "latent_mask": {
+                    "supervision_source": (
+                        "GroundingDINO object-0 detection propagated by SAM2; "
+                        "pseudo-mask treated as GT-role supervision"
+                    ),
+                    "target_definition": (
+                        "area-pooled mask occupancy normalized over each latent frame"
+                    ),
+                    "query_weighting": (
+                        "F04/latent-1 covered query cells weighted by fractional occupancy"
+                    ),
+                    "old_attention_definition": (
+                        "uniform query mean after full T*S softmax; per-head Teacher KL"
+                    ),
+                    "new_attention_definition": (
+                        "per-query per-frame spatial softmax, then fractional-occupancy "
+                        "query mean and gamma30 PCK head mixture"
+                    ),
+                    "future_only": True,
+                    "valid_target_frames": valid_count,
+                    "weight": float(args.latent_mask_weight),
+                    "student_raw_soft_ce": float(
+                        latent_mask_comparison["raw_soft_ce"].detach().item()
+                    ),
+                    "teacher_raw_soft_ce": float(
+                        latent_mask_comparison["teacher_raw_soft_ce"].detach().item()
+                    ),
+                    "weighted_loss": float(
+                        latent_mask_comparison["loss"].detach().item()
+                    ),
+                    "old_kl_weighted_loss": float(old_kl_only_loss.detach().item()),
+                    "old_kl_gradient_norm": float(
+                        old_kl_gradient.detach().float().norm().item()
+                    ),
+                    "old_kl_gradient_abs_mean": float(
+                        old_kl_gradient.detach().float().abs().mean().item()
+                    ),
+                    "latent_mask_gradient_norm": float(
+                        latent_mask_gradient.detach().float().norm().item()
+                    ),
+                    "latent_mask_gradient_abs_mean": float(
+                        latent_mask_gradient.detach().float().abs().mean().item()
+                    ),
+                    "teacher_attention_mass_in_support": float(
+                        teacher_mass_mean.detach().item()
+                    ),
+                    "student_attention_mass_in_support": float(
+                        student_mass_mean.detach().item()
+                    ),
+                    "teacher_top1_in_support_rate": float(
+                        teacher_top1_rate.detach().item()
+                    ),
+                    "student_top1_in_support_rate": float(
+                        student_top1_rate.detach().item()
+                    ),
+                    "mapping_audit": {
+                        "pixel_frames": int(tracked_masks.shape[0]),
+                        "latent_frames": int(grid[0]),
+                        "anchor_pixel_frames": anchor_frame_indices(
+                            int(grid[0]), int(tracked_masks.shape[0])
+                        ),
+                        "source_pixel_frame": int(args.query_pixel_frame),
+                        "source_latent_frame": int(args.query_latent_frame),
+                        "source_mask_exact_match": True,
+                        "reverse_support_definition": "upsampled occupancy > 0",
+                        "reverse_support_iou": reverse_support_iou,
+                        "reverse_support_recall": reverse_support_recall,
+                        "reverse_mass_ratio": reverse_mass_ratio,
+                    },
+                },
             },
             "tensors": {
                 "target_x0": tensor_stats(target_x0),
@@ -1167,6 +1548,17 @@ def run_forward(args: argparse.Namespace) -> None:
                 "student_heatmap": tensor_stats(student_heatmap_saved),
                 "teacher_head_probabilities": tensor_stats(teacher_head_maps),
                 "student_head_probabilities": tensor_stats(student_head_maps),
+                "teacher_frame_head_probabilities": tensor_stats(
+                    teacher_frame_head_maps
+                ),
+                "student_frame_head_probabilities": tensor_stats(
+                    student_frame_head_maps
+                ),
+                "latent_mask_occupancy": tensor_stats(object_token_occupancy),
+                "latent_mask_target": tensor_stats(latent_mask_comparison["target"]),
+                "latent_mask_student_attention": tensor_stats(
+                    latent_mask_comparison["student_region_attention"]
+                ),
             },
             "peak_gpu_memory_mib": float(torch.cuda.max_memory_allocated(device) / 2**20),
         }
@@ -1184,9 +1576,13 @@ def run_forward(args: argparse.Namespace) -> None:
             target_velocity,
             pred_x0,
             probe_noise,
+            object_token_occupancy,
+            query_weights,
+            reverse_pixel_occupancy,
             teacher_probe_input,
             teacher_heatmap,
             teacher_head_maps,
+            teacher_frame_head_maps,
             fixed_query_by_block,
             velocity_leaf,
             pred_x0_leaf,
@@ -1194,8 +1590,18 @@ def run_forward(args: argparse.Namespace) -> None:
             student_probe_input_saved,
             student_heatmap,
             student_head_maps,
+            student_frame_head_maps,
             student_heatmap_saved,
+            student_trajectory,
+            teacher_trajectory,
             comparison,
+            latent_mask_comparison,
+            old_kl_only_loss,
+            auxiliary_loss,
+            heatmap_loss,
+            trajectory_loss,
+            old_kl_gradient,
+            latent_mask_gradient,
             velocity_gradient,
         )
         gc.collect()
@@ -1960,6 +2366,199 @@ def render_heatmap_media(
     return files
 
 
+def render_latent_mask_loss_media(
+    case_output: Path,
+    source_frames: np.ndarray,
+    tracked_masks: np.ndarray,
+    arrays: Mapping[str, np.ndarray],
+    metrics: Mapping[str, Any],
+    heatmap_fps: float,
+) -> dict[str, str]:
+    """Render the old-attention/new-mask target comparison on aligned frames."""
+    required = (
+        "latent_mask_target",
+        "latent_mask_teacher_attention",
+        "latent_mask_student_attention",
+        "latent_mask_ce_contribution",
+        "latent_mask_valid",
+        "latent_mask_occupancy",
+        "latent_mask_reverse_source_occupancy",
+    )
+    missing = [key for key in required if key not in arrays]
+    if missing:
+        raise KeyError(f"latent-mask render inputs are missing: {missing}")
+
+    target = np.asarray(arrays["latent_mask_target"], dtype=np.float32)[0]
+    teacher = np.asarray(
+        arrays["latent_mask_teacher_attention"], dtype=np.float32
+    )[0]
+    student = np.asarray(
+        arrays["latent_mask_student_attention"], dtype=np.float32
+    )[0]
+    ce = np.asarray(arrays["latent_mask_ce_contribution"], dtype=np.float32)[0]
+    valid = np.asarray(arrays["latent_mask_valid"], dtype=bool)[0]
+    occupancy = np.asarray(arrays["latent_mask_occupancy"], dtype=np.float32)[0]
+    if not (target.shape == teacher.shape == student.shape == ce.shape == occupancy.shape):
+        raise ValueError(
+            "latent-mask render arrays must share [T,H,W] geometry: "
+            f"{target.shape}/{teacher.shape}/{student.shape}/{ce.shape}/{occupancy.shape}"
+        )
+    if valid.shape != target.shape[:1]:
+        raise ValueError(f"latent-mask valid shape mismatch: {valid.shape}/{target.shape}")
+
+    anchors = anchor_frame_indices(target.shape[0], source_frames.shape[0])
+    if tracked_masks.shape[0] != source_frames.shape[0]:
+        raise ValueError(
+            f"tracked mask/video frame mismatch: {tracked_masks.shape}/{source_frames.shape}"
+        )
+    shared_scale = max(
+        heatmap_scale(target), heatmap_scale(teacher), heatmap_scale(student)
+    )
+    lambda_mask = float(metrics["probe"]["latent_mask"]["weight"])
+    weighted_ce = ce * valid[:, None, None].astype(np.float32) * lambda_mask
+    ce_scale = heatmap_scale(weighted_ce)
+
+    comparison_frames = []
+    contact_panels = []
+    timeline_rows: dict[str, list[np.ndarray]] = {
+        "GT-mask": [],
+        "Teacher": [],
+        "Student": [],
+        "lambda-CE": [],
+    }
+    for latent_index, pixel_index in enumerate(anchors):
+        frame = source_frames[pixel_index]
+        state = "loss" if valid[latent_index] else "audit only"
+        mask_overlay = overlay_selected_mask(
+            frame,
+            tracked_masks[pixel_index],
+            f"SAM2 GT-role | L{latent_index:02d}/F{pixel_index:02d}",
+        )
+        target_heat, target_overlay = overlay_heatmap(
+            frame, target[latent_index], shared_scale
+        )
+        teacher_heat, teacher_overlay = overlay_heatmap(
+            frame, teacher[latent_index], shared_scale
+        )
+        student_heat, student_overlay = overlay_heatmap(
+            frame, student[latent_index], shared_scale
+        )
+        ce_heat, ce_overlay = overlay_heatmap(
+            frame, weighted_ce[latent_index], ce_scale
+        )
+        five = np.concatenate(
+            [
+                add_label(resize_panel(mask_overlay), f"SAM2 mask | {state}"),
+                add_label(resize_panel(target_overlay), "Latent target"),
+                add_label(resize_panel(teacher_overlay), "Teacher attention"),
+                add_label(resize_panel(student_overlay), "Student attention"),
+                add_label(resize_panel(ce_overlay), f"{lambda_mask:g} x CE"),
+            ],
+            axis=1,
+        )
+        comparison_frames.append(five)
+        contact_panels.append(five)
+        timeline_rows["GT-mask"].append(
+            add_label(
+                cv2.resize(target_heat, (160, 96), interpolation=cv2.INTER_AREA),
+                f"GT L{latent_index:02d}/F{pixel_index:02d}",
+                bar_height=24,
+            )
+        )
+        timeline_rows["Teacher"].append(
+            add_label(
+                cv2.resize(teacher_heat, (160, 96), interpolation=cv2.INTER_AREA),
+                f"T L{latent_index:02d}/F{pixel_index:02d}",
+                bar_height=24,
+            )
+        )
+        timeline_rows["Student"].append(
+            add_label(
+                cv2.resize(student_heat, (160, 96), interpolation=cv2.INTER_AREA),
+                f"S L{latent_index:02d}/F{pixel_index:02d}",
+                bar_height=24,
+            )
+        )
+        timeline_rows["lambda-CE"].append(
+            add_label(
+                cv2.resize(ce_heat, (160, 96), interpolation=cv2.INTER_AREA),
+                f"CE L{latent_index:02d}/F{pixel_index:02d}",
+                bar_height=24,
+            )
+        )
+
+    files = {
+        "comparison": "latent_mask_loss_five_panel.mp4",
+        "contact_sheet": "latent_mask_loss_13frame_contact_sheet.jpg",
+        "timeline": "latent_mask_loss_timeline.jpg",
+        "mapping_audit": "latent_mask_mapping_audit.jpg",
+    }
+    write_video(case_output / files["comparison"], comparison_frames, heatmap_fps)
+    contact_sheet = make_contact_sheet(contact_panels, columns=1, background=236)
+    cv2.imwrite(
+        str(case_output / files["contact_sheet"]),
+        cv2.cvtColor(contact_sheet, cv2.COLOR_RGB2BGR),
+        [cv2.IMWRITE_JPEG_QUALITY, 91],
+    )
+    divider = np.full((6, 160 * len(anchors), 3), 210, dtype=np.uint8)
+    timeline_parts = []
+    for row_index, row in enumerate(timeline_rows.values()):
+        if row_index:
+            timeline_parts.append(divider)
+        timeline_parts.append(np.concatenate(row, axis=1))
+    timeline = np.concatenate(timeline_parts, axis=0)
+    cv2.imwrite(
+        str(case_output / files["timeline"]),
+        cv2.cvtColor(timeline, cv2.COLOR_RGB2BGR),
+        [cv2.IMWRITE_JPEG_QUALITY, 94],
+    )
+
+    mapping = metrics["probe"]["latent_mask"]["mapping_audit"]
+    source_pixel = int(mapping["source_pixel_frame"])
+    source_latent = int(mapping["source_latent_frame"])
+    source_frame = source_frames[source_pixel]
+    _, occupancy_overlay = overlay_heatmap(
+        source_frame, occupancy[source_latent], 1.0
+    )
+    reverse_occupancy = np.asarray(
+        arrays["latent_mask_reverse_source_occupancy"], dtype=np.float32
+    )
+    reverse_overlay = overlay_selected_mask(
+        source_frame,
+        reverse_occupancy > 0.0,
+        "Reverse support > 0",
+    )
+    audit = np.concatenate(
+        [
+            add_label(
+                resize_panel(
+                    overlay_selected_mask(
+                        source_frame,
+                        tracked_masks[source_pixel],
+                        "Pixel SAM2 mask",
+                    )
+                ),
+                f"F{source_pixel:02d} source",
+            ),
+            add_label(
+                resize_panel(occupancy_overlay),
+                f"Area pool -> L{source_latent:02d}",
+            ),
+            add_label(
+                resize_panel(reverse_overlay),
+                f"support IoU {mapping['reverse_support_iou']:.3f}",
+            ),
+        ],
+        axis=1,
+    )
+    cv2.imwrite(
+        str(case_output / files["mapping_audit"]),
+        cv2.cvtColor(audit, cv2.COLOR_RGB2BGR),
+        [cv2.IMWRITE_JPEG_QUALITY, 94],
+    )
+    return files
+
+
 def render_heatmap_timelines(
     output_root: Path,
     teacher: np.ndarray,
@@ -2441,7 +3040,7 @@ def noise_sweep_html(metrics: dict[str, Any] | None) -> str:
 {media_figure(f'{stage_base}/x0_anchor_contact_sheet.jpg','13 aligned x0 anchor frames','GT | x_t | x0_pred | difference')}
 </div></details>{''.join(probe_sections)}</div></details>"""
         )
-    return f"""<section id="noise-sweep"><div class="section-heading"><span>04</span><div><h2>Training-noise sweep</h2><p>Five Main timesteps · Probe 0.1 and 0.2</p></div></div>
+    return f"""<section id="noise-sweep"><div class="section-heading"><span>05</span><div><h2>Training-noise sweep</h2><p>Five Main timesteps · Probe 0.1 and 0.2</p></div></div>
 <p class="protocol">All training stages share one <code>epsilon_train</code>; both Probe levels and every Teacher/Student pair share one <code>epsilon_p</code>. PCK score {pck_audit.get('score_min', float('nan')):.4f}–{pck_audit.get('score_max', float('nan')):.4f}; γ=1 weight {pck_audit.get('linear_weight_min', float('nan')):.6f}–{pck_audit.get('linear_weight_max', float('nan')):.6f}; active γ={power_label} weight {pck_audit.get('weight_min', float('nan')):.6f}–{pck_audit.get('weight_max', float('nan')):.6f}.</p>
 <div class="table-wrap"><table class="metric-table"><thead><tr><th>Training t</th><th>Training σ</th><th>Probe</th><th>Probe t</th><th>Legacy agg KL(S||T)</th><th>Equal head KL(T||S)</th><th>PCK γ=1 KL</th><th>PCK γ={power_label} KL</th><th>Equal traj</th><th>PCK γ=1 traj</th><th>PCK γ={power_label} traj</th><th>||dLγ{power_label}/dv||</th></tr></thead><tbody>{''.join(summary_rows)}</tbody></table></div>
 {''.join(stage_sections)}</section>"""
@@ -2477,6 +3076,18 @@ def case_page(
     sharpened_directory = pck_sharpened_directory(pck_weight_power)
     comparison_timeline = f"equal_vs_pck_gamma{power_label}_top100_timeline.jpg"
     sweep_html = noise_sweep_html(sweep_metrics)
+    latent_mask = probe.get("latent_mask")
+    latent_mask_html = ""
+    if latent_mask:
+        mapping = latent_mask["mapping_audit"]
+        latent_mask_html = f"""<section id="loss-compare"><div class="section-heading"><span>04</span><div><h2>Teacher KL vs latent-mask supervision</h2><p>同一 Probe 前向，仅替换监督目标</p></div></div>
+<div class="facts"><div class="fact"><span>Old raw KL</span><strong>{probe['pck_weighted_head_kl_teacher_student']:.6f}</strong></div><div class="fact"><span>Old weighted loss</span><strong>{latent_mask['old_kl_weighted_loss']:.6f}</strong></div><div class="fact"><span>New raw mask CE</span><strong>{latent_mask['student_raw_soft_ce']:.6f}</strong></div><div class="fact"><span>New weighted loss</span><strong>{latent_mask['weighted_loss']:.6f}</strong></div><div class="fact"><span>Valid future frames</span><strong>{latent_mask['valid_target_frames']}</strong></div></div>
+<p class="protocol"><strong>同一次前向对照：</strong>Teacher/Student 使用相同输入、共享 Probe noise、同一组固定且 detach 的 Teacher post-RoPE Q、Student K 和 Top100 PCK γ={power_label} 头。旧方案保持当前定义：每个 query 对全序列 <code>T×S</code> softmax 后做 uniform query mean，再计算 <code>{probe['heatmap_weight']:g} × KL(T||S)</code>。新方案严格采用 GT latent-mask 定义：每个 query 在每个目标帧内 spatial softmax，按 F04 fractional occupancy 聚合 query，再计算 <code>{latent_mask['weight']:g} × CE(mask,S)</code>。因此这里替换的是完整监督 objective，不只是把 KL 公式中的 target 张量换掉。mask 来自 GroundingDINO object-0 检测并由 SAM2 跟踪，是 GT-role pseudo-mask，不是数据集原生标注。</p>
+<div class="table-wrap"><table class="metric-table"><thead><tr><th>方案</th><th>监督 target</th><th>Raw objective</th><th>Loss weight</th><th>Weighted loss</th><th>||dL/dv_pred||</th><th>mean |dL/dv_pred|</th></tr></thead><tbody><tr><td>旧 Teacher KL</td><td>Teacher attention</td><td>{probe['pck_weighted_head_kl_teacher_student']:.6f}</td><td>{probe['heatmap_weight']:.4f}</td><td>{latent_mask['old_kl_weighted_loss']:.6f}</td><td>{latent_mask['old_kl_gradient_norm']:.6f}</td><td>{latent_mask['old_kl_gradient_abs_mean']:.8f}</td></tr><tr><td>新 latent mask</td><td>SAM2 occupancy</td><td>{latent_mask['student_raw_soft_ce']:.6f}</td><td>{latent_mask['weight']:.4f}</td><td>{latent_mask['weighted_loss']:.6f}</td><td>{latent_mask['latent_mask_gradient_norm']:.6f}</td><td>{latent_mask['latent_mask_gradient_abs_mean']:.8f}</td></tr></tbody></table></div>
+{timeline_figure('latent_mask_loss_timeline.jpg','GT-role target vs Teacher vs Student vs weighted CE','L00-L12 / F00-F48; first two latent frames are audit-only')}
+<div class="grid"><div class="wide">{media_figure('latent_mask_loss_five_panel.mp4','逐帧 loss 对照','SAM2 mask · latent target · Teacher · Student · weighted CE')}</div>{media_figure('latent_mask_mapping_audit.jpg','F04 latent 映射核查',f"support recall {mapping['reverse_support_recall']:.3f}; mass ratio {mapping['reverse_mass_ratio']:.3f}; downsampling is not invertible")}{media_figure('latent_mask_loss_13frame_contact_sheet.jpg','13-frame loss contact sheet','all aligned latent anchors')}</div>
+<div class="facts"><div class="fact"><span>Teacher mask mass</span><strong>{latent_mask['teacher_attention_mass_in_support']:.4f}</strong></div><div class="fact"><span>Student mask mass</span><strong>{latent_mask['student_attention_mass_in_support']:.4f}</strong></div><div class="fact"><span>Teacher top-1 in mask</span><strong>{latent_mask['teacher_top1_in_support_rate']:.3f}</strong></div><div class="fact"><span>Student top-1 in mask</span><strong>{latent_mask['student_top1_in_support_rate']:.3f}</strong></div><div class="fact"><span>Teacher mask CE</span><strong>{latent_mask['teacher_raw_soft_ce']:.6f}</strong></div></div>
+<p class="data-link"><a href="probe_outputs.npz">完整逐帧数组</a> · <a href="metrics.json">指标与映射审计</a></p></section>"""
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(case['case_key'])}</title>
 <style>
@@ -2490,7 +3101,7 @@ main{{width:min(1760px,calc(100% - 28px));margin:auto;padding:20px 0 72px}}secti
 .sweep-stage{{border-top:1px solid var(--line-strong)}}.sweep-stage:last-child{{border-bottom:1px solid var(--line-strong)}}.sweep-stage>summary{{display:flex;justify-content:space-between;gap:16px;cursor:pointer;padding:13px 4px;font-weight:800;font-size:15px}}.sweep-stage>summary small{{color:var(--muted);font-weight:500}}.stage-body{{padding:0 0 24px}}.sweep-probe{{border-top:1px dashed var(--line);padding:18px 0 6px}}.probe-heading{{display:flex;justify-content:space-between;gap:14px;align-items:baseline;margin-bottom:7px}}.probe-heading span{{font-size:11px;color:var(--muted)}}.metric-line{{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;color:var(--muted);font-size:11px}}.metric-line strong{{color:var(--ink);font-size:12px}}
 .media-drawer{{margin-top:12px;border:1px solid var(--line);background:#edf1ef}}.media-drawer>summary{{cursor:pointer;padding:9px 11px;font-weight:700;font-size:12px}}.media-drawer[open]>summary{{border-bottom:1px solid var(--line)}}.media-drawer .grid{{padding:10px}}.stage-media{{margin:0 0 8px}}.compact-grid figure{{background:var(--paper)}}.data-link{{padding:10px;margin:0}}.candidates{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:10px}}.candidate-drawer{{margin-top:12px}}
 @media(max-width:900px){{header{{position:static}}main{{width:min(100% - 18px,1760px)}}.grid,.result-triplet,.result-pair{{grid-template-columns:1fr}}.facts{{grid-template-columns:1fr 1fr}}.wide,.timeline{{grid-column:auto}}.sweep-stage>summary{{display:block}}.sweep-stage>summary small{{display:block;margin-top:3px}}.timeline img{{min-width:1560px}}figcaption{{display:block}}figcaption span{{display:block;text-align:left}}}}
-</style></head><body><header><div class="header-inner"><a class="back" href="{html.escape(index_href)}">返回总览</a><h1>{html.escape(case['case_key'])}</h1><p>{html.escape(case['caption'])}</p><nav><a href="#query">固定 Query</a><a href="#baseline">原始 x0</a><a href="#probe">原始 Probe</a>{'<a href="#noise-sweep">噪声 Sweep</a>' if sweep_metrics else ''}<a href="#candidates">SAM2 候选</a></nav></div></header><main>
+</style></head><body><header><div class="header-inner"><a class="back" href="{html.escape(index_href)}">返回总览</a><h1>{html.escape(case['case_key'])}</h1><p>{html.escape(case['caption'])}</p><nav><a href="#query">固定 Query</a><a href="#baseline">原始 x0</a><a href="#probe">原始 Probe</a>{'<a href="#loss-compare">Loss 对照</a>' if latent_mask else ''}{'<a href="#noise-sweep">噪声 Sweep</a>' if sweep_metrics else ''}<a href="#candidates">SAM2 候选</a></nav></div></header><main>
 <div class="facts"><div class="fact"><span>Split / index</span><strong>train / {case['dataset_index']}</strong></div><div class="fact"><span>Probe grid</span><strong>{' × '.join(map(str,metrics['grid']))}</strong></div><div class="fact"><span>Query cells</span><strong>{metrics['query_token_count']}</strong></div><div class="fact"><span>Top heads</span><strong>100 / {metrics['head_selection']['num_blocks']} blocks</strong></div><div class="fact"><span>Peak allocated</span><strong>{metrics['peak_gpu_memory_mib']:.0f} MiB</strong></div></div>
 <section id="query"><div class="section-heading"><span>01</span><div><h2>Fixed object query</h2><p>F04 identity mask → latent-1 query cells</p></div></div><div class="grid">
 {media_figure('prep/f04.png','F04 training frame')}{media_figure('prep/sam2_identity_mask.png','Selected SAM2 identity mask',case['target_phrase'])}
@@ -2505,8 +3116,9 @@ main{{width:min(1760px,calc(100% - 28px));margin:auto;padding:20px 0 72px}}secti
 <div class="result-triplet">{media_figure('teacher_student_five_panel.mp4','Equal aggregate','GT · x0_pred · Teacher · Student · difference')}{media_figure('pck_weighted/teacher_student_five_panel.mp4','PCK γ=1 aggregate','linear PCK score weighting')}{media_figure(f'{sharpened_directory}/teacher_student_five_panel.mp4',f'PCK γ={power_label} aggregate','active training weighting')}</div>
 <div class="result-triplet">{media_figure('trajectory_overlay.jpg','Equal trajectory','Teacher green · Student red')}{media_figure('pck_weighted/trajectory_overlay.jpg','PCK γ=1 trajectory','Teacher green · Student red')}{media_figure(f'{sharpened_directory}/trajectory_overlay.jpg',f'PCK γ={power_label} trajectory','active training weighting')}</div>
 <details class="media-drawer"><summary>Inputs and frame-by-frame media</summary><div class="grid compact-grid">{media_figure('vae_teacher_probe_input.mp4','GT x0 + shared Probe noise',f"level={probe['noise_level']:.2f}")}{media_figure('vae_student_probe_input.mp4','x0_pred + same Probe noise',f"seed={probe['shared_noise_seed']}")}{media_figure('teacher_frame_heatmap_overlay.mp4','Equal Teacher frame / heatmap / overlay')}{media_figure('student_frame_heatmap_overlay.mp4','Equal Student frame / heatmap / overlay')}{media_figure('pck_weighted/teacher_frame_heatmap_overlay.mp4','PCK γ=1 Teacher frame / heatmap / overlay')}{media_figure('pck_weighted/student_frame_heatmap_overlay.mp4','PCK γ=1 Student frame / heatmap / overlay')}{media_figure(f'{sharpened_directory}/teacher_frame_heatmap_overlay.mp4',f'PCK γ={power_label} Teacher frame / heatmap / overlay')}{media_figure(f'{sharpened_directory}/student_frame_heatmap_overlay.mp4',f'PCK γ={power_label} Student frame / heatmap / overlay')}<div class="wide">{media_figure('teacher_student_13frame_contact_sheet.jpg','Equal aggregate · all 13 aligned frames')}</div><div class="wide">{media_figure('pck_weighted/teacher_student_13frame_contact_sheet.jpg','PCK γ=1 · all 13 aligned frames')}</div><div class="wide">{media_figure(f'{sharpened_directory}/teacher_student_13frame_contact_sheet.jpg',f'PCK γ={power_label} · all 13 aligned frames')}</div><p class="data-link"><a href="trajectory_values.json">Equal trajectory</a> · <a href="pck_weighted/trajectory_values.json">PCK γ=1</a> · <a href="{sharpened_directory}/trajectory_values.json">PCK γ={power_label}</a></p></div></details></section>
+{latent_mask_html}
 {sweep_html}
-<section id="candidates"><div class="section-heading"><span>05</span><div><h2>SAM2 candidate audit</h2><p>Prompt-free AMG candidates and training filter</p></div></div><div class="grid">{media_figure('prep/sam2_amg_all_overlay.png','All AMG candidates',f"n={case['sam2_amg']['raw_candidate_count']}")}{media_figure('prep/sam2_amg_filtered_overlay.png','Training AMG filter',f"n={case['sam2_amg']['training_filtered_count']}")}</div><details class="media-drawer candidate-drawer"><summary>All candidate masks</summary><div class="candidates">{candidate_html}</div></details></section>
+<section id="candidates"><div class="section-heading"><span>06</span><div><h2>SAM2 candidate audit</h2><p>Prompt-free AMG candidates and training filter</p></div></div><div class="grid">{media_figure('prep/sam2_amg_all_overlay.png','All AMG candidates',f"n={case['sam2_amg']['raw_candidate_count']}")}{media_figure('prep/sam2_amg_filtered_overlay.png','Training AMG filter',f"n={case['sam2_amg']['training_filtered_count']}")}</div><details class="media-drawer candidate-drawer"><summary>All candidate masks</summary><div class="candidates">{candidate_html}</div></details></section>
 </main></body></html>"""
 
 
@@ -2524,12 +3136,16 @@ def index_page(cases: list[dict[str, Any]]) -> str:
         f"<td>{row['equal_head_kl']:.6f}</td><td>{row['pck_linear_head_kl']:.6f}</td>"
         f"<td>{row['pck_head_kl']:.6f}</td>"
         f"<td>{row['trajectory_huber']:.6f}</td>"
-        f"<td>{row['gradient_norm']:.5f}</td></tr>"
+        f"<td>{row['old_kl_weighted_loss']:.6f}</td>"
+        f"<td>{row['latent_mask_raw_ce']:.6f}</td>"
+        f"<td>{row['latent_mask_weighted_loss']:.6f}</td>"
+        f"<td>{row['old_kl_gradient_norm']:.5f}</td>"
+        f"<td>{row['latent_mask_gradient_norm']:.5f}</td></tr>"
         for row in cases
     )
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Frozen Motion Probe training diagnostics</title><style>
-:root{{--bg:#edf0ec;--paper:#fff;--ink:#17201b;--muted:#59665f;--line:#b7c1bb;--green:#176c59}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Noto Sans CJK SC","Source Han Sans SC",sans-serif;letter-spacing:0}}header,main{{width:min(1500px,calc(100% - 28px));margin:auto}}header{{padding:24px 0 14px;border-bottom:2px solid var(--ink)}}h1{{font-size:28px;margin:0}}p{{margin:4px 0;color:var(--muted)}}main{{padding:20px 0 60px}}table{{width:100%;border-collapse:collapse;background:var(--paper)}}th,td{{padding:11px;border:1px solid var(--line);text-align:left}}th{{background:#dfe5e0;font-size:12px}}a{{color:var(--green);font-weight:800;text-decoration:none}}.protocol{{margin-top:18px;padding:12px;border-left:5px solid var(--green);background:var(--paper)}}code{{font-size:12px}}@media(max-width:850px){{main{{overflow:auto}}table{{min-width:1050px}}}}
-</style></head><body><header><h1>Frozen Motion Probe training-case diagnostics</h1><p>PyBullet train split · official Wan2.2-TI2V-5B baseline · F04/latent-1 fixed query · latest3350 Top100</p></header><main><table><thead><tr><th>Case</th><th>Family</th><th>Train index</th><th>Identity target</th><th>Query cells</th><th>Noise sweep</th><th>Equal head KL</th><th>PCK γ=1 KL</th><th>PCK γ={power_label} KL</th><th>PCK γ={power_label} Trajectory</th><th>||dLγ{power_label}/dv_pred||</th></tr></thead><tbody>{rows}</tbody></table><div class="protocol"><strong>PCK-sharpened probe:</strong> Teacher and Student share noise, timestep, text and clean TI2V conditioning. Active training heat loss is <code>Σ_h normalized(PCK_h^{power_label}) KL(A_h^tea || A_h^stu)</code>. Case pages compare equal, linear PCK and γ={power_label} heatmaps under one shared color scale.</div></main></body></html>"""
+:root{{--bg:#edf0ec;--paper:#fff;--ink:#17201b;--muted:#59665f;--line:#b7c1bb;--green:#176c59}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 "Noto Sans CJK SC","Source Han Sans SC",sans-serif;letter-spacing:0}}header,main{{width:min(1760px,calc(100% - 28px));margin:auto}}header{{padding:24px 0 14px;border-bottom:2px solid var(--ink)}}h1{{font-size:28px;margin:0}}p{{margin:4px 0;color:var(--muted)}}main{{padding:20px 0 60px;overflow:auto}}table{{width:100%;border-collapse:collapse;background:var(--paper);min-width:1600px}}th,td{{padding:9px;border:1px solid var(--line);text-align:left;white-space:nowrap}}th{{background:#dfe5e0;font-size:12px}}a{{color:var(--green);font-weight:800;text-decoration:none}}.protocol{{margin-top:18px;padding:12px;border-left:5px solid var(--green);background:var(--paper)}}code{{font-size:12px}}
+</style></head><body><header><h1>Frozen Motion Probe loss diagnostics</h1><p>PyBullet train split · 3 cases · official Wan2.2-TI2V-5B baseline · F04/latent-1 fixed query · latest3350 Top100</p></header><main><table><thead><tr><th>Case</th><th>Family</th><th>Train index</th><th>Identity target</th><th>Query cells</th><th>Noise sweep</th><th>Equal head KL</th><th>PCK γ=1 KL</th><th>Old PCK γ={power_label} KL</th><th>PCK γ={power_label} Trajectory</th><th>Old weighted KL</th><th>New mask CE</th><th>New weighted mask loss</th><th>||dL_KL/dv||</th><th>||dL_mask/dv||</th></tr></thead><tbody>{rows}</tbody></table><div class="protocol"><strong>Loss 对照：</strong>两种方案共享同一 Teacher Q、Student K、Probe noise 和 PCK γ={power_label} 头权重。旧方案监督 Student 拟合 Teacher attention；新方案监督 Student 拟合 GroundingDINO + SAM2 跟踪 mask 的 latent occupancy。该 mask 是 GT-role pseudo-mask，不是数据集原生 GT。Raw KL 与 raw CE 的量纲不同，应结合 weighted loss 和对 <code>v_pred</code> 的梯度范数比较。</div></main></body></html>"""
 
 
 def report_index_row(
@@ -2537,6 +3153,7 @@ def report_index_row(
     metrics: dict[str, Any],
     sweep_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    latent_mask = metrics["probe"].get("latent_mask", {})
     return {
         "case_key": case["case_key"],
         "family": case["family"],
@@ -2565,7 +3182,13 @@ def report_index_row(
             "trajectory_huber_pck_weighted",
             metrics["probe"]["trajectory_huber"],
         ),
-        "gradient_norm": metrics["probe"]["gradient_to_first_pass_v_pred_norm"],
+        "old_kl_weighted_loss": latent_mask.get("old_kl_weighted_loss", float("nan")),
+        "latent_mask_raw_ce": latent_mask.get("student_raw_soft_ce", float("nan")),
+        "latent_mask_weighted_loss": latent_mask.get("weighted_loss", float("nan")),
+        "old_kl_gradient_norm": latent_mask.get("old_kl_gradient_norm", float("nan")),
+        "latent_mask_gradient_norm": latent_mask.get(
+            "latent_mask_gradient_norm", float("nan")
+        ),
     }
 
 
@@ -2664,6 +3287,14 @@ def run_render(args: argparse.Namespace) -> None:
             probe_arrays,
             float(args.heatmap_fps),
             float(args.pck_weight_power),
+        )
+        render_latent_mask_loss_media(
+            case_output,
+            source_frames,
+            load_tracked_target_mask(args, case),
+            probe_arrays,
+            metrics,
+            float(args.heatmap_fps),
         )
         teacher_trajectory = probe_arrays["teacher_trajectory"][0]
         student_trajectory = probe_arrays["student_trajectory"][0]

@@ -10,6 +10,7 @@ import torch
 
 from run_training_case_diagnostics import (
     anchor_frame_indices,
+    compute_latent_mask_comparison,
     compute_probe_weighting_comparison,
     make_contact_sheet,
     mask_iou,
@@ -72,6 +73,82 @@ def test_probe_comparison_keeps_linear_and_gamma30_losses_distinct():
         (per_head * sharpened_weights).sum(),
     )
     assert float(sharpened_weights.max() / sharpened_weights.min()) > 1.0e5
+
+
+def test_latent_mask_comparison_conditions_each_frame_and_reaches_student():
+    teacher = torch.tensor(
+        [
+            [
+                [0.10, 0.20, 0.05, 0.05, 0.08, 0.12, 0.20, 0.20],
+                [0.05, 0.05, 0.20, 0.20, 0.10, 0.10, 0.15, 0.15],
+            ]
+        ]
+    )
+    student = torch.tensor(
+        [
+            [
+                [0.20, 0.10, 0.05, 0.05, 0.12, 0.08, 0.20, 0.20],
+                [0.08, 0.12, 0.20, 0.10, 0.05, 0.15, 0.15, 0.15],
+            ]
+        ],
+        requires_grad=True,
+    )
+    occupancy = torch.tensor(
+        [[[[1.0, 0.0], [0.0, 0.0]], [[0.0, 0.5], [1.0, 0.0]]]]
+    )
+
+    comparison = compute_latent_mask_comparison(
+        teacher,
+        student,
+        object_token_occupancy_bthw=occupancy,
+        grid=(2, 2, 2),
+        head_weights=torch.tensor([0.7, 0.3]),
+        source_frame=0,
+        lambda_mask=0.01,
+    )
+
+    assert comparison["valid"].tolist() == [[False, True]]
+    assert torch.allclose(
+        comparison["student_region_attention"].sum(dim=-1),
+        torch.ones(1, 2),
+    )
+    assert torch.allclose(comparison["target"].sum(dim=-1), torch.ones(1, 2))
+    assert torch.allclose(
+        comparison["loss"], 0.01 * comparison["raw_soft_ce"]
+    )
+    comparison["loss"].backward()
+    assert student.grad is not None and float(student.grad.norm()) > 0.0
+
+
+def test_latent_mask_comparison_accepts_explicit_framewise_head_maps():
+    teacher = torch.tensor(
+        [[[[0.7, 0.1, 0.1, 0.1], [0.1, 0.2, 0.6, 0.1]]]],
+        dtype=torch.float32,
+    )
+    student = torch.tensor(
+        [[[[0.6, 0.2, 0.1, 0.1], [0.2, 0.2, 0.5, 0.1]]]],
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+    occupancy = torch.tensor(
+        [[[[1.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [1.0, 0.0]]]]
+    )
+
+    comparison = compute_latent_mask_comparison(
+        teacher,
+        student,
+        object_token_occupancy_bthw=occupancy,
+        grid=(2, 2, 2),
+        head_weights=torch.ones(1),
+        source_frame=0,
+        lambda_mask=0.01,
+    )
+
+    assert torch.allclose(
+        comparison["student_region_attention"], student[:, 0]
+    )
+    comparison["loss"].backward()
+    assert student.grad is not None and float(student.grad.norm()) > 0.0
 
 
 def test_noise_sweep_config_pairs_probe_level_and_timestep():

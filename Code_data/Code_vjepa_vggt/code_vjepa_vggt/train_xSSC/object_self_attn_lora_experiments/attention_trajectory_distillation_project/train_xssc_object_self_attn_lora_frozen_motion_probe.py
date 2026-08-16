@@ -389,10 +389,13 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
         timestep: torch.Tensor,
         captured_inputs: dict,
         query_rows: torch.Tensor,
+        query_weights: torch.Tensor | None = None,
+        frame_query_weights: torch.Tensor | None = None,
+        return_frame_head_probabilities: bool = False,
         grid: tuple[int, int, int],
         retain_input_gradient: bool,
         fixed_query_by_block: dict[int, torch.Tensor] | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[int, torch.Tensor]]:
+    ) -> tuple:
         probe_dit = self._motion_probe_dit
         probe_dit.eval()
         if any(parameter.requires_grad for parameter in probe_dit.parameters()):
@@ -508,6 +511,7 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
         ).reshape(frames * height * width, 1, -1).to(x.device)
 
         head_probabilities = []
+        frame_head_probabilities = []
         query_representations_by_block: dict[int, torch.Tensor] = {}
         for block_id, block in enumerate(probe_dit.blocks):
             selected_heads = self.motion_probe_selected_heads_by_block.get(
@@ -529,6 +533,12 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
                     collector = TopHeadQKCollector(
                         selected_heads_by_block={_block_id: _selected_heads},
                         query_rows=query_rows,
+                        query_weights=query_weights,
+                        frame_query_weights=(
+                            frame_query_weights
+                            if return_frame_head_probabilities
+                            else None
+                        ),
                         grid=grid,
                         expected_num_heads=24,
                         fixed_query_by_block=(
@@ -546,16 +556,21 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
                             block_t_mod,
                             block_freqs,
                         )
-                    return (
+                    outputs = (
                         block_output,
                         collector.finalize_head_probabilities(),
                         collector.finalize_query_representations(),
                     )
+                    if return_frame_head_probabilities:
+                        return outputs + (
+                            collector.finalize_frame_head_probabilities(),
+                        )
+                    return outputs
 
                 if retain_input_gradient:
                     if self.motion_probe_gradient_checkpointing_offload:
                         with torch.autograd.graph.save_on_cpu():
-                            x, block_probabilities, block_query = checkpoint(
+                            block_outputs = checkpoint(
                                 selected_block_forward,
                                 x,
                                 text_context,
@@ -564,7 +579,7 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
                                 use_reentrant=False,
                             )
                     else:
-                        x, block_probabilities, block_query = checkpoint(
+                        block_outputs = checkpoint(
                             selected_block_forward,
                             x,
                             text_context,
@@ -573,12 +588,22 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
                             use_reentrant=False,
                         )
                 else:
-                    x, block_probabilities, block_query = selected_block_forward(
+                    block_outputs = selected_block_forward(
                         x,
                         text_context,
                         t_mod,
                         freqs,
                     )
+                if return_frame_head_probabilities:
+                    (
+                        x,
+                        block_probabilities,
+                        block_query,
+                        block_frame_probabilities,
+                    ) = block_outputs
+                    frame_head_probabilities.append(block_frame_probabilities)
+                else:
+                    x, block_probabilities, block_query = block_outputs
                 head_probabilities.append(block_probabilities)
                 query_representations_by_block[block_id] = block_query
             elif retain_input_gradient:
@@ -622,6 +647,19 @@ class FrozenMotionProbeWanModule(core.DINOv3XSSCContextSlotsWanModule):
             grid=grid,
             head_weights=self.motion_probe_pck_weights,
         )
+        if return_frame_head_probabilities:
+            physical_frame_heads = torch.cat(frame_head_probabilities, dim=1)
+            if physical_frame_heads.shape[:2] != physical_heads.shape[:2]:
+                raise RuntimeError(
+                    "Frozen Motion Probe framewise/global head mismatch: "
+                    f"{physical_frame_heads.shape}/{physical_heads.shape}"
+                )
+            return (
+                heatmap,
+                physical_heads,
+                query_representations_by_block,
+                physical_frame_heads,
+            )
         return (
             heatmap,
             physical_heads,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build an auto-refreshing static page for the 30-case six-checkpoint matrix."""
+"""Build an auto-refreshing static page for the 30-case step-by-method matrix."""
 from __future__ import annotations
 import argparse, html, json
 from pathlib import Path
@@ -9,7 +9,7 @@ def read(path: Path, fallback):
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--config",type=Path,required=True); args=p.parse_args()
-    c=read(args.config,{}) ; root=Path(c["output_root"]); manifest=read(Path(c["cases_manifest"]),{"cases":[]}); video=read(root/"video_status.json",{"state":"queued","entries":{}}); loss=read(root/"loss_status.json",{"state":"queued","entries":{}}); overlay_status=read(root/"trajectory_overlay_status.json",{"state":"queued","entries":{}})
+    c=read(args.config,{}) ; root=Path(c["output_root"]); manifest=read(Path(c["cases_manifest"]),{"cases":[]}); video=read(root/"video_status.json",{"state":"queued","entries":{}}); loss=read(root/"loss_status.json",{"state":"queued","entries":{}})
     cases=manifest.get("cases",[]); entries=c.get("entries",[])
     method_columns=[]; method_by_key={}
     for entry in entries:
@@ -29,12 +29,11 @@ def main():
     site=root/"hub"; media=site/"media"; media.mkdir(parents=True,exist_ok=True)
     entry_losses={e["entry_id"]:read(root/"losses"/f"{e['entry_id']}.json",{}) for e in entries}
     loss_status_entries=loss.get("entries",{})
-    rows=[]; ready_v=ready_l=ready_o=0
+    rows=[]; ready_v=ready_l=0
     for case in cases:
         cells={}
         for e in entries:
             method_key=str(e.get("method_key", e["entry_id"]))
-            is_trajectory=method_key=="cotracker_trajectory"
             vroot=root/"videos"/e["entry_id"]
             candidates=list(vroot.glob(f"{case['case_id']}*.mp4"))+list(vroot.glob(f"*/{case['case_id']}*.mp4"))
             v=next(iter(candidates),None)
@@ -44,19 +43,8 @@ def main():
                 target=media/f"{case['case_id']}__{e['entry_id']}.mp4"
                 if target.is_symlink(): target.unlink()
                 elif target.exists(): target.unlink()
-                target.symlink_to(v.resolve()); vhtml=(f'<span class="media-label">生成视频</span>' if is_trajectory else '')+f'<video controls preload="none" data-sync-video src="media/{html.escape(target.name)}"></video>'; ready_v+=1
-            else: vhtml=(f'<span class="media-label">生成视频</span>' if is_trajectory else '')+'<div class="pending">视频待完成</div>'
-            overlay_metrics=None
-            if is_trajectory:
-                overlay_dir=root/"trajectory_overlays"/e["entry_id"]/case["case_id"]
-                overlay=overlay_dir/"trajectory_overlay.mp4"
-                overlay_metrics=read(overlay_dir/"metrics.json",None)
-                if overlay.is_file():
-                    target=media/f"{case['case_id']}__{e['entry_id']}__trajectory_overlay.mp4"
-                    if target.is_symlink(): target.unlink()
-                    elif target.exists(): target.unlink()
-                    target.symlink_to(overlay.resolve()); vhtml+=f'<span class="media-label">轨迹 Overlay</span><video class="trajectory-overlay" controls preload="none" data-sync-video src="media/{html.escape(target.name)}"></video>'; ready_o+=1
-                else: vhtml+='<span class="media-label">轨迹 Overlay</span><div class="pending trajectory-pending">轨迹 Overlay 待完成</div>'
+                target.symlink_to(v.resolve()); vhtml=f'<video controls preload="none" data-sync-video src="media/{html.escape(target.name)}"></video>'; ready_v+=1
+            else: vhtml='<div class="pending">视频待完成</div>'
             if rec:
                 m=rec.get("metrics",{}); loss_html=f"main {float(rec.get('loss_main',0)):.6f}"; 
                 if 'train/loss_xssc' in m: loss_html+=f" · xSSC {float(m['train/loss_xssc']):.6f}"
@@ -73,8 +61,6 @@ def main():
                     loss_html=f"loss {state}{detail}"
                 else:
                     loss_html='loss 待完成'
-            if overlay_metrics:
-                loss_html+=f" · inference trajectory {float(overlay_metrics['trajectory_loss']):.6f} · ADE {float(overlay_metrics['trajectory_normalized_ade']):.5f}"
             cells[(int(e["step"]), method_key)]=(
                 vhtml,
                 loss_html,
@@ -119,12 +105,11 @@ def main():
         hidden = "" if not rows else " hidden"
         rows.append(f'<section class="case" data-case-id="{html.escape(case["case_id"], quote=True)}"{hidden}><h2>{html.escape(case["case_id"])}</h2><p>{html.escape(case["prompt"])}</p>{matrix}</section>')
     expected=len(cases)*len(entries)
-    expected_o=len(cases)*sum(e.get("method_key")=="cotracker_trajectory" for e in entries)
-    refresh='<meta http-equiv="refresh" content="60">' if ready_v<expected or ready_l<expected or ready_o<expected_o else ''
+    refresh='<meta http-equiv="refresh" content="60">' if ready_v<expected or ready_l<expected else ''
     loss_state=str(loss.get("state"))
     if ready_l<expected and loss_state=="complete":
         loss_state="partial"
-    status=f"视频 {ready_v}/{expected} · trajectory overlay {ready_o}/{expected_o} · loss {ready_l}/{expected} · video={html.escape(str(video.get('state')))} · overlay={html.escape(str(overlay_status.get('state')))} · loss={html.escape(loss_state)}"
+    status=f"视频 {ready_v}/{expected} · loss {ready_l}/{expected} · video={html.escape(str(video.get('state')))} · loss={html.escape(loss_state)}"
     case_options="".join(
         f'<option value="{html.escape(case["case_id"], quote=True)}">'
         f'{index:02d} · {html.escape(str(case["prompt"]))}</option>'
@@ -313,8 +298,6 @@ code{color:#d4e3ec;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}
 .method-heading small{grid-column:2;margin-top:4px;color:#7f96a5;font:10px ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:none}
 .matrix-cell{background:#18232d}
 .cell-video video,.cell-video .pending{display:block;width:100%;aspect-ratio:896/512;background:#05090d;object-fit:cover}
-.cell-video .trajectory-overlay,.cell-video .trajectory-pending{aspect-ratio:2688/512;object-fit:contain}
-.media-label{display:block;margin:6px 0 4px;color:#8ea6b5;font:700 10px ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:uppercase}
 .cell-metric{min-height:30px;margin:7px 0 0;color:#a9bac8;font:10px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}
 .matrix-empty{vertical-align:middle!important;background:#151f27;color:#607582;text-align:center!important}
 .matrix-empty span{display:block;margin-top:54px;color:#748b9a;font:700 18px ui-monospace,SFMono-Regular,Consolas,monospace}
@@ -331,7 +314,7 @@ p{color:#a9bac8;font-size:12px}
 .sync-replay:disabled{cursor:wait;opacity:.72}
 @media(max-width:700px){main{padding:12px}.matrix-note{align-items:flex-start;flex-direction:column;gap:4px}.ranking-heading{align-items:stretch;flex-direction:column}.ranking-count{align-self:flex-start}.case-picker{align-items:stretch;flex-direction:column;gap:6px}.case-picker select{width:100%;min-width:0}.sync-replay{right:12px;bottom:max(12px,env(safe-area-inset-bottom))}}
 </style>"""
-    page=f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{refresh}<title>30-case validation · method comparison</title>{style}</head><body><button id="sync-replay" class="sync-replay" type="button" title="同步重播当前 case 的所有对比视频" aria-live="polite">同步重播</button><main><div class="summary"><h1>30-case train validation · {len(entries)} checkpoints</h1><p>{html.escape(c.get('title',''))}</p><p><b>{status}</b> · 固定 seed {manifest.get('seed')} · PyBullet train · 49f · context 8f · 40 steps</p><div class="case-picker"><label for="case-select">选择 case</label><select id="case-select" aria-label="选择要查看的 case">{case_options}</select></div><p><a href="../">返回项目 Hub</a> · <a href="../project-info/">项目说明</a></p></div>{ranking_html}{''.join(rows)}</main>{replay_script}</body></html>'''
+    page=f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{refresh}<title>30-case validation · method comparison</title>{style}</head><body><button id="sync-replay" class="sync-replay" type="button" title="同步重播当前 case 的所有对比视频" aria-live="polite">同步重播</button><main><div class="summary"><h1>30-case train validation · {len(entries)} checkpoints</h1><p>{html.escape(c.get('title',''))}</p><p><b>{status}</b> · 固定 seed {manifest.get('seed')} · PyBullet train · 49f · context 8f · 40 steps</p><div class="case-picker"><label for="case-select">选择 case</label><select id="case-select" aria-label="选择要查看的 case">{case_options}</select></div><p><a href="../">返回项目 Hub</a> · <a href="../project-info/">项目说明</a> · <a href="../cotracker-trajectory-overlay-5cases/">CoTracker 轨迹 Overlay</a></p></div>{ranking_html}{''.join(rows)}</main>{replay_script}</body></html>'''
     (site/"index.html").write_text(page,encoding="utf-8")
     print(site)
 
