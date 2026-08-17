@@ -161,6 +161,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
     parser.add_argument(
+        "--dataset-format",
+        choices=("pybullet0713", "pybullet0613_raw"),
+        default="pybullet0713",
+    )
+    parser.add_argument(
         "--split", default="train", choices=("train", "val", "test", "all")
     )
     parser.add_argument("--device", default="cuda:0")
@@ -199,6 +204,7 @@ def cache_config(
         "status": status,
         "updated_at_utc": datetime.now(timezone.utc).isoformat(),
         "dataset_root": str(args.dataset_root.expanduser().resolve()),
+        "dataset_format": str(args.dataset_format),
         "split": str(args.split),
         "selected_count": int(selected_count),
         "num_frames": int(args.num_frames),

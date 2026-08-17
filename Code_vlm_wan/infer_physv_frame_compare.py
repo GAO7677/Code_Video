@@ -36,6 +36,7 @@ DEFAULT_PROMPT = "/home/gaoya/Code_Video/Code_vlm_wan/prompts/physv_concise_temp
 DEFAULT_CLIP_ROOT = "/data/gaoya/agent-data/outputs/physv_qwen3vl/frame_prefix_clips"
 DEFAULT_OUTPUT = "/data/gaoya/agent-data/outputs/physv_qwen3vl/0613_phyco_frame_compare.jsonl"
 FRAME_COUNTS = (8, 16, 24)
+MIN_PROCESSOR_PIXELS = 4096
 
 
 def parse_args():
@@ -49,7 +50,17 @@ def parse_args():
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--max-model-len", type=int, default=8192)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.94)
+    parser.add_argument(
+        "--skip-mm-profiling",
+        action="store_true",
+        help="Skip vLLM's maximum-size multimodal warmup profile.",
+    )
     parser.add_argument("--ffmpeg-bin", default=None)
+    parser.add_argument(
+        "--answer-prefix",
+        default="",
+        help="Optional assistant prefill used to force direct caption generation.",
+    )
     parser.add_argument(
         "--normalize-existing",
         action="store_true",
@@ -126,13 +137,15 @@ def build_prefix_messages(video_path: Path, prompt: str, frame_count: int, max_p
     ]
 
 
-def answer_prompt(vllm_input: dict):
+def answer_prompt(vllm_input: dict, answer_prefix: str = ""):
     thinking_prompt = "<|im_start|>assistant\n<think>\n"
     answer_prompt = "<|im_start|>assistant\n<think>\n</think>\n\n"
     if vllm_input["prompt"].endswith(thinking_prompt):
         vllm_input["prompt"] = (
             vllm_input["prompt"][: -len(thinking_prompt)] + answer_prompt
         )
+    if answer_prefix:
+        vllm_input["prompt"] += answer_prefix
 
 
 def normalize_caption(text: str, max_sentences: int = 4, max_words: int = 120) -> str:
@@ -143,7 +156,7 @@ def normalize_caption(text: str, max_sentences: int = 4, max_words: int = 120) -
 
     selected = []
     word_count = 0
-    for sentence in re.split(r"(?<=[.!?])\s+", caption):
+    for sentence in re.findall(r"[^.!?。！？]+[.!?。！？]+|[^.!?。！？]+$", caption):
         sentence = sentence.strip()
         if not sentence:
             continue
@@ -157,7 +170,8 @@ def normalize_caption(text: str, max_sentences: int = 4, max_words: int = 120) -
         return " ".join(selected)
 
     words = re.findall(r"\S+", caption)[:max_words]
-    return " ".join(words).rstrip(".!?") + "."
+    terminator = "。" if re.search(r"[\u4e00-\u9fff]", caption) else "."
+    return " ".join(words).rstrip(".!?。！？") + terminator
 
 
 def normalize_existing_results(output_path: Path):
@@ -184,23 +198,27 @@ def run_prefix_case(
     processor,
     llm,
     sampling_params,
+    answer_prefix: str,
 ):
     result = {
         "frame_count": frame_count,
         "video": str(video_path),
         "thinking_disabled": True,
+        "answer_prefix": answer_prefix or None,
     }
     messages = build_prefix_messages(video_path, prompt, frame_count, max_pixels)
     try:
         vllm_input, video_inputs = prepare_vllm_input(messages, processor)
-        answer_prompt(vllm_input)
+        answer_prompt(vllm_input, answer_prefix)
         result["video_info"] = get_video_info(video_inputs)
         outputs = llm.generate(
             [vllm_input], sampling_params=sampling_params, use_tqdm=False
         )
-        raw_text = outputs[0].outputs[0].text
+        completion = outputs[0].outputs[0].text
+        raw_text = answer_prefix + completion
         result.update(
             {
+                "response_completion": completion,
                 "response_raw": raw_text,
                 "response_final": normalize_caption(raw_text),
                 "status": "ok",
@@ -284,8 +302,16 @@ def main():
         tensor_parallel_size=1,
         gpu_memory_utilization=args.gpu_memory_utilization,
         max_model_len=args.max_model_len,
+        max_num_batched_tokens=args.max_model_len,
         max_num_seqs=1,
         limit_mm_per_prompt={"video": 1},
+        mm_processor_kwargs={
+            "size": {
+                "longest_edge": args.max_pixels,
+                "shortest_edge": MIN_PROCESSOR_PIXELS,
+            }
+        },
+        skip_mm_profiling=args.skip_mm_profiling,
         enforce_eager=True,
         seed=0,
     )
@@ -311,6 +337,7 @@ def main():
                     processor,
                     llm,
                     sampling_params,
+                    args.answer_prefix,
                 )
                 variant["label"] = f"前 {frame_count} 帧"
                 variant["source"] = "generated_prefix_clip"

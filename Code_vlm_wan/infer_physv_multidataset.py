@@ -34,6 +34,7 @@ DEFAULT_MODEL = "/data/gaoya/ckpt/Qwen-Qwen3-VL-32B-Thinking-FP8"
 DEFAULT_0613_ROOT = "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet"
 DEFAULT_PHYCO_ROOT = "/data/gaoya/dataset/nnsriram97-phyco_kubric"
 DEFAULT_OUTPUT = "/data/gaoya/agent-data/outputs/physv_qwen3vl/0613_phyco_smoke.jsonl"
+MIN_PROCESSOR_PIXELS = 4096
 ANSWER_CONSTRAINT = """
 
 请只输出最终观察结论，不要展示思考过程，也不要重复场景描述。严格限制为不超过 4 句话、120 个英文单词；按时间顺序说明主要运动、接触/碰撞和视频末状态。无法确认的细节不要臆测。
@@ -179,6 +180,11 @@ def parse_args():
     parser.add_argument("--max-model-len", type=int, default=8192)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.94)
     parser.add_argument(
+        "--skip-mm-profiling",
+        action="store_true",
+        help="Skip vLLM's maximum-size multimodal warmup profile.",
+    )
+    parser.add_argument(
         "--disable-thinking",
         action="store_true",
         help="Use the answer-only assistant prompt for Thinking checkpoints.",
@@ -279,11 +285,19 @@ def main():
             trust_remote_code=True,
             dtype="auto",
             tensor_parallel_size=1,
-            gpu_memory_utilization=args.gpu_memory_utilization,
-            max_model_len=args.max_model_len,
-            max_num_seqs=1,
-            limit_mm_per_prompt={"video": 1},
-            enforce_eager=True,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        max_model_len=args.max_model_len,
+        max_num_batched_tokens=args.max_model_len,
+        max_num_seqs=1,
+        limit_mm_per_prompt={"video": 1},
+        mm_processor_kwargs={
+            "size": {
+                "longest_edge": args.max_pixels,
+                "shortest_edge": MIN_PROCESSOR_PIXELS,
+            }
+        },
+        skip_mm_profiling=args.skip_mm_profiling,
+        enforce_eager=True,
             seed=0,
         )
     except Exception as exc:

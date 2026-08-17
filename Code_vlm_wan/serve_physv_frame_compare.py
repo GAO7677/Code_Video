@@ -100,14 +100,21 @@ class CompareHandler(BaseHTTPRequestHandler):
     def _rows(self):
         return load_rows(self.server.results_path)
 
-    def _variant_path(self, case_id, variant_key):
+    def _variant_path(self, case_id, variant_key, field="video"):
         for row in self._rows():
             if row.get("case_id") == case_id:
                 variant = row.get("variants", {}).get(variant_key)
                 if variant:
-                    path = Path(variant.get("video", ""))
+                    path = Path(variant.get(field, ""))
                     return path if path.is_file() else None
         return None
+
+    def _parse_media_token(self, path, prefix):
+        token = unquote(path.removeprefix(prefix))
+        try:
+            return token.rsplit("/", 1)
+        except ValueError:
+            return None
 
     def _handle(self):
         parsed = urlparse(self.path)
@@ -121,6 +128,10 @@ class CompareHandler(BaseHTTPRequestHandler):
                     public_variant = dict(variant)
                     token = f"{row['case_id']}/{variant_key}"
                     public_variant["video_url"] = "/media/" + quote(token, safe="")
+                    if public_variant.get("vlm_input_video"):
+                        public_variant["vlm_input_video_url"] = (
+                            "/vlm-input/" + quote(token, safe="")
+                        )
                     public_variants[variant_key] = public_variant
                 public_row["variants"] = public_variants
                 public_rows.append(public_row)
@@ -129,15 +140,27 @@ class CompareHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/media/"):
-            token = unquote(path.removeprefix("/media/"))
-            try:
-                case_id, variant_key = token.rsplit("/", 1)
-            except ValueError:
+            parsed_token = self._parse_media_token(path, "/media/")
+            if parsed_token is None:
                 self._send_bytes(b"Video not found", "text/plain; charset=utf-8", 404)
                 return
+            case_id, variant_key = parsed_token
             video_path = self._variant_path(case_id, variant_key)
             if video_path is None:
                 self._send_bytes(b"Video not found", "text/plain; charset=utf-8", 404)
+                return
+            self._send_file(video_path, "video/mp4")
+            return
+
+        if path.startswith("/vlm-input/"):
+            parsed_token = self._parse_media_token(path, "/vlm-input/")
+            if parsed_token is None:
+                self._send_bytes(b"VLM input replay not found", "text/plain; charset=utf-8", 404)
+                return
+            case_id, variant_key = parsed_token
+            video_path = self._variant_path(case_id, variant_key, "vlm_input_video")
+            if video_path is None:
+                self._send_bytes(b"VLM input replay not found", "text/plain; charset=utf-8", 404)
                 return
             self._send_file(video_path, "video/mp4")
             return

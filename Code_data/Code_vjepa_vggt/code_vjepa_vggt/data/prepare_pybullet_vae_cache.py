@@ -128,6 +128,9 @@ def _latent_comparison_metrics(
 
 
 def _build_dataset(args: argparse.Namespace):
+    if args.dataset_format == "pybullet0613_raw":
+        # CPU bilinear resize varies slightly with thread count and VAE amplifies it.
+        torch.set_num_threads(1)
     common = {
         "root": args.pybullet_root,
         "split": "all",

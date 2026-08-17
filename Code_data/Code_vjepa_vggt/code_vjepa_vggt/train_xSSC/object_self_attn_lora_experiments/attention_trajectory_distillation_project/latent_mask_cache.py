@@ -135,7 +135,8 @@ class PyBulletLatentMaskCache:
 def _pybullet_records(dataset) -> list[Any]:
     if (
         hasattr(dataset, "samples")
-        and dataset.__class__.__name__ == "PyBullet0713NoGTBoxDataset"
+        and dataset.__class__.__name__
+        in {"PyBullet0713NoGTBoxDataset", "PyBulletRawNoGTBoxDataset"}
     ):
         return list(dataset.samples)
     records: list[Any] = []
@@ -152,7 +153,7 @@ class LatentMaskCachedDataset(torch.utils.data.Dataset):
         self.cache = cache
         records = _pybullet_records(dataset)
         if not records:
-            raise ValueError("GT latent-mask loss requires a PyBullet0713 dataset")
+            raise ValueError("GT latent-mask loss requires a supported PyBullet dataset")
         cache.validate_records(records)
         self.sample_weights = getattr(dataset, "sample_weights", None)
         self.load_from_cache = False

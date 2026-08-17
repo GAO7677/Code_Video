@@ -36,6 +36,9 @@ from AAA_my_test.precompute_toydataset_sam2_regions import build_provider
 from code_vjepa_vggt.data.pybullet0713_no_gt_box_dataset import (
     PyBullet0713NoGTBoxDataset,
 )
+from code_vjepa_vggt.data.pybullet_raw_no_gt_box_dataset import (
+    PyBulletRawNoGTBoxDataset,
+)
 from code_vjepa_vggt.data.pybullet_vae_cache import sample_uid
 from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (
     DetectedObjectTrack,
@@ -62,6 +65,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
+    parser.add_argument(
+        "--dataset-format",
+        choices=("pybullet0713", "pybullet0613_raw"),
+        default="pybullet0713",
+    )
     parser.add_argument(
         "--cotracker-checkpoint", type=Path, default=DEFAULT_COTRACKER_CHECKPOINT
     )
@@ -94,15 +102,18 @@ def atomic_json(path: Path, payload: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def build_dataset(args: argparse.Namespace) -> PyBullet0713NoGTBoxDataset:
-    return PyBullet0713NoGTBoxDataset(
-        root=args.dataset_root,
-        split=args.split,
-        resolution=(int(args.height), int(args.width)),
-        num_frames=int(args.num_frames),
-        num_context_frames=8,
-        sampling_strategy="prefix",
-    )
+def build_dataset(args: argparse.Namespace):
+    common = {
+        "root": args.dataset_root,
+        "split": args.split,
+        "resolution": (int(args.height), int(args.width)),
+        "num_frames": int(args.num_frames),
+        "num_context_frames": 8,
+        "sampling_strategy": "prefix",
+    }
+    if args.dataset_format == "pybullet0613_raw":
+        return PyBulletRawNoGTBoxDataset(**common, window_starts=(0,))
+    return PyBullet0713NoGTBoxDataset(**common)
 
 
 def selected_records(args: argparse.Namespace, dataset) -> list[Any]:
@@ -166,6 +177,11 @@ def load_frames(record, args: argparse.Namespace) -> np.ndarray:
 
 
 def dynamic_object_phrases(record) -> list[str]:
+    raw_phrases = getattr(record, "dynamic_object_phrases", None)
+    if raw_phrases is not None:
+        phrases = [str(value).strip() for value in raw_phrases if str(value).strip()]
+        if phrases:
+            return phrases
     manifest = json.loads(Path(record.manifest_path).read_text(encoding="utf-8"))
     phrases = [
         str(value).strip()

@@ -42,6 +42,9 @@ from code_vjepa_vggt.data.mixed_replay_no_gt_box_dataset import (
 from code_vjepa_vggt.data.pybullet0713_no_gt_box_dataset import (
     PyBullet0713NoGTBoxDataset,
 )
+from code_vjepa_vggt.data.pybullet_raw_no_gt_box_dataset import (
+    PyBulletRawNoGTBoxDataset,
+)
 
 from diffsynth.diffusion import ModelLogger
 
@@ -623,6 +626,11 @@ def build_parser() -> argparse.ArgumentParser:
             action.choices = [*action.choices, "xssc_replay_mix"]
             break
     dataset = parser.add_argument_group("xssc_replay_mix")
+    dataset.add_argument(
+        "--pybullet_dataset_format",
+        choices=["pybullet0713", "pybullet0613_raw"],
+        default="pybullet0713",
+    )
     dataset.add_argument("--pybullet0713_root", type=str, default=None)
     dataset.add_argument("--pybullet0713_split", default="train", choices=["train", "val", "test", "all"])
     dataset.add_argument("--pybullet0713_sampling_strategy", default="prefix", choices=["prefix", "uniform"])
@@ -671,25 +679,30 @@ def build_dataset(args: argparse.Namespace):
     if source_probabilities["pybullet"] > 0.0:
         if not args.pybullet0713_root:
             raise ValueError("Positive PyBullet ratio requires --pybullet0713_root")
-        datasets.append(
-            PyBullet0713NoGTBoxDataset(
-                root=args.pybullet0713_root,
-                split=args.pybullet0713_split,
-                resolution=resolution,
-                num_frames=args.num_frames,
-                num_context_frames=args.fixed_num_context_frames,
-                sampling_strategy=args.pybullet0713_sampling_strategy,
+        common = {
+            "root": args.pybullet0713_root,
+            "split": args.pybullet0713_split,
+            "resolution": resolution,
+            "num_frames": args.num_frames,
+            "num_context_frames": args.fixed_num_context_frames,
+            "sampling_strategy": args.pybullet0713_sampling_strategy,
+            "init_scan_limit": args.pybullet0713_init_scan_limit,
+            "vae_cache_dir": args.pybullet0713_vae_cache_dir,
+            "vae_checkpoint_path": Path(args.wan_root) / "Wan2.2_VAE.pth",
+            "prompt_cache_dir": args.pybullet0713_prompt_cache_dir,
+            "text_encoder_checkpoint_path": (
+                Path(args.wan_root) / "models_t5_umt5-xxl-enc-bf16.pth"
+            ),
+            "tokenizer_path": args.tokenizer_path,
+        }
+        if args.pybullet_dataset_format == "pybullet0613_raw":
+            pybullet = PyBulletRawNoGTBoxDataset(**common, window_starts=(0,))
+        else:
+            pybullet = PyBullet0713NoGTBoxDataset(
+                **common,
                 families=args.pybullet0713_family,
-                init_scan_limit=args.pybullet0713_init_scan_limit,
-                vae_cache_dir=args.pybullet0713_vae_cache_dir,
-                vae_checkpoint_path=Path(args.wan_root) / "Wan2.2_VAE.pth",
-                prompt_cache_dir=args.pybullet0713_prompt_cache_dir,
-                text_encoder_checkpoint_path=(
-                    Path(args.wan_root) / "models_t5_umt5-xxl-enc-bf16.pth"
-                ),
-                tokenizer_path=args.tokenizer_path,
             )
-        )
+        datasets.append(pybullet)
         source_names.append("pybullet")
         active_probabilities.append(source_probabilities["pybullet"])
     if source_probabilities["kubric"] > 0.0:

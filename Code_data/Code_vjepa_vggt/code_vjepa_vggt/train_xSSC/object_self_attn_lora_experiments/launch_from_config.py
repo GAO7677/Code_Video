@@ -499,6 +499,9 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
             "expected_trainable_params"
         ],
         "--dataset_type": data["dataset_type"],
+        "--pybullet_dataset_format": data.get(
+            "pybullet_dataset_format", "pybullet0713"
+        ),
         "--pybullet0713_root": paths["pybullet_root"],
         "--pybullet0713_split": data["pybullet_split"],
         "--pybullet0713_sampling_strategy": data["pybullet_sampling_strategy"],

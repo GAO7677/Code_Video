@@ -1,0 +1,46 @@
+{
+  "extends": "formal_full_sa_no_object_latent_mask_loss_pybullet100_cached_gpu67.json",
+  "experiment": {
+    "name": "smoke_full_sa_no_object_gt_latent_mask_loss_pybullet0613_cached_gpu3",
+    "description": "One-step single-GPU smoke using 0613 raw videos with 49-frame VAE, prompt, and GT latent-mask caches"
+  },
+  "launch": {
+    "gpu_set": "3",
+    "num_processes": 1,
+    "main_process_port": 29540
+  },
+  "paths": {
+    "pybullet_root": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500",
+    "pybullet_vae_cache_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/cache_49f/vae_latents_wan22_512x896_49f_prefix_bf16",
+    "pybullet_prompt_cache_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/cache_49f/prompt_embeddings_wan22_umt5_bf16",
+    "output_root": "/data/gaoya/agent-data/checkpoints/gt_latent_mask_loss_smoke_0613"
+  },
+  "data": {
+    "pybullet_dataset_format": "pybullet0613_raw",
+    "pybullet_init_scan_limit": 1
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 1,
+    "max_train_steps": 1,
+    "num_epochs": 1
+  },
+  "checkpointing": {
+    "save_steps": 1,
+    "max_checkpoints_keep": 1,
+    "resume_from": null
+  },
+  "logging": {
+    "report_to": "none",
+    "wandb_name": "smoke_full_sa_no_object_gt_latent_mask_loss_pybullet0613_cached_gpu3",
+    "wandb_mode": "disabled"
+  },
+  "latent_mask_loss": {
+    "cache_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/cache_49f/gt_latent_mask_grounded_sam2_smoke",
+    "gradient_diagnostics_every_n_forwards": 1
+  },
+  "comparison": {
+    "enforce_fairness": false,
+    "allow_gpu_set_override": true
+  }
+}
