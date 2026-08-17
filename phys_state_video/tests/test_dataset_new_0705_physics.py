@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.dataset_new_0705.scene_generators_0705 import (
     EARTH_GRAVITY,
+    F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG,
     _collision_vertical_extent,
     generate_scenario_blueprint,
     validate_blueprint_physics,
@@ -71,6 +72,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
                 "left_to_right",
                 table_height_m=table_height,
                 initial_speed_mps=1.25,
+                travel_angle_deg=F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG,
             )
             self.assertAlmostEqual(blueprint.metadata["table_height_m"], table_height, places=5)
             self.assertEqual(blueprint.camera_key, "cam_09")
@@ -79,20 +81,25 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             self.assertAlmostEqual(blueprint.metadata["floor_restitution"], 0.62, places=5)
             mover = next(obj for obj in blueprint.objects if obj.name == "roller_0")
             self.assertTrue(mover.dynamic)
-            self.assertAlmostEqual(mover.linear_velocity[0], 1.25, places=5)
-            self.assertAlmostEqual(mover.linear_velocity[1], 0.0, places=5)
+            self.assertAlmostEqual(
+                blueprint.metadata["travel_angle_deg"],
+                F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG,
+                places=5,
+            )
+            self.assertGreater(mover.linear_velocity[0], 0.0)
+            self.assertLess(mover.linear_velocity[1], 0.0)
             self.assertAlmostEqual(mover.mass, 2.50, places=5)
             self.assertAlmostEqual(mover.friction, 0.40, places=5)
             self.assertAlmostEqual(mover.restitution, 1.0, places=5)
             self.assertAlmostEqual(mover.linear_damping, 0.0, places=5)
             self.assertAlmostEqual(mover.angular_damping, 0.0, places=5)
-            speeds.append(mover.linear_velocity[0])
+            speeds.append(math.hypot(mover.linear_velocity[0], mover.linear_velocity[1]))
         self.assertTrue(all(abs(speed - speeds[0]) < 1e-6 for speed in speeds))
 
     def test_table_rolloff_supports_multiple_velocity_directions(self) -> None:
         speed = 1.25
         radius = 0.14
-        for angle_deg in (-24.0, -12.0, 12.0, 24.0, 180.0):
+        for angle_deg in (-48.0, -36.0, -30.0, -24.0, -18.0, -12.0):
             blueprint = generate_scenario_blueprint(
                 "F11",
                 f"F11_table_angle_{angle_deg}",

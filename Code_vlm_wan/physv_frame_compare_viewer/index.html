@@ -175,7 +175,7 @@
     .case-heading h3 { margin: 5px 0 0; overflow-wrap: anywhere; font-size: 19px; line-height: 1.2; letter-spacing: -.025em; }
     .case-heading .case-id { max-width: 800px; margin: 5px 0 0; color: var(--muted); font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
     .case-heading .case-tag { flex: 0 0 auto; padding: 6px 8px; color: var(--teal); background: var(--teal-soft); border-radius: 3px; font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
-    .comparison-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: start; }
+    .comparison-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: start; }
     .variant-card { min-width: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; box-shadow: var(--shadow); }
     .variant-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-height: 62px; padding: 11px 12px 9px; border-bottom: 1px solid var(--line); }
     .variant-index { display: block; color: var(--coral); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -270,7 +270,7 @@
       <div>
         <p class="eyebrow">EXPERIMENT VIEW / QWEN3-VL</p>
         <h2>同一视频，核对模型实际看到的帧序列。</h2>
-        <p>播放器展示由 Qwen3-VL 最终视觉 patch 反构的 RGB 回放；前缀输入与完整视频的 FPS 20 / FPS 15 输入、帧索引、尺寸、张量哈希和输出并列保留。</p>
+        <p>播放器展示由 Qwen3-VL 最终视觉 patch 反构的 RGB 回放；前缀输入、完整视频 FPS 20 / FPS 15，以及 FPS 15 的 3M 像素高分辨率输入、帧索引、尺寸、张量哈希和输出并列保留。</p>
       </div>
       <div class="stats" aria-label="结果统计">
         <div class="stat"><strong id="stat-cases">--</strong><span>cases</span></div>
@@ -314,8 +314,8 @@
 
   <script>
     const state = { rows: [], filter: "all", query: "" };
-    const variantOrder = ["prefix_8", "prefix_16", "prefix_24", "full", "full_fps15"];
-    const variantNumbers = { prefix_8: "01", prefix_16: "02", prefix_24: "03", full: "04", full_fps15: "05" };
+    const variantOrder = ["prefix_8", "prefix_16", "prefix_24", "full", "full_fps15", "full_fps15_3m"];
+    const variantNumbers = { prefix_8: "01", prefix_16: "02", prefix_24: "03", full: "04", full_fps15: "05", full_fps15_3m: "06" };
 
     const byId = (id) => document.getElementById(id);
     const node = (tag, className, value) => {
@@ -395,7 +395,7 @@
       byId("stat-cases").textContent = String(state.rows.length);
       byId("stat-prefix").textContent = String(state.rows.length * 3);
       const fullRunCount = state.rows.reduce((count, row) => (
-        count + ["full", "full_fps15"].filter((key) => row.variants && row.variants[key]).length
+        count + ["full", "full_fps15", "full_fps15_3m"].filter((key) => row.variants && row.variants[key]).length
       ), 0);
       byId("stat-full").textContent = String(fullRunCount);
       byId("stat-visible").textContent = String(visibleRows.length);

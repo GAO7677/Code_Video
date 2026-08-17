@@ -23,6 +23,7 @@ NOMINAL_RENDER_WIDTH = 1280
 NOMINAL_RENDER_HEIGHT = 720
 DIRECTION_MODES = {"left_to_right", "right_to_left", "vertical"}
 DEFAULT_CAMERA_DISTANCE_SCALE = 0.88
+F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG = -24.0
 
 
 def build_camera_catalog() -> dict[str, CameraSpec]:
@@ -1353,7 +1354,7 @@ def _make_f11(
     speed = float(initial_speed_mps if initial_speed_mps is not None else rng.uniform(*family.speed_range))
     speed = float(np.clip(speed, 0.65, 2.4))
     if travel_angle_deg is None:
-        travel_angle = 0.0
+        travel_angle = F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG
     else:
         travel_angle = float(np.clip(travel_angle_deg, -60.0, 180.0))
     travel_heading = math.radians(travel_angle)

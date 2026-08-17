@@ -18,6 +18,7 @@ import numpy as np
 from .render_sim_0705 import render_blueprint_case
 from .scene_generators_0705 import (
     DEFAULT_CAMERA_DISTANCE_SCALE,
+    F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG,
     build_scenario_family_catalog,
     generate_scenario_blueprint,
 )
@@ -57,14 +58,14 @@ DIFFICULTY_LEVELS = {
 }
 
 TABLE_ROLLOFF_CASES = (
-    {"table_height_m": 0.46, "height_label": "low", "travel_angle_deg": 0.0, "angle_label": "a000"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 0.0, "angle_label": "a000"},
-    {"table_height_m": 1.02, "height_label": "high", "travel_angle_deg": 0.0, "angle_label": "a000"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -24.0, "angle_label": "am24"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -12.0, "angle_label": "am12"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 12.0, "angle_label": "ap12"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 24.0, "angle_label": "ap24"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 180.0, "angle_label": "a180"},
+    {"table_height_m": 0.46, "height_label": "low", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr024"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr024"},
+    {"table_height_m": 1.02, "height_label": "high", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr024"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -12.0, "angle_label": "sr012"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -18.0, "angle_label": "sr018"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -30.0, "angle_label": "sr030"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -36.0, "angle_label": "sr036"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -48.0, "angle_label": "sr048"},
 )
 
 
@@ -351,7 +352,7 @@ def main() -> None:
             difficulty = {
                 "level": "L2",
                 "title": "桌面滚落",
-                "description": "同物体、同初速度在不同桌高和不同速度方向上滚动并越过桌缘，重点观察落体时机、反弹和轨迹方向变化。",
+                "description": "同物体、同初速度在不同桌高和不同屏幕右向斜率上滚动并越过近侧桌缘，重点观察落体时机、反弹和轨迹方向变化。",
                 "priority": 2,
             }
             pilot_metadata = {
