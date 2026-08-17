@@ -214,13 +214,19 @@ def shared_crop_box(frames: np.ndarray, background: np.ndarray) -> tuple[int, in
     return crop_left, crop_top, crop_left + roi_width, crop_top + roi_height
 
 
-def build_storyboard(reader: VideoReader, indices: list[int], destination: Path) -> tuple[Image.Image, dict[str, Any]]:
+def build_storyboard(
+    reader: VideoReader,
+    indices: list[int],
+    destination: Path,
+    tile_width: int = 384,
+    tile_height: int = 256,
+) -> tuple[Image.Image, dict[str, Any]]:
+    if tile_width <= 0 or tile_height <= 0:
+        raise ValueError("Storyboard tile dimensions must be positive")
     all_indices = list(range(len(reader)))
     background = np.median(reader.get_batch(all_indices).asnumpy(), axis=0).astype(np.uint8)
     frames = reader.get_batch(indices).asnumpy()
     crop_left, crop_top, crop_right, crop_bottom = shared_crop_box(frames, background)
-    tile_width = 384
-    tile_height = 256
     board = Image.new("RGB", (tile_width * 3, tile_height * 2), color=(0, 0, 0))
     draw = ImageDraw.Draw(board)
     source_fps = float(reader.get_avg_fps())

@@ -118,6 +118,15 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             jitter_fov_deg=0.0,
             hdri_key="studio_warm",
         ),
+        CameraSpec(
+            eye=(0.0, -3.95, 1.25),
+            target=(0.0, 0.0, 0.52),
+            yfov_deg=52.0,
+            jitter_eye_xyz=(0.0, 0.0, 0.0),
+            jitter_target_xyz=(0.0, 0.0, 0.0),
+            jitter_fov_deg=0.0,
+            hdri_key="hall_neutral",
+        ),
     ]
     return {f"cam_{idx:02d}": camera for idx, camera in enumerate(cameras)}
 
@@ -332,6 +341,25 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             speed_range=(1.25, 1.25),
             spin_range=(0.0, 0.0),
             angle_range_deg=(0.0, 24.0),
+        ),
+        ScenarioFamilySpec(
+            key="F12",
+            title="Inclined Ramp Control",
+            description="A wheel is released from rest on a floor-supported ramp while only the incline angle changes.",
+            family_slug="F12_inclined_ramp_control",
+            min_dynamic_objects=4,
+            max_dynamic_objects=4,
+            min_total_objects=4,
+            max_total_objects=4,
+            supports_occlusion=False,
+            supports_support_objects=True,
+            target_event_types=("release", "ramp_roll", "ramp_exit"),
+            preferred_surface_keys=("painted_concrete_floor",),
+            preferred_camera_keys=("cam_10",),
+            motion_modes=("gravity_roll",),
+            speed_range=(0.0, 0.0),
+            spin_range=(0.0, 0.0),
+            angle_range_deg=(8.0, 32.0),
         ),
     ]
     return {family.key: family for family in families}
@@ -1487,6 +1515,152 @@ def _make_f11(
     )
 
 
+def _make_f12(
+    rng: np.random.Generator,
+    sample_key: str,
+    size_scale: float = 1.0,
+    *,
+    ramp_angle_deg: float | None = None,
+) -> ScenarioBlueprint:
+    """Build a gravity-only inclined-ramp control scene.
+
+    The wheel, board, and both risers are dynamic PyBullet bodies.  The board
+    rests on the floor at its lower edge and on two grounded risers at the high
+    end, so the visible ramp is supported by contact rather than a fixed or
+    suspended body.  Only the board angle is varied across the control set.
+    """
+    del rng  # The control geometry intentionally has no appearance randomness.
+    family = build_scenario_family_catalog()["F12"]
+    materials = build_material_catalog()
+
+    ramp_angle = float(ramp_angle_deg if ramp_angle_deg is not None else 20.0)
+    ramp_angle = float(np.clip(ramp_angle, 8.0, 32.0))
+    theta = math.radians(ramp_angle)
+    cos_theta = math.cos(theta)
+    sin_theta = math.sin(theta)
+
+    board_half_length = 0.90 * size_scale
+    board_half_width = 0.34 * size_scale
+    board_half_thickness = 0.035 * size_scale
+    wheel_radius = 0.15 * size_scale
+    wheel_width = 0.12 * size_scale
+
+    # The lower underside touches the ground at x=+half_length.  The board and
+    # risers remain dynamic, but start in a mechanically supported arrangement.
+    board_center_z = board_half_thickness * cos_theta + board_half_length * sin_theta
+    board = ObjectInstanceSpec(
+        name="incline_board_0",
+        family_key="incline_board",
+        shape="box",
+        semantic_role="ramp_support",
+        size={"hx": board_half_length, "hy": board_half_width, "hz": board_half_thickness},
+        mass=48.0,
+        friction=0.88,
+        restitution=0.01,
+        linear_damping=0.05,
+        angular_damping=0.12,
+        material_key="painted_metal_yellow",
+        color=materials["painted_metal_yellow"].base_color,
+        dynamic=True,
+        role="dynamic_ramp",
+        position=(0.0, 0.0, board_center_z),
+        orientation_euler_deg=(0.0, ramp_angle, 0.0),
+        linear_velocity=(0.0, 0.0, 0.0),
+        angular_velocity=(0.0, 0.0, 0.0),
+    )
+
+    support_local_x = -0.63 * size_scale
+    support_half_x = 0.10 * size_scale
+    support_half_y = 0.10 * size_scale
+    support_clearance = 0.004 * size_scale
+    support_top_z = (
+        board_center_z
+        - support_local_x * sin_theta
+        - board_half_thickness * cos_theta
+        - support_clearance
+    )
+    support_height = max(0.10 * size_scale, support_top_z)
+    support_x = support_local_x * cos_theta - board_half_thickness * sin_theta
+    risers = tuple(
+        ObjectInstanceSpec(
+            name=f"incline_riser_{index}",
+            family_key="incline_riser",
+            shape="box",
+            semantic_role="ramp_support",
+            size={"hx": support_half_x, "hy": support_half_y, "hz": 0.5 * support_height},
+            mass=120.0,
+            friction=0.92,
+            restitution=0.01,
+            linear_damping=0.10,
+            angular_damping=0.16,
+            material_key="painted_metal_yellow",
+            color=materials["painted_metal_yellow"].base_color,
+            dynamic=True,
+            role="dynamic_support",
+            position=(support_x, side * 0.20 * size_scale, 0.5 * support_height),
+            orientation_euler_deg=(0.0, 0.0, 0.0),
+            linear_velocity=(0.0, 0.0, 0.0),
+            angular_velocity=(0.0, 0.0, 0.0),
+        )
+        for index, side in enumerate((-1.0, 1.0))
+    )
+
+    wheel_local_x = -0.50 * size_scale
+    wheel_local_z = board_half_thickness + wheel_radius + 0.004 * size_scale
+    wheel = ObjectInstanceSpec(
+        name="wheel_0",
+        family_key="wheel",
+        shape="wheel_thick",
+        semantic_role="rolling_dynamic",
+        size={"radius": wheel_radius, "width": wheel_width},
+        mass=1.60,
+        friction=0.72,
+        restitution=0.06,
+        linear_damping=0.01,
+        angular_damping=0.02,
+        material_key="rubber_blue",
+        color=materials["rubber_blue"].base_color,
+        dynamic=True,
+        role="dynamic",
+        position=(
+            wheel_local_x * cos_theta + wheel_local_z * sin_theta,
+            0.0,
+            board_center_z - wheel_local_x * sin_theta + wheel_local_z * cos_theta,
+        ),
+        orientation_euler_deg=(90.0, ramp_angle, 0.0),
+        linear_velocity=(0.0, 0.0, 0.0),
+        angular_velocity=(0.0, 0.0, 0.0),
+    )
+
+    camera_key = "cam_10"
+    camera = build_camera_catalog()[camera_key]
+    return ScenarioBlueprint(
+        family_key=family.key,
+        sample_key=sample_key,
+        title=f"Wheel release on a {ramp_angle:.0f} degree incline",
+        description="A blue wheel is released from rest on a floor-supported ramp; only the ramp incline changes.",
+        gravity=EARTH_GRAVITY,
+        pre_roll_s=0.04,
+        camera_key=camera_key,
+        surface_key="painted_concrete_floor",
+        lighting_key=camera.hdri_key,
+        camera=camera,
+        objects=(wheel, board, *risers),
+        tags=("inclined_ramp_control", "gravity_release", f"ramp_angle_{ramp_angle:.0f}"),
+        metadata={
+            "ramp_angle_deg": round(ramp_angle, 5),
+            "ramp_length_m": round(2.0 * board_half_length, 5),
+            "ramp_width_m": round(2.0 * board_half_width, 5),
+            "ramp_thickness_m": round(2.0 * board_half_thickness, 5),
+            "released_from_rest": True,
+            "initial_speed_mps": 0.0,
+            "floor_restitution": 0.02,
+            "support_mode": "dynamic_floor_supported_risers",
+            "controlled_variable": "ramp_angle_deg",
+        },
+    )
+
+
 FAMILY_GENERATORS = {
     "F1": _make_f1,
     "F2": _make_f2,
@@ -1499,6 +1673,7 @@ FAMILY_GENERATORS = {
     "F9": _make_f9,
     "F10": _make_f10,
     "F11": _make_f11,
+    "F12": _make_f12,
 }
 
 
@@ -1512,6 +1687,7 @@ def generate_scenario_blueprint(
     table_height_m: float | None = None,
     initial_speed_mps: float | None = None,
     travel_angle_deg: float | None = None,
+    ramp_angle_deg: float | None = None,
 ) -> ScenarioBlueprint:
     if family_key not in FAMILY_GENERATORS:
         raise KeyError(f"unsupported family_key={family_key}")
@@ -1530,6 +1706,13 @@ def generate_scenario_blueprint(
             table_height_m=table_height_m,
             initial_speed_mps=initial_speed_mps,
             travel_angle_deg=travel_angle_deg,
+        )
+    elif family_key == "F12":
+        blueprint = FAMILY_GENERATORS[family_key](
+            rng,
+            sample_key,
+            size_scale,
+            ramp_angle_deg=ramp_angle_deg,
         )
     else:
         blueprint = FAMILY_GENERATORS[family_key](rng, sample_key, size_scale)

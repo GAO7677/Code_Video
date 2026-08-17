@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhysV Simulation Review</title>
+  <style>
+    :root {
+      --canvas: #edf1ef;
+      --surface: #fbfcfb;
+      --surface-muted: #f4f7f5;
+      --ink: #172821;
+      --muted: #64736c;
+      --line: #cfd9d3;
+      --line-strong: #aabbb1;
+      --forest: #183b30;
+      --teal: #087d73;
+      --teal-soft: #ddf1eb;
+      --clay: #b85e36;
+      --gold: #9b6e13;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid #4ea597; outline-offset: 2px; }
+
+    .app-header {
+      min-height: 66px;
+      padding: 12px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      color: #f5f8f5;
+      background: var(--forest);
+      border-bottom: 3px solid #6e9a7d;
+    }
+
+    .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+    .brand strong { font-size: 17px; }
+    .brand span, .header-status { color: #c4d5ca; font-size: 12px; }
+    .header-actions { display: flex; align-items: center; gap: 16px; }
+    .download-link { padding: 6px 0; color: #f5f8f5; text-decoration: none; border-bottom: 1px solid #a7c6b3; }
+    .download-link:hover { color: #d8efe0; border-color: #d8efe0; }
+
+    .shell { max-width: 1740px; margin: 0 auto; padding: 20px 28px 32px; }
+
+    .view-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+      padding: 0 0 14px;
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .mode-tabs { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+    .mode-tab {
+      min-height: 36px;
+      padding: 8px 12px;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid transparent;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+    }
+    .mode-tab:hover { color: var(--forest); background: #e5ece7; }
+    .mode-tab[aria-selected="true"] { color: var(--forest); background: var(--surface); border-color: var(--line); border-bottom-color: var(--teal); font-weight: 700; }
+
+    .filter-group { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+    .field-label { color: var(--muted); font-size: 12px; }
+    .filter-control { min-height: 36px; padding: 7px 9px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 4px; }
+    #case-search { width: 200px; }
+    .filter-control:disabled { color: #95a29b; background: #e7ece9; cursor: not-allowed; }
+
+    .section-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+    .section-bar h1, .section-bar h2, .pane-heading h2, .analysis-heading h2, .block-heading { margin: 0; font-size: 14px; line-height: 1.35; }
+    .section-bar p, .count, .muted { margin: 0; color: var(--muted); font-size: 12px; }
+    .comparison { padding: 0 0 20px; margin-bottom: 20px; border-bottom: 1px solid var(--line-strong); }
+    .comparison-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+
+    .compare-case {
+      display: grid;
+      min-width: 0;
+      padding: 0;
+      overflow: hidden;
+      text-align: left;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .compare-case:hover { border-color: #729e91; }
+    .compare-case.active { border: 2px solid var(--teal); }
+    .compare-case video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #18261f; object-fit: contain; pointer-events: none; }
+    .compare-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 9px 10px 10px; }
+    .compare-height { font-weight: 700; }
+    .compare-id { color: var(--muted); font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    .compare-speed { align-self: start; color: var(--clay); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+    .comparison-table-wrap { margin-top: 12px; overflow-x: auto; background: var(--surface); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .comparison-table { width: 100%; min-width: 700px; border-collapse: collapse; font-size: 12px; }
+    .comparison-table th, .comparison-table td { padding: 9px 10px; text-align: left; border-bottom: 1px solid #e2e8e4; font-variant-numeric: tabular-nums; }
+    .comparison-table th { color: var(--muted); background: var(--surface-muted); font-weight: 600; }
+    .comparison-table tbody tr:last-child td { border-bottom: 0; }
+    .comparison-table .selected-row { background: var(--teal-soft); }
+
+    .review-grid {
+      display: grid;
+      grid-template-columns: 270px minmax(440px, 1.22fr) minmax(300px, 0.78fr);
+      align-items: stretch;
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+    }
+    .pane { min-width: 0; }
+    .case-pane, .video-pane { border-right: 1px solid var(--line); }
+    .pane-heading, .analysis-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 50px; padding: 13px 15px; border-bottom: 1px solid var(--line); }
+    .case-list { max-height: calc(100vh - 256px); min-height: 480px; padding: 7px; overflow: auto; }
+    .case-group + .case-group { margin-top: 12px; }
+    .case-group-title { display: block; padding: 5px 7px 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
+
+    .case-button { display: block; width: 100%; margin: 0 0 4px; padding: 9px 10px; text-align: left; background: transparent; border: 1px solid transparent; border-left: 3px solid transparent; border-radius: 4px; cursor: pointer; }
+    .case-button:hover { background: #edf3ef; }
+    .case-button.active { background: var(--teal-soft); border-color: #b4d9ce; border-left-color: var(--teal); }
+    .case-title { display: block; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+    .case-meta { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .level-tag { display: inline-block; margin-right: 5px; padding: 1px 4px; color: #fff; background: var(--forest); border-radius: 3px; font-size: 10px; font-weight: 700; }
+
+    .video-stage { background: #13221b; }
+    #video { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: min(68vh, 680px); background: #13221b; object-fit: contain; }
+    .video-caption { padding: 10px 15px 0; color: var(--muted); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    .metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .metric { min-width: 0; padding: 9px 11px; border-right: 1px solid var(--line); }
+    .metric:nth-child(3n) { border-right: 0; }
+    .metric:nth-child(n + 4) { border-top: 1px solid var(--line); }
+    .metric-label { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; }
+    .metric-value { display: block; margin-top: 2px; color: var(--ink); font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+    .selected-note { padding: 11px 15px 14px; color: var(--muted); font-size: 12px; }
+
+    .analysis-pane { background: #f8faf8; }
+    .analysis-heading .source { color: var(--gold); font-size: 11px; font-weight: 700; }
+    .text-block { padding: 14px 15px; border-bottom: 1px solid var(--line); }
+    .block-heading { margin-bottom: 7px; color: var(--forest); }
+    .block-copy { margin: 0; color: #3e5148; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .response-block .block-copy { color: var(--ink); }
+    .context-row { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 14px 15px; }
+    .context-item { padding-left: 9px; border-left: 3px solid var(--clay); }
+    .context-label { display: block; margin-bottom: 2px; color: var(--muted); font-size: 10px; text-transform: uppercase; }
+    .context-value { display: block; overflow-wrap: anywhere; }
+    details { border-top: 1px solid var(--line); }
+    details summary { padding: 11px 15px; color: var(--teal); font-size: 12px; font-weight: 700; cursor: pointer; }
+    pre { max-height: 240px; margin: 0; padding: 0 15px 15px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #31443b; font: 11px/1.48 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .empty { padding: 28px 16px; color: var(--muted); text-align: center; }
+    [hidden] { display: none !important; }
+
+    @media (max-width: 1240px) {
+      .review-grid { grid-template-columns: 250px minmax(0, 1fr); }
+      .analysis-pane { grid-column: 1 / -1; border-top: 1px solid var(--line); }
+      .analysis-content { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .analysis-content > * { border-bottom: 0; border-right: 1px solid var(--line); }
+      .analysis-content > *:last-child { border-right: 0; }
+      .analysis-content details { border-top: 0; }
+    }
+
+    @media (max-width: 860px) {
+      .app-header, .view-controls { align-items: flex-start; flex-direction: column; }
+      .header-actions, .filter-group { width: 100%; justify-content: space-between; }
+      .comparison-grid { grid-template-columns: 1fr; }
+      .analysis-content { grid-template-columns: 1fr; }
+      .analysis-content > * { border-right: 0; border-bottom: 1px solid var(--line); }
+      .analysis-content > *:last-child { border-bottom: 0; }
+    }
+
+    @media (max-width: 720px) {
+      .app-header { padding: 12px 16px; }
+      .brand { align-items: flex-start; flex-direction: column; gap: 1px; }
+      .shell { padding: 15px 12px 24px; }
+      .header-actions { align-items: flex-start; flex-direction: column; gap: 5px; }
+      .filter-group { align-items: stretch; flex-direction: column; }
+      #case-search, .filter-control { width: 100%; }
+      .review-grid { display: flex; flex-direction: column; }
+      .case-pane, .video-pane { border-right: 0; border-bottom: 1px solid var(--line); }
+      .case-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 0; max-height: none; gap: 4px; }
+      .case-group { display: contents; }
+      .case-group + .case-group { margin-top: 0; }
+      .case-group-title { grid-column: 1 / -1; }
+      .case-button { margin: 0; }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metric:nth-child(3n) { border-right: 1px solid var(--line); }
+      .metric:nth-child(2n) { border-right: 0; }
+      .metric:nth-child(n + 3) { border-top: 1px solid var(--line); }
+    }
+
+    @media (max-width: 460px) {
+      .case-list { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: 1fr; }
+      .metric, .metric:nth-child(3n) { border-right: 0; }
+      .metric:nth-child(n + 2) { border-top: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand"><strong>PhysV 物理仿真审阅</strong><span>视频、控制变量与状态记录</span></div>
+    <div class="header-actions"><span class="header-status" id="status">正在读取结果...</span><a class="download-link" href="/download/results.jsonl" download>下载 JSONL</a></div>
+  </header>
+
+  <main class="shell">
+    <section class="view-controls" aria-label="案例视图与筛选">
+      <div class="mode-tabs" role="tablist" aria-label="案例视图">
+        <button class="mode-tab" type="button" role="tab" data-mode="height" aria-selected="true">F11 桌高对照</button>
+        <button class="mode-tab" type="button" role="tab" data-mode="direction" aria-selected="false">F11 方向变体</button>
+        <button class="mode-tab" type="button" role="tab" data-mode="all" aria-selected="false">全部案例</button>
+      </div>
+      <div class="filter-group">
+        <label class="field-label" for="level-filter">难度</label>
+        <select class="filter-control" id="level-filter">
+          <option value="all">全部等级</option>
+          <option value="L1">L1 基础场景</option>
+          <option value="L2">L2 多阶段场景</option>
+          <option value="L3">L3 交互场景</option>
+        </select>
+        <label class="field-label" for="case-search">查找</label>
+        <input class="filter-control" id="case-search" type="search" placeholder="case ID 或场景名" autocomplete="off">
+      </div>
+    </section>
+
+    <section class="comparison" id="comparison" hidden>
+      <div class="section-bar">
+        <div><h1>F11 / 桌高对照</h1><p id="comparison-controls"></p></div>
+        <span class="count" id="comparison-count"></span>
+      </div>
+      <div class="comparison-grid" id="comparison-grid"></div>
+      <div class="comparison-table-wrap">
+        <table class="comparison-table">
+          <thead><tr><th>桌高</th><th>初速度</th><th>最高线速度</th><th>高度范围</th><th>末速度</th><th>末态</th></tr></thead>
+          <tbody id="comparison-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="review-grid" id="workspace" hidden>
+      <aside class="pane case-pane">
+        <div class="pane-heading"><h2 id="case-list-title">案例</h2><span class="count" id="case-count"></span></div>
+        <div class="case-list" id="case-list"></div>
+      </aside>
+
+      <section class="pane video-pane">
+        <div class="pane-heading"><h2 id="video-title">视频</h2><span class="count" id="video-status"></span></div>
+        <div class="video-stage"><video id="video" controls playsinline preload="auto"></video></div>
+        <div class="video-caption" id="video-caption"></div>
+        <div class="metric-grid" id="metric-grid"></div>
+        <div class="selected-note" id="selected-note"></div>
+      </section>
+
+      <aside class="pane analysis-pane">
+        <div class="analysis-heading"><h2>问题与记录</h2><span class="source" id="answer-source"></span></div>
+        <div class="analysis-content">
+          <section class="text-block"><h3 class="block-heading">输入问题</h3><p class="block-copy" id="question"></p></section>
+          <section class="text-block response-block"><h3 class="block-heading">当前输出</h3><p class="block-copy" id="response"></p></section>
+          <section class="context-row">
+            <div class="context-item"><span class="context-label">难度与场景</span><span class="context-value" id="scene-context"></span></div>
+            <div class="context-item"><span class="context-label">场景机制</span><span class="context-value" id="scene-description"></span></div>
+          </section>
+          <details><summary>状态摘要 JSON</summary><pre id="summary"></pre></details>
+          <details><summary>场景参数 JSON</summary><pre id="spec"></pre></details>
+        </div>
+      </aside>
+    </section>
+
+    <p class="empty" id="empty" hidden>没有匹配的案例。</p>
+  </main>
+
+  <script>
+    const state = { rows: [], filtered: [], mode: "height", selectedId: "", query: "", level: "all" };
+    const $ = (id) => document.getElementById(id);
+
+    function isF11(row) { return row.scene_family && row.scene_family.family_key === "F11"; }
+    function spec(row) { return row.scenario_spec || {}; }
+    function tableHeight(row) {
+      const value = Number(spec(row).table_height_m);
+      return Number.isFinite(value) ? value : null;
+    }
+    function angleLabel(row) { return String(spec(row).angle_label || "").toLowerCase(); }
+    function dynamicObject(row) { return (spec(row).objects || []).find((object) => object.dynamic) || (spec(row).objects || [])[0] || null; }
+    function initialSpeed(row) {
+      const object = dynamicObject(row);
+      const velocity = object && Array.isArray(object.linear_velocity) ? object.linear_velocity : [];
+      const speed = Math.sqrt(velocity.reduce((sum, value) => sum + Number(value || 0) ** 2, 0));
+      return Number.isFinite(speed) ? speed : null;
+    }
+    function objectSummary(row) {
+      const summary = row.state_summary || {};
+      const object = dynamicObject(row);
+      return (summary.objects || []).find((item) => object && item.name === object.name) || (summary.objects || [])[0] || {};
+    }
+    function number(value, digits = 2) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric.toFixed(digits) : "-";
+    }
+    function metric(value, unit = "", digits = 2) {
+      const rendered = number(value, digits);
+      return rendered === "-" ? rendered : `${rendered}${unit}`;
+    }
+    function motionState(value) {
+      const labels = { moving: "运动中", settled: "静止", stopped: "静止", unknown: "未知" };
+      return labels[value] || value || "-";
+    }
+    function f11Primary(row) { return isF11(row) && angleLabel(row) === "sr048"; }
+    function f11DirectionSet(row) { return isF11(row) && Math.abs((tableHeight(row) || 0) - 0.68) < 0.001; }
+
+    function displayTitle(row) {
+      if (isF11(row)) return `桌高 ${metric(tableHeight(row), " m")} / ${angleLabel(row).toUpperCase() || "SR -"}`;
+      return row.scene_title || row.case_id;
+    }
+    function displayMeta(row) {
+      const difficulty = row.difficulty || {};
+      const family = row.scene_family || {};
+      if (isF11(row)) return `F11 · ${spec(row).travel_angle_deg ?? "-"} deg · ${motionState(row.state_summary && row.state_summary.final_motion_state)}`;
+      return `${difficulty.title || difficulty.level || "-"} · ${family.family_key || "-"}`;
+    }
+    function rowsForMode() {
+      if (state.mode === "height") return state.rows.filter(f11Primary).sort((a, b) => (tableHeight(a) || 0) - (tableHeight(b) || 0));
+      if (state.mode === "direction") {
+        return state.rows.filter(f11DirectionSet).sort((a, b) => {
+          if (f11Primary(a)) return -1;
+          if (f11Primary(b)) return 1;
+          return Number(spec(a).travel_angle_deg || 0) - Number(spec(b).travel_angle_deg || 0);
+        });
+      }
+      return state.rows.slice().sort((a, b) => {
+        const priority = Number(a.difficulty && a.difficulty.priority || 99) - Number(b.difficulty && b.difficulty.priority || 99);
+        return priority || a.case_id.localeCompare(b.case_id);
+      });
+    }
+    function filteredRows() {
+      const query = state.query.trim().toLowerCase();
+      return rowsForMode().filter((row) => {
+        const matchesLevel = state.mode !== "all" || state.level === "all" || (row.difficulty && row.difficulty.level === state.level);
+        const haystack = [row.case_id, row.scene_title, row.scene_description, row.scene_family && row.scene_family.title].filter(Boolean).join(" ").toLowerCase();
+        return matchesLevel && (!query || haystack.includes(query));
+      });
+    }
+    function chooseSelected(rows) {
+      if (rows.some((row) => row.case_id === state.selectedId)) return;
+      const middleHeight = rows.find((row) => row.case_id === "difficulty_l2_f11_h068_sr048");
+      state.selectedId = (middleHeight || rows[0] || {}).case_id || "";
+    }
+    function groupLabel(row) {
+      if (state.mode === "height") return "桌高控制组";
+      if (state.mode === "direction") return "0.68 m 方向组";
+      const difficulty = row.difficulty || {};
+      return `${difficulty.level || "-"} / ${difficulty.title || "未分类"}`;
+    }
+
+    function renderList() {
+      const list = $("case-list");
+      list.replaceChildren();
+      const groups = new Map();
+      state.filtered.forEach((row) => {
+        const label = groupLabel(row);
+        if (!groups.has(label)) groups.set(label, []);
+        groups.get(label).push(row);
+      });
+      groups.forEach((rows, label) => {
+        const group = document.createElement("section");
+        group.className = "case-group";
+        const heading = document.createElement("span");
+        heading.className = "case-group-title";
+        heading.textContent = label;
+        group.appendChild(heading);
+        rows.forEach((row) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = `case-button${row.case_id === state.selectedId ? " active" : ""}`;
+          button.setAttribute("aria-pressed", String(row.case_id === state.selectedId));
+          const title = document.createElement("span");
+          title.className = "case-title";
+          title.textContent = displayTitle(row);
+          const meta = document.createElement("span");
+          meta.className = "case-meta";
+          const tag = document.createElement("span");
+          tag.className = "level-tag";
+          tag.textContent = (row.difficulty && row.difficulty.level) || "-";
+          meta.append(tag, document.createTextNode(displayMeta(row)));
+          button.append(title, meta);
+          button.addEventListener("click", () => { state.selectedId = row.case_id; render(); });
+          group.appendChild(button);
+        });
+        list.appendChild(group);
+      });
+      const labels = { height: "桌高控制组", direction: "方向变体", all: "案例" };
+      $("case-list-title").textContent = labels[state.mode];
+      $("case-count").textContent = `${state.filtered.length} 个`;
+    }
+
+    function renderComparison() {
+      const section = $("comparison");
+      const controls = state.rows.filter(f11Primary).sort((a, b) => (tableHeight(a) || 0) - (tableHeight(b) || 0));
+      const show = state.mode === "height" && controls.length > 0;
+      section.hidden = !show;
+      if (!show) return;
+      const baseline = dynamicObject(controls[0]) || {};
+      const uniform = controls.every((row) => {
+        const object = dynamicObject(row) || {};
+        return object.mass_kg === baseline.mass_kg && object.restitution === baseline.restitution && object.friction === baseline.friction;
+      });
+      const floor = spec(controls[0]).floor_restitution;
+      $("comparison-controls").textContent = uniform
+        ? `滚球参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 地面 e=${number(floor)}`
+        : "滚球参数存在差异";
+      $("comparison-count").textContent = `${controls.length} 个控制案例`;
+
+      const grid = $("comparison-grid");
+      grid.replaceChildren();
+      controls.forEach((row) => {
+        const summary = row.state_summary || {};
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = `compare-case${row.case_id === state.selectedId ? " active" : ""}`;
+        card.setAttribute("aria-label", `选择 ${displayTitle(row)}`);
+        const video = document.createElement("video");
+        video.src = row.video_url;
+        video.autoplay = true;
+        video.loop = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.setAttribute("aria-hidden", "true");
+        const meta = document.createElement("div");
+        meta.className = "compare-meta";
+        const left = document.createElement("div");
+        const height = document.createElement("div");
+        height.className = "compare-height";
+        height.textContent = `桌高 ${metric(tableHeight(row), " m")}`;
+        const id = document.createElement("div");
+        id.className = "compare-id";
+        id.textContent = row.case_id;
+        left.append(height, id);
+        const speed = document.createElement("span");
+        speed.className = "compare-speed";
+        speed.textContent = `vmax ${metric(summary.max_linear_speed_mps, " m/s")}`;
+        meta.append(left, speed);
+        card.append(video, meta);
+        card.addEventListener("click", () => { state.selectedId = row.case_id; render(); });
+        grid.appendChild(card);
+        video.play().catch(() => {});
+      });
+
+      const body = $("comparison-table-body");
+      body.replaceChildren();
+      controls.forEach((row) => {
+        const object = objectSummary(row);
+        const tr = document.createElement("tr");
+        if (row.case_id === state.selectedId) tr.className = "selected-row";
+        const values = [
+          metric(tableHeight(row), " m"),
+          metric(initialSpeed(row), " m/s"),
+          metric(row.state_summary && row.state_summary.max_linear_speed_mps, " m/s"),
+          metric(object.height_range_m, " m"),
+          metric(object.final_speed_mps, " m/s"),
+          motionState(row.state_summary && row.state_summary.final_motion_state),
+        ];
+        values.forEach((value) => {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          tr.appendChild(cell);
+        });
+        body.appendChild(tr);
+      });
+    }
+
+    function metricsFor(row) {
+      const summary = row.state_summary || {};
+      const object = objectSummary(row);
+      if (isF11(row)) {
+        return [
+          ["桌高", metric(tableHeight(row), " m")],
+          ["初速度", metric(initialSpeed(row), " m/s")],
+          ["最高线速度", metric(summary.max_linear_speed_mps, " m/s")],
+          ["高度范围", metric(object.height_range_m, " m")],
+          ["末速度", metric(object.final_speed_mps, " m/s")],
+          ["末态", motionState(summary.final_motion_state)],
+        ];
+      }
+      return [
+        ["时长", metric(summary.duration_s, " s")],
+        ["物体数", String((summary.objects || []).length || 0)],
+        ["初速度", metric(initialSpeed(row), " m/s")],
+        ["最高线速度", metric(summary.max_linear_speed_mps, " m/s")],
+        ["末速度", metric(object.final_speed_mps, " m/s")],
+        ["末态", motionState(summary.final_motion_state)],
+      ];
+    }
+
+    function renderMetrics(row) {
+      const grid = $("metric-grid");
+      grid.replaceChildren();
+      metricsFor(row).forEach(([label, value]) => {
+        const item = document.createElement("div");
+        item.className = "metric";
+        const labelNode = document.createElement("span");
+        labelNode.className = "metric-label";
+        labelNode.textContent = label;
+        const valueNode = document.createElement("span");
+        valueNode.className = "metric-value";
+        valueNode.textContent = value;
+        item.append(labelNode, valueNode);
+        grid.appendChild(item);
+      });
+    }
+
+    function renderSelected() {
+      const row = state.filtered.find((item) => item.case_id === state.selectedId);
+      if (!row) return;
+      const summary = row.state_summary || {};
+      const difficulty = row.difficulty || {};
+      const family = row.scene_family || {};
+      const video = $("video");
+      if (video.dataset.caseId !== row.case_id) {
+        video.pause();
+        video.src = row.video_url;
+        video.dataset.caseId = row.case_id;
+        video.load();
+      }
+      $("video-title").textContent = row.case_id;
+      $("video-status").textContent = row.status || "rendered";
+      $("video-caption").textContent = row.video || "";
+      $("question").textContent = row.question || "未记录问题。";
+      $("response").textContent = row.response_final || "尚无输出。";
+      $("answer-source").textContent = row.answer_source || "-";
+      $("scene-context").textContent = `${difficulty.level || "-"} / ${difficulty.title || "-"} / ${family.family_key || "-"} ${family.title || ""}`;
+      $("scene-description").textContent = row.scene_description || family.description || "-";
+      $("summary").textContent = JSON.stringify(summary, null, 2);
+      $("spec").textContent = JSON.stringify(spec(row), null, 2);
+      renderMetrics(row);
+      const object = dynamicObject(row) || {};
+      $("selected-note").textContent = isF11(row)
+        ? `滚球：${metric(object.mass_kg, " kg")} · e=${number(object.restitution)} · mu=${number(object.friction)} · 屏幕右向 ${angleLabel(row).toUpperCase() || "-"}`
+        : `${row.width || 1280} x ${row.height || 720} · ${summary.frames || "-"} 帧 · mask ${row.mask_ids ? "已保留" : "缺失"}`;
+    }
+
+    function renderControls() {
+      document.querySelectorAll(".mode-tab").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.mode === state.mode)));
+      $("level-filter").disabled = state.mode !== "all";
+    }
+    function render() {
+      state.filtered = filteredRows();
+      chooseSelected(state.filtered);
+      renderControls();
+      const hasRows = state.filtered.length > 0;
+      $("workspace").hidden = !hasRows;
+      $("empty").hidden = hasRows;
+      $("status").textContent = `${state.filtered.length} / ${state.rows.length} 个案例`;
+      if (!hasRows) {
+        $("comparison").hidden = true;
+        return;
+      }
+      renderList();
+      renderComparison();
+      renderSelected();
+    }
+
+    document.querySelectorAll(".mode-tab").forEach((button) => button.addEventListener("click", () => { state.mode = button.dataset.mode; render(); }));
+    $("level-filter").addEventListener("change", (event) => { state.level = event.target.value; render(); });
+    $("case-search").addEventListener("input", (event) => { state.query = event.target.value; render(); });
+    fetch("/api/results")
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((rows) => { state.rows = rows; render(); })
+      .catch((error) => { $("status").textContent = `读取失败: ${error.message}`; });
+  </script>
+</body>
+</html>

@@ -225,6 +225,12 @@ def _family_event_sentence(blueprint: ScenarioBlueprint) -> str:
         if isinstance(table_height, (int, float)):
             return f"{_object_prompt_phrase(mover)} rolls across a {float(table_height):.2f} m-high table and falls off the edge."
         return f"{_object_prompt_phrase(mover)} {motion_text} on a table."
+    if blueprint.family_key == "F12":
+        mover = role_map.get("wheel_0", blueprint.objects[0])
+        ramp_angle = blueprint.metadata.get("ramp_angle_deg")
+        if isinstance(ramp_angle, (int, float)):
+            return f"{_object_prompt_phrase(mover)} is released from rest on a {float(ramp_angle):.0f} degree incline."
+        return f"{_object_prompt_phrase(mover)} is released from rest on a visible incline."
     return "Rigid objects move through a realistic indoor physics scene."
 
 

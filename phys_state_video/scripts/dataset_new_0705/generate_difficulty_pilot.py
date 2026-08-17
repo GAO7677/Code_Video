@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .common_specs import ScenarioBlueprint
 from .render_sim_0705 import render_blueprint_case
 from .scene_generators_0705 import (
     DEFAULT_CAMERA_DISTANCE_SCALE,
@@ -66,6 +67,13 @@ TABLE_ROLLOFF_CASES = (
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -24.0, "angle_label": "sr024"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -30.0, "angle_label": "sr030"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -36.0, "angle_label": "sr036"},
+)
+
+RAMP_INCLINE_CASES = (
+    {"ramp_angle_deg": 8.0, "angle_label": "a008", "angle_name": "shallow"},
+    {"ramp_angle_deg": 16.0, "angle_label": "a016", "angle_name": "moderate"},
+    {"ramp_angle_deg": 24.0, "angle_label": "a024", "angle_name": "steep"},
+    {"ramp_angle_deg": 32.0, "angle_label": "a032", "angle_name": "very_steep"},
 )
 
 
@@ -162,6 +170,42 @@ def _family_summary(family_key: str) -> dict[str, object]:
     }
 
 
+def _scenario_objects(blueprint: ScenarioBlueprint) -> list[dict[str, object]]:
+    return [
+        {
+            "name": obj.name,
+            "family_key": obj.family_key,
+            "shape": obj.shape,
+            "dynamic": bool(obj.dynamic),
+            "role": obj.role,
+            "mass_kg": round(float(obj.mass), 5),
+            "friction": round(float(obj.friction), 5),
+            "restitution": round(float(obj.restitution), 5),
+            "position": [round(float(value), 5) for value in obj.position],
+            "linear_velocity": [round(float(value), 5) for value in obj.linear_velocity],
+            "angular_velocity": [round(float(value), 5) for value in obj.angular_velocity],
+        }
+        for obj in blueprint.objects
+    ]
+
+
+def _load_existing_rows(results_path: Path) -> list[dict[str, object]]:
+    if not results_path.exists():
+        return []
+    rows: list[dict[str, object]] = []
+    for line_number, line in enumerate(results_path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid existing results at {results_path}:{line_number}") from exc
+        if not isinstance(row, dict) or not isinstance(row.get("case_id"), str):
+            raise ValueError(f"invalid result row at {results_path}:{line_number}")
+        rows.append(row)
+    return rows
+
+
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -178,6 +222,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-distance-scale", type=float, default=DEFAULT_CAMERA_DISTANCE_SCALE)
     parser.add_argument("--scene-style", type=str, default="indoor_realistic")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--only-control-group",
+        choices=("f11", "f12"),
+        help="Render only one deterministic control group instead of the full pilot.",
+    )
+    parser.add_argument(
+        "--append-existing-results",
+        action="store_true",
+        help="Merge newly rendered control cases into an existing cases.jsonl at --output-root.",
+    )
     return parser.parse_args()
 
 
@@ -185,7 +239,15 @@ def main() -> None:
     args = parse_args()
     if args.per_level <= 0:
         raise ValueError("--per-level must be positive")
+    if args.overwrite and args.append_existing_results:
+        raise ValueError("--overwrite cannot be combined with --append-existing-results")
     output_root = args.output_root
+    results_path = output_root / "cases.jsonl"
+    existing_rows = _load_existing_rows(results_path) if args.append_existing_results else []
+    if args.only_control_group and results_path.exists() and not args.append_existing_results:
+        raise FileExistsError(
+            f"{results_path} already exists; pass --append-existing-results to preserve its rows"
+        )
     if args.overwrite and output_root.exists():
         shutil.rmtree(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -196,7 +258,8 @@ def main() -> None:
     shared_table_speed = 1.25
 
     case_index = 0
-    for level_key, level in DIFFICULTY_LEVELS.items():
+    base_levels = DIFFICULTY_LEVELS.items() if args.only_control_group is None else ()
+    for level_key, level in base_levels:
         families = list(level["families"])
         for local_index in range(args.per_level):
             family_key = families[local_index % len(families)]
@@ -314,7 +377,8 @@ def main() -> None:
                 )
                 print(f"failed {case_id}: {exc!r}", flush=True)
 
-    for extra in TABLE_ROLLOFF_CASES:
+    f11_cases = TABLE_ROLLOFF_CASES if args.only_control_group in (None, "f11") else ()
+    for extra in f11_cases:
         family_key = "F11"
         table_height_m = float(extra["table_height_m"])
         travel_angle_deg = float(extra["travel_angle_deg"])
@@ -372,22 +436,7 @@ def main() -> None:
                     "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
                     "table_height_label": extra["height_label"],
                     "angle_label": extra["angle_label"],
-                    "objects": [
-                        {
-                            "name": obj.name,
-                            "family_key": obj.family_key,
-                            "shape": obj.shape,
-                            "dynamic": bool(obj.dynamic),
-                            "role": obj.role,
-                            "mass_kg": round(float(obj.mass), 5),
-                            "friction": round(float(obj.friction), 5),
-                            "restitution": round(float(obj.restitution), 5),
-                            "position": [round(float(value), 5) for value in obj.position],
-                            "linear_velocity": [round(float(value), 5) for value in obj.linear_velocity],
-                            "angular_velocity": [round(float(value), 5) for value in obj.angular_velocity],
-                        }
-                        for obj in blueprint.objects
-                    ],
+                    "objects": _scenario_objects(blueprint),
                 },
                 "label_policy": "scene mechanism is not an observed motion label",
             }
@@ -441,27 +490,150 @@ def main() -> None:
             )
             print(f"failed {case_id}: {exc!r}", flush=True)
 
-    _write_json(output_root / "pilot_manifest.json", rows)
+    f12_cases = RAMP_INCLINE_CASES if args.only_control_group in (None, "f12") else ()
+    for extra in f12_cases:
+        family_key = "F12"
+        ramp_angle_deg = float(extra["ramp_angle_deg"])
+        case_id = f"difficulty_l2_f12_{extra['angle_label']}"
+        seed = int(args.seed_base + 99000)
+        case_root = output_root / "cases" / "L2" / family_key / case_id
+        try:
+            if case_root.exists() and not args.overwrite:
+                raise FileExistsError(
+                    f"case exists; pass --overwrite for a fresh pilot: {case_root}"
+                )
+            blueprint = generate_scenario_blueprint(
+                family_key=family_key,
+                sample_key=case_id,
+                seed=seed,
+                direction_mode="left_to_right",
+                size_scale=args.size_scale,
+                camera_distance_scale=args.camera_distance_scale,
+                ramp_angle_deg=ramp_angle_deg,
+            )
+            render_manifest = render_blueprint_case(
+                blueprint=blueprint,
+                seed=seed,
+                output_root=case_root,
+                width=args.width,
+                height=args.height,
+                scene_style="indoor_realistic",
+                export_instance_masks=True,
+                preserve_states=True,
+            )
+            state_summary = _summarize_states(Path(render_manifest["states"]))
+            family_summary = _family_summary(family_key)
+            difficulty = {
+                "level": "L2",
+                "title": "斜面释放",
+                "description": "同一蓝色轮子从静止在不同坡角的动态支撑斜板上释放，重点观察重力驱动的滚动加速、斜面退出和末态。",
+                "priority": 2,
+            }
+            pilot_metadata = {
+                "difficulty": difficulty,
+                "scene_family": family_summary,
+                "state_summary": state_summary,
+                "scene_style": "indoor_realistic",
+                "scenario_spec": {
+                    "surface_key": blueprint.surface_key,
+                    "camera_key": blueprint.camera_key,
+                    "lighting_key": blueprint.lighting_key,
+                    "scene_style": "indoor_realistic",
+                    "ramp_angle_deg": round(ramp_angle_deg, 5),
+                    "ramp_angle_label": extra["angle_label"],
+                    "ramp_angle_name": extra["angle_name"],
+                    "ramp_length_m": round(float(blueprint.metadata["ramp_length_m"]), 5),
+                    "initial_speed_mps": 0.0,
+                    "released_from_rest": True,
+                    "controlled_variable": "ramp_angle_deg",
+                    "support_mode": blueprint.metadata["support_mode"],
+                    "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
+                    "objects": _scenario_objects(blueprint),
+                },
+                "label_policy": "scene mechanism is not an observed motion label",
+            }
+            meta_path = Path(render_manifest["meta"])
+            meta_payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta_payload["difficulty_pilot"] = pilot_metadata
+            meta_path.write_text(
+                json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            manifest_path = case_root / "case_manifest.json"
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_payload["difficulty_pilot"] = pilot_metadata
+            manifest_path.write_text(
+                json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            rows.append(
+                {
+                    "case_id": case_id,
+                    "status": "rendered",
+                    "difficulty": difficulty,
+                    "scene_family": family_summary,
+                    "scene_title": blueprint.title,
+                    "scene_description": blueprint.description,
+                    "scene_style": "indoor_realistic",
+                    "scenario_spec": pilot_metadata["scenario_spec"],
+                    "state_summary": state_summary,
+                    "video": render_manifest["video"],
+                    "video_url": "/media/" + case_id,
+                    "meta": render_manifest["meta"],
+                    "states": render_manifest["states"],
+                    "mask_video": render_manifest["mask_video"],
+                    "mask_ids": render_manifest["mask_ids"],
+                    "question": ANALYSIS_QUESTION,
+                    "response_final": "本 pilot 只展示仿真视频和状态摘要，尚未运行 VLM。",
+                    "response_raw": "",
+                    "answer_source": "simulation_pilot",
+                    "caption_intent_only": render_manifest["caption"],
+                }
+            )
+            print(f"rendered {case_id} -> {render_manifest['video']}", flush=True)
+        except Exception as exc:  # pragma: no cover - batch guard
+            failures.append(
+                {
+                    "case_id": case_id,
+                    "difficulty": "L2",
+                    "family_key": family_key,
+                    "seed": seed,
+                    "error": repr(exc),
+                }
+            )
+            print(f"failed {case_id}: {exc!r}", flush=True)
+
+    merged_by_case_id = {str(row["case_id"]): row for row in existing_rows}
+    merged_by_case_id.update({str(row["case_id"]): row for row in rows})
+    all_rows = list(merged_by_case_id.values())
+    requested = (
+        (3 * args.per_level if args.only_control_group is None else 0)
+        + (len(TABLE_ROLLOFF_CASES) if args.only_control_group in (None, "f11") else 0)
+        + (len(RAMP_INCLINE_CASES) if args.only_control_group in (None, "f12") else 0)
+    )
+
+    _write_json(output_root / "pilot_manifest.json", all_rows)
     _write_json(output_root / "reports" / "failure_report.json", failures)
     _write_json(
         output_root / "reports" / "summary.json",
         {
-            "total_requested": 3 * args.per_level + len(TABLE_ROLLOFF_CASES),
-            "rendered": len(rows),
+            "total_requested": requested,
+            "rendered": len(all_rows),
+            "rendered_this_run": len(rows),
+            "existing_rows_preserved": len(existing_rows),
             "failures": len(failures),
             "difficulty_levels": DIFFICULTY_LEVELS,
             "state_summary_policy": "derived from preserved PyBullet states; not a semantic event annotation",
         },
     )
     with (output_root / "cases.jsonl").open("w", encoding="utf-8") as handle:
-        for row in rows:
+        for row in all_rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     print(
         json.dumps(
             {
                 "output_root": str(output_root),
-                "requested": 3 * args.per_level + len(TABLE_ROLLOFF_CASES),
-                "rendered": len(rows),
+                "requested": requested,
+                "rendered": len(all_rows),
+                "rendered_this_run": len(rows),
                 "failures": len(failures),
                 "results": str(output_root / "cases.jsonl"),
             },

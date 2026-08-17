@@ -273,6 +273,16 @@
       "checkpoint": "/data/gaoya/agent-data/checkpoints/object_cotracker_trajectory_loss/full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached/step000000_gpu01_20260816T020512Z/checkpoints/step-004000",
       "config": "/data/gaoya/agent-data/checkpoints/object_cotracker_trajectory_loss/full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached/step000000_gpu01_20260816T020512Z/resolved_experiment_config.json",
       "color": "#A23B72"
+    },
+    {
+      "entry_id": "cotracker_trajectory_step4500",
+      "method_key": "cotracker_trajectory",
+      "method_label": "Full-SA + No-Object + CoTracker Trajectory Loss",
+      "version": "step-0 run",
+      "step": 4500,
+      "checkpoint": "/data/gaoya/agent-data/checkpoints/object_cotracker_trajectory_loss/full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached/step000000_gpu01_20260816T020512Z/checkpoints/step-004500",
+      "config": "/data/gaoya/agent-data/checkpoints/object_cotracker_trajectory_loss/full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached/step000000_gpu01_20260816T020512Z/resolved_experiment_config.json",
+      "color": "#A23B72"
     }
   ]
 }

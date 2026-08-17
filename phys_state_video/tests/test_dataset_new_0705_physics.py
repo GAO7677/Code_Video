@@ -19,12 +19,15 @@ from scripts.dataset_new_0705.scene_generators_0705 import (
     validate_blueprint_physics,
 )
 from scripts.dataset_new_0705.render_sim_0705 import build_object_phrase_bundle
-from scripts.dataset_new_0705.generate_difficulty_pilot import TABLE_ROLLOFF_CASES
+from scripts.dataset_new_0705.generate_difficulty_pilot import (
+    RAMP_INCLINE_CASES,
+    TABLE_ROLLOFF_CASES,
+)
 
 
 class DatasetNew0705PhysicsTests(unittest.TestCase):
     def test_generated_static_objects_are_grounded_and_dynamic_objects_use_gravity(self) -> None:
-        for family_index in range(1, 12):
+        for family_index in range(1, 13):
             family_key = f"F{family_index}"
             for sample_index in range(30):
                 blueprint = generate_scenario_blueprint(
@@ -49,7 +52,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             validate_blueprint_physics(replace(blueprint, objects=(invalid_object,)))
 
     def test_visible_supports_are_dynamic_and_grounded(self) -> None:
-        for family_key in ("F5", "F6", "F9", "F10"):
+        for family_key in ("F5", "F6", "F9", "F10", "F12"):
             blueprint = generate_scenario_blueprint(
                 family_key, f"{family_key}_support", 20260717
             )
@@ -152,13 +155,60 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             self.assertAlmostEqual(mover.angular_velocity[0], expected_vy / radius, places=5)
             self.assertAlmostEqual(mover.angular_velocity[1], -expected_vx / radius, places=5)
 
+    def test_incline_control_uses_dynamic_floor_supported_bodies(self) -> None:
+        expected_angles = [8.0, 16.0, 24.0, 32.0]
+        self.assertEqual(
+            [float(case["ramp_angle_deg"]) for case in RAMP_INCLINE_CASES],
+            expected_angles,
+        )
+        board_heights = []
+        wheel_specs = []
+        for angle_deg in expected_angles:
+            blueprint = generate_scenario_blueprint(
+                "F12",
+                f"f12_angle_{angle_deg:03.0f}",
+                20260817,
+                "left_to_right",
+                ramp_angle_deg=angle_deg,
+            )
+            self.assertEqual(blueprint.gravity, EARTH_GRAVITY)
+            self.assertEqual(blueprint.camera_key, "cam_10")
+            self.assertEqual(blueprint.surface_key, "painted_concrete_floor")
+            self.assertEqual(blueprint.lighting_key, "hall_neutral")
+            self.assertAlmostEqual(blueprint.metadata["ramp_angle_deg"], angle_deg, places=5)
+            self.assertEqual(blueprint.metadata["support_mode"], "dynamic_floor_supported_risers")
+            self.assertTrue(all(obj.dynamic for obj in blueprint.objects))
+
+            wheel = next(obj for obj in blueprint.objects if obj.name == "wheel_0")
+            board = next(obj for obj in blueprint.objects if obj.name == "incline_board_0")
+            risers = [obj for obj in blueprint.objects if obj.name.startswith("incline_riser_")]
+            self.assertEqual(wheel.family_key, "wheel")
+            self.assertAlmostEqual(wheel.mass, 1.60, places=5)
+            self.assertAlmostEqual(wheel.friction, 0.72, places=5)
+            self.assertAlmostEqual(wheel.restitution, 0.06, places=5)
+            self.assertEqual(wheel.linear_velocity, (0.0, 0.0, 0.0))
+            self.assertEqual(wheel.angular_velocity, (0.0, 0.0, 0.0))
+            self.assertAlmostEqual(board.orientation_euler_deg[1], angle_deg, places=5)
+            self.assertEqual(board.role, "dynamic_ramp")
+            self.assertEqual(len(risers), 2)
+            for riser in risers:
+                self.assertEqual(riser.role, "dynamic_support")
+                self.assertAlmostEqual(
+                    riser.position[2], _collision_vertical_extent(riser), places=7
+                )
+            board_heights.append(board.position[2])
+            wheel_specs.append((wheel.size, wheel.mass, wheel.friction, wheel.restitution))
+
+        self.assertEqual(wheel_specs, [wheel_specs[0]] * len(wheel_specs))
+        self.assertEqual(board_heights, sorted(board_heights))
+
     def test_validation_rejects_nonstandard_gravity(self) -> None:
         blueprint = generate_scenario_blueprint("F1", "invalid_gravity", seed=20260717)
         with self.assertRaisesRegex(ValueError, "require gravity"):
             validate_blueprint_physics(replace(blueprint, gravity=3.71))
 
     def test_left_and_right_cases_are_complete_mirrors(self) -> None:
-        for family_index in range(1, 12):
+        for family_index in range(1, 13):
             family_key = f"F{family_index}"
             left = generate_scenario_blueprint(family_key, "left", 20260718, "left_to_right")
             right = generate_scenario_blueprint(family_key, "right", 20260718, "right_to_left")

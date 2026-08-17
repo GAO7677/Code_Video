@@ -1,8 +1,9 @@
+import json
 import unittest
 
 from PIL import Image
 
-from infer_physv_evidence_pipeline import event_window_indices
+from infer_physv_evidence_pipeline import event_time_keys, event_window_indices, parse_event_probe
 from physv_caption_ablation import dense_start_indices
 from physv_caption_evidence_probe import split_storyboard
 
@@ -37,6 +38,22 @@ class EventWindowIndicesTest(unittest.TestCase):
     def test_shifts_a_boundary_window_without_duplicates(self):
         self.assertEqual(event_window_indices(total_frames=90, center=2, window_size=6), [0, 1, 2, 3, 4, 5])
         self.assertEqual(event_window_indices(total_frames=90, center=89, window_size=6), [84, 85, 86, 87, 88, 89])
+
+
+class EventProbeTest(unittest.TestCase):
+    def test_accepts_the_expected_ordered_time_keys(self):
+        indices = [0, 1, 2, 3, 4, 5]
+        keys = event_time_keys(indices, source_fps=30.0)
+        expected = {key: "可见状态" for key in keys}
+
+        self.assertEqual(
+            parse_event_probe(json.dumps(expected, ensure_ascii=False), indices, source_fps=30.0),
+            expected,
+        )
+
+    def test_rejects_an_incomplete_event_probe(self):
+        with self.assertRaises(ValueError):
+            parse_event_probe('{"t=0.00s":"可见状态"}', [0, 1, 2, 3, 4, 5], source_fps=30.0)
 
 
 if __name__ == "__main__":
