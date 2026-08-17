@@ -50,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--processor-longest-edge", type=int, default=160000)
     parser.add_argument("--model-dtype", choices=("bfloat16", "float16", "float32"), default="bfloat16")
     parser.add_argument("--case-id", action="append", dest="case_ids")
+    parser.add_argument("--variant-key", action="append", dest="variant_keys")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -135,12 +136,21 @@ def build_messages(
         "video": str(variant["video"]),
         "max_pixels": max_pixels,
     }
-    if variant_key == "full":
+    params = variant.get("video_params")
+    if params is None and variant_key == "full":
         if full_row is None:
             raise ValueError(f"Missing full-video result for {row['case_id']}")
-        if str(full_row.get("video")) != str(variant["video"]):
-            raise ValueError(f"Full-video path mismatch for {row['case_id']}")
-        params = full_row.get("video_params") or {}
+        params = full_row.get("video_params")
+    if params is not None:
+        if not isinstance(params, dict):
+            raise ValueError(f"Invalid full-video parameters for {row['case_id']} / {variant_key}")
+        if variant_key == "full":
+            if full_row is None:
+                raise ValueError(f"Missing full-video result for {row['case_id']}")
+            if str(full_row.get("video")) != str(variant["video"]):
+                raise ValueError(f"Full-video path mismatch for {row['case_id']}")
+            if full_row.get("video_params") != params:
+                raise ValueError(f"Saved full-video parameters do not match for {row['case_id']}")
         required = ("fps", "max_frames", "max_pixels")
         if any(name not in params for name in required):
             raise ValueError(f"Missing saved full-video parameters for {row['case_id']}")
@@ -148,7 +158,7 @@ def build_messages(
             raise ValueError(
                 f"Unexpected full-video max_pixels for {row['case_id']}: {params['max_pixels']}"
             )
-        video_content["fps"] = int(params["fps"])
+        video_content["fps"] = float(params["fps"])
         video_content["max_frames"] = int(params["max_frames"])
     else:
         frame_count = variant.get("frame_count")
@@ -444,6 +454,9 @@ def main() -> None:
     if len(full_by_case) != len(full_rows):
         raise ValueError("Duplicate case IDs in full-video results")
     selected_case_ids = set(args.case_ids or [row["case_id"] for row in rows])
+    variant_keys = args.variant_keys or ["prefix_8", "prefix_16", "prefix_24", "full"]
+    if len(set(variant_keys)) != len(variant_keys):
+        raise ValueError(f"Duplicate variant keys: {variant_keys}")
     missing_case_ids = selected_case_ids - {row["case_id"] for row in rows}
     if missing_case_ids:
         raise ValueError(f"Unknown case IDs: {sorted(missing_case_ids)}")
@@ -466,7 +479,7 @@ def main() -> None:
         if full_row is None:
             raise ValueError(f"No full-video result for {row['case_id']}")
         variants = row.get("variants") or {}
-        for variant_key in ("prefix_8", "prefix_16", "prefix_24", "full"):
+        for variant_key in variant_keys:
             variant = variants.get(variant_key)
             if variant is None:
                 raise ValueError(f"Missing {variant_key} for {row['case_id']}")

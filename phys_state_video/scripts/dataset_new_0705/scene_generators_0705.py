@@ -109,9 +109,9 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             hdri_key="studio_warm",
         ),
         CameraSpec(
-            eye=(3.20, -0.65, 1.36),
+            eye=(-3.20, -0.65, 1.36),
             target=(0.25, 0.00, 0.28),
-            yfov_deg=50.0,
+            yfov_deg=58.0,
             jitter_eye_xyz=(0.0, 0.0, 0.0),
             jitter_target_xyz=(0.0, 0.0, 0.0),
             jitter_fov_deg=0.0,

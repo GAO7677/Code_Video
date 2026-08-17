@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PhysV / Prefix Frame Comparison</title>
+  <title>PhysV / Temporal Sampling Comparison</title>
   <style>
     :root {
       --ink: #182326;
@@ -175,7 +175,7 @@
     .case-heading h3 { margin: 5px 0 0; overflow-wrap: anywhere; font-size: 19px; line-height: 1.2; letter-spacing: -.025em; }
     .case-heading .case-id { max-width: 800px; margin: 5px 0 0; color: var(--muted); font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
     .case-heading .case-tag { flex: 0 0 auto; padding: 6px 8px; color: var(--teal); background: var(--teal-soft); border-radius: 3px; font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
-    .comparison-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: start; }
+    .comparison-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: start; }
     .variant-card { min-width: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; box-shadow: var(--shadow); }
     .variant-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-height: 62px; padding: 11px 12px 9px; border-bottom: 1px solid var(--line); }
     .variant-index { display: block; color: var(--coral); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -270,7 +270,7 @@
       <div>
         <p class="eyebrow">EXPERIMENT VIEW / QWEN3-VL</p>
         <h2>同一视频，核对模型实际看到的帧序列。</h2>
-        <p>播放器展示由 Qwen3-VL 最终视觉 patch 反构的 RGB 回放；源帧索引、最终尺寸和张量哈希与对应输出并列保留。</p>
+        <p>播放器展示由 Qwen3-VL 最终视觉 patch 反构的 RGB 回放；前缀输入与完整视频的 FPS 20 / FPS 15 输入、帧索引、尺寸、张量哈希和输出并列保留。</p>
       </div>
       <div class="stats" aria-label="结果统计">
         <div class="stat"><strong id="stat-cases">--</strong><span>cases</span></div>
@@ -314,8 +314,8 @@
 
   <script>
     const state = { rows: [], filter: "all", query: "" };
-    const variantOrder = ["prefix_8", "prefix_16", "prefix_24", "full"];
-    const variantNumbers = { prefix_8: "01", prefix_16: "02", prefix_24: "03", full: "04" };
+    const variantOrder = ["prefix_8", "prefix_16", "prefix_24", "full", "full_fps15"];
+    const variantNumbers = { prefix_8: "01", prefix_16: "02", prefix_24: "03", full: "04", full_fps15: "05" };
 
     const byId = (id) => document.getElementById(id);
     const node = (tag, className, value) => {
@@ -340,9 +340,11 @@
 
     function visualInputLabel(variant) {
       const shape = variant.vlm_input_audit && variant.vlm_input_audit.visual_replay_shape;
-      if (Array.isArray(shape) && shape.length === 4) return `${shape[0]} 帧 / ${shape[2]} x ${shape[3]}`;
+      const targetFps = variant.video_params && Number(variant.video_params.fps);
+      const fpsLabel = Number.isFinite(targetFps) ? ` / 目标 ${targetFps} fps` : "";
+      if (Array.isArray(shape) && shape.length === 4) return `${shape[0]} 帧 / ${shape[2]} x ${shape[3]}${fpsLabel}`;
       const stageOne = variant.video_info && variant.video_info.shape;
-      if (Array.isArray(stageOne) && stageOne.length === 4) return `${stageOne[0]} 帧 / ${stageOne[2]} x ${stageOne[3]}`;
+      if (Array.isArray(stageOne) && stageOne.length === 4) return `${stageOne[0]} 帧 / ${stageOne[2]} x ${stageOne[3]}${fpsLabel}`;
       return "等待审计";
     }
 
@@ -373,10 +375,15 @@
       const grid = Array.isArray(audit.vllm_grid_thw) ? audit.vllm_grid_thw.join(" x ") : "--";
       const size = audit.vllm_processor_kwargs && audit.vllm_processor_kwargs.size;
       const budget = size ? `${size.shortest_edge}..${size.longest_edge}` : "--";
+      const targetFps = variant.video_params && Number(variant.video_params.fps);
+      const replayFps = Number(audit.visual_replay_fps);
+      const targetTiming = Number.isFinite(targetFps) ? `${targetFps} fps` : "--";
+      const replayTiming = Number.isFinite(replayFps) ? `${replayFps.toFixed(3)} fps` : "--";
       return [
         "播放器：由最终 VLM patch 张量反归一化得到的 RGB 回放（H.264 仅用于可视化）。",
         `源视频：${audit.source_video || variant.video || "--"}`,
         `源帧：${formatIndices(audit.source_frame_indices)}  (${audit.source_total_frames || "?"} 帧源视频 @ ${audit.source_fps || "?"} fps)`,
+        `采样目标：${targetTiming}；回放编码帧率：${replayTiming}`,
         `Qwen 解码/缩放张量：${stageOne}  SHA-256 ${audit.stage_one_tensor_sha256 || "--"}`,
         `最终 VLM 视觉序列：${visual}  | patch：${patchShape}  | grid_thw：${grid}`,
         `vLLM 处理：do_sample_frames=false，像素预算 ${budget}，dtype ${audit.vllm_patch_dtype || "--"}`,
@@ -387,7 +394,10 @@
     function renderStats(visibleRows) {
       byId("stat-cases").textContent = String(state.rows.length);
       byId("stat-prefix").textContent = String(state.rows.length * 3);
-      byId("stat-full").textContent = String(state.rows.length);
+      const fullRunCount = state.rows.reduce((count, row) => (
+        count + ["full", "full_fps15"].filter((key) => row.variants && row.variants[key]).length
+      ), 0);
+      byId("stat-full").textContent = String(fullRunCount);
       byId("stat-visible").textContent = String(visibleRows.length);
       byId("case-count").textContent = `${visibleRows.length} / ${state.rows.length}`;
     }
@@ -427,7 +437,7 @@
       const head = node("header", "variant-head");
       const titleBlock = node("div");
       titleBlock.append(node("span", "variant-index", variantNumbers[key]));
-      titleBlock.append(node("h4", "", variant.label || (key === "full" ? "完整视频" : key)));
+      titleBlock.append(node("h4", "", variant.label || (key.startsWith("full") ? "完整视频" : key)));
       head.append(titleBlock);
       head.append(node("span", "variant-kind", sourceLabel(variant)));
       card.append(head);
@@ -506,7 +516,8 @@
         headingText.append(node("h3", "", `${parts.family} / ${parts.leaf}`));
         headingText.append(node("p", "case-id", row.case_id || ""));
         heading.append(headingText);
-        heading.append(node("span", "case-tag", "4-way VLM input"));
+        const visibleVariantCount = variantOrder.filter((key) => row.variants && row.variants[key]).length;
+        heading.append(node("span", "case-tag", `${visibleVariantCount}-way VLM input`));
         section.append(heading);
 
         const comparison = node("div", "comparison-grid");

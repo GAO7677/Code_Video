@@ -61,7 +61,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
                 )
 
     def test_table_rolloff_cases_share_speed_across_heights(self) -> None:
-        heights = (0.46, 0.68, 0.92)
+        heights = (0.46, 0.68, 1.02)
         speeds = []
         for index, table_height in enumerate(heights):
             blueprint = generate_scenario_blueprint(
@@ -74,6 +74,8 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             )
             self.assertAlmostEqual(blueprint.metadata["table_height_m"], table_height, places=5)
             self.assertEqual(blueprint.camera_key, "cam_09")
+            self.assertLess(blueprint.camera.eye[0], 0.0)
+            self.assertAlmostEqual(blueprint.camera.yfov_deg, 58.0, places=5)
             self.assertAlmostEqual(blueprint.metadata["floor_restitution"], 0.62, places=5)
             mover = next(obj for obj in blueprint.objects if obj.name == "roller_0")
             self.assertTrue(mover.dynamic)

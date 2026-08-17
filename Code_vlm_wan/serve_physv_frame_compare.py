@@ -111,10 +111,8 @@ class CompareHandler(BaseHTTPRequestHandler):
 
     def _parse_media_token(self, path, prefix):
         token = unquote(path.removeprefix(prefix))
-        try:
-            return token.rsplit("/", 1)
-        except ValueError:
-            return None
+        parts = token.rsplit("/", 1)
+        return tuple(parts) if len(parts) == 2 else None
 
     def _handle(self):
         parsed = urlparse(self.path)

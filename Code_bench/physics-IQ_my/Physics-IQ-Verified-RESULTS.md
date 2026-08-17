@@ -82,6 +82,7 @@
 |---|---|---:|---:|---:|---:|---|
 | 已完成 | xSSC Full-SA no-object step-2000 | P0 | 198/198 | **33.8024** | 35.65 | 是 |
 | 已完成 | xSSC Full-SA no-object xSSC-loss DINOv3 MOVi-C step-500 | P0 | 198/198 | **33.2976** | 34.45 | 是 |
+| 已完成 | PhysRVG-72f-adapted | P0 | 198/198 | **39.9116** | 41.86 | 是 |
 | 已完成 | PhysRVG 旧版 BPP | P1 | 198/198 | 28.7738 | 26.92 | 否 |
 | 已完成 | PhysRVG 旧版 OP | P2 | 198/198 | 29.5964 | 27.73 | 否 |
 | 已完成 | Wan2.2-TI2V-5B OP last-frame baseline | P3 | 198/198 | 28.1540 | 26.43 | 否 |
@@ -226,14 +227,6 @@ SSH 118上的结果产物：
 
 | 最近状态 | 模型与 Run | 协议 | 进度 | 分数 |
 |---|---|---:|---:|---|
-| 已完成 | PhysRVG-72f-adapted | P0 | 198/198 submission，raw 77/77 | Verified 39.91156421027763（39.91）；Original 0.41853671160880473，官方 JSON 展示 41.86 |
-
-PhysRVG-72f-adapted 的官方评测产物：
-
-- CSV：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-72f-xssc-aligned-bpp-run_01/physics-IQ-benchmark-verified/results/physrvg-72f-xssc-aligned-bpp-run_01_mp4only.csv`
-- Metrics JSON：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-72f-xssc-aligned-bpp-run_01/physics-IQ-benchmark-verified/results/physrvg-72f-xssc-aligned-bpp-run_01_mp4only_metrics.json`
-- Verified 子指标：spatiotemporal `0.5129906042588389`，spatial `0.4086476549475409`，weighted spatial `0.33871453322437833`，MSE `0.33610977598034736`。
-- 备注：提交目录中含 `.json` 边车文件，官方评测器只接受 MP4；评测时使用内容不变的 198 个 MP4 硬链接目录 `physrvg-72f-xssc-aligned-bpp-run_01_mp4only`。
 | 已中断，可续跑 | xSSC slot-dedup step-2000 | P0 | 73/198 raw | 暂无 |
 | 未完成 | stage1b step-2500 | 非P0 | 11/198 | 暂无 |
 | 未完成 | stage1b step-2500 with negative prompt | 非P0 | 1/198 | 暂无 |
@@ -261,6 +254,15 @@ SSH 118上的结果产物：
 - 续跑后保留的189帧 raw：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/raw_model_outputs/physrvg-72f-xssc-aligned-bpp-run_01`
 - Evaluation root：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-72f-xssc-aligned-bpp-run_01`
 - Pipeline log：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/logs/physrvg-72f-xssc-aligned-bpp-run_01_pipeline.log`
+
+官方评测结果：
+
+- Verified：`39.91156421027763`（主表记录 `39.9116`）
+- Original：`0.41853671160880473`，官方 JSON 展示 `41.86`
+- CSV：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-72f-xssc-aligned-bpp-run_01/physics-IQ-benchmark-verified/results/physrvg-72f-xssc-aligned-bpp-run_01_mp4only.csv`
+- Metrics JSON：`/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-72f-xssc-aligned-bpp-run_01/physics-IQ-benchmark-verified/results/physrvg-72f-xssc-aligned-bpp-run_01_mp4only_metrics.json`
+- 官方 CSV：66 行场景记录，对应 198 个视频；Verified 子指标：spatiotemporal `0.5129906042588389`，spatial `0.4086476549475409`，weighted spatial `0.33871453322437833`，MSE `0.33610977598034736`。
+- 备注：提交目录含 `.json` 边车文件，官方评测器只接受 MP4；评测时使用内容不变的 198 个 MP4 硬链接目录 `physrvg-72f-xssc-aligned-bpp-run_01_mp4only`。
 
 Raw保存说明：
 

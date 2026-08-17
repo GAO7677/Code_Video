@@ -59,7 +59,7 @@ DIFFICULTY_LEVELS = {
 TABLE_ROLLOFF_CASES = (
     {"table_height_m": 0.46, "height_label": "low", "travel_angle_deg": 0.0, "angle_label": "a000"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 0.0, "angle_label": "a000"},
-    {"table_height_m": 0.92, "height_label": "high", "travel_angle_deg": 0.0, "angle_label": "a000"},
+    {"table_height_m": 1.02, "height_label": "high", "travel_angle_deg": 0.0, "angle_label": "a000"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -24.0, "angle_label": "am24"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -12.0, "angle_label": "am12"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 12.0, "angle_label": "ap12"},
