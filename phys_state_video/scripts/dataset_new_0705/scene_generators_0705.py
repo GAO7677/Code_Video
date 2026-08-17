@@ -304,6 +304,25 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             spin_range=(0.0, 10.0),
             angle_range_deg=(0.0, 30.0),
         ),
+        ScenarioFamilySpec(
+            key="F11",
+            title="Table Roll-Off",
+            description="A fixed-speed object rolls across a table and drops from the edge at different table heights.",
+            family_slug="F11_table_rolloff",
+            min_dynamic_objects=1,
+            max_dynamic_objects=1,
+            min_total_objects=6,
+            max_total_objects=6,
+            supports_occlusion=False,
+            supports_support_objects=True,
+            target_event_types=("table_entry", "edge_drop", "land"),
+            preferred_surface_keys=("residential_wood_floor", "studio_wood_floor", "dark_wood_floor"),
+            preferred_camera_keys=("cam_05", "cam_08", "cam_06"),
+            motion_modes=("table_rolloff",),
+            speed_range=(1.0, 1.6),
+            spin_range=(0.0, 0.0),
+            angle_range_deg=(0.0, 0.0),
+        ),
     ]
     return {family.key: family for family in families}
 
@@ -488,6 +507,11 @@ def validate_blueprint_physics(blueprint: ScenarioBlueprint) -> None:
                 f"{blueprint.sample_key}/{obj.name}: visible support must be dynamic; "
                 "use role='anchored_occluder' only for fixed scene geometry"
             )
+
+        if obj.role.startswith("anchored_"):
+            if obj.mass != 0.0:
+                raise ValueError(f"{blueprint.sample_key}/{obj.name}: static object mass must be zero")
+            continue
 
         expected_z = _collision_vertical_extent(obj)
         if obj.mass != 0.0:
@@ -1303,6 +1327,136 @@ def _make_f10(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0
     )
 
 
+def _make_f11(
+    rng: np.random.Generator,
+    sample_key: str,
+    size_scale: float = 1.0,
+    *,
+    table_height_m: float | None = None,
+    initial_speed_mps: float | None = None,
+) -> ScenarioBlueprint:
+    family = build_scenario_family_catalog()["F11"]
+    materials = build_material_catalog()
+
+    table_height = float(table_height_m if table_height_m is not None else rng.uniform(0.45, 0.95))
+    table_height = float(np.clip(table_height, 0.38, 1.02))
+    speed = float(initial_speed_mps if initial_speed_mps is not None else rng.uniform(*family.speed_range))
+    speed = float(np.clip(speed, 0.85, 2.4))
+
+    table_top_thickness = 0.05 * size_scale
+    table_top_half = 0.60 * size_scale
+    table_depth_half = 0.36 * size_scale
+    leg_half = 0.035 * size_scale
+    leg_height = max(0.20 * size_scale, table_height - table_top_thickness)
+    top_center_z = leg_height + 0.5 * table_top_thickness
+    leg_center_z = 0.5 * leg_height
+    ball_radius = 0.14 * size_scale
+    ball_start_x = -0.36 * size_scale
+    ball_start_y = 0.0
+    table_top_material_key = str(rng.choice(["wood_plywood", "wood_dark", "concrete_painted"]))
+
+    table_top = ObjectInstanceSpec(
+        name="table_top_0",
+        family_key="table_top",
+        shape="box",
+        semantic_role="support",
+        size={"hx": table_top_half, "hy": table_depth_half, "hz": 0.5 * table_top_thickness},
+        mass=0.0,
+        friction=0.88,
+        restitution=0.01,
+        linear_damping=0.0,
+        angular_damping=0.0,
+        material_key=table_top_material_key,
+        color=materials[table_top_material_key].base_color,
+        dynamic=False,
+        role="anchored_fixture",
+        position=(0.0, 0.0, top_center_z),
+        orientation_euler_deg=(0.0, 0.0, 0.0),
+        linear_velocity=(0.0, 0.0, 0.0),
+        angular_velocity=(0.0, 0.0, 0.0),
+    )
+
+    leg_material = str(rng.choice(["wood_dark", "painted_metal_teal", "concrete_painted"]))
+    leg_color = materials[leg_material].base_color
+    leg_dx = table_top_half - 0.08 * size_scale
+    leg_dy = table_depth_half - 0.08 * size_scale
+    leg_positions = [
+        (-leg_dx, -leg_dy, leg_center_z),
+        (leg_dx, -leg_dy, leg_center_z),
+        (-leg_dx, leg_dy, leg_center_z),
+        (leg_dx, leg_dy, leg_center_z),
+    ]
+    legs = [
+        ObjectInstanceSpec(
+            name=f"table_leg_{index}",
+            family_key="table_leg",
+            shape="box",
+            semantic_role="support",
+            size={"hx": leg_half, "hy": leg_half, "hz": 0.5 * leg_height},
+            mass=0.0,
+            friction=0.90,
+            restitution=0.01,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            material_key=leg_material,
+            color=leg_color,
+            dynamic=False,
+            role="anchored_fixture",
+            position=position,
+            orientation_euler_deg=(0.0, 0.0, 0.0),
+            linear_velocity=(0.0, 0.0, 0.0),
+            angular_velocity=(0.0, 0.0, 0.0),
+        )
+        for index, position in enumerate(leg_positions)
+    ]
+
+    mover = ObjectInstanceSpec(
+        name="roller_0",
+        family_key="ball",
+        shape="sphere",
+        semantic_role="rolling_dynamic",
+        size={"radius": ball_radius},
+        mass=0.95,
+        friction=0.58,
+        restitution=0.32,
+        linear_damping=0.02,
+        angular_damping=0.03,
+        material_key="rubber_red",
+        color=materials["rubber_red"].base_color,
+        dynamic=True,
+        role="dynamic",
+        position=(ball_start_x, ball_start_y, table_height + ball_radius),
+        orientation_euler_deg=(0.0, 0.0, 0.0),
+        linear_velocity=(speed, 0.0, 0.0),
+        angular_velocity=(0.0, -speed / max(ball_radius, 1e-6), 0.0),
+    )
+
+    camera_key = "cam_05"
+    camera = _sample_camera_with_distance_scale(rng, camera_key, camera_distance_scale=DEFAULT_CAMERA_DISTANCE_SCALE)
+
+    return ScenarioBlueprint(
+        family_key=family.key,
+        sample_key=sample_key,
+        title=f"Table roll-off at {table_height:.2f}m",
+        description="A fixed-speed ball rolls across a table of varying height and drops from the edge under gravity.",
+        gravity=EARTH_GRAVITY,
+        pre_roll_s=0.04,
+        camera_key=camera_key,
+        surface_key=str(rng.choice(family.preferred_surface_keys)),
+        lighting_key=build_camera_catalog()[camera_key].hdri_key,
+        camera=camera,
+        objects=(mover, table_top, *legs),
+        tags=("table_rolloff", "fixed_speed", f"table_height_{table_height:.2f}", "gravity_drop"),
+        metadata={
+            "table_height_m": round(table_height, 5),
+            "initial_speed_mps": round(speed, 5),
+            "table_top_thickness_m": round(table_top_thickness, 5),
+            "table_top_half_width_m": round(table_top_half, 5),
+            "table_top_half_depth_m": round(table_depth_half, 5),
+        },
+    )
+
+
 FAMILY_GENERATORS = {
     "F1": _make_f1,
     "F2": _make_f2,
@@ -1314,6 +1468,7 @@ FAMILY_GENERATORS = {
     "F8": _make_f8,
     "F9": _make_f9,
     "F10": _make_f10,
+    "F11": _make_f11,
 }
 
 
@@ -1324,6 +1479,8 @@ def generate_scenario_blueprint(
     direction_mode: str = "auto",
     size_scale: float = 1.0,
     camera_distance_scale: float = DEFAULT_CAMERA_DISTANCE_SCALE,
+    table_height_m: float | None = None,
+    initial_speed_mps: float | None = None,
 ) -> ScenarioBlueprint:
     if family_key not in FAMILY_GENERATORS:
         raise KeyError(f"unsupported family_key={family_key}")
@@ -1334,7 +1491,16 @@ def generate_scenario_blueprint(
     if direction_mode == "auto":
         direction_mode = "left_to_right" if seed % 2 == 0 else "right_to_left"
     rng = np.random.default_rng(seed)
-    blueprint = FAMILY_GENERATORS[family_key](rng, sample_key, size_scale)
+    if family_key == "F11":
+        blueprint = FAMILY_GENERATORS[family_key](
+            rng,
+            sample_key,
+            size_scale,
+            table_height_m=table_height_m,
+            initial_speed_mps=initial_speed_mps,
+        )
+    else:
+        blueprint = FAMILY_GENERATORS[family_key](rng, sample_key, size_scale)
     blueprint = replace(
         blueprint,
         metadata={

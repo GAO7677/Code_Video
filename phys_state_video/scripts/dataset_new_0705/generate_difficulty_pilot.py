@@ -56,6 +56,12 @@ DIFFICULTY_LEVELS = {
     },
 }
 
+TABLE_ROLLOFF_CASES = (
+    {"table_height_m": 0.46, "label": "low"},
+    {"table_height_m": 0.68, "label": "mid"},
+    {"table_height_m": 0.92, "label": "high"},
+)
+
 
 def _decode_name(value: object) -> str:
     if isinstance(value, bytes):
@@ -181,6 +187,7 @@ def main() -> None:
     rows: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
     family_catalog = build_scenario_family_catalog()
+    shared_table_speed = 1.25
 
     case_index = 0
     for level_key, level in DIFFICULTY_LEVELS.items():
@@ -300,12 +307,133 @@ def main() -> None:
                 )
                 print(f"failed {case_id}: {exc!r}", flush=True)
 
+    for extra in TABLE_ROLLOFF_CASES:
+        family_key = "F11"
+        table_height_m = float(extra["table_height_m"])
+        case_id = f"difficulty_l2_f11_h{int(round(table_height_m * 100)):03d}"
+        seed = int(args.seed_base + 88000)
+        case_root = output_root / "cases" / "L2" / family_key / case_id
+        try:
+            if case_root.exists() and not args.overwrite:
+                raise FileExistsError(
+                    f"case exists; pass --overwrite for a fresh pilot: {case_root}"
+                )
+            blueprint = generate_scenario_blueprint(
+                family_key=family_key,
+                sample_key=case_id,
+                seed=seed,
+                direction_mode="left_to_right",
+                size_scale=args.size_scale,
+                camera_distance_scale=args.camera_distance_scale,
+                table_height_m=table_height_m,
+                initial_speed_mps=shared_table_speed,
+            )
+            render_manifest = render_blueprint_case(
+                blueprint=blueprint,
+                seed=seed,
+                output_root=case_root,
+                width=args.width,
+                height=args.height,
+                scene_style="indoor_realistic",
+                export_instance_masks=True,
+                preserve_states=True,
+            )
+            state_summary = _summarize_states(Path(render_manifest["states"]))
+            family_summary = _family_summary(family_key)
+            difficulty = {
+                "level": "L2",
+                "title": "桌面滚落",
+                "description": "同初速度物体在不同桌高上滚动并越过桌缘，重点观察落体时机与接触变化。",
+                "priority": 2,
+            }
+            pilot_metadata = {
+                "difficulty": difficulty,
+                "scene_family": family_summary,
+                "state_summary": state_summary,
+                "scene_style": "indoor_realistic",
+                "scenario_spec": {
+                    "surface_key": blueprint.surface_key,
+                    "camera_key": blueprint.camera_key,
+                    "lighting_key": blueprint.lighting_key,
+                    "scene_style": "indoor_realistic",
+                    "table_height_m": round(table_height_m, 5),
+                    "initial_speed_mps": round(shared_table_speed, 5),
+                    "table_height_label": extra["label"],
+                    "objects": [
+                        {
+                            "name": obj.name,
+                            "family_key": obj.family_key,
+                            "shape": obj.shape,
+                            "dynamic": bool(obj.dynamic),
+                            "role": obj.role,
+                            "mass_kg": round(float(obj.mass), 5),
+                            "friction": round(float(obj.friction), 5),
+                            "restitution": round(float(obj.restitution), 5),
+                            "position": [round(float(value), 5) for value in obj.position],
+                            "linear_velocity": [round(float(value), 5) for value in obj.linear_velocity],
+                            "angular_velocity": [round(float(value), 5) for value in obj.angular_velocity],
+                        }
+                        for obj in blueprint.objects
+                    ],
+                },
+                "label_policy": "scene mechanism is not an observed motion label",
+            }
+            meta_path = Path(render_manifest["meta"])
+            meta_payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta_payload["difficulty_pilot"] = pilot_metadata
+            meta_path.write_text(
+                json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            manifest_path = case_root / "case_manifest.json"
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_payload["difficulty_pilot"] = pilot_metadata
+            manifest_path.write_text(
+                json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+
+            rows.append(
+                {
+                    "case_id": case_id,
+                    "status": "rendered",
+                    "difficulty": difficulty,
+                    "scene_family": family_summary,
+                    "scene_title": blueprint.title,
+                    "scene_description": blueprint.description,
+                    "scene_style": "indoor_realistic",
+                    "scenario_spec": pilot_metadata["scenario_spec"],
+                    "state_summary": state_summary,
+                    "video": render_manifest["video"],
+                    "video_url": "/media/" + case_id,
+                    "meta": render_manifest["meta"],
+                    "states": render_manifest["states"],
+                    "mask_video": render_manifest["mask_video"],
+                    "mask_ids": render_manifest["mask_ids"],
+                    "question": ANALYSIS_QUESTION,
+                    "response_final": "本 pilot 只展示仿真视频和状态摘要，尚未运行 VLM。",
+                    "response_raw": "",
+                    "answer_source": "simulation_pilot",
+                    "caption_intent_only": render_manifest["caption"],
+                }
+            )
+            print(f"rendered {case_id} -> {render_manifest['video']}", flush=True)
+        except Exception as exc:  # pragma: no cover - batch guard
+            failures.append(
+                {
+                    "case_id": case_id,
+                    "difficulty": "L2",
+                    "family_key": family_key,
+                    "seed": seed,
+                    "error": repr(exc),
+                }
+            )
+            print(f"failed {case_id}: {exc!r}", flush=True)
+
     _write_json(output_root / "pilot_manifest.json", rows)
     _write_json(output_root / "reports" / "failure_report.json", failures)
     _write_json(
         output_root / "reports" / "summary.json",
         {
-            "total_requested": 3 * args.per_level,
+            "total_requested": 3 * args.per_level + len(TABLE_ROLLOFF_CASES),
             "rendered": len(rows),
             "failures": len(failures),
             "difficulty_levels": DIFFICULTY_LEVELS,
@@ -319,7 +447,7 @@ def main() -> None:
         json.dumps(
             {
                 "output_root": str(output_root),
-                "requested": 3 * args.per_level,
+                "requested": 3 * args.per_level + len(TABLE_ROLLOFF_CASES),
                 "rendered": len(rows),
                 "failures": len(failures),
                 "results": str(output_root / "cases.jsonl"),

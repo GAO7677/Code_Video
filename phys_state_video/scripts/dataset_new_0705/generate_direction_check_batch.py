@@ -14,7 +14,7 @@ VERTICAL_MOTION_TAGS = {"F5": "drop", "F8": "vertical_drop"}
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Render paired direction checks for rigid F1-F10 cases.")
+    parser = argparse.ArgumentParser(description="Render paired direction checks for rigid F1-F11 cases.")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
@@ -42,7 +42,7 @@ def main() -> None:
     failures: list[dict[str, object]] = []
 
     plans: list[tuple[str, str, int]] = []
-    for family_index in range(1, 11):
+    for family_index in range(1, 12):
         family_key = f"F{family_index}"
         pair_seed = args.seed_base + family_index * 1009
         plans.extend(

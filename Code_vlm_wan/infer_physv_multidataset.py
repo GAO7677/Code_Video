@@ -34,6 +34,10 @@ DEFAULT_MODEL = "/data/gaoya/ckpt/Qwen-Qwen3-VL-32B-Thinking-FP8"
 DEFAULT_0613_ROOT = "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet"
 DEFAULT_PHYCO_ROOT = "/data/gaoya/dataset/nnsriram97-phyco_kubric"
 DEFAULT_OUTPUT = "/data/gaoya/agent-data/outputs/physv_qwen3vl/0613_phyco_smoke.jsonl"
+ANSWER_CONSTRAINT = """
+
+请只输出最终观察结论，不要展示思考过程，也不要重复场景描述。严格限制为不超过 4 句话、120 个英文单词；按时间顺序说明主要运动、接触/碰撞和视频末状态。无法确认的细节不要臆测。
+""".strip()
 
 
 @dataclass(frozen=True)
@@ -168,6 +172,11 @@ def parse_args():
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--max-model-len", type=int, default=8192)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.94)
+    parser.add_argument(
+        "--disable-thinking",
+        action="store_true",
+        help="Use the answer-only assistant prompt for Thinking checkpoints.",
+    )
     return parser.parse_args()
 
 
@@ -176,7 +185,7 @@ def run_case(case: Case, args, processor, llm, sampling_params):
         "text": case.context_text,
         "source": case.context_source,
     }
-    question = build_question(original_prompt)
+    question = build_question(original_prompt) + "\n\n" + ANSWER_CONSTRAINT
     messages = build_messages(case.video_path, args, question)
     started = time.time()
     result = {
@@ -192,9 +201,17 @@ def run_case(case: Case, args, processor, llm, sampling_params):
             "max_frames": args.max_frames,
             "max_pixels": args.max_pixels,
         },
+        "thinking_disabled": args.disable_thinking,
     }
     try:
         vllm_input, video_inputs = prepare_vllm_input(messages, processor)
+        if args.disable_thinking:
+            thinking_prompt = "<|im_start|>assistant\n<think>\n"
+            answer_prompt = "<|im_start|>assistant\n<think>\n</think>\n\n"
+            if vllm_input["prompt"].endswith(thinking_prompt):
+                vllm_input["prompt"] = (
+                    vllm_input["prompt"][: -len(thinking_prompt)] + answer_prompt
+                )
         result["video_info"] = get_video_info(video_inputs)
         outputs = llm.generate(
             [vllm_input], sampling_params=sampling_params, use_tqdm=False
@@ -261,9 +278,9 @@ def main():
         raise
 
     sampling_params = SamplingParams(
-        temperature=0.6,
-        top_p=0.95,
-        top_k=20,
+        temperature=0.0,
+        top_p=1.0,
+        top_k=-1,
         max_tokens=args.max_new_tokens,
     )
 

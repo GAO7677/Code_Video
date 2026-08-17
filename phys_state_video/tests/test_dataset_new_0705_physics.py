@@ -21,7 +21,7 @@ from scripts.dataset_new_0705.render_sim_0705 import build_object_phrase_bundle
 
 class DatasetNew0705PhysicsTests(unittest.TestCase):
     def test_generated_static_objects_are_grounded_and_dynamic_objects_use_gravity(self) -> None:
-        for family_index in range(1, 11):
+        for family_index in range(1, 12):
             family_key = f"F{family_index}"
             for sample_index in range(30):
                 blueprint = generate_scenario_blueprint(
@@ -35,6 +35,8 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
                         self.assertGreater(obj.mass, 0.0)
                     else:
                         self.assertEqual(obj.mass, 0.0)
+                        if obj.role.startswith("anchored_"):
+                            continue
                         self.assertAlmostEqual(obj.position[2], _collision_vertical_extent(obj), places=7)
 
     def test_validation_rejects_zero_mass_dynamic_object(self) -> None:
@@ -57,13 +59,32 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
                     obj.position[2], _collision_vertical_extent(obj), places=7
                 )
 
+    def test_table_rolloff_cases_share_speed_across_heights(self) -> None:
+        heights = (0.46, 0.68, 0.92)
+        speeds = []
+        for index, table_height in enumerate(heights):
+            blueprint = generate_scenario_blueprint(
+                "F11",
+                f"F11_table_{index}",
+                20260717,
+                "left_to_right",
+                table_height_m=table_height,
+                initial_speed_mps=1.25,
+            )
+            self.assertAlmostEqual(blueprint.metadata["table_height_m"], table_height, places=5)
+            mover = next(obj for obj in blueprint.objects if obj.name == "roller_0")
+            self.assertTrue(mover.dynamic)
+            self.assertAlmostEqual(mover.linear_velocity[0], 1.25, places=5)
+            speeds.append(mover.linear_velocity[0])
+        self.assertTrue(all(abs(speed - speeds[0]) < 1e-6 for speed in speeds))
+
     def test_validation_rejects_nonstandard_gravity(self) -> None:
         blueprint = generate_scenario_blueprint("F1", "invalid_gravity", seed=20260717)
         with self.assertRaisesRegex(ValueError, "require gravity"):
             validate_blueprint_physics(replace(blueprint, gravity=3.71))
 
     def test_left_and_right_cases_are_complete_mirrors(self) -> None:
-        for family_index in range(1, 11):
+        for family_index in range(1, 12):
             family_key = f"F{family_index}"
             left = generate_scenario_blueprint(family_key, "left", 20260718, "left_to_right")
             right = generate_scenario_blueprint(family_key, "right", 20260718, "right_to_left")

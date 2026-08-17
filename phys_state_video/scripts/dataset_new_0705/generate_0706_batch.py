@@ -52,7 +52,7 @@ def _family_plan(num_cases: int, pattern: str) -> list[str]:
             plan.extend([key] * counts[key])
         return plan
     if pattern == "motion_heavy":
-        weights = {"F1": 12, "F2": 12, "F3": 12, "F4": 10, "F5": 10, "F6": 10, "F7": 10, "F8": 10, "F9": 7, "F10": 7}
+        weights = {"F1": 12, "F2": 12, "F3": 12, "F4": 10, "F5": 10, "F6": 10, "F7": 10, "F8": 10, "F9": 7, "F10": 7, "F11": 6}
         expanded: list[str] = []
         for key in families:
             expanded.extend([key] * weights[key])

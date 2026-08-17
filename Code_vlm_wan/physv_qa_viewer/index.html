@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhysV / Evidence Desk</title>
+  <style>
+    :root {
+      --ink: #182326;
+      --ink-soft: #324245;
+      --muted: #6b7978;
+      --paper: #e9efec;
+      --panel: #fbfcfa;
+      --line: #cbd6d1;
+      --line-strong: #aebdb7;
+      --coral: #e46445;
+      --coral-soft: #f8e4dd;
+      --teal: #0e877d;
+      --teal-soft: #dceeea;
+      --lime: #b9cf6a;
+      --violet: #5b588d;
+      --shadow: 0 12px 28px rgba(24, 35, 38, .07);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--paper); }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    button, input { font: inherit; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { border: 0; }
+    :focus-visible { outline: 3px solid rgba(228, 100, 69, .5); outline-offset: 2px; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      min-height: 74px;
+      padding: 14px 34px;
+      color: #f7faf8;
+      background: var(--ink);
+      border-bottom: 4px solid var(--coral);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      color: var(--ink);
+      background: var(--lime);
+      border-radius: 5px;
+      font: 800 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .04em;
+    }
+    .eyebrow {
+      margin: 0;
+      color: var(--teal);
+      font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .topbar .eyebrow { color: #b9cf6a; }
+    .brand h1 { margin: 2px 0 0; font-size: 18px; line-height: 1.1; letter-spacing: -.02em; }
+    .top-meta { display: flex; align-items: center; gap: 18px; color: #b8c7c4; font-size: 12px; }
+    .run-state { display: flex; align-items: center; gap: 7px; color: #f7faf8; font-weight: 700; }
+    .status-dot { width: 8px; height: 8px; background: var(--lime); border-radius: 50%; }
+    .download-link {
+      padding: 7px 10px;
+      color: var(--ink);
+      background: var(--lime);
+      border-radius: 4px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .shell { max-width: 1720px; margin: 0 auto; padding: 26px 34px 34px; }
+    .overview {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: end;
+      padding: 0 0 22px;
+      border-bottom: 1px solid var(--line-strong);
+    }
+    .overview h2 {
+      max-width: 680px;
+      margin: 7px 0 0;
+      font-size: 34px;
+      line-height: 1.08;
+      letter-spacing: -.045em;
+    }
+    .overview p:not(.eyebrow) { max-width: 680px; margin: 10px 0 0; color: var(--muted); }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(74px, 1fr)); border-left: 1px solid var(--line-strong); }
+    .stat { min-width: 88px; padding: 0 18px; border-right: 1px solid var(--line-strong); }
+    .stat strong { display: block; font: 800 25px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.06em; }
+    .stat span { display: block; margin-top: 6px; color: var(--muted); font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 17px 0;
+    }
+    .filter-group { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .filter-label { margin-right: 5px; color: var(--muted); font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .filter-button {
+      padding: 8px 12px;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .filter-button:hover { border-color: var(--teal); background: var(--teal-soft); }
+    .filter-button.active { color: #fff; background: var(--teal); border-color: var(--teal); }
+    .search {
+      width: 250px;
+      padding: 9px 11px;
+      color: var(--ink);
+      background: var(--panel);
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+    }
+    .search::placeholder { color: #91a09c; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 275px minmax(420px, 1.2fr) minmax(330px, .82fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .rail { min-width: 0; }
+    .rail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 2px 10px; border-bottom: 2px solid var(--ink); }
+    .rail-head h3, .panel-head h3 { margin: 0; font-size: 13px; letter-spacing: .02em; }
+    .mono { color: var(--muted); font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .case-list { max-height: calc(100vh - 250px); overflow: auto; border-bottom: 1px solid var(--line-strong); }
+    .case-button {
+      display: block;
+      width: 100%;
+      padding: 14px 12px 13px 14px;
+      color: var(--ink);
+      background: transparent;
+      border-bottom: 1px solid var(--line);
+      border-left: 3px solid transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .case-button:hover { background: rgba(255, 255, 255, .58); }
+    .case-button.active { background: var(--coral-soft); border-left-color: var(--coral); }
+    .case-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .case-number { color: var(--coral); font: 800 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .case-dataset { color: var(--muted); font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .case-name { display: block; margin-top: 7px; overflow-wrap: anywhere; font-weight: 800; }
+    .case-family { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .empty { padding: 22px 14px; color: var(--muted); border-bottom: 1px solid var(--line-strong); }
+
+    .panel { min-width: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow); }
+    .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 15px 17px; border-bottom: 1px solid var(--line); }
+    .panel-head .eyebrow { margin-bottom: 5px; }
+    .panel-title { margin: 0; overflow-wrap: anywhere; font-size: 16px; line-height: 1.2; }
+    .panel-tag { flex: 0 0 auto; padding: 5px 7px; color: var(--teal); background: var(--teal-soft); border-radius: 3px; font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .video-wrap { position: relative; background: #121b1c; }
+    video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #121b1c; object-fit: contain; }
+    .video-fallback { display: none; padding: 80px 20px; color: #d4dfdb; text-align: center; }
+    .video-fallback.visible { display: block; }
+    .video-meta { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
+    .meta-cell { min-width: 0; padding: 12px 15px; border-right: 1px solid var(--line); }
+    .meta-cell:last-child { border-right: 0; }
+    .meta-label { display: block; margin-bottom: 4px; color: var(--muted); font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .meta-value { display: block; overflow-wrap: anywhere; font-size: 12px; font-weight: 700; }
+    .path-line { padding: 12px 17px; color: var(--muted); border-bottom: 1px solid var(--line); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .evidence-note { padding: 16px 17px 18px; }
+    .evidence-note h4 { margin: 0 0 7px; font-size: 12px; }
+    .evidence-note p { margin: 0; color: var(--muted); font-size: 13px; }
+
+    .answer-panel { position: sticky; top: 18px; }
+    .answer-body { padding: 19px 19px 20px; }
+    .answer-kicker { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--muted); font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .answer-status { color: var(--teal); }
+    .answer-copy { margin: 0; padding-left: 15px; color: var(--ink-soft); border-left: 4px solid var(--coral); font-size: 18px; line-height: 1.55; }
+    .answer-copy::first-letter { color: var(--coral); }
+    .answer-divider { height: 1px; margin: 20px 0 0; background: var(--line); }
+    details { border-top: 1px solid var(--line); }
+    details:first-of-type { margin-top: 17px; }
+    summary { padding: 13px 17px; color: var(--ink-soft); cursor: pointer; font-size: 12px; font-weight: 800; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { float: right; color: var(--teal); content: "+"; font: 700 16px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    details[open] summary::after { content: "-"; }
+    .detail-content { padding: 0 17px 16px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+    .detail-content.mono-block { color: var(--ink-soft); font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .context-source { margin-top: 9px; color: #94a19e; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .error-panel { display: none; padding: 20px; color: #8d3725; background: var(--coral-soft); border: 1px solid #edb4a4; border-radius: 6px; }
+    .error-panel.visible { display: block; }
+
+    @media (max-width: 1240px) {
+      .workspace { grid-template-columns: 240px minmax(0, 1fr); }
+      .answer-panel { grid-column: 2; position: static; }
+    }
+    @media (max-width: 820px) {
+      .topbar { align-items: flex-start; flex-direction: column; gap: 13px; padding: 16px 18px; }
+      .top-meta { width: 100%; justify-content: space-between; }
+      .shell { padding: 20px 16px 28px; }
+      .overview { grid-template-columns: 1fr; gap: 20px; }
+      .overview h2 { font-size: 28px; }
+      .stats { width: 100%; }
+      .stat { min-width: 0; padding: 0 12px; }
+      .controls { align-items: stretch; flex-direction: column; }
+      .search { width: 100%; }
+      .workspace { display: flex; flex-direction: column; }
+      .rail, .panel { width: 100%; }
+      .case-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; }
+      .case-button { min-height: 105px; }
+      .answer-panel { position: static; }
+    }
+    @media (max-width: 520px) {
+      .stats { grid-template-columns: repeat(2, 1fr); row-gap: 16px; }
+      .stat:nth-child(2) { border-right: 0; }
+      .stat:nth-child(3) { padding-top: 2px; }
+      .case-list { grid-template-columns: 1fr; }
+      .case-button { min-height: 0; }
+      .video-meta { grid-template-columns: 1fr; }
+      .meta-cell { border-right: 0; border-bottom: 1px solid var(--line); }
+      .meta-cell:last-child { border-bottom: 0; }
+      .answer-copy { font-size: 16px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">PV</span>
+      <div>
+        <p class="eyebrow">PHYSICS VIDEO QA</p>
+        <h1>Evidence Desk</h1>
+      </div>
+    </div>
+    <div class="top-meta">
+      <span class="run-state"><i class="status-dot" aria-hidden="true"></i><span id="run-state">读取中</span></span>
+      <span id="last-run">LOCAL JSONL</span>
+      <a class="download-link" href="/download/results.jsonl" download>下载结果</a>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="overview">
+      <div>
+        <p class="eyebrow">LOCAL EVALUATION / QWEN3-VL</p>
+        <h2>Motion, contact, final state.</h2>
+        <p>物理视频问答的可核对记录：视频证据、场景上下文与模型结论并列呈现。</p>
+      </div>
+      <div class="stats" aria-label="结果统计">
+        <div class="stat"><strong id="stat-total">--</strong><span>cases</span></div>
+        <div class="stat"><strong id="stat-0613">--</strong><span>0613 pybullet</span></div>
+        <div class="stat"><strong id="stat-phyco">--</strong><span>phyco kubric</span></div>
+        <div class="stat"><strong id="stat-ok">--</strong><span>answers ok</span></div>
+      </div>
+    </section>
+
+    <section class="controls" aria-label="筛选和搜索">
+      <div class="filter-group">
+        <span class="filter-label">Dataset</span>
+        <button class="filter-button active" data-filter="all">全部</button>
+        <button class="filter-button" data-filter="0613pybullet">0613 PyBullet</button>
+        <button class="filter-button" data-filter="phyco_kubric">PhyCo Kubric</button>
+      </div>
+      <input class="search" id="search" type="search" placeholder="搜索 case / scenario" aria-label="搜索 case 或 scenario">
+    </section>
+
+    <div class="error-panel" id="error-panel" role="alert"></div>
+    <section class="workspace" id="workspace" hidden>
+      <aside class="rail">
+        <div class="rail-head"><h3>CASE INDEX</h3><span class="mono" id="case-count">0 / 0</span></div>
+        <div class="case-list" id="case-list"></div>
+      </aside>
+
+      <section class="panel video-panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">01 / VIDEO EVIDENCE</p>
+            <h3 class="panel-title" id="video-title">等待选择 case</h3>
+          </div>
+          <span class="panel-tag" id="video-tag">--</span>
+        </div>
+        <div class="video-wrap">
+          <video id="video" controls preload="metadata"></video>
+          <div class="video-fallback" id="video-fallback">视频文件无法读取</div>
+        </div>
+        <div class="video-meta">
+          <div class="meta-cell"><span class="meta-label">Frames</span><span class="meta-value" id="meta-frames">--</span></div>
+          <div class="meta-cell"><span class="meta-label">Resolution</span><span class="meta-value" id="meta-resolution">--</span></div>
+          <div class="meta-cell"><span class="meta-label">Inference</span><span class="meta-value" id="meta-inference">--</span></div>
+        </div>
+        <div class="path-line" id="video-path">--</div>
+        <div class="evidence-note">
+          <h4>Observed answer</h4>
+          <p id="evidence-summary">选择左侧 case 查看模型对运动、接触和末状态的判断。</p>
+        </div>
+      </section>
+
+      <aside class="panel answer-panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">02 / MODEL READOUT</p>
+            <h3 class="panel-title">物理动态问答</h3>
+          </div>
+          <span class="panel-tag" id="answer-status">--</span>
+        </div>
+        <div class="answer-body">
+          <div class="answer-kicker"><span>response_final</span><span class="answer-status" id="answer-mode">--</span></div>
+          <p class="answer-copy" id="answer">--</p>
+          <div class="answer-divider"></div>
+          <details open>
+            <summary>场景上下文</summary>
+            <div class="detail-content" id="context">--</div>
+            <div class="context-source" id="context-source"></div>
+          </details>
+          <details>
+            <summary>原始问题</summary>
+            <div class="detail-content" id="question">--</div>
+          </details>
+          <details>
+            <summary>原始模型输出</summary>
+            <div class="detail-content mono-block" id="raw-response">--</div>
+          </details>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const state = { rows: [], filtered: [], selectedId: null, filter: "all", query: "" };
+    const $ = (id) => document.getElementById(id);
+    const datasetNames = { "0613pybullet": "0613 PYBULLET", "phyco_kubric": "PHYCO KUBRIC" };
+
+    function scenarioName(row) {
+      const parts = String(row.case_id || "").split("/").filter(Boolean);
+      if (row.dataset === "0613pybullet") return parts.find((part) => /^F\d/.test(part)) || "PhysV";
+      return parts.length > 3 ? parts[parts.length - 3] : "PhyCo case";
+    }
+
+    function caseName(row) {
+      const parts = String(row.case_id || "").split("/").filter(Boolean);
+      return row.dataset === "0613pybullet" ? (parts.at(-1) || row.case_id) : (parts.at(-1) || row.case_id);
+    }
+
+    function caseSubtitle(row) {
+      const scenario = scenarioName(row).replaceAll("_", " ");
+      return row.dataset === "0613pybullet" ? `${scenario} / validation` : scenario;
+    }
+
+    function videoInfo(row) {
+      const info = row.video_info || {};
+      const shape = Array.isArray(info.shape) ? info.shape : [];
+      return {
+        frames: shape[0] ? `${shape[0]} frames` : "--",
+        resolution: shape.length > 3 ? `${shape[3]} x ${shape[2]}` : "--",
+      };
+    }
+
+    function updateStats() {
+      const count = (dataset) => state.rows.filter((row) => row.dataset === dataset).length;
+      $("stat-total").textContent = state.rows.length;
+      $("stat-0613").textContent = count("0613pybullet");
+      $("stat-phyco").textContent = count("phyco_kubric");
+      $("stat-ok").textContent = state.rows.filter((row) => row.status === "ok" && row.response_final).length;
+    }
+
+    function applyFilter() {
+      const needle = state.query.trim().toLowerCase();
+      state.filtered = state.rows.filter((row) => {
+        const datasetMatch = state.filter === "all" || row.dataset === state.filter;
+        const haystack = `${row.case_id} ${row.video} ${scenarioName(row)}`.toLowerCase();
+        return datasetMatch && (!needle || haystack.includes(needle));
+      });
+      if (!state.filtered.some((row) => row.case_id === state.selectedId)) {
+        state.selectedId = state.filtered[0]?.case_id || null;
+      }
+      renderList();
+      renderSelected();
+      $("case-count").textContent = `${state.filtered.length} / ${state.rows.length}`;
+    }
+
+    function renderList() {
+      const list = $("case-list");
+      list.replaceChildren();
+      if (!state.filtered.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "没有匹配的 case";
+        list.appendChild(empty);
+        return;
+      }
+      state.filtered.forEach((row, index) => {
+        const button = document.createElement("button");
+        button.className = `case-button${row.case_id === state.selectedId ? " active" : ""}`;
+        button.type = "button";
+        button.innerHTML = `<span class="case-top"><span class="case-number">${String(index + 1).padStart(2, "0")}</span><span class="case-dataset"></span></span><span class="case-name"></span><span class="case-family"></span>`;
+        button.querySelector(".case-dataset").textContent = datasetNames[row.dataset] || row.dataset || "DATASET";
+        button.querySelector(".case-name").textContent = caseName(row);
+        button.querySelector(".case-family").textContent = caseSubtitle(row);
+        button.addEventListener("click", () => {
+          state.selectedId = row.case_id;
+          renderList();
+          renderSelected();
+        });
+        list.appendChild(button);
+      });
+    }
+
+    function renderSelected() {
+      const row = state.filtered.find((item) => item.case_id === state.selectedId);
+      if (!row) return;
+      const info = videoInfo(row);
+      $("video-title").textContent = caseName(row);
+      $("video-tag").textContent = datasetNames[row.dataset] || row.dataset || "CASE";
+      $("video-path").textContent = row.video || "视频路径不可用";
+      $("meta-frames").textContent = info.frames;
+      $("meta-resolution").textContent = info.resolution;
+      $("meta-inference").textContent = row.elapsed_seconds ? `${row.elapsed_seconds}s` : "--";
+      $("answer-status").textContent = row.status || "unknown";
+      $("answer-mode").textContent = row.thinking_disabled ? "direct mode" : "thinking mode";
+      $("answer").textContent = row.response_final || row.error || "没有可用答案";
+      $("evidence-summary").textContent = row.response_final || row.error || "没有可用答案";
+      $("context").textContent = row.original_prompt || "没有附带场景描述。";
+      $("context-source").textContent = row.original_prompt_source || "source: none";
+      $("question").textContent = row.question || "--";
+      $("raw-response").textContent = row.response_raw || row.error || "--";
+      const video = $("video");
+      $("video-fallback").classList.remove("visible");
+      video.style.display = "block";
+      video.src = row.video_url || "";
+      video.load();
+      video.onerror = () => {
+        video.style.display = "none";
+        $("video-fallback").classList.add("visible");
+      };
+    }
+
+    function setFilter(filter) {
+      state.filter = filter;
+      document.querySelectorAll("[data-filter]").forEach((button) => button.classList.toggle("active", button.dataset.filter === filter));
+      applyFilter();
+    }
+
+    document.querySelectorAll("[data-filter]").forEach((button) => button.addEventListener("click", () => setFilter(button.dataset.filter)));
+    $("search").addEventListener("input", (event) => { state.query = event.target.value; applyFilter(); });
+
+    fetch("/api/results")
+      .then((response) => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); })
+      .then((rows) => {
+        state.rows = Array.isArray(rows) ? rows : [];
+        state.selectedId = state.rows[0]?.case_id || null;
+        updateStats();
+        applyFilter();
+        $("workspace").hidden = false;
+        $("run-state").textContent = "READY";
+        $("last-run").textContent = `${state.rows.length} CASES / LOCAL`;
+      })
+      .catch((error) => {
+        $("run-state").textContent = "ERROR";
+        $("error-panel").textContent = `无法读取问答结果：${error.message}`;
+        $("error-panel").classList.add("visible");
+      });
+  </script>
+</body>
+</html>

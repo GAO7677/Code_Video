@@ -103,6 +103,7 @@ MOTION_TAG_PROMPT_NAMES = {
     "edge_roll": "rolls toward an edge",
     "fall_off": "falls off the edge after approaching it",
     "boundary_slide": "slides near a boundary with fall-off risk",
+    "table_rolloff": "rolls across a table and falls off the edge",
 }
 
 
@@ -218,6 +219,12 @@ def _family_event_sentence(blueprint: ScenarioBlueprint) -> str:
     if blueprint.family_key == "F10":
         mover = role_map.get("edge_mover", blueprint.objects[0])
         return f"{_object_prompt_phrase(mover)} {motion_text} near a visible edge."
+    if blueprint.family_key == "F11":
+        mover = role_map.get("roller_0", blueprint.objects[0])
+        table_height = blueprint.metadata.get("table_height_m")
+        if isinstance(table_height, (int, float)):
+            return f"{_object_prompt_phrase(mover)} rolls across a {float(table_height):.2f} m-high table and falls off the edge."
+        return f"{_object_prompt_phrase(mover)} {motion_text} on a table."
     return "Rigid objects move through a realistic indoor physics scene."
 
 
