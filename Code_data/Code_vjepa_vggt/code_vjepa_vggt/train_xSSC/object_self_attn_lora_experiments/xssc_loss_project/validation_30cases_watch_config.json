@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "validation_config": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/xssc_loss_project/validation_30cases_config.json",
+  "poll_seconds": 60,
+  "minimum_checkpoint_age_seconds": 120,
+  "retry_cooldown_seconds": 300,
+  "task_timeout_seconds": 14400,
+  "video_gpu": 2,
+  "loss_gpu": 3,
+  "targets": [
+    {
+      "method_key": "latent_mask",
+      "entry_id_prefix": "latent_mask",
+      "method_label": "Full-SA + No-Object + GT Latent-Mask Loss",
+      "version": "formal gpu67",
+      "checkpoint_root": "/data/gaoya/agent-data/checkpoints/gt_latent_mask_loss/full_sa_no_object_gt_latent_mask_loss_pybullet100_cached_gpu67/step000000_gpu67_20260816T193744Z/checkpoints",
+      "config": "/data/gaoya/agent-data/checkpoints/gt_latent_mask_loss/full_sa_no_object_gt_latent_mask_loss_pybullet100_cached_gpu67/step000000_gpu67_20260816T193744Z/resolved_experiment_config.json",
+      "source_config": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/attention_trajectory_distillation_project/configs/formal_full_sa_no_object_latent_mask_loss_pybullet100_cached_gpu67.json",
+      "color": "#E69F00"
+    },
+    {
+      "method_key": "cotracker_trajectory",
+      "entry_id_prefix": "cotracker_trajectory",
+      "method_label": "Full-SA + No-Object + CoTracker Trajectory Loss",
+      "version": "step-0 run",
+      "checkpoint_root": "/data/gaoya/agent-data/checkpoints/object_cotracker_trajectory_loss/full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached/step000000_gpu01_20260816T020512Z/checkpoints",
+      "config": "/data/gaoya/agent-data/checkpoints/object_cotracker_trajectory_loss/full_sa_no_object_cotracker_trajectory_loss_pybullet100_cached/step000000_gpu01_20260816T020512Z/resolved_experiment_config.json",
+      "color": "#A23B72"
+    }
+  ]
+}

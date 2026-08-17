@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build an auto-refreshing static page for the 30-case step-by-method matrix."""
+"""Build an auto-refreshing static page for the 30-case method-by-step matrix."""
 from __future__ import annotations
 import argparse, html, json
 from pathlib import Path
@@ -9,7 +9,7 @@ def read(path: Path, fallback):
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--config",type=Path,required=True); args=p.parse_args()
-    c=read(args.config,{}) ; root=Path(c["output_root"]); manifest=read(Path(c["cases_manifest"]),{"cases":[]}); video=read(root/"video_status.json",{"state":"queued","entries":{}}); loss=read(root/"loss_status.json",{"state":"queued","entries":{}})
+    c=read(args.config,{}) ; root=Path(c["output_root"]); manifest=read(Path(c["cases_manifest"]),{"cases":[]}); video=read(root/"video_status.json",{"state":"queued","entries":{}}); loss=read(root/"loss_status.json",{"state":"queued","entries":{}}); watcher=read(root/"latest_checkpoint_watch_status.json",{})
     cases=manifest.get("cases",[]); entries=c.get("entries",[])
     method_columns=[]; method_by_key={}
     for entry in entries:
@@ -67,20 +67,19 @@ def main():
                 loss_html,
                 e["entry_id"],
             )
-        method_headers=[]
+        weight_headers=[]
+        for step in weight_steps:
+            present=sum(1 for column in method_columns if cells.get((step, column["method_key"])) is not None)
+            weight_headers.append(
+                f'<th scope="col" class="weight-heading"><strong>step-{step:04d}</strong>'
+                f'<small>{present}/{len(method_columns)} 方法</small></th>'
+            )
+        method_rows=[]
         for column in method_columns:
             versions=" / ".join(dict.fromkeys(str(e["version"]) for e in column["entries"]))
-            method_headers.append(
-                f'<th scope="col"><div class="method-heading">'
-                f'<span class="method-swatch" style="background:{html.escape(str(column["color"]),quote=True)}"></span>'
-                f'<span class="method-heading-name">{html.escape(column["method_label"])}</span>'
-                f'<small>{html.escape(versions)}</small></div></th>'
-            )
-        step_rows=[]
-        for step in weight_steps:
             row_cells=[]
             present=0
-            for column in method_columns:
+            for step in weight_steps:
                 cell=cells.get((step, column["method_key"]))
                 if cell is None:
                     row_cells.append('<td class="matrix-empty"><span>—</span><small>该 step 未提供</small></td>')
@@ -92,16 +91,19 @@ def main():
                     f'<div class="cell-video">{vhtml}</div>'
                     f'<p class="cell-metric">{html.escape(loss_html)}</p></td>'
                 )
-            step_rows.append(
-                f'<tr><th scope="row" class="step-cell"><strong>step-{step:04d}</strong>'
-                f'<small>{present}/{len(method_columns)} 方法</small></th>{"".join(row_cells)}</tr>'
+            method_rows.append(
+                f'<tr><th scope="row" class="method-cell"><div class="method-row-label">'
+                f'<span class="method-swatch" style="background:{html.escape(str(column["color"]),quote=True)}"></span>'
+                f'<span class="method-row-name">{html.escape(column["method_label"])}</span>'
+                f'<small>{html.escape(versions)} · {present}/{len(weight_steps)} steps</small>'
+                f'</div></th>{"".join(row_cells)}</tr>'
             )
         matrix=(
-            '<div class="matrix-note"><span>行 = 权重 step</span><span>列 = 方法</span>'
+            '<div class="matrix-note"><span>行 = 方法</span><span>列 = 权重 step</span>'
             f'<span>{len(weight_steps)} steps · {len(method_columns)} methods</span></div>'
             '<div class="matrix-wrap"><table class="matrix"><thead><tr>'
-            '<th scope="col" class="step-heading">权重 step</th>'
-            f'{"".join(method_headers)}</tr></thead><tbody>{"".join(step_rows)}</tbody></table></div>'
+            '<th scope="col" class="method-heading">方法</th>'
+            f'{"".join(weight_headers)}</tr></thead><tbody>{"".join(method_rows)}</tbody></table></div>'
         )
         hidden = "" if not rows else " hidden"
         rows.append(f'<section class="case" data-case-id="{html.escape(case["case_id"], quote=True)}"{hidden}><h2>{html.escape(case["case_id"])}</h2><p>{html.escape(case["prompt"])}</p>{matrix}</section>')
@@ -110,7 +112,8 @@ def main():
     loss_state=str(loss.get("state"))
     if ready_l<expected and loss_state=="complete":
         loss_state="partial"
-    status=f"视频 {ready_v}/{expected} · loss {ready_l}/{expected} · video={html.escape(str(video.get('state')))} · loss={html.escape(loss_state)}"
+    watcher_state=str(watcher.get("state","not_started"))
+    status=f"视频 {ready_v}/{expected} · loss {ready_l}/{expected} · video={html.escape(str(video.get('state')))} · loss={html.escape(loss_state)} · watcher={html.escape(watcher_state)}"
     case_options="".join(
         f'<option value="{html.escape(case["case_id"], quote=True)}">'
         f'{index:02d} · {html.escape(str(case["prompt"]))}</option>'
@@ -286,17 +289,18 @@ code{color:#d4e3ec;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}
 .matrix th,.matrix td{width:224px;min-width:224px;padding:8px;border-right:1px solid #263846;border-bottom:1px solid #263846;text-align:left;vertical-align:top}
 .matrix thead th{position:sticky;top:0;z-index:4;background:#1d2a34;color:#edf4fa;text-transform:none}
 .matrix thead th:last-child,.matrix tbody td:last-child{border-right:0}
-.matrix .step-heading,.matrix .step-cell{width:112px;min-width:112px}
-.matrix .step-heading{left:0;z-index:6;color:#f2c14e;font-size:11px;letter-spacing:.05em}
-.matrix .step-cell{position:sticky;left:0;z-index:3;background:#17242d;color:#f2c14e}
-.matrix .step-cell strong{display:block;font:700 12px ui-monospace,SFMono-Regular,Consolas,monospace}
-.matrix .step-cell small{display:block;margin-top:5px;color:#8095a4;font-size:10px;font-weight:400}
+.matrix .method-heading,.matrix .method-cell{width:260px;min-width:260px}
+.matrix .method-heading{left:0;z-index:6;color:#f2c14e;font-size:11px;letter-spacing:.05em}
+.matrix .method-cell{position:sticky;left:0;z-index:3;background:#17242d;color:#edf4fa}
+.matrix .weight-heading{color:#f2c14e}
+.matrix .weight-heading strong{display:block;font:700 12px ui-monospace,SFMono-Regular,Consolas,monospace}
+.matrix .weight-heading small{display:block;margin-top:5px;color:#8095a4;font-size:10px;font-weight:400}
 .matrix tbody tr:hover td{background:#1a2731}
-.matrix tbody tr:hover .step-cell{background:#20313c}
-.method-heading{display:grid;grid-template-columns:10px minmax(0,1fr);column-gap:7px;align-items:start;line-height:1.3}
-.method-heading .method-swatch{grid-row:1 / span 2;margin-top:4px}
-.method-heading-name{font-weight:700;overflow-wrap:anywhere}
-.method-heading small{grid-column:2;margin-top:4px;color:#7f96a5;font:10px ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:none}
+.matrix tbody tr:hover .method-cell{background:#20313c}
+.method-row-label{display:grid;grid-template-columns:10px minmax(0,1fr);column-gap:7px;align-items:start;line-height:1.3}
+.method-row-label .method-swatch{grid-row:1 / span 2;margin-top:4px}
+.method-row-name{font-weight:700;overflow-wrap:anywhere}
+.method-row-label small{grid-column:2;margin-top:4px;color:#7f96a5;font:10px ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:none}
 .matrix-cell{background:#18232d}
 .cell-video video,.cell-video .pending{display:block;width:100%;aspect-ratio:896/512;background:#05090d;object-fit:cover}
 .cell-metric{min-height:30px;margin:7px 0 0;color:#a9bac8;font:10px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}
