@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run fixed 30-case video inference for six explicitly listed checkpoints."""
+"""Run fixed 30-case video inference for configured checkpoints."""
 from __future__ import annotations
 import argparse, json, os, subprocess, time
 from pathlib import Path
