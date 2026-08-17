@@ -58,14 +58,14 @@ DIFFICULTY_LEVELS = {
 }
 
 TABLE_ROLLOFF_CASES = (
-    {"table_height_m": 0.46, "height_label": "low", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr024"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr024"},
-    {"table_height_m": 1.02, "height_label": "high", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr024"},
+    {"table_height_m": 0.46, "height_label": "low", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
+    {"table_height_m": 1.02, "height_label": "high", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -12.0, "angle_label": "sr012"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -18.0, "angle_label": "sr018"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -24.0, "angle_label": "sr024"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -30.0, "angle_label": "sr030"},
     {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -36.0, "angle_label": "sr036"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -48.0, "angle_label": "sr048"},
 )
 
 

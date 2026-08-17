@@ -19,6 +19,7 @@ from scripts.dataset_new_0705.scene_generators_0705 import (
     validate_blueprint_physics,
 )
 from scripts.dataset_new_0705.render_sim_0705 import build_object_phrase_bundle
+from scripts.dataset_new_0705.generate_difficulty_pilot import TABLE_ROLLOFF_CASES
 
 
 class DatasetNew0705PhysicsTests(unittest.TestCase):
@@ -63,6 +64,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
 
     def test_table_rolloff_cases_share_speed_across_heights(self) -> None:
         heights = (0.46, 0.68, 1.02)
+        self.assertAlmostEqual(F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, -48.0, places=5)
         speeds = []
         for index, table_height in enumerate(heights):
             blueprint = generate_scenario_blueprint(
@@ -76,8 +78,22 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             )
             self.assertAlmostEqual(blueprint.metadata["table_height_m"], table_height, places=5)
             self.assertEqual(blueprint.camera_key, "cam_09")
-            self.assertLess(blueprint.camera.eye[0], 0.0)
+            self.assertAlmostEqual(blueprint.camera.eye[0], 0.0, places=5)
+            self.assertLess(blueprint.camera.eye[1], -2.8)
+            self.assertAlmostEqual(blueprint.camera.target[0], 0.0, places=5)
+            self.assertAlmostEqual(blueprint.camera.target[1], 0.0, places=5)
             self.assertAlmostEqual(blueprint.camera.yfov_deg, 58.0, places=5)
+            camera_horizontal_distance = math.hypot(
+                blueprint.camera.eye[0] - blueprint.camera.target[0],
+                blueprint.camera.eye[1] - blueprint.camera.target[1],
+            )
+            camera_downward_angle_deg = math.degrees(
+                math.atan2(
+                    abs(blueprint.camera.eye[2] - blueprint.camera.target[2]),
+                    camera_horizontal_distance,
+                )
+            )
+            self.assertLess(camera_downward_angle_deg, 12.0)
             self.assertAlmostEqual(blueprint.metadata["floor_restitution"], 0.62, places=5)
             mover = next(obj for obj in blueprint.objects if obj.name == "roller_0")
             self.assertTrue(mover.dynamic)
@@ -95,6 +111,18 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             self.assertAlmostEqual(mover.angular_damping, 0.0, places=5)
             speeds.append(math.hypot(mover.linear_velocity[0], mover.linear_velocity[1]))
         self.assertTrue(all(abs(speed - speeds[0]) < 1e-6 for speed in speeds))
+
+    def test_table_rolloff_pilot_cases_use_rightward_screen_trajectories(self) -> None:
+        self.assertEqual(len(TABLE_ROLLOFF_CASES), 8)
+        self.assertTrue(all(float(case["travel_angle_deg"]) < 0.0 for case in TABLE_ROLLOFF_CASES))
+        primary_cases = [case for case in TABLE_ROLLOFF_CASES if case["angle_label"] == "sr048"]
+        self.assertEqual([case["table_height_m"] for case in primary_cases], [0.46, 0.68, 1.02])
+        self.assertTrue(
+            all(
+                float(case["travel_angle_deg"]) == F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG
+                for case in primary_cases
+            )
+        )
 
     def test_table_rolloff_supports_multiple_velocity_directions(self) -> None:
         speed = 1.25

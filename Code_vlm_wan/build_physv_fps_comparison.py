@@ -24,6 +24,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--highres-results", type=Path)
     parser.add_argument("--highres-variant-key", default="full_fps15_3m")
     parser.add_argument("--highres-label", default="完整视频 / FPS 15 / 3M px")
+    parser.add_argument("--higherres-results", type=Path)
+    parser.add_argument("--higherres-variant-key", default="full_fps15_6_5m")
+    parser.add_argument("--higherres-label", default="完整视频 / FPS 15 / 6.5M px")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     return parser.parse_args()
 
@@ -105,11 +108,34 @@ def full_variant(row: dict[str, Any], label: str, source: str) -> dict[str, Any]
     }
 
 
+def preserve_or_add_full_variant(
+    variants: dict[str, Any],
+    variant_key: str,
+    row: dict[str, Any],
+    label: str,
+    source: str,
+) -> None:
+    existing = variants.get(variant_key)
+    if existing is None:
+        variants[variant_key] = full_variant(row, label, source)
+        return
+    require_equal(existing.get("video"), row.get("video"), f"{row['case_id']} existing {variant_key} video")
+    require_equal(existing.get("status"), "ok", f"{row['case_id']} existing {variant_key} status")
+    if normalized_text(existing.get("response_final")) != normalized_text(row.get("response_final")):
+        raise ValueError(f"Mismatch for {row['case_id']} existing {variant_key} final output")
+    existing["label"] = label
+    existing["source"] = source
+    existing["video_params"] = copy.deepcopy(row["video_params"])
+    existing["thinking_disabled"] = row.get("thinking_disabled")
+
+
 def main() -> None:
     args = parse_args()
     paths = (args.comparison, args.fps20_results, args.fps15_results)
     if args.highres_results is not None:
         paths += (args.highres_results,)
+    if args.higherres_results is not None:
+        paths += (args.higherres_results,)
     if args.output.resolve() in {path.resolve() for path in paths}:
         raise ValueError("Output must be a new derived comparison file")
 
@@ -117,10 +143,14 @@ def main() -> None:
     fps20_rows = load_jsonl(args.fps20_results)
     fps15_rows = load_jsonl(args.fps15_results)
     highres_rows = load_jsonl(args.highres_results) if args.highres_results is not None else None
+    higherres_rows = load_jsonl(args.higherres_results) if args.higherres_results is not None else None
     fps20_by_case = index_rows(fps20_rows, "FPS-20 results")
     fps15_by_case = index_rows(fps15_rows, "FPS-15 results")
     highres_by_case = (
         index_rows(highres_rows, "high-resolution results") if highres_rows is not None else None
+    )
+    higherres_by_case = (
+        index_rows(higherres_rows, "higher-resolution results") if higherres_rows is not None else None
     )
     comparison_by_case = index_rows(comparison_rows, "comparison results")
 
@@ -129,6 +159,8 @@ def main() -> None:
     require_equal(set(fps15_by_case), expected_cases, "FPS-15 case IDs")
     if highres_by_case is not None:
         require_equal(set(highres_by_case), expected_cases, "high-resolution case IDs")
+    if higherres_by_case is not None:
+        require_equal(set(higherres_by_case), expected_cases, "higher-resolution case IDs")
 
     merged_rows = copy.deepcopy(comparison_rows)
     for row in merged_rows:
@@ -136,6 +168,7 @@ def main() -> None:
         fps20 = fps20_by_case[case_id]
         fps15 = fps15_by_case[case_id]
         highres = highres_by_case[case_id] if highres_by_case is not None else None
+        higherres = higherres_by_case[case_id] if higherres_by_case is not None else None
         variants = row.get("variants")
         if not isinstance(variants, dict) or "full" not in variants:
             raise ValueError(f"Comparison row is missing full variant: {case_id}")
@@ -152,6 +185,7 @@ def main() -> None:
         require_equal(int(fps20_params["max_pixels"]), int(fps15_params["max_pixels"]), f"{case_id} max_pixels")
         require_equal(float(fps20_params["fps"]), 20.0, f"{case_id} FPS-20 target")
         require_equal(float(fps15_params["fps"]), 15.0, f"{case_id} FPS-15 target")
+        highres_params = None
         if highres is not None:
             for key in ("dataset", "video", "question", "thinking_disabled"):
                 require_equal(fps15.get(key), highres.get(key), f"{case_id} high-resolution {key}")
@@ -163,6 +197,19 @@ def main() -> None:
             )
             if int(highres_params["max_pixels"]) <= int(fps15_params["max_pixels"]):
                 raise ValueError(f"High-resolution max_pixels must exceed FPS-15 baseline for {case_id}")
+        higherres_params = None
+        if higherres is not None:
+            for key in ("dataset", "video", "question", "thinking_disabled"):
+                require_equal(fps15.get(key), higherres.get(key), f"{case_id} higher-resolution {key}")
+            higherres_params = require_video_params(higherres, f"higher-resolution {case_id}")
+            require_equal(float(higherres_params["fps"]), 15.0, f"{case_id} higher-resolution FPS target")
+            require_equal(
+                int(higherres_params["max_frames"]), int(fps15_params["max_frames"]),
+                f"{case_id} higher-resolution max_frames",
+            )
+            reference_params = highres_params or fps15_params
+            if int(higherres_params["max_pixels"]) <= int(reference_params["max_pixels"]):
+                raise ValueError(f"Higher-resolution max_pixels must exceed the preceding run for {case_id}")
 
         existing_full = variants["full"]
         require_equal(existing_full.get("video"), fps20.get("video"), f"{case_id} existing full video")
@@ -175,17 +222,9 @@ def main() -> None:
         existing_full["label"] = "完整视频 / FPS 20"
         existing_full["source"] = "full_video_fps20"
         existing_full["video_params"] = copy.deepcopy(fps20_params)
-        existing_fps15 = variants.get("full_fps15")
-        if existing_fps15 is None:
-            variants["full_fps15"] = full_variant(fps15, "完整视频 / FPS 15", "full_video_fps15")
-        else:
-            require_equal(existing_fps15.get("video"), fps15.get("video"), f"{case_id} existing FPS-15 video")
-            require_equal(existing_fps15.get("status"), "ok", f"{case_id} existing FPS-15 status")
-            if normalized_text(existing_fps15.get("response_final")) != normalized_text(fps15.get("response_final")):
-                raise ValueError(f"Mismatch for {case_id} existing FPS-15 final output")
-            existing_fps15["label"] = "完整视频 / FPS 15"
-            existing_fps15["source"] = "full_video_fps15"
-            existing_fps15["video_params"] = copy.deepcopy(fps15_params)
+        preserve_or_add_full_variant(
+            variants, "full_fps15", fps15, "完整视频 / FPS 15", "full_video_fps15"
+        )
 
         comparison = {
             "full_fps20_variant": "full",
@@ -193,11 +232,25 @@ def main() -> None:
             "changed_parameter": "video_params.fps",
         }
         if highres is not None:
-            variants[args.highres_variant_key] = full_variant(
-                highres, args.highres_label, "full_video_fps15_highres"
+            preserve_or_add_full_variant(
+                variants,
+                args.highres_variant_key,
+                highres,
+                args.highres_label,
+                "full_video_fps15_highres",
             )
             comparison["full_fps15_highres_variant"] = args.highres_variant_key
             comparison["full_fps15_highres_max_pixels"] = int(highres_params["max_pixels"])
+        if higherres is not None:
+            preserve_or_add_full_variant(
+                variants,
+                args.higherres_variant_key,
+                higherres,
+                args.higherres_label,
+                "full_video_fps15_higherres",
+            )
+            comparison["full_fps15_higherres_variant"] = args.higherres_variant_key
+            comparison["full_fps15_higherres_max_pixels"] = int(higherres_params["max_pixels"])
         row["fps_comparison"] = comparison
 
     write_jsonl_atomically(args.output, merged_rows)
@@ -206,6 +259,8 @@ def main() -> None:
     print("full_video_fps15=15")
     if highres_rows is not None:
         print(f"full_video_highres_variant={args.highres_variant_key}")
+    if higherres_rows is not None:
+        print(f"full_video_higherres_variant={args.higherres_variant_key}")
     print(f"output={args.output}")
 
 

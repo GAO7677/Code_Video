@@ -23,7 +23,7 @@ NOMINAL_RENDER_WIDTH = 1280
 NOMINAL_RENDER_HEIGHT = 720
 DIRECTION_MODES = {"left_to_right", "right_to_left", "vertical"}
 DEFAULT_CAMERA_DISTANCE_SCALE = 0.88
-F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG = -24.0
+F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG = -48.0
 
 
 def build_camera_catalog() -> dict[str, CameraSpec]:
@@ -110,8 +110,8 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             hdri_key="studio_warm",
         ),
         CameraSpec(
-            eye=(-3.20, -0.65, 1.36),
-            target=(0.25, 0.00, 0.28),
+            eye=(0.0, -3.64, 1.05),
+            target=(0.0, 0.0, 0.50),
             yfov_deg=58.0,
             jitter_eye_xyz=(0.0, 0.0, 0.0),
             jitter_target_xyz=(0.0, 0.0, 0.0),
@@ -179,7 +179,7 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             motion_modes=("domino", "push_chain", "rolling_chain", "offset_chain"),
             speed_range=(1.4, 4.8),
             spin_range=(0.0, 10.0),
-            angle_range_deg=(0.0, 24.0),
+            angle_range_deg=(-48.0, -12.0),
         ),
         ScenarioFamilySpec(
             key="F4",

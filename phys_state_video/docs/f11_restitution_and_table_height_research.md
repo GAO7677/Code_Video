@@ -45,6 +45,8 @@ The current F11 setup is:
 | Floor restitution | 0.62 |
 | Effective Bullet contact restitution | 0.62 |
 | Low table height | 0.46 m |
+| Primary screen-right travel angle | -48 degrees |
+| Camera | Front view with approximately 8.5 degrees downward tilt |
 
 Therefore, increasing ball mass does not change the free-fall acceleration or the
 static-floor rebound. Increasing ball restitution is also not a physical option here:
@@ -72,14 +74,15 @@ rebound.
 
 ### High-table sweep with floor restitution fixed at 0.62
 
-The current generator allows table heights up to 1.02 m. With the low table fixed at
-0.46 m, a 1.02 m high table produces a 29.87 cm high-minus-low first-bounce contrast
-in the deterministic test, exceeding the 25 cm target without changing the floor or
-ball parameters.
+The current generator allows table heights up to 1.02 m. With the primary
+screen-right trajectory fixed at -48 degrees, the rendered low and high cases produce
+first-bounce heights of 18.82 cm and 47.07 cm respectively, a 28.25 cm contrast. This
+exceeds the 25 cm target without changing the floor or ball parameters.
 
 ## Recommendation
 
 Keep the floor restitution at 0.62 and retain one fixed ball specification across all
-F11 cases. Use 0.46 m and 1.02 m as the contrast pair, then render and validate that
-the ball and rebound remain inside the camera frame. Do not use mass as a proxy for
-bounciness against a static floor.
+F11 cases. Use 0.46 m and 1.02 m as the contrast pair with the -48 degree primary
+screen-right trajectory, then render and validate that the ball and rebound remain
+inside the camera frame. Do not use mass as a proxy for bounciness against a static
+floor.
