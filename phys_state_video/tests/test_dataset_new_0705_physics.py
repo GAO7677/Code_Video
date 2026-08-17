@@ -177,6 +177,18 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             self.assertLess(blueprint.camera.eye[1], -6.0)
             self.assertAlmostEqual(blueprint.camera.target[0], 2.35, places=5)
             self.assertAlmostEqual(blueprint.camera.yfov_deg, 48.0, places=5)
+            camera_horizontal_distance = math.hypot(
+                blueprint.camera.eye[0] - blueprint.camera.target[0],
+                blueprint.camera.eye[1] - blueprint.camera.target[1],
+            )
+            camera_downward_angle_deg = math.degrees(
+                math.atan2(
+                    abs(blueprint.camera.eye[2] - blueprint.camera.target[2]),
+                    camera_horizontal_distance,
+                )
+            )
+            self.assertGreater(camera_downward_angle_deg, 5.0)
+            self.assertLess(camera_downward_angle_deg, 6.0)
             self.assertEqual(blueprint.surface_key, "painted_concrete_floor")
             self.assertEqual(blueprint.lighting_key, "hall_bright")
             self.assertAlmostEqual(blueprint.metadata["ramp_angle_deg"], angle_deg, places=5)

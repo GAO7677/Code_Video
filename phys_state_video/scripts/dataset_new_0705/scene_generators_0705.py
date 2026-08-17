@@ -120,9 +120,10 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
         ),
         CameraSpec(
             # F12 runs from the raised left end of the ramp to the right-side
-            # floor.  Center the full simulated rollout rather than only the
-            # support, while retaining a near-front elevation.
-            eye=(2.35, -6.90, 1.40),
+            # floor. Center the full simulated rollout rather than only the
+            # support, with a shallow downward view that keeps the ramp
+            # surface and wheel-floor contact visually legible.
+            eye=(2.35, -6.90, 1.20),
             target=(2.35, 0.0, 0.54),
             yfov_deg=48.0,
             jitter_eye_xyz=(0.0, 0.0, 0.0),
