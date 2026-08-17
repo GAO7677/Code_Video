@@ -72,9 +72,12 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
                 initial_speed_mps=1.25,
             )
             self.assertAlmostEqual(blueprint.metadata["table_height_m"], table_height, places=5)
+            self.assertEqual(blueprint.camera_key, "cam_09")
+            self.assertAlmostEqual(blueprint.metadata["floor_restitution"], 0.42, places=5)
             mover = next(obj for obj in blueprint.objects if obj.name == "roller_0")
             self.assertTrue(mover.dynamic)
             self.assertAlmostEqual(mover.linear_velocity[0], 1.25, places=5)
+            self.assertAlmostEqual(mover.restitution, 0.95, places=5)
             speeds.append(mover.linear_velocity[0])
         self.assertTrue(all(abs(speed - speeds[0]) < 1e-6 for speed in speeds))
 

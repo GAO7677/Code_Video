@@ -1,0 +1,20 @@
+Describe the video as a concise, temporally ordered physical caption.
+
+Focus on the observable physical behavior of the main objects. Describe their translational motion, rotation or orientation changes, contacts, collisions, interactions with other objects or surfaces, and how these behaviors evolve over time. Also describe visible deformation or material response when clearly observable.
+
+Describe changes in physical state at the moment they occur. For example, state when an object gains or loses contact with a surface, leaves a supporting surface, becomes airborne, contacts another object or surface, rebounds, changes direction, changes motion mode, deforms, or settles. Prefer concrete event descriptions over abstract labels or summaries.
+
+Pay attention to how motion changes over time, including changes in direction, relative speed, rotation, oscillation, and motion magnitude. Near the end of the video, describe the object's current motion, contact, orientation, and deformation state if they are visually clear.
+
+Describe material behavior only from visible evidence. You may describe an object as behaving rigidly or deformably, or state that no visible deformation occurs, but do not guess a specific material or infer unobservable physical parameters such as mass, friction coefficient, stiffness, force, or exact velocity.
+
+Include object geometry, spatial arrangement, and scene structure only when they are relevant to understanding the physical behavior. Minimize appearance details such as color, texture, or background semantics unless they are necessary to distinguish objects.
+
+Use the following dataset description only as auxiliary context. Verify it against the actual video and ignore any detail that is inconsistent with what is visibly observed.
+
+Dataset description:
+A sphere falls onto a raised platform, moves across its upper surface, passes beyond the platform edge, falls to the lower ground, and continues moving after contact.
+
+Describe events strictly in the order in which they occur. Only report events and physical states that are visually supported by the video. If rotation, deformation, rebound, contact, or another detail cannot be reliably determined, do not claim it. Do not predict what happens after the video ends.
+
+Output only the final caption. Do not provide reasoning, analysis, bullet points, labels, or repeat the dataset description. Use no more than 4 sentences and 120 English words.

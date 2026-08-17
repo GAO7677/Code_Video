@@ -480,6 +480,7 @@ def blueprint_to_legacy_scenario(blueprint: ScenarioBlueprint, seed: int) -> leg
         seed=seed,
         pre_roll_s=blueprint.pre_roll_s,
         sim_type="rigid_realism_v2",
+        floor_restitution=float(blueprint.metadata.get("floor_restitution", 0.02)),
     )
 
 

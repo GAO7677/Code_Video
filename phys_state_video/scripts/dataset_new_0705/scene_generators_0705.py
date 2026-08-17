@@ -108,6 +108,15 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             jitter_fov_deg=1.5,
             hdri_key="studio_warm",
         ),
+        CameraSpec(
+            eye=(2.40, 0.00, 0.92),
+            target=(0.10, 0.00, 0.18),
+            yfov_deg=36.0,
+            jitter_eye_xyz=(0.0, 0.0, 0.0),
+            jitter_target_xyz=(0.0, 0.0, 0.0),
+            jitter_fov_deg=0.0,
+            hdri_key="studio_warm",
+        ),
     ]
     return {f"cam_{idx:02d}": camera for idx, camera in enumerate(cameras)}
 
@@ -317,9 +326,9 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             supports_support_objects=True,
             target_event_types=("table_entry", "edge_drop", "land"),
             preferred_surface_keys=("residential_wood_floor", "studio_wood_floor", "dark_wood_floor"),
-            preferred_camera_keys=("cam_05", "cam_08", "cam_06"),
+            preferred_camera_keys=("cam_09",),
             motion_modes=("table_rolloff",),
-            speed_range=(1.0, 1.6),
+            speed_range=(1.25, 1.25),
             spin_range=(0.0, 0.0),
             angle_range_deg=(0.0, 0.0),
         ),
@@ -1341,7 +1350,7 @@ def _make_f11(
     table_height = float(table_height_m if table_height_m is not None else rng.uniform(0.45, 0.95))
     table_height = float(np.clip(table_height, 0.38, 1.02))
     speed = float(initial_speed_mps if initial_speed_mps is not None else rng.uniform(*family.speed_range))
-    speed = float(np.clip(speed, 0.85, 2.4))
+    speed = float(np.clip(speed, 0.65, 2.4))
 
     table_top_thickness = 0.05 * size_scale
     table_top_half = 0.60 * size_scale
@@ -1418,9 +1427,9 @@ def _make_f11(
         size={"radius": ball_radius},
         mass=0.95,
         friction=0.58,
-        restitution=0.32,
-        linear_damping=0.02,
-        angular_damping=0.03,
+        restitution=0.95,
+        linear_damping=0.005,
+        angular_damping=0.005,
         material_key="rubber_red",
         color=materials["rubber_red"].base_color,
         dynamic=True,
@@ -1431,8 +1440,8 @@ def _make_f11(
         angular_velocity=(0.0, -speed / max(ball_radius, 1e-6), 0.0),
     )
 
-    camera_key = "cam_05"
-    camera = _sample_camera_with_distance_scale(rng, camera_key, camera_distance_scale=DEFAULT_CAMERA_DISTANCE_SCALE)
+    camera_key = "cam_09"
+    camera = build_camera_catalog()[camera_key]
 
     return ScenarioBlueprint(
         family_key=family.key,
@@ -1450,6 +1459,7 @@ def _make_f11(
         metadata={
             "table_height_m": round(table_height, 5),
             "initial_speed_mps": round(speed, 5),
+            "floor_restitution": 0.42,
             "table_top_thickness_m": round(table_top_thickness, 5),
             "table_top_half_width_m": round(table_top_half, 5),
             "table_top_half_depth_m": round(table_depth_half, 5),

@@ -95,6 +95,7 @@ class ScenarioSpec:
     seed: int
     pre_roll_s: float = 0.75
     sim_type: str = "rigid_simple"
+    floor_restitution: float = 0.02
 
 
 THEME_LABELS = {
@@ -1222,7 +1223,7 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text
         plane_id,
         -1,
         lateralFriction=scenario.floor_friction,
-        restitution=0.02,
+        restitution=scenario.floor_restitution,
         activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING,
     )
     if abs(float(scenario.gravity) - EARTH_GRAVITY) > 1e-6:
@@ -1324,6 +1325,7 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text
         "gravity": scenario.gravity,
         "sim_type": scenario.sim_type,
         "floor_friction": scenario.floor_friction,
+        "floor_restitution": scenario.floor_restitution,
         "spawn_policy": "no mid-scene spawn; pre-roll allowed for off-screen continuity",
         "video": str(output_mp4),
         "states": str(output_npz),

@@ -238,6 +238,7 @@ def main() -> None:
                         "camera_key": blueprint.camera_key,
                         "lighting_key": blueprint.lighting_key,
                         "scene_style": args.scene_style,
+                        "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
                         "objects": [
                             {
                                 "name": obj.name,
@@ -358,6 +359,7 @@ def main() -> None:
                     "scene_style": "indoor_realistic",
                     "table_height_m": round(table_height_m, 5),
                     "initial_speed_mps": round(shared_table_speed, 5),
+                    "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
                     "table_height_label": extra["label"],
                     "objects": [
                         {

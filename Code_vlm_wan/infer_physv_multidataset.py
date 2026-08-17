@@ -165,6 +165,12 @@ def parse_args():
     parser.add_argument("--0613-root", default=DEFAULT_0613_ROOT)
     parser.add_argument("--phyco-root", default=DEFAULT_PHYCO_ROOT)
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--prompt-file",
+        type=Path,
+        default=None,
+        help="Use this exact user prompt instead of the default context-augmented prompt.",
+    )
     parser.add_argument("--num-cases-per-dataset", type=int, default=3)
     parser.add_argument("--fps", type=float, default=20.0)
     parser.add_argument("--max-frames", type=int, default=64)
@@ -185,7 +191,9 @@ def run_case(case: Case, args, processor, llm, sampling_params):
         "text": case.context_text,
         "source": case.context_source,
     }
-    question = build_question(original_prompt) + "\n\n" + ANSWER_CONSTRAINT
+    question = args.prompt_text or (
+        build_question(original_prompt) + "\n\n" + ANSWER_CONSTRAINT
+    )
     messages = build_messages(case.video_path, args, question)
     started = time.time()
     result = {
@@ -193,7 +201,8 @@ def run_case(case: Case, args, processor, llm, sampling_params):
         "case_id": case.case_id,
         "video": str(case.video_path),
         "question": question,
-        "analysis_prompt": ANALYSIS_PROMPT,
+        "analysis_prompt": args.prompt_text or ANALYSIS_PROMPT,
+        "prompt_source": str(args.prompt_file) if args.prompt_file else "default",
         "original_prompt": case.context_text,
         "original_prompt_source": case.context_source,
         "video_params": {
@@ -241,6 +250,12 @@ def run_case(case: Case, args, processor, llm, sampling_params):
 
 def main():
     args = parse_args()
+    if args.prompt_file is not None:
+        if not args.prompt_file.is_file():
+            raise FileNotFoundError(args.prompt_file)
+        args.prompt_text = args.prompt_file.read_text(encoding="utf-8").strip()
+    else:
+        args.prompt_text = None
     count = max(args.num_cases_per_dataset, 1)
     cases = select_0613_cases(Path(args.__dict__["0613_root"]), count)
     cases += select_phyco_cases(Path(args.phyco_root), count)
