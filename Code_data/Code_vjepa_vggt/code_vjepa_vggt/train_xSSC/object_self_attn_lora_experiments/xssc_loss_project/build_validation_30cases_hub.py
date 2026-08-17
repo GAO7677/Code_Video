@@ -50,6 +50,7 @@ def main():
                 if 'train/loss_xssc' in m: loss_html+=f" · xSSC {float(m['train/loss_xssc']):.6f}"
                 if 'train/loss_vjepa' in m: loss_html+=f" · V-JEPA {float(m['train/loss_vjepa']):.6f}"
                 if 'train/loss_trajectory' in m: loss_html+=f" · trajectory {float(m['train/loss_trajectory']):.6f}"
+                if 'train/loss_motion_probe_latent_mask_ce_weighted' in m: loss_html+=f" · latent-mask {float(m['train/loss_motion_probe_latent_mask_ce_weighted']):.6f}"
                 if 'train/loss_total' in m: loss_html+=f" · total {float(m['train/loss_total']):.6f}"
                 ready_l+=1
             else:

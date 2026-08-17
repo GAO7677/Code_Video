@@ -102,6 +102,7 @@ def _summarize_states(states_path: Path) -> dict[str, object]:
         max_speed = float(speed.max(initial=0.0))
         final_speed = float(speed[-1])
         max_angular_speed = float(angular_speed.max(initial=0.0))
+        final_angular_speed = float(angular_speed[-1])
         direction_reversals = _direction_reversals(object_linear)
         height_range = float(object_positions[:, 2].max() - object_positions[:, 2].min())
         moving = max(max_speed, max_angular_speed * 0.05, height_range) > 0.05
@@ -115,6 +116,7 @@ def _summarize_states(states_path: Path) -> dict[str, object]:
                 "max_speed_mps": round(max_speed, 5),
                 "final_speed_mps": round(final_speed, 5),
                 "max_angular_speed_radps": round(max_angular_speed, 5),
+                "final_angular_speed_radps": round(final_angular_speed, 5),
                 "height_range_m": round(height_range, 5),
                 "direction_reversals": direction_reversals,
                 "derived_motion_present": bool(moving),
@@ -123,7 +125,7 @@ def _summarize_states(states_path: Path) -> dict[str, object]:
 
     final_motion = "moving" if any(
         float(item["final_speed_mps"]) > 0.08
-        or float(item["max_angular_speed_radps"]) > 0.35
+        or float(item["final_angular_speed_radps"]) > 0.35
         for item in objects
     ) else "nearly_stationary"
     return {
@@ -162,6 +164,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-base", type=int, default=20260817)
     parser.add_argument("--size-scale", type=float, default=1.0)
     parser.add_argument("--camera-distance-scale", type=float, default=DEFAULT_CAMERA_DISTANCE_SCALE)
+    parser.add_argument("--scene-style", type=str, default="indoor_realistic")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -206,6 +209,7 @@ def main() -> None:
                     output_root=case_root,
                     width=args.width,
                     height=args.height,
+                    scene_style=args.scene_style,
                     export_instance_masks=True,
                     preserve_states=True,
                 )
@@ -221,15 +225,19 @@ def main() -> None:
                     "difficulty": difficulty,
                     "scene_family": family_summary,
                     "state_summary": state_summary,
+                    "scene_style": args.scene_style,
                     "scenario_spec": {
                         "surface_key": blueprint.surface_key,
                         "camera_key": blueprint.camera_key,
                         "lighting_key": blueprint.lighting_key,
+                        "scene_style": args.scene_style,
                         "objects": [
                             {
                                 "name": obj.name,
                                 "family_key": obj.family_key,
                                 "shape": obj.shape,
+                                "dynamic": bool(obj.dynamic),
+                                "role": obj.role,
                                 "mass_kg": round(float(obj.mass), 5),
                                 "friction": round(float(obj.friction), 5),
                                 "restitution": round(float(obj.restitution), 5),
@@ -263,6 +271,7 @@ def main() -> None:
                         "scene_family": family_summary,
                         "scene_title": blueprint.title,
                         "scene_description": blueprint.description,
+                        "scene_style": args.scene_style,
                         "scenario_spec": pilot_metadata["scenario_spec"],
                         "state_summary": state_summary,
                         "video": render_manifest["video"],

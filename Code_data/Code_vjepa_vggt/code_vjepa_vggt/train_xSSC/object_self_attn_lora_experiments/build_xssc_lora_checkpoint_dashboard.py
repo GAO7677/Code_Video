@@ -1445,6 +1445,11 @@ MERGED_METHODS = [
         "color": "#A23B72",
     },
     {
+        "key": "full_sa_no_object_gt_latent_mask_loss",
+        "label": "Full-SA + No-Object + GT Latent-Mask CE",
+        "color": "#E69F00",
+    },
+    {
         "key": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
         "label": "Full-SA + Object + Slot-Dedup (xSSC-50k) + xSSC Loss (DINOv3 MOVi-C 50k)",
         "color": "#D55E00",

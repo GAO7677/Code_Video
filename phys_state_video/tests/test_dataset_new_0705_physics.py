@@ -43,6 +43,20 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "dynamic object mass must be positive"):
             validate_blueprint_physics(replace(blueprint, objects=(invalid_object,)))
 
+    def test_visible_supports_are_dynamic_and_grounded(self) -> None:
+        for family_key in ("F5", "F6", "F9", "F10"):
+            blueprint = generate_scenario_blueprint(
+                family_key, f"{family_key}_support", 20260717
+            )
+            supports = [obj for obj in blueprint.objects if "support" in obj.role]
+            self.assertTrue(supports, family_key)
+            for obj in supports:
+                self.assertTrue(obj.dynamic, (family_key, obj.name))
+                self.assertGreater(obj.mass, 0.0, (family_key, obj.name))
+                self.assertAlmostEqual(
+                    obj.position[2], _collision_vertical_extent(obj), places=7
+                )
+
     def test_validation_rejects_nonstandard_gravity(self) -> None:
         blueprint = generate_scenario_blueprint("F1", "invalid_gravity", seed=20260717)
         with self.assertRaisesRegex(ValueError, "require gravity"):

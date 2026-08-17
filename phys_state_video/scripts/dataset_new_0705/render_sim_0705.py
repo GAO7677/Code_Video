@@ -252,8 +252,10 @@ def _build_prompt_bundle(blueprint: ScenarioBlueprint, width: int, height: int) 
     }
 
 
-def register_material_assets() -> None:
-    for material in build_material_catalog().values():
+def register_material_assets(materials: dict[str, MaterialSpec] | None = None) -> None:
+    if materials is None:
+        materials = build_material_catalog()
+    for material in materials.values():
         asset_key = _legacy_texture_asset(material)
         if not asset_key or not material.texture_path:
             continue
@@ -272,15 +274,19 @@ def _load_image(path: str) -> np.ndarray | None:
     return legacy.cv2.cvtColor(image, legacy.cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
 
-def _sample_texture_array(material: MaterialSpec, rng: np.random.Generator | None = None) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, float, float]:
+def _sample_texture_array(
+    material: MaterialSpec,
+    rng: np.random.Generator | None = None,
+) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None, float, float]:
     if rng is None:
         rng = np.random.default_rng(0)
     albedo = _load_image(material.texture_path)
     normal = _load_image(material.normal_path)
     roughness = _load_image(material.roughness_path)
+    ao = _load_image(material.ao_path)
     repeat = float(rng.uniform(*material.texture_repeat_range))
     rotation_deg = float(rng.uniform(*material.texture_rotation_deg_range))
-    return albedo, normal, roughness, repeat, rotation_deg
+    return albedo, normal, roughness, ao, repeat, rotation_deg
 
 
 def _sample_map_bilinear(image: np.ndarray, uv: np.ndarray) -> np.ndarray:
@@ -308,6 +314,23 @@ def _sample_map_bilinear(image: np.ndarray, uv: np.ndarray) -> np.ndarray:
     ).astype(np.float32)
 
 
+def _stable_name_seed(name: str) -> int:
+    value = 0
+    for index, char in enumerate(name):
+        value += (index + 1) * ord(char)
+    return int(value % (2**32 - 1))
+
+
+def _make_pbr_material(material: MaterialSpec) -> legacy.pyrender.MetallicRoughnessMaterial:
+    return legacy.pyrender.MetallicRoughnessMaterial(
+        alphaMode="OPAQUE",
+        baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+        metallicFactor=float(np.clip(material.metallic, 0.0, 1.0)),
+        roughnessFactor=float(np.clip(material.roughness, 0.05, 1.0)),
+        doubleSided=True,
+    )
+
+
 def _apply_texture_2d_pattern(
     mesh,
     material: MaterialSpec,
@@ -315,9 +338,10 @@ def _apply_texture_2d_pattern(
     seed: int,
     uv_repeat_override: float | None = None,
     tone_bias_override: float | None = None,
+    natural: bool = False,
 ) -> None:
     rng = np.random.default_rng(seed)
-    albedo, normal_map, rough_map, repeat, rotation_deg = _sample_texture_array(material, rng)
+    albedo, normal_map, rough_map, ao_map, repeat, rotation_deg = _sample_texture_array(material, rng)
     repeat = uv_repeat_override if uv_repeat_override is not None else repeat
     tone_jitter = float(rng.uniform(*material.tone_jitter_range))
     if tone_bias_override is not None:
@@ -352,22 +376,27 @@ def _apply_texture_2d_pattern(
             colors[dominant == 1] = _sample_map_bilinear(albedo, uv_xz[dominant == 1])
         if np.any(dominant == 2):
             colors[dominant == 2] = _sample_map_bilinear(albedo, uv_xy[dominant == 2])
+    if albedo is not None and natural:
+        base_tint = np.clip(np.asarray(material.base_color, dtype=np.float32), 0.0, 1.0)
+        base_max = max(float(base_tint.max()), 1e-6)
+        tint = 0.58 + 0.42 * (base_tint / base_max)
+        colors = colors * tint[None, :]
     else:
         if material.texture_style == "fabric":
-            weave = 0.5 + 0.5 * np.sin(verts[:, 0] * 18.0 + verts[:, 1] * 11.0)
-            bands = 0.5 + 0.5 * np.sin(verts[:, 2] * 4.0 + verts[:, 0] * 2.0)
-            colors = colors * (0.84 + 0.10 * weave[:, None]) * (0.90 + 0.08 * bands[:, None])
+            weave = 0.5 + 0.5 * np.sin(verts[:, 0] * 16.0 + verts[:, 1] * 10.0)
+            bands = 0.5 + 0.5 * np.sin(verts[:, 2] * 3.2 + verts[:, 0] * 1.8)
+            colors = colors * (0.88 + (0.06 if natural else 0.10) * weave[:, None]) * (0.94 + (0.04 if natural else 0.08) * bands[:, None])
         elif material.texture_style == "metal":
             sheen = 0.45 + 0.55 * (verts[:, 2] - verts[:, 2].min()) / max(float(np.ptp(verts[:, 2])), 1e-6)
-            colors = colors * (0.78 + 0.22 * sheen[:, None])
+            colors = colors * (0.84 + (0.12 if natural else 0.22) * sheen[:, None])
         elif material.texture_style == "painted":
-            brush = 0.5 + 0.5 * np.sin(verts[:, 0] * 6.0 + verts[:, 2] * 3.0)
-            colors = colors * (0.86 + 0.10 * brush[:, None])
+            brush = 0.5 + 0.5 * np.sin(verts[:, 0] * 5.0 + verts[:, 2] * 2.8)
+            colors = colors * (0.90 + (0.05 if natural else 0.10) * brush[:, None])
         else:
-            bands = 0.5 + 0.5 * np.sin(verts[:, 0] * 3.4 + verts[:, 2] * 2.2)
-            colors = colors * (0.86 + 0.12 * bands[:, None])
+            bands = 0.5 + 0.5 * np.sin(verts[:, 0] * 3.1 + verts[:, 2] * 2.0)
+            colors = colors * (0.90 + (0.05 if natural else 0.12) * bands[:, None])
 
-    if rough_map is not None:
+    if rough_map is not None and not natural:
         rough_abs = np.mean(rough_map, axis=2, keepdims=False)
         rough = _sample_map_bilinear(rough_abs[..., None].repeat(3, axis=2), dominant_uv).mean(axis=1)
         colors = colors * (0.85 + 0.15 * (1.0 - rough)[:, None])
@@ -376,24 +405,30 @@ def _apply_texture_2d_pattern(
         dominant = np.argmax(abs_normals, axis=1)
         if np.any(dominant == 0):
             nmap = _sample_map_bilinear(normal_map, uv_yz[dominant == 0])
-            bump = 0.55 + 0.45 * np.clip(nmap[:, 2], 0.0, 1.0)
+            bump = (0.55 + 0.45 * np.clip(nmap[:, 2], 0.0, 1.0)) if not natural else (0.92 + 0.08 * np.clip(nmap[:, 2], 0.0, 1.0))
             colors[dominant == 0] *= bump[:, None]
         if np.any(dominant == 1):
             nmap = _sample_map_bilinear(normal_map, uv_xz[dominant == 1])
-            bump = 0.55 + 0.45 * np.clip(nmap[:, 2], 0.0, 1.0)
+            bump = (0.55 + 0.45 * np.clip(nmap[:, 2], 0.0, 1.0)) if not natural else (0.92 + 0.08 * np.clip(nmap[:, 2], 0.0, 1.0))
             colors[dominant == 1] *= bump[:, None]
         if np.any(dominant == 2):
             nmap = _sample_map_bilinear(normal_map, uv_xy[dominant == 2])
-            bump = 0.55 + 0.45 * np.clip(nmap[:, 2], 0.0, 1.0)
+            bump = (0.55 + 0.45 * np.clip(nmap[:, 2], 0.0, 1.0)) if not natural else (0.92 + 0.08 * np.clip(nmap[:, 2], 0.0, 1.0))
             colors[dominant == 2] *= bump[:, None]
+    if ao_map is not None:
+        ao = _sample_map_bilinear(ao_map, dominant_uv).mean(axis=1)
+        colors = colors * ((0.82 + 0.18 * ao)[:, None] if natural else (0.76 + 0.24 * ao)[:, None])
 
     low_freq = 0.5 + 0.5 * np.sin(verts[:, 0] * 1.1 + verts[:, 1] * 0.8 + verts[:, 2] * 0.4)
     if tone_jitter > 0.0:
-        colors = colors * (1.0 - tone_jitter) + np.asarray(material.accent_color, dtype=np.float32)[None, :] * tone_jitter
-    colors = colors * (0.90 + 0.10 * low_freq[:, None])
-    colors = colors * (0.96 + 0.04 * mix)
+        jitter = tone_jitter * (0.55 if natural else 1.0)
+        colors = colors * (1.0 - jitter) + np.asarray(material.accent_color, dtype=np.float32)[None, :] * jitter
+    colors = colors * ((0.96 + 0.04 * low_freq)[:, None] if natural else (0.90 + 0.10 * low_freq)[:, None])
+    colors = colors * ((0.985 + 0.015 * mix) if natural else (0.96 + 0.04 * mix))
     colors = np.clip(colors, 0.0, 1.0)
-    mesh.visual.vertex_colors = colors
+    noise_scale = 0.012 if natural else 0.03
+    noise = rng.uniform(-noise_scale, noise_scale, colors.shape).astype(np.float32)
+    mesh.visual.vertex_colors = np.clip(colors + noise, 0.0, 1.0)
 
 
 def _legacy_object_spec_from_blueprint_object(obj) -> legacy.ObjectSpec:
@@ -451,9 +486,21 @@ def _style_bg(surface_key: str) -> list[float]:
     return [0.54, 0.53, 0.50]
 
 
-def _add_mesh_with_material(scene, mesh, material: MaterialSpec, pose, *, seed: int) -> None:
-    _apply_texture_2d_pattern(mesh, material, seed=seed)
-    scene.add(legacy.pyrender.Mesh.from_trimesh(mesh, smooth=False), pose=pose)
+def _add_mesh_with_material(
+    scene,
+    mesh,
+    material: MaterialSpec,
+    pose,
+    *,
+    seed: int,
+    natural: bool = False,
+    smooth: bool = False,
+) -> None:
+    _apply_texture_2d_pattern(mesh, material, seed=seed, natural=natural)
+    scene.add(
+        legacy.pyrender.Mesh.from_trimesh(mesh, material=_make_pbr_material(material), smooth=smooth),
+        pose=pose,
+    )
 
 
 def _build_decor_object(
@@ -529,14 +576,28 @@ class RealismPreviewRenderer:
         surface = surfaces[surface_key]
         lighting = lightings[lighting_key]
         self.scene_style = scene_style
+        self.materials = materials
+        self.object_materials: dict[str, MaterialSpec] = {}
+
+        if scene_style == "indoor_realistic":
+            bg_color = [0.09, 0.09, 0.10]
+            ambient = [0.08 + lighting.ambient_boost, 0.08 + lighting.ambient_boost, 0.08 + lighting.ambient_boost]
+        elif scene_style == "indoor_natural":
+            bg_color = [0.45, 0.46, 0.47]
+            ambient = [0.11 + 0.3 * lighting.ambient_boost, 0.11 + 0.3 * lighting.ambient_boost, 0.11 + 0.3 * lighting.ambient_boost]
+        else:
+            bg_color = _style_bg(surface_key)
+            ambient = [0.08 + lighting.ambient_boost, 0.08 + lighting.ambient_boost, 0.08 + lighting.ambient_boost]
 
         self.scene = legacy.pyrender.Scene(
-            bg_color=_style_bg(surface_key) if scene_style != "indoor_realistic" else [0.09, 0.09, 0.10],
-            ambient_light=[0.08 + lighting.ambient_boost, 0.08 + lighting.ambient_boost, 0.08 + lighting.ambient_boost],
+            bg_color=bg_color,
+            ambient_light=ambient,
         )
 
         if scene_style == "indoor_realistic":
             self._add_indoor_room(materials, surface, lighting)
+        elif scene_style == "indoor_natural":
+            self._add_natural_room(materials, surface, lighting)
         else:
             self._add_simple_stage(materials, surface, lighting)
 
@@ -598,6 +659,105 @@ class RealismPreviewRenderer:
         self.scene.add(
             rim,
             pose=legacy._look_at(np.array([0.0, 2.8, 2.4]), np.array([0.0, 0.4, 0.3]), np.array([0.0, 0.0, 1.0])),
+        )
+
+    def _add_natural_room(self, materials, surface, lighting) -> None:
+        rng = np.random.default_rng(271828)
+        floor = legacy.trimesh.creation.box(extents=[14.4, 12.8, 0.05])
+        _add_mesh_with_material(
+            self.scene,
+            floor,
+            materials[surface.floor_material_key],
+            legacy._tr(0.0, 2.0, -0.05),
+            seed=int(rng.integers(0, 1_000_000)),
+            natural=True,
+            smooth=False,
+        )
+
+        back_wall = legacy.trimesh.creation.box(extents=[14.4, 0.05, 3.6])
+        _add_mesh_with_material(
+            self.scene,
+            back_wall,
+            materials[surface.wall_material_key],
+            legacy._tr(0.0, 5.0, 1.8),
+            seed=int(rng.integers(0, 1_000_000)),
+            natural=True,
+            smooth=False,
+        )
+
+        left_wall = legacy.trimesh.creation.box(extents=[0.05, 12.8, 3.6])
+        _add_mesh_with_material(
+            self.scene,
+            left_wall,
+            materials[surface.wall_material_key],
+            legacy._tr(-7.2, 1.95, 1.8),
+            seed=int(rng.integers(0, 1_000_000)),
+            natural=True,
+            smooth=False,
+        )
+
+        right_wall = legacy.trimesh.creation.box(extents=[0.05, 12.8, 3.6])
+        _add_mesh_with_material(
+            self.scene,
+            right_wall,
+            materials[surface.wall_material_key],
+            legacy._tr(7.2, 1.95, 1.8),
+            seed=int(rng.integers(0, 1_000_000)),
+            natural=True,
+            smooth=False,
+        )
+
+        ceiling = legacy.trimesh.creation.box(extents=[14.4, 12.8, 0.04])
+        _add_mesh_with_material(
+            self.scene,
+            ceiling,
+            materials["concrete_clean_wall"],
+            legacy._tr(0.0, 2.0, 3.58),
+            seed=int(rng.integers(0, 1_000_000)),
+            natural=True,
+            smooth=False,
+        )
+
+        floor_trim = legacy.trimesh.creation.box(extents=[14.25, 0.04, 0.10])
+        _add_mesh_with_material(
+            self.scene,
+            floor_trim,
+            materials["wood_dark"],
+            legacy._tr(0.0, 5.0, 0.05),
+            seed=int(rng.integers(0, 1_000_000)),
+            natural=True,
+            smooth=False,
+        )
+
+        key_light = legacy.pyrender.SpotLight(
+            color=[1.0, 0.99, 0.96],
+            intensity=32.0 * lighting.key_light_intensity,
+            innerConeAngle=0.58,
+            outerConeAngle=1.25,
+        )
+        fill_light = legacy.pyrender.SpotLight(
+            color=[0.96, 0.98, 1.0],
+            intensity=18.0 * lighting.fill_light_intensity,
+            innerConeAngle=0.62,
+            outerConeAngle=1.35,
+        )
+        overhead = legacy.pyrender.SpotLight(
+            color=[1.0, 1.0, 1.0],
+            intensity=12.0 * lighting.rim_light_intensity,
+            innerConeAngle=0.55,
+            outerConeAngle=1.12,
+        )
+        self.scene.add(
+            key_light,
+            pose=legacy._look_at(np.array([-2.8, -1.8, 3.1]), np.array([0.0, 0.7, 0.55]), np.array([0.0, 0.0, 1.0])),
+        )
+        self.scene.add(
+            fill_light,
+            pose=legacy._look_at(np.array([2.6, -1.4, 2.7]), np.array([0.0, 0.5, 0.42]), np.array([0.0, 0.0, 1.0])),
+        )
+        self.scene.add(
+            overhead,
+            pose=legacy._look_at(np.array([0.0, 2.0, 3.2]), np.array([0.0, 0.4, 0.4]), np.array([0.0, 0.0, 1.0])),
         )
 
     def _add_indoor_room(self, materials, surface, lighting) -> None:
@@ -888,8 +1048,26 @@ class RealismPreviewRenderer:
 
     def add_object(self, obj: legacy.ObjectSpec) -> None:
         mesh = legacy._make_mesh(obj)
+        if self.scene_style == "indoor_natural":
+            material = self.object_materials.get(obj.name)
+            if material is not None:
+                _apply_texture_2d_pattern(
+                    mesh,
+                    material,
+                    seed=_stable_name_seed(obj.name),
+                    natural=True,
+                )
+                rendered = legacy.pyrender.Mesh.from_trimesh(
+                    mesh,
+                    material=_make_pbr_material(material),
+                    smooth=True,
+                )
+            else:
+                rendered = legacy.pyrender.Mesh.from_trimesh(mesh, smooth=True)
+        else:
+            rendered = legacy.pyrender.Mesh.from_trimesh(mesh, smooth=True)
         node = self.scene.add(
-            legacy.pyrender.Mesh.from_trimesh(mesh, smooth=True),
+            rendered,
             pose=legacy._tr(obj.position[0], obj.position[1], obj.position[2]),
         )
         self.nodes[obj.name] = node
@@ -1005,7 +1183,8 @@ def render_blueprint_case(
     preserve_states: bool = False,
 ) -> dict:
     output_root.mkdir(parents=True, exist_ok=True)
-    register_material_assets()
+    materials = build_material_catalog()
+    register_material_assets(materials)
     scenario = blueprint_to_legacy_scenario(blueprint, seed=seed)
 
     with override_legacy_runtime(output_root=output_root, camera=blueprint.camera, width=width, height=height):
@@ -1020,6 +1199,7 @@ def render_blueprint_case(
                 scene_style=scene_style,
                 capture_instance_masks=export_instance_masks,
             )
+            renderer.object_materials = {obj.name: materials[obj.material_key] for obj in blueprint.objects}
             try:
                 meta = legacy.run_scenario(renderer, scenario, overlay_text=False)
                 if export_instance_masks:
@@ -1042,6 +1222,7 @@ def render_blueprint_case(
     payload["camera"]["up"] = list(blueprint.camera.up)
     payload["surface_key"] = blueprint.surface_key
     payload["lighting_key"] = blueprint.lighting_key
+    payload["scene_style"] = scene_style
     payload["tags"] = list(blueprint.tags)
     payload["size_scale"] = float(blueprint.metadata.get("size_scale", 1.0))
     payload["camera_distance_scale"] = float(blueprint.metadata.get("camera_distance_scale", 1.0))
@@ -1052,6 +1233,7 @@ def render_blueprint_case(
         "sample_key": blueprint.sample_key,
         "surface_key": blueprint.surface_key,
         "lighting_key": blueprint.lighting_key,
+        "scene_style": scene_style,
         "camera_key": blueprint.camera_key,
         "metadata": blueprint.metadata,
     }
@@ -1128,6 +1310,7 @@ def render_blueprint_case(
         "camera_distance_scale": float(blueprint.metadata.get("camera_distance_scale", 1.0)),
         "caption": payload["caption"],
         "short_caption": payload["short_caption"],
+        "scene_style": scene_style,
         "object_nouns": payload["object_nouns"],
         "object_phrases": payload["object_phrases"],
         "dynamic_object_phrases": payload["dynamic_object_phrases"],

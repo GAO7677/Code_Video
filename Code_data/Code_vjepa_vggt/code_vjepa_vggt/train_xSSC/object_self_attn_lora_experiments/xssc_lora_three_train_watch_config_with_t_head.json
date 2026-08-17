@@ -71,6 +71,7 @@
       "full_sa_no_object_vjepa_loss",
       "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
       "full_sa_no_object_cotracker_trajectory_loss",
+      "full_sa_no_object_gt_latent_mask_loss",
       "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
       "t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000",
       "wan22_openvid_lora_baseline",
@@ -341,6 +342,14 @@
       "bootstrap_result_roots": {
         "1000": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_three_run_watch/results/full_sa_no_object_cotracker_trajectory_loss/step-001000_steps8_512x896_ctx08_49f"
       }
+    },
+    {
+      "key": "full_sa_no_object_gt_latent_mask_loss",
+      "label": "Full-SA + No-Object + GT Latent-Mask CE",
+      "color": "#E69F00",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/gt_latent_mask_loss/full_sa_no_object_gt_latent_mask_loss_pybullet100_cached_gpu67/step000000_gpu67_20260816T193744Z/checkpoints"
+      ]
     }
   ]
 }

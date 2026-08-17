@@ -483,6 +483,12 @@ def validate_blueprint_physics(blueprint: ScenarioBlueprint) -> None:
                 raise ValueError(f"{blueprint.sample_key}/{obj.name}: dynamic object mass must be positive")
             continue
 
+        if obj.role == "support":
+            raise ValueError(
+                f"{blueprint.sample_key}/{obj.name}: visible support must be dynamic; "
+                "use role='anchored_occluder' only for fixed scene geometry"
+            )
+
         expected_z = _collision_vertical_extent(obj)
         if obj.mass != 0.0:
             raise ValueError(f"{blueprint.sample_key}/{obj.name}: static object mass must be zero")
@@ -569,6 +575,47 @@ def _sample_object(
 
     grounded_position = (obj.position[0], obj.position[1], _collision_vertical_extent(obj))
     return replace(obj, mass=0.0, position=grounded_position)
+
+
+def _support_volume_m3(obj: ObjectInstanceSpec) -> float:
+    """Estimate a visible support volume for assigning a rigid-body mass."""
+    if obj.shape == "wedge":
+        return 4.0 * obj.size["hx"] * obj.size["hy"] * obj.size["hz"]
+    if obj.shape in {"box", "rounded_box"}:
+        return 8.0 * obj.size["hx"] * obj.size["hy"] * obj.size["hz"]
+    raise ValueError(f"unsupported dynamic support shape: {obj.shape}")
+
+
+def _dynamicize_support(obj: ObjectInstanceSpec) -> ObjectInstanceSpec:
+    """Turn a visible support into a grounded dynamic body.
+
+    The floor and walls remain environment geometry. A support listed in a
+    blueprint, however, is a visible physical object and must have mass.
+    """
+    if obj.role != "support":
+        raise ValueError(f"expected a support object, got role={obj.role!r}")
+    density_by_material = {
+        "wood": 500.0,
+        "cardboard": 300.0,
+        "concrete": 1600.0,
+    }
+    density = next(
+        (value for prefix, value in density_by_material.items() if obj.material_key.startswith(prefix)),
+        500.0,
+    )
+    mass = max(0.25, _support_volume_m3(obj) * density)
+    grounded_z = _collision_vertical_extent(obj)
+    return replace(
+        obj,
+        dynamic=True,
+        role="dynamic_support",
+        mass=float(mass),
+        position=(obj.position[0], obj.position[1], grounded_z),
+        linear_velocity=(0.0, 0.0, 0.0),
+        angular_velocity=(0.0, 0.0, 0.0),
+        linear_damping=max(float(obj.linear_damping), 0.02),
+        angular_damping=max(float(obj.angular_damping), 0.04),
+    )
 
 
 def _sample_camera(rng: np.random.Generator, key: str) -> CameraSpec:
@@ -922,7 +969,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
             material_keys_by_category=material_keys,
             size_scale=size_scale,
             dynamic=False,
-            role="occluder",
+            role="anchored_occluder",
             position=(-0.18, -0.05, 0.50),
             orientation_euler_deg=(0.0, 0.0, 0.0),
         )
@@ -936,7 +983,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
                 material_keys_by_category=material_keys,
                 size_scale=size_scale,
                 dynamic=False,
-                role="occluder",
+                role="anchored_occluder",
                 position=(0.18, -0.05, 0.50),
                 orientation_euler_deg=(0.0, 0.0, 0.0),
             )
@@ -976,6 +1023,7 @@ def _make_f5(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         position=(rng.uniform(-0.08, 0.20), 0.0, 0.16),
         forced_material_key=str(rng.choice(["wood_plywood", "wood_dark", "cardboard_kraft"])),
     )
+    support = _dynamicize_support(support)
     drop_linear, drop_angular, drop_orientation = _motion_vectors(
         rng,
         speed=motion["speed"],
@@ -1030,6 +1078,7 @@ def _make_f6(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         forced_material_key=str(rng.choice(["wood_plywood", "wood_dark", "concrete_painted"])),
         orientation_euler_deg=(0.0, rng.uniform(0.0, 14.0), rng.uniform(-6.0, 6.0)),
     )
+    support = _dynamicize_support(support)
     mover_linear, mover_angular, mover_orientation = _motion_vectors(
         rng,
         speed=motion["speed"],
@@ -1189,6 +1238,7 @@ def _make_f9(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         position=(rng.uniform(-0.20, 0.20), rng.uniform(-0.08, 0.08), 0.12),
         forced_material_key=str(rng.choice(["wood_plywood", "cardboard_kraft", "concrete_painted"])),
     )
+    support = _dynamicize_support(support)
     camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (mover_a, mover_b))
     return ScenarioBlueprint(
         family_key=family.key,
@@ -1235,6 +1285,7 @@ def _make_f10(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0
         position=(rng.uniform(-0.15, 0.15), 0.0, 0.10),
         forced_material_key=str(rng.choice(["wood_dark", "wood_plywood", "cardboard_kraft"])),
     )
+    support = _dynamicize_support(support)
     camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (mover,))
     return ScenarioBlueprint(
         family_key=family.key,

@@ -33,7 +33,15 @@ EXPERIMENT_ROOT = HERE.parent
 TRAIN_XSSC_ROOT = EXPERIMENT_ROOT.parent
 PACKAGE_ROOT = EXPERIMENT_ROOT.parents[2]
 DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main")
-for path in (HERE, EXPERIMENT_ROOT, TRAIN_XSSC_ROOT, PACKAGE_ROOT, DIFFSYNTH_ROOT):
+ATTENTION_ROOT = EXPERIMENT_ROOT / "attention_trajectory_distillation_project"
+for path in (
+    HERE,
+    EXPERIMENT_ROOT,
+    ATTENTION_ROOT,
+    TRAIN_XSSC_ROOT,
+    PACKAGE_ROOT,
+    DIFFSYNTH_ROOT,
+):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -44,6 +52,7 @@ import xssc_loss_project.train_full_sa_object_slot_dedup_xssc_loss as slot_dedup
 import xssc_loss_project.train_xssc_object_self_attn_lora_xssc_loss as xssc_train
 import vjepa_loss_project.train_xssc_object_self_attn_lora_vjepa_loss as vjepa_train
 import object_cotracker_trajectory_project.train_xssc_object_self_attn_lora_trajectory_loss as trajectory_train
+import attention_trajectory_distillation_project.train_xssc_object_self_attn_lora_frozen_motion_probe_latent_mask as latent_mask_train
 from code_vjepa_vggt.data.mixed_replay_no_gt_box_dataset import (
     KubricReplayNoGTBoxDataset,
     OpenVidNoGTBoxDataset,
@@ -154,6 +163,12 @@ def launch_argv(manifest_path: Path) -> list[str]:
 
 def model_kind(config: dict[str, Any]) -> str:
     script = str(config.get("experiment", {}).get("script", ""))
+    experiment_name = str(config.get("experiment", {}).get("name", ""))
+    latent_mask_enabled = bool(
+        config.get("latent_mask_loss", {}).get("enabled", False)
+    )
+    if latent_mask_enabled or "latent_mask" in f"{script} {experiment_name}".lower():
+        return "latent_mask"
     trajectory_enabled = bool(config.get("trajectory_loss", {}).get("enabled", False))
     if trajectory_enabled or "trajectory_loss" in script:
         return "trajectory"
@@ -187,6 +202,7 @@ def parse_model_args(manifest_path: Path) -> tuple[argparse.Namespace, dict[str,
         "xssc": xssc_train.build_parser,
         "vjepa": vjepa_train.build_parser,
         "trajectory": trajectory_train.build_parser,
+        "latent_mask": latent_mask_train.build_parser,
     }[kind]()
     args, _unknown = parser.parse_known_args(launch_argv(manifest_path))
     if kind == "physrvg" and not getattr(args, "physrvg_dit_checkpoint", None):
@@ -346,6 +362,7 @@ def build_model(
         "xssc": xssc_train,
         "vjepa": vjepa_train,
         "trajectory": trajectory_train,
+        "latent_mask": latent_mask_train,
     }[kind]
     model = implementation.build_model(args, accelerator)
     model.to(device)
@@ -461,14 +478,26 @@ def evaluate_prepared(
     seed_all(case_seed)
     shared, positive, negative = transfer_prepared(model, prepared_cpu)
     is_trajectory_model = hasattr(model, "_trajectory_batch")
+    is_latent_mask_model = hasattr(model, "_latent_mask_samples")
     if is_trajectory_model and trajectory_cache is None:
         raise ValueError("trajectory validation requires a cached trajectory target")
     if trajectory_cache is not None and not is_trajectory_model:
         raise ValueError("trajectory cache was provided to a non-trajectory model")
     if is_trajectory_model:
         model._trajectory_batch = [trajectory_cache]
+    if is_latent_mask_model:
+        raw_sample = shared.get("raw_sample")
+        if not isinstance(raw_sample, dict):
+            raise ValueError("latent-mask validation requires shared raw_sample metadata")
+        model._latent_mask_samples = [raw_sample]
     try:
-        with torch.inference_mode():
+        # The latent-mask auxiliary objective differentiates the Student probe
+        # attention map with respect to the first-pass prediction. Other
+        # validation objectives remain inference-only.
+        gradient_context = (
+            torch.enable_grad() if is_latent_mask_model else torch.inference_mode()
+        )
+        with gradient_context:
             # Auxiliary-loss subclasses override this path even when the object
             # branch is disabled. Calling task_to_loss directly would silently
             # drop their xSSC/V-JEPA/trajectory validation terms.
@@ -476,6 +505,8 @@ def evaluate_prepared(
     finally:
         if is_trajectory_model:
             model._trajectory_batch = None
+        if is_latent_mask_model:
+            model._latent_mask_samples = None
     loss_main = float(metrics.get("train/loss_main", loss.detach().item()))
     numeric = {
         key: float(value)
