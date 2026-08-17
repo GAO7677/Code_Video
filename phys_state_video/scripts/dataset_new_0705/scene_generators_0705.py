@@ -122,7 +122,7 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             # F12 runs from the raised left end of the ramp to the right-side
             # floor. Center the full simulated rollout rather than only the
             # support, with a shallow downward view that keeps the ramp
-            # surface and wheel-floor contact visually legible.
+            # surface and block-floor contact visually legible.
             eye=(2.35, -6.90, 1.20),
             target=(2.35, 0.0, 0.54),
             yfov_deg=48.0,
@@ -349,7 +349,7 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
         ScenarioFamilySpec(
             key="F12",
             title="Inclined Ramp Control",
-            description="A wheel is released from rest on a floor-supported ramp while only the incline angle changes.",
+            description="A red wooden block is released from rest on a floor-supported ramp while only the incline angle changes.",
             family_slug="F12_inclined_ramp_control",
             min_dynamic_objects=4,
             max_dynamic_objects=4,
@@ -357,10 +357,10 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             max_total_objects=4,
             supports_occlusion=False,
             supports_support_objects=True,
-            target_event_types=("release", "ramp_roll", "ramp_exit"),
+            target_event_types=("release", "ramp_slide", "ramp_exit"),
             preferred_surface_keys=("painted_concrete_floor",),
             preferred_camera_keys=("cam_10",),
-            motion_modes=("gravity_roll",),
+            motion_modes=("gravity_slide",),
             speed_range=(0.0, 0.0),
             spin_range=(0.0, 0.0),
             angle_range_deg=(8.0, 32.0),
@@ -1528,7 +1528,7 @@ def _make_f12(
 ) -> ScenarioBlueprint:
     """Build a gravity-only inclined-ramp control scene.
 
-    The wheel, board, and both risers are dynamic PyBullet bodies.  The board
+    The block, board, and both risers are dynamic PyBullet bodies.  The board
     rests on the floor at its lower edge and on two grounded risers at the high
     end, so the visible ramp is supported by contact rather than a fixed or
     suspended body.  Only the board angle is varied across the control set.
@@ -1546,8 +1546,9 @@ def _make_f12(
     board_half_length = 0.90 * size_scale
     board_half_width = 0.34 * size_scale
     board_half_thickness = 0.035 * size_scale
-    wheel_radius = 0.20 * size_scale
-    wheel_width = 0.15 * size_scale
+    block_half_x = 0.20 * size_scale
+    block_half_y = 0.16 * size_scale
+    block_half_z = 0.14 * size_scale
 
     # The lower underside touches the ground at x=+half_length.  The board and
     # risers remain dynamic, but start in a mechanically supported arrangement.
@@ -1609,29 +1610,29 @@ def _make_f12(
         for index, side in enumerate((-1.0, 1.0))
     )
 
-    wheel_local_x = -0.50 * size_scale
-    wheel_local_z = board_half_thickness + wheel_radius + 0.004 * size_scale
-    wheel = ObjectInstanceSpec(
-        name="wheel_0",
-        family_key="wheel",
-        shape="wheel_thick",
-        semantic_role="rolling_dynamic",
-        size={"radius": wheel_radius, "width": wheel_width},
+    block_local_x = -0.50 * size_scale
+    block_local_z = board_half_thickness + block_half_z + 0.004 * size_scale
+    block = ObjectInstanceSpec(
+        name="block_0",
+        family_key="wood_block",
+        shape="box",
+        semantic_role="sliding_dynamic",
+        size={"hx": block_half_x, "hy": block_half_y, "hz": block_half_z},
         mass=2.50,
-        friction=0.72,
-        restitution=0.06,
-        linear_damping=0.01,
-        angular_damping=0.02,
-        material_key="rubber_blue",
-        color=materials["rubber_blue"].base_color,
+        friction=0.12,
+        restitution=0.08,
+        linear_damping=0.02,
+        angular_damping=0.04,
+        material_key="wood_red",
+        color=materials["wood_red"].base_color,
         dynamic=True,
         role="dynamic",
         position=(
-            wheel_local_x * cos_theta + wheel_local_z * sin_theta,
+            block_local_x * cos_theta + block_local_z * sin_theta,
             0.0,
-            board_center_z - wheel_local_x * sin_theta + wheel_local_z * cos_theta,
+            board_center_z - block_local_x * sin_theta + block_local_z * cos_theta,
         ),
-        orientation_euler_deg=(90.0, ramp_angle, 0.0),
+        orientation_euler_deg=(0.0, ramp_angle, 0.0),
         linear_velocity=(0.0, 0.0, 0.0),
         angular_velocity=(0.0, 0.0, 0.0),
     )
@@ -1641,15 +1642,15 @@ def _make_f12(
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
-        title=f"Wheel release on a {ramp_angle:.0f} degree incline",
-        description="A blue wheel is released from rest on a floor-supported ramp; only the ramp incline changes.",
+        title=f"Red wooden block release on a {ramp_angle:.0f} degree incline",
+        description="A red wooden block is released from rest on a floor-supported ramp; only the ramp incline changes.",
         gravity=EARTH_GRAVITY,
         pre_roll_s=0.04,
         camera_key=camera_key,
         surface_key="painted_concrete_floor",
         lighting_key=camera.hdri_key,
         camera=camera,
-        objects=(wheel, board, *risers),
+        objects=(block, board, *risers),
         tags=("inclined_ramp_control", "gravity_release", f"ramp_angle_{ramp_angle:.0f}"),
         metadata={
             "ramp_angle_deg": round(ramp_angle, 5),

@@ -162,7 +162,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             expected_angles,
         )
         board_heights = []
-        wheel_specs = []
+        block_specs = []
         for angle_deg in expected_angles:
             blueprint = generate_scenario_blueprint(
                 "F12",
@@ -195,17 +195,21 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             self.assertEqual(blueprint.metadata["support_mode"], "dynamic_floor_supported_risers")
             self.assertTrue(all(obj.dynamic for obj in blueprint.objects))
 
-            wheel = next(obj for obj in blueprint.objects if obj.name == "wheel_0")
+            block = next(obj for obj in blueprint.objects if obj.name == "block_0")
             board = next(obj for obj in blueprint.objects if obj.name == "incline_board_0")
             risers = [obj for obj in blueprint.objects if obj.name.startswith("incline_riser_")]
-            self.assertEqual(wheel.family_key, "wheel")
-            self.assertAlmostEqual(wheel.size["radius"], 0.20, places=5)
-            self.assertAlmostEqual(wheel.size["width"], 0.15, places=5)
-            self.assertAlmostEqual(wheel.mass, 2.50, places=5)
-            self.assertAlmostEqual(wheel.friction, 0.72, places=5)
-            self.assertAlmostEqual(wheel.restitution, 0.06, places=5)
-            self.assertEqual(wheel.linear_velocity, (0.0, 0.0, 0.0))
-            self.assertEqual(wheel.angular_velocity, (0.0, 0.0, 0.0))
+            self.assertEqual(block.family_key, "wood_block")
+            self.assertEqual(block.shape, "box")
+            self.assertEqual(block.material_key, "wood_red")
+            self.assertAlmostEqual(block.size["hx"], 0.20, places=5)
+            self.assertAlmostEqual(block.size["hy"], 0.16, places=5)
+            self.assertAlmostEqual(block.size["hz"], 0.14, places=5)
+            self.assertAlmostEqual(block.mass, 2.50, places=5)
+            self.assertAlmostEqual(block.friction, 0.12, places=5)
+            self.assertAlmostEqual(block.restitution, 0.08, places=5)
+            self.assertEqual(block.linear_velocity, (0.0, 0.0, 0.0))
+            self.assertEqual(block.angular_velocity, (0.0, 0.0, 0.0))
+            self.assertEqual(block.orientation_euler_deg, (0.0, angle_deg, 0.0))
             self.assertAlmostEqual(board.orientation_euler_deg[1], angle_deg, places=5)
             self.assertEqual(board.role, "dynamic_ramp")
             self.assertEqual(len(risers), 2)
@@ -215,9 +219,9 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
                     riser.position[2], _collision_vertical_extent(riser), places=7
                 )
             board_heights.append(board.position[2])
-            wheel_specs.append((wheel.size, wheel.mass, wheel.friction, wheel.restitution))
+            block_specs.append((block.size, block.mass, block.friction, block.restitution))
 
-        self.assertEqual(wheel_specs, [wheel_specs[0]] * len(wheel_specs))
+        self.assertEqual(block_specs, [block_specs[0]] * len(block_specs))
         self.assertEqual(board_heights, sorted(board_heights))
 
     def test_validation_rejects_nonstandard_gravity(self) -> None:

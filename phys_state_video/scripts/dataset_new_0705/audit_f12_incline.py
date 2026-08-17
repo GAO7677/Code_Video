@@ -96,13 +96,14 @@ def _load_case(output_root: Path, case_id: str, angle_deg: float) -> dict[str, o
         for name, object_id in zip(mask_names, mask_object_ids)
     }
     object_specs = {str(item["name"]): item for item in metadata["objects"]}
-    wheel_index = names.index("wheel_0")
-    wheel = object_specs["wheel_0"]
+    mover_name = next(name for name, spec in object_specs.items() if spec["role"] == "dynamic")
+    mover_index = names.index(mover_name)
+    mover = object_specs[mover_name]
     board_index = names.index("incline_board_0")
     riser_indices = [index for index, name in enumerate(names) if name.startswith("incline_riser_")]
-    wheel_speeds = np.linalg.norm(linear_velocities[:, wheel_index], axis=1)
+    mover_speeds = np.linalg.norm(linear_velocities[:, mover_index], axis=1)
     configured_initial_speed = float(
-        np.linalg.norm(np.asarray(wheel["linear_velocity"], dtype=np.float64))
+        np.linalg.norm(np.asarray(mover["linear_velocity"], dtype=np.float64))
     )
     board_displacement = float(np.linalg.norm(positions[-1, board_index] - positions[0, board_index]))
     riser_displacement = max(
@@ -124,16 +125,16 @@ def _load_case(output_root: Path, case_id: str, angle_deg: float) -> dict[str, o
         "all_dynamic_objects": bool(all(bool(spec["dynamic"]) for spec in object_specs.values())),
         "all_objects_visible_every_frame": bool(all(visibility.values())),
         "visibility_by_object": visibility,
-        "wheel": {
-            "mass_kg": float(wheel["mass"]),
-            "radius_m": float(wheel["size"]["radius"]),
-            "width_m": float(wheel["size"]["width"]),
-            "friction": float(wheel["friction"]),
-            "restitution": float(wheel["restitution"]),
+        "moving_object_name": mover_name,
+        "moving_object": {
+            "mass_kg": float(mover["mass"]),
+            "size": {key: float(value) for key, value in mover["size"].items()},
+            "friction": float(mover["friction"]),
+            "restitution": float(mover["restitution"]),
             "configured_initial_speed_mps": round(configured_initial_speed, 6),
-            "first_saved_frame_speed_mps": round(float(wheel_speeds[0]), 6),
-            "max_speed_mps": round(float(wheel_speeds.max()), 6),
-            "final_speed_mps": round(float(wheel_speeds[-1]), 6),
+            "first_saved_frame_speed_mps": round(float(mover_speeds[0]), 6),
+            "max_speed_mps": round(float(mover_speeds.max()), 6),
+            "final_speed_mps": round(float(mover_speeds[-1]), 6),
         },
         "board_final_displacement_m": round(board_displacement, 6),
         "max_riser_final_displacement_m": round(riser_displacement, 6),
@@ -146,14 +147,13 @@ def main() -> None:
     args = parser.parse_args()
 
     cases = [_load_case(args.output_root, case_id, angle_deg) for case_id, angle_deg in CASE_SPECS]
-    speeds = [float(case["wheel"]["max_speed_mps"]) for case in cases]
-    wheel_signatures = [
+    speeds = [float(case["moving_object"]["max_speed_mps"]) for case in cases]
+    mover_signatures = [
         (
-            case["wheel"]["mass_kg"],
-            case["wheel"]["radius_m"],
-            case["wheel"]["width_m"],
-            case["wheel"]["friction"],
-            case["wheel"]["restitution"],
+            case["moving_object"]["mass_kg"],
+            tuple(sorted(case["moving_object"]["size"].items())),
+            case["moving_object"]["friction"],
+            case["moving_object"]["restitution"],
         )
         for case in cases
     ]
@@ -161,9 +161,9 @@ def main() -> None:
         "four_angle_cases": [case["ramp_angle_deg"] for case in cases]
         == [angle for _, angle in CASE_SPECS],
         "all_use_hall_bright": all(case["lighting_key"] == "hall_bright" for case in cases),
-        "identical_enlarged_wheel_parameters": wheel_signatures == [wheel_signatures[0]] * len(cases),
+        "identical_moving_object_parameters": mover_signatures == [mover_signatures[0]] * len(cases),
         "released_from_rest": all(
-            float(case["wheel"]["configured_initial_speed_mps"]) == 0.0 for case in cases
+            float(case["moving_object"]["configured_initial_speed_mps"]) == 0.0 for case in cases
         ),
         "all_camera_downward_angles_between_5_and_6deg": all(
             5.0 < float(case["camera_downward_angle_deg"]) < 6.0 for case in cases

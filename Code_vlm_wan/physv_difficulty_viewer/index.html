@@ -442,8 +442,8 @@
       const floor = spec(controls[0]).floor_restitution;
       $("comparison-title").textContent = inclineMode ? "F12 / 斜面倾角对照" : "F11 / 桌高对照";
       $("comparison-controls").textContent = uniform
-        ? inclineMode
-          ? `滚轮参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 静止释放 · 斜板 ${metric(spec(controls[0]).ramp_length_m, " m")} · 地面 e=${number(floor)}`
+          ? inclineMode
+          ? `红色木块参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 静止释放 · 斜板 ${metric(spec(controls[0]).ramp_length_m, " m")} · 地面 e=${number(floor)}`
           : `滚球参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 地面 e=${number(floor)}`
         : "运动物体参数存在差异";
       $("comparison-count").textContent = `${controls.length} 个控制案例`;
@@ -598,7 +598,7 @@
       $("selected-note").textContent = isF11(row)
         ? `滚球：${metric(object.mass_kg, " kg")} · e=${number(object.restitution)} · mu=${number(object.friction)} · 屏幕右向 ${angleLabel(row).toUpperCase() || "-"}`
         : isF12(row)
-          ? `滚轮：${metric(object.mass_kg, " kg")} · e=${number(object.restitution)} · mu=${number(object.friction)} · 静止释放 · 斜板和支撑均为受重力的动态物体`
+          ? `红色木块：${metric(object.mass_kg, " kg")} · e=${number(object.restitution)} · mu=${number(object.friction)} · 静止释放 · 斜板和支撑均为受重力的动态物体`
           : `${row.width || 1280} x ${row.height || 720} · ${summary.frames || "-"} 帧 · mask ${row.mask_ids ? "已保留" : "缺失"}`;
     }
 

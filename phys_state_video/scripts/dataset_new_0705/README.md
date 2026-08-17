@@ -29,6 +29,7 @@
     - `wedge_ramp`
     - `pillar_occluder`
     - `platform_block`
+    - `wood_block`
     - `wheel`
     - `spool`
     - `dumbbell`

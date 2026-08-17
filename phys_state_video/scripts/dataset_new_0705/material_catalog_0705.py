@@ -106,6 +106,17 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             mix_variation_range=(0.08, 0.20),
         ),
         MaterialSpec(
+            key="wood_red",
+            category="wood",
+            texture_style="wood_real",
+            base_color=(0.72, 0.035, 0.02),
+            accent_color=(0.92, 0.26, 0.15),
+            roughness=0.80,
+            tone_jitter_range=(0.02, 0.05),
+            mix_variation_range=(0.06, 0.16),
+            notes="Red-stained wood with procedural grain for the F12 control block.",
+        ),
+        MaterialSpec(
             key="cardboard_kraft",
             category="cardboard",
             texture_style="painted",

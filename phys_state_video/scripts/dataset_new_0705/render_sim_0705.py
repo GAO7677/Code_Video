@@ -46,6 +46,7 @@ MATERIAL_PROMPT_NAMES = {
     "plastic_white": "white plastic",
     "wood_plywood": "plywood",
     "wood_dark": "dark wood",
+    "wood_red": "red wooden",
     "cardboard_kraft": "kraft cardboard",
     "leather_brown": "brown leather",
     "fabric_curtain": "light fabric",
@@ -91,6 +92,7 @@ MOTION_TAG_PROMPT_NAMES = {
     "shallow_slide": "slides down a shallow ramp",
     "steep_slide": "slides down a steep ramp",
     "rollout": "slides down the ramp and rolls out",
+    "gravity_slide": "slides down the incline",
     "high_spin": "spins strongly with limited translation",
     "reverse_spin": "shows reverse spin while translating",
     "wobble_spin": "wobbles with strong angular motion",
@@ -226,7 +228,7 @@ def _family_event_sentence(blueprint: ScenarioBlueprint) -> str:
             return f"{_object_prompt_phrase(mover)} rolls across a {float(table_height):.2f} m-high table and falls off the edge."
         return f"{_object_prompt_phrase(mover)} {motion_text} on a table."
     if blueprint.family_key == "F12":
-        mover = role_map.get("wheel_0", blueprint.objects[0])
+        mover = role_map.get("block_0", blueprint.objects[0])
         ramp_angle = blueprint.metadata.get("ramp_angle_deg")
         if isinstance(ramp_angle, (int, float)):
             return f"{_object_prompt_phrase(mover)} is released from rest on a {float(ramp_angle):.0f} degree incline."

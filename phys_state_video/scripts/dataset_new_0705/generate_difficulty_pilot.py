@@ -526,7 +526,7 @@ def main() -> None:
             difficulty = {
                 "level": "L2",
                 "title": "斜面释放",
-                "description": "同一蓝色轮子从静止在不同坡角的动态支撑斜板上释放，重点观察重力驱动的滚动加速、斜面退出和末态。",
+                "description": "同一红色木块从静止在不同坡角的动态支撑斜板上释放，重点观察重力驱动的滑动、翻滚、斜面退出和末态。",
                 "priority": 2,
             }
             pilot_metadata = {
