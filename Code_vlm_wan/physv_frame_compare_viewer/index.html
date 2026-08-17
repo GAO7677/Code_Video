@@ -185,6 +185,9 @@
     video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #111a1b; object-fit: contain; }
     .video-fallback { display: none; min-height: 100px; padding: 35px 12px; color: #d4dfdb; text-align: center; font-size: 12px; }
     .video-fallback.visible { display: block; }
+    .evidence-strip { border-top: 1px solid var(--line); background: #f2f7f4; }
+    .evidence-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 11px; color: var(--teal); font: 800 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .evidence-image { display: block; width: 100%; aspect-ratio: 9 / 4; background: #111a1b; object-fit: contain; }
     .variant-meta { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, .58fr); border-bottom: 1px solid var(--line); }
     .meta-cell { min-width: 0; padding: 9px 11px; border-right: 1px solid var(--line); }
     .meta-cell:last-child { border-right: 0; }
@@ -270,7 +273,7 @@
       <div>
         <p class="eyebrow">EXPERIMENT VIEW / QWEN3-VL</p>
         <h2>同一视频，核对模型实际看到的帧序列。</h2>
-        <p>播放器展示由 Qwen3-VL 最终视觉 patch 反构的 RGB 回放；前缀输入、完整视频 FPS 20 / FPS 15，以及 FPS 15 的 3M、6.5M 像素高分辨率输入、帧索引、尺寸、张量哈希和输出并列保留。</p>
+        <p>播放器展示由 Qwen3-VL 最终视觉 patch 反构的 RGB 回放；最终证据链路额外展示模型输入的六张局部事件帧、逐帧状态核验和压缩后的 caption。</p>
       </div>
       <div class="stats" aria-label="结果统计">
         <div class="stat"><strong id="stat-cases">--</strong><span>cases</span></div>
@@ -314,8 +317,8 @@
 
   <script>
     const state = { rows: [], filter: "all", query: "" };
-    const variantOrder = ["prefix_8", "prefix_16", "prefix_24", "full", "full_fps15", "full_fps15_3m", "full_fps15_6_5m"];
-    const variantNumbers = { prefix_8: "01", prefix_16: "02", prefix_24: "03", full: "04", full_fps15: "05", full_fps15_3m: "06", full_fps15_6_5m: "07" };
+    const variantOrder = ["prefix_8", "prefix_16", "prefix_24", "full", "full_fps15", "full_fps15_3m", "full_fps15_6_5m", "full_fps15_6_5m_evidence"];
+    const variantNumbers = { prefix_8: "01", prefix_16: "02", prefix_24: "03", full: "04", full_fps15: "05", full_fps15_3m: "06", full_fps15_6_5m: "07", full_fps15_6_5m_evidence: "08" };
 
     const byId = (id) => document.getElementById(id);
     const node = (tag, className, value) => {
@@ -342,9 +345,11 @@
       const shape = variant.vlm_input_audit && variant.vlm_input_audit.visual_replay_shape;
       const targetFps = variant.video_params && Number(variant.video_params.fps);
       const fpsLabel = Number.isFinite(targetFps) ? ` / 目标 ${targetFps} fps` : "";
-      if (Array.isArray(shape) && shape.length === 4) return `${shape[0]} 帧 / ${shape[2]} x ${shape[3]}${fpsLabel}`;
+      const evidence = variant.evidence_input_audit;
+      const evidenceLabel = evidence && Number.isInteger(evidence.image_count) ? ` + ${evidence.image_count} 证据帧` : "";
+      if (Array.isArray(shape) && shape.length === 4) return `${shape[0]} 帧 / ${shape[2]} x ${shape[3]}${fpsLabel}${evidenceLabel}`;
       const stageOne = variant.video_info && variant.video_info.shape;
-      if (Array.isArray(stageOne) && stageOne.length === 4) return `${stageOne[0]} 帧 / ${stageOne[2]} x ${stageOne[3]}${fpsLabel}`;
+      if (Array.isArray(stageOne) && stageOne.length === 4) return `${stageOne[0]} 帧 / ${stageOne[2]} x ${stageOne[3]}${fpsLabel}${evidenceLabel}`;
       return "等待审计";
     }
 
@@ -357,6 +362,7 @@
     }
 
     function sourceLabel(variant) {
+      if (variant.evidence_storyboard) return "VIDEO + EVIDENCE";
       return variant.vlm_input_video ? "VLM INPUT" : "SOURCE VIDEO";
     }
 
@@ -379,7 +385,7 @@
       const replayFps = Number(audit.visual_replay_fps);
       const targetTiming = Number.isFinite(targetFps) ? `${targetFps} fps` : "--";
       const replayTiming = Number.isFinite(replayFps) ? `${replayFps.toFixed(3)} fps` : "--";
-      return [
+      const lines = [
         "播放器：由最终 VLM patch 张量反归一化得到的 RGB 回放（H.264 仅用于可视化）。",
         `源视频：${audit.source_video || variant.video || "--"}`,
         `源帧：${formatIndices(audit.source_frame_indices)}  (${audit.source_total_frames || "?"} 帧源视频 @ ${audit.source_fps || "?"} fps)`,
@@ -388,14 +394,26 @@
         `最终 VLM 视觉序列：${visual}  | patch：${patchShape}  | grid_thw：${grid}`,
         `vLLM 处理：do_sample_frames=false，像素预算 ${budget}，dtype ${audit.vllm_patch_dtype || "--"}`,
         `最终 patch SHA-256：${audit.vllm_patch_sha256 || "--"}`,
-      ].join("\n");
+      ];
+      if (variant.evidence_input_audit) {
+        const evidence = variant.evidence_input_audit;
+        const sizes = Array.isArray(evidence.image_sizes) ? evidence.image_sizes.map((size) => size.join(" x ")).join(", ") : "--";
+        const window = variant.evidence_window || {};
+        lines.push(`局部证据：${evidence.image_count || 0} 张图，尺寸 ${sizes}`);
+        lines.push(`事件窗口：帧 ${formatIndices(window.frame_indices)}；t=${Number(window.start_time || 0).toFixed(2)}s 至 ${Number(window.end_time || 0).toFixed(2)}s`);
+        lines.push(`逐帧核验：${JSON.stringify(variant.evidence_states || {}, null, 2)}`);
+        if (variant.caption_compaction) {
+          lines.push(`caption 句数：${variant.caption_compaction.input_sentence_count} -> ${variant.caption_compaction.output_sentence_count}（${variant.caption_compaction.method}）`);
+        }
+      }
+      return lines.join("\n");
     }
 
     function renderStats(visibleRows) {
       byId("stat-cases").textContent = String(state.rows.length);
       byId("stat-prefix").textContent = String(state.rows.length * 3);
       const fullRunCount = state.rows.reduce((count, row) => (
-        count + ["full", "full_fps15", "full_fps15_3m", "full_fps15_6_5m"].filter((key) => row.variants && row.variants[key]).length
+        count + ["full", "full_fps15", "full_fps15_3m", "full_fps15_6_5m", "full_fps15_6_5m_evidence"].filter((key) => row.variants && row.variants[key]).length
       ), 0);
       byId("stat-full").textContent = String(fullRunCount);
       byId("stat-visible").textContent = String(visibleRows.length);
@@ -445,7 +463,7 @@
       const videoWrap = node("div", "video-wrap");
       const video = document.createElement("video");
       video.controls = true;
-      video.preload = "metadata";
+      video.preload = "auto";
       video.playsInline = true;
       video.setAttribute("aria-label", `${variant.label || key} VLM input replay`);
       if (variant.vlm_input_video_url || variant.video_url) video.src = variant.vlm_input_video_url || variant.video_url;
@@ -453,6 +471,20 @@
       video.addEventListener("error", () => fallback.classList.add("visible"));
       videoWrap.append(video, fallback);
       card.append(videoWrap);
+
+      if (variant.evidence_storyboard_url) {
+        const evidence = node("section", "evidence-strip");
+        const evidenceHead = node("div", "evidence-head");
+        evidenceHead.append(node("span", "", "事件证据输入 / 6 帧"));
+        const window = variant.evidence_window || {};
+        evidenceHead.append(node("span", "", `t=${Number(window.start_time || 0).toFixed(2)}-${Number(window.end_time || 0).toFixed(2)}s`));
+        const image = document.createElement("img");
+        image.className = "evidence-image";
+        image.src = variant.evidence_storyboard_url;
+        image.alt = `${variant.label || key} 的六张局部事件证据帧`;
+        evidence.append(evidenceHead, image);
+        card.append(evidence);
+      }
 
       const meta = node("div", "variant-meta");
       const frameCell = node("div", "meta-cell");
@@ -487,11 +519,12 @@
       output.append(node("p", `answer${variant.status === "ok" ? "" : " missing"}`, text));
       card.append(output);
 
-      if (variant.response_raw && variant.response_raw !== variant.response_final) {
+      const rawOutput = variant.response_before_compaction || variant.response_raw;
+      if (rawOutput && rawOutput !== variant.response_final) {
         const details = document.createElement("details");
         details.className = "variant-details";
-        const summary = node("summary", "", "查看原始输出");
-        const raw = node("div", "raw-output", variant.response_raw);
+        const summary = node("summary", "", "查看压缩前模型输出");
+        const raw = node("div", "raw-output", rawOutput);
         details.append(summary, raw);
         card.append(details);
       }

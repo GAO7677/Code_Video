@@ -296,6 +296,14 @@ def build_lighting_catalog() -> dict[str, LightingSpec]:
             ambient_boost=0.02,
         ),
         LightingSpec(
+            hdri_key="hall_bright",
+            key_light_intensity=1.28,
+            fill_light_intensity=0.94,
+            rim_light_intensity=0.50,
+            shadow_strength=0.46,
+            ambient_boost=0.075,
+        ),
+        LightingSpec(
             hdri_key="studio_warm",
             key_light_intensity=1.12,
             fill_light_intensity=0.70,
@@ -312,6 +320,7 @@ def build_hdri_catalog() -> dict[str, str]:
         "studio_soft": str(HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr"),
         "studio_warm": str(HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr"),
         "hall_neutral": str(HDRI_ROOT / "old_hall" / "old_hall_4k.hdr"),
+        "hall_bright": str(HDRI_ROOT / "old_hall" / "old_hall_4k.hdr"),
     }
 
 

@@ -119,13 +119,16 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             hdri_key="studio_warm",
         ),
         CameraSpec(
-            eye=(0.0, -3.95, 1.25),
-            target=(0.0, 0.0, 0.52),
-            yfov_deg=52.0,
+            # F12 runs from the raised left end of the ramp to the right-side
+            # floor.  Center the full simulated rollout rather than only the
+            # support, while retaining a near-front elevation.
+            eye=(2.35, -6.90, 1.40),
+            target=(2.35, 0.0, 0.54),
+            yfov_deg=48.0,
             jitter_eye_xyz=(0.0, 0.0, 0.0),
             jitter_target_xyz=(0.0, 0.0, 0.0),
             jitter_fov_deg=0.0,
-            hdri_key="hall_neutral",
+            hdri_key="hall_bright",
         ),
     ]
     return {f"cam_{idx:02d}": camera for idx, camera in enumerate(cameras)}
@@ -1542,8 +1545,8 @@ def _make_f12(
     board_half_length = 0.90 * size_scale
     board_half_width = 0.34 * size_scale
     board_half_thickness = 0.035 * size_scale
-    wheel_radius = 0.15 * size_scale
-    wheel_width = 0.12 * size_scale
+    wheel_radius = 0.20 * size_scale
+    wheel_width = 0.15 * size_scale
 
     # The lower underside touches the ground at x=+half_length.  The board and
     # risers remain dynamic, but start in a mechanically supported arrangement.
@@ -1613,7 +1616,7 @@ def _make_f12(
         shape="wheel_thick",
         semantic_role="rolling_dynamic",
         size={"radius": wheel_radius, "width": wheel_width},
-        mass=1.60,
+        mass=2.50,
         friction=0.72,
         restitution=0.06,
         linear_damping=0.01,

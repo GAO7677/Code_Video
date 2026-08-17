@@ -89,6 +89,7 @@
     .section-bar p, .count, .muted { margin: 0; color: var(--muted); font-size: 12px; }
     .comparison { padding: 0 0 20px; margin-bottom: 20px; border-bottom: 1px solid var(--line-strong); }
     .comparison-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .comparison-grid.four-up { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
     .compare-case {
       display: grid;
@@ -167,6 +168,7 @@
 
     @media (max-width: 1240px) {
       .review-grid { grid-template-columns: 250px minmax(0, 1fr); }
+      .comparison-grid.four-up { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .analysis-pane { grid-column: 1 / -1; border-top: 1px solid var(--line); }
       .analysis-content { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .analysis-content > * { border-bottom: 0; border-right: 1px solid var(--line); }
@@ -178,6 +180,7 @@
       .app-header, .view-controls { align-items: flex-start; flex-direction: column; }
       .header-actions, .filter-group { width: 100%; justify-content: space-between; }
       .comparison-grid { grid-template-columns: 1fr; }
+      .comparison-grid.four-up { grid-template-columns: 1fr; }
       .analysis-content { grid-template-columns: 1fr; }
       .analysis-content > * { border-right: 0; border-bottom: 1px solid var(--line); }
       .analysis-content > *:last-child { border-bottom: 0; }
@@ -221,6 +224,7 @@
     <section class="view-controls" aria-label="案例视图与筛选">
       <div class="mode-tabs" role="tablist" aria-label="案例视图">
         <button class="mode-tab" type="button" role="tab" data-mode="height" aria-selected="true">F11 桌高对照</button>
+        <button class="mode-tab" type="button" role="tab" data-mode="incline" aria-selected="false">F12 斜面倾角</button>
         <button class="mode-tab" type="button" role="tab" data-mode="direction" aria-selected="false">F11 方向变体</button>
         <button class="mode-tab" type="button" role="tab" data-mode="all" aria-selected="false">全部案例</button>
       </div>
@@ -239,13 +243,13 @@
 
     <section class="comparison" id="comparison" hidden>
       <div class="section-bar">
-        <div><h1>F11 / 桌高对照</h1><p id="comparison-controls"></p></div>
+        <div><h1 id="comparison-title">F11 / 桌高对照</h1><p id="comparison-controls"></p></div>
         <span class="count" id="comparison-count"></span>
       </div>
       <div class="comparison-grid" id="comparison-grid"></div>
       <div class="comparison-table-wrap">
         <table class="comparison-table">
-          <thead><tr><th>桌高</th><th>初速度</th><th>最高线速度</th><th>高度范围</th><th>末速度</th><th>末态</th></tr></thead>
+          <thead><tr id="comparison-table-head"><th>桌高</th><th>初速度</th><th>最高线速度</th><th>高度范围</th><th>末速度</th><th>末态</th></tr></thead>
           <tbody id="comparison-table-body"></tbody>
         </table>
       </div>
@@ -288,12 +292,17 @@
     const $ = (id) => document.getElementById(id);
 
     function isF11(row) { return row.scene_family && row.scene_family.family_key === "F11"; }
+    function isF12(row) { return row.scene_family && row.scene_family.family_key === "F12"; }
     function spec(row) { return row.scenario_spec || {}; }
     function tableHeight(row) {
       const value = Number(spec(row).table_height_m);
       return Number.isFinite(value) ? value : null;
     }
     function angleLabel(row) { return String(spec(row).angle_label || "").toLowerCase(); }
+    function rampAngle(row) {
+      const value = Number(spec(row).ramp_angle_deg);
+      return Number.isFinite(value) ? value : null;
+    }
     function dynamicObject(row) { return (spec(row).objects || []).find((object) => object.dynamic) || (spec(row).objects || [])[0] || null; }
     function initialSpeed(row) {
       const object = dynamicObject(row);
@@ -320,19 +329,23 @@
     }
     function f11Primary(row) { return isF11(row) && angleLabel(row) === "sr048"; }
     function f11DirectionSet(row) { return isF11(row) && Math.abs((tableHeight(row) || 0) - 0.68) < 0.001; }
+    function f12Control(row) { return isF12(row); }
 
     function displayTitle(row) {
       if (isF11(row)) return `桌高 ${metric(tableHeight(row), " m")} / ${angleLabel(row).toUpperCase() || "SR -"}`;
+      if (isF12(row)) return `斜面 ${metric(rampAngle(row), "°", 0)}`;
       return row.scene_title || row.case_id;
     }
     function displayMeta(row) {
       const difficulty = row.difficulty || {};
       const family = row.scene_family || {};
       if (isF11(row)) return `F11 · ${spec(row).travel_angle_deg ?? "-"} deg · ${motionState(row.state_summary && row.state_summary.final_motion_state)}`;
+      if (isF12(row)) return `F12 · 静止释放 · ${motionState(row.state_summary && row.state_summary.final_motion_state)}`;
       return `${difficulty.title || difficulty.level || "-"} · ${family.family_key || "-"}`;
     }
     function rowsForMode() {
       if (state.mode === "height") return state.rows.filter(f11Primary).sort((a, b) => (tableHeight(a) || 0) - (tableHeight(b) || 0));
+      if (state.mode === "incline") return state.rows.filter(f12Control).sort((a, b) => (rampAngle(a) || 0) - (rampAngle(b) || 0));
       if (state.mode === "direction") {
         return state.rows.filter(f11DirectionSet).sort((a, b) => {
           if (f11Primary(a)) return -1;
@@ -355,11 +368,15 @@
     }
     function chooseSelected(rows) {
       if (rows.some((row) => row.case_id === state.selectedId)) return;
-      const middleHeight = rows.find((row) => row.case_id === "difficulty_l2_f11_h068_sr048");
-      state.selectedId = (middleHeight || rows[0] || {}).case_id || "";
+      const preferredCaseId = state.mode === "incline"
+        ? "difficulty_l2_f12_a024"
+        : "difficulty_l2_f11_h068_sr048";
+      const preferred = rows.find((row) => row.case_id === preferredCaseId);
+      state.selectedId = (preferred || rows[0] || {}).case_id || "";
     }
     function groupLabel(row) {
       if (state.mode === "height") return "桌高控制组";
+      if (state.mode === "incline") return "斜面倾角控制组";
       if (state.mode === "direction") return "0.68 m 方向组";
       const difficulty = row.difficulty || {};
       return `${difficulty.level || "-"} / ${difficulty.title || "未分类"}`;
@@ -401,15 +418,20 @@
         });
         list.appendChild(group);
       });
-      const labels = { height: "桌高控制组", direction: "方向变体", all: "案例" };
+      const labels = { height: "桌高控制组", incline: "斜面倾角控制组", direction: "方向变体", all: "案例" };
       $("case-list-title").textContent = labels[state.mode];
       $("case-count").textContent = `${state.filtered.length} 个`;
     }
 
     function renderComparison() {
       const section = $("comparison");
-      const controls = state.rows.filter(f11Primary).sort((a, b) => (tableHeight(a) || 0) - (tableHeight(b) || 0));
-      const show = state.mode === "height" && controls.length > 0;
+      const inclineMode = state.mode === "incline";
+      const controls = (inclineMode ? state.rows.filter(f12Control) : state.rows.filter(f11Primary)).sort((a, b) => {
+        const left = inclineMode ? rampAngle(a) : tableHeight(a);
+        const right = inclineMode ? rampAngle(b) : tableHeight(b);
+        return (left || 0) - (right || 0);
+      });
+      const show = (state.mode === "height" || inclineMode) && controls.length > 0;
       section.hidden = !show;
       if (!show) return;
       const baseline = dynamicObject(controls[0]) || {};
@@ -418,12 +440,26 @@
         return object.mass_kg === baseline.mass_kg && object.restitution === baseline.restitution && object.friction === baseline.friction;
       });
       const floor = spec(controls[0]).floor_restitution;
+      $("comparison-title").textContent = inclineMode ? "F12 / 斜面倾角对照" : "F11 / 桌高对照";
       $("comparison-controls").textContent = uniform
-        ? `滚球参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 地面 e=${number(floor)}`
-        : "滚球参数存在差异";
+        ? inclineMode
+          ? `滚轮参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 静止释放 · 斜板 ${metric(spec(controls[0]).ramp_length_m, " m")} · 地面 e=${number(floor)}`
+          : `滚球参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 地面 e=${number(floor)}`
+        : "运动物体参数存在差异";
       $("comparison-count").textContent = `${controls.length} 个控制案例`;
+      const tableHeaders = inclineMode
+        ? ["斜面角度", "初速度", "最高线速度", "路径长度", "末速度", "末态"]
+        : ["桌高", "初速度", "最高线速度", "高度范围", "末速度", "末态"];
+      const tableHead = $("comparison-table-head");
+      tableHead.replaceChildren();
+      tableHeaders.forEach((label) => {
+        const header = document.createElement("th");
+        header.textContent = label;
+        tableHead.appendChild(header);
+      });
 
       const grid = $("comparison-grid");
+      grid.className = `comparison-grid${inclineMode ? " four-up" : ""}`;
       grid.replaceChildren();
       controls.forEach((row) => {
         const summary = row.state_summary || {};
@@ -444,7 +480,9 @@
         const left = document.createElement("div");
         const height = document.createElement("div");
         height.className = "compare-height";
-        height.textContent = `桌高 ${metric(tableHeight(row), " m")}`;
+        height.textContent = inclineMode
+          ? `斜面 ${metric(rampAngle(row), "°", 0)}`
+          : `桌高 ${metric(tableHeight(row), " m")}`;
         const id = document.createElement("div");
         id.className = "compare-id";
         id.textContent = row.case_id;
@@ -466,10 +504,10 @@
         const tr = document.createElement("tr");
         if (row.case_id === state.selectedId) tr.className = "selected-row";
         const values = [
-          metric(tableHeight(row), " m"),
+          inclineMode ? metric(rampAngle(row), "°", 0) : metric(tableHeight(row), " m"),
           metric(initialSpeed(row), " m/s"),
           metric(row.state_summary && row.state_summary.max_linear_speed_mps, " m/s"),
-          metric(object.height_range_m, " m"),
+          inclineMode ? metric(object.path_length_m, " m") : metric(object.height_range_m, " m"),
           metric(object.final_speed_mps, " m/s"),
           motionState(row.state_summary && row.state_summary.final_motion_state),
         ];
@@ -491,6 +529,16 @@
           ["初速度", metric(initialSpeed(row), " m/s")],
           ["最高线速度", metric(summary.max_linear_speed_mps, " m/s")],
           ["高度范围", metric(object.height_range_m, " m")],
+          ["末速度", metric(object.final_speed_mps, " m/s")],
+          ["末态", motionState(summary.final_motion_state)],
+        ];
+      }
+      if (isF12(row)) {
+        return [
+          ["斜面角度", metric(rampAngle(row), "°", 0)],
+          ["初速度", metric(initialSpeed(row), " m/s")],
+          ["最高线速度", metric(summary.max_linear_speed_mps, " m/s")],
+          ["路径长度", metric(object.path_length_m, " m")],
           ["末速度", metric(object.final_speed_mps, " m/s")],
           ["末态", motionState(summary.final_motion_state)],
         ];
@@ -549,7 +597,9 @@
       const object = dynamicObject(row) || {};
       $("selected-note").textContent = isF11(row)
         ? `滚球：${metric(object.mass_kg, " kg")} · e=${number(object.restitution)} · mu=${number(object.friction)} · 屏幕右向 ${angleLabel(row).toUpperCase() || "-"}`
-        : `${row.width || 1280} x ${row.height || 720} · ${summary.frames || "-"} 帧 · mask ${row.mask_ids ? "已保留" : "缺失"}`;
+        : isF12(row)
+          ? `滚轮：${metric(object.mass_kg, " kg")} · e=${number(object.restitution)} · mu=${number(object.friction)} · 静止释放 · 斜板和支撑均为受重力的动态物体`
+          : `${row.width || 1280} x ${row.height || 720} · ${summary.frames || "-"} 帧 · mask ${row.mask_ids ? "已保留" : "缺失"}`;
     }
 
     function renderControls() {

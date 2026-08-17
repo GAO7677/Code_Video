@@ -130,6 +130,10 @@ class CompareHandler(BaseHTTPRequestHandler):
                         public_variant["vlm_input_video_url"] = (
                             "/vlm-input/" + quote(token, safe="")
                         )
+                    if public_variant.get("evidence_storyboard"):
+                        public_variant["evidence_storyboard_url"] = (
+                            "/evidence-storyboard/" + quote(token, safe="")
+                        )
                     public_variants[variant_key] = public_variant
                 public_row["variants"] = public_variants
                 public_rows.append(public_row)
@@ -161,6 +165,19 @@ class CompareHandler(BaseHTTPRequestHandler):
                 self._send_bytes(b"VLM input replay not found", "text/plain; charset=utf-8", 404)
                 return
             self._send_file(video_path, "video/mp4")
+            return
+
+        if path.startswith("/evidence-storyboard/"):
+            parsed_token = self._parse_media_token(path, "/evidence-storyboard/")
+            if parsed_token is None:
+                self._send_bytes(b"Evidence storyboard not found", "text/plain; charset=utf-8", 404)
+                return
+            case_id, variant_key = parsed_token
+            image_path = self._variant_path(case_id, variant_key, "evidence_storyboard")
+            if image_path is None:
+                self._send_bytes(b"Evidence storyboard not found", "text/plain; charset=utf-8", 404)
+                return
+            self._send_file(image_path, "image/png")
             return
 
         if path == "/download/results.jsonl":

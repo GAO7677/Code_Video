@@ -3,6 +3,7 @@ import unittest
 
 from PIL import Image
 
+from compact_physv_captions import deduplicate_exact_sentences, sentence_count
 from infer_physv_evidence_pipeline import event_time_keys, event_window_indices, parse_event_probe
 from physv_caption_ablation import dense_start_indices
 from physv_caption_evidence_probe import split_storyboard
@@ -54,6 +55,20 @@ class EventProbeTest(unittest.TestCase):
     def test_rejects_an_incomplete_event_probe(self):
         with self.assertRaises(ValueError):
             parse_event_probe('{"t=0.00s":"可见状态"}', [0, 1, 2, 3, 4, 5], source_fps=30.0)
+
+
+class CaptionSentenceCountTest(unittest.TestCase):
+    def test_counts_chinese_and_ascii_sentence_markers(self):
+        self.assertEqual(sentence_count("第一句。第二句！Third?"), 3)
+
+    def test_treats_an_unterminated_caption_as_one_sentence(self):
+        self.assertEqual(sentence_count("只有一句"), 1)
+
+    def test_deduplicates_repeated_sentences_without_reordering(self):
+        self.assertEqual(
+            deduplicate_exact_sentences("第一句。第二句。第一句。"),
+            "第一句。第二句。",
+        )
 
 
 if __name__ == "__main__":
