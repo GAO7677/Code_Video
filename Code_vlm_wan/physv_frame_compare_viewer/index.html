@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhysV / Prefix Frame Comparison</title>
+  <style>
+    :root {
+      --ink: #182326;
+      --ink-soft: #344447;
+      --muted: #6a7978;
+      --paper: #e9efec;
+      --panel: #fbfcfa;
+      --line: #cad6d1;
+      --line-strong: #a9bbb4;
+      --coral: #e46445;
+      --coral-soft: #f8e4dd;
+      --teal: #0e877d;
+      --teal-soft: #dceeea;
+      --lime: #b9cf6a;
+      --violet: #5b588d;
+      --shadow: 0 10px 24px rgba(24, 35, 38, .07);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; scroll-behavior: smooth; background: var(--paper); }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    button, input { font: inherit; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { border: 0; }
+    :focus-visible { outline: 3px solid rgba(228, 100, 69, .55); outline-offset: 2px; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      min-height: 74px;
+      padding: 14px 34px;
+      color: #f7faf8;
+      background: var(--ink);
+      border-bottom: 4px solid var(--coral);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      color: var(--ink);
+      background: var(--lime);
+      border-radius: 5px;
+      font: 800 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .04em;
+    }
+    .eyebrow {
+      margin: 0;
+      color: var(--teal);
+      font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .topbar .eyebrow { color: var(--lime); }
+    .brand h1 { margin: 2px 0 0; font-size: 18px; line-height: 1.1; letter-spacing: -.02em; }
+    .top-meta { display: flex; align-items: center; gap: 18px; color: #b8c7c4; font-size: 12px; }
+    .run-state { display: flex; align-items: center; gap: 7px; color: #f7faf8; font-weight: 700; }
+    .status-dot { width: 8px; height: 8px; background: var(--lime); border-radius: 50%; }
+    .download-link {
+      padding: 7px 10px;
+      color: var(--ink);
+      background: var(--lime);
+      border-radius: 4px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .download-link:hover { background: #d2e58a; }
+
+    .shell { max-width: 1840px; margin: 0 auto; padding: 28px 34px 42px; }
+    .overview {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: end;
+      padding: 0 0 22px;
+      border-bottom: 1px solid var(--line-strong);
+    }
+    .overview h2 {
+      max-width: 780px;
+      margin: 7px 0 0;
+      font-size: 34px;
+      line-height: 1.08;
+      letter-spacing: -.045em;
+    }
+    .overview p:not(.eyebrow) { max-width: 780px; margin: 10px 0 0; color: var(--muted); }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(76px, 1fr)); border-left: 1px solid var(--line-strong); }
+    .stat { min-width: 88px; padding: 0 18px; border-right: 1px solid var(--line-strong); }
+    .stat strong { display: block; font: 800 25px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.06em; }
+    .stat span { display: block; margin-top: 6px; color: var(--muted); font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 17px 0;
+    }
+    .filter-group { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .filter-label { margin-right: 5px; color: var(--muted); font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .filter-button {
+      padding: 8px 12px;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .filter-button:hover { border-color: var(--teal); background: var(--teal-soft); }
+    .filter-button.active { color: #fff; background: var(--teal); border-color: var(--teal); }
+    .search {
+      width: 280px;
+      padding: 9px 11px;
+      color: var(--ink);
+      background: var(--panel);
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+    }
+    .search::placeholder { color: #91a09c; }
+
+    .workspace { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 22px; align-items: start; }
+    .case-nav { position: sticky; top: 18px; min-width: 0; }
+    .rail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 2px 10px; border-bottom: 2px solid var(--ink); }
+    .rail-head h3 { margin: 0; font-size: 13px; letter-spacing: .02em; }
+    .mono { color: var(--muted); font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .case-list { max-height: calc(100vh - 220px); overflow: auto; border-bottom: 1px solid var(--line-strong); }
+    .case-button {
+      display: block;
+      width: 100%;
+      padding: 14px 12px 13px 14px;
+      color: var(--ink);
+      background: transparent;
+      border-bottom: 1px solid var(--line);
+      border-left: 3px solid transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .case-button:hover { background: rgba(255, 255, 255, .58); }
+    .case-button.active { background: var(--coral-soft); border-left-color: var(--coral); }
+    .case-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .case-number { color: var(--coral); font: 800 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .case-dataset { color: var(--muted); font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .case-name { display: block; margin-top: 7px; overflow-wrap: anywhere; font-weight: 800; }
+    .case-family { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .empty { padding: 24px 16px; color: var(--muted); border-bottom: 1px solid var(--line-strong); }
+    .error-panel { display: none; padding: 20px; color: #8d3725; background: var(--coral-soft); border: 1px solid #edb4a4; border-radius: 6px; }
+    .error-panel.visible { display: block; }
+
+    .results { min-width: 0; }
+    .case-section { scroll-margin-top: 18px; padding: 0 0 30px; margin-bottom: 28px; border-bottom: 2px solid var(--ink); }
+    .case-section:last-child { margin-bottom: 0; }
+    .case-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 0 0 13px;
+    }
+    .case-heading h3 { margin: 5px 0 0; overflow-wrap: anywhere; font-size: 19px; line-height: 1.2; letter-spacing: -.025em; }
+    .case-heading .case-id { max-width: 800px; margin: 5px 0 0; color: var(--muted); font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .case-heading .case-tag { flex: 0 0 auto; padding: 6px 8px; color: var(--teal); background: var(--teal-soft); border-radius: 3px; font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .comparison-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: start; }
+    .variant-card { min-width: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; box-shadow: var(--shadow); }
+    .variant-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-height: 62px; padding: 11px 12px 9px; border-bottom: 1px solid var(--line); }
+    .variant-index { display: block; color: var(--coral); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .variant-head h4 { margin: 5px 0 0; font-size: 15px; line-height: 1.1; }
+    .variant-kind { flex: 0 0 auto; padding: 4px 5px; color: var(--violet); background: #e8e7f3; border-radius: 3px; font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .video-wrap { position: relative; background: #111a1b; }
+    video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #111a1b; object-fit: contain; }
+    .video-fallback { display: none; min-height: 100px; padding: 35px 12px; color: #d4dfdb; text-align: center; font-size: 12px; }
+    .video-fallback.visible { display: block; }
+    .variant-meta { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line); }
+    .meta-cell { min-width: 0; padding: 9px 11px; border-right: 1px solid var(--line); }
+    .meta-cell:last-child { border-right: 0; }
+    .meta-label { display: block; margin-bottom: 3px; color: var(--muted); font: 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+    .meta-value { display: block; overflow-wrap: anywhere; font-size: 11px; font-weight: 800; }
+    .output { padding: 12px 13px 14px; }
+    .output-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: var(--muted); font: 700 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .ok { color: var(--teal); }
+    .failed { color: var(--coral); }
+    .answer { margin: 0; padding-left: 10px; color: var(--ink-soft); border-left: 3px solid var(--coral); font-size: 13px; line-height: 1.48; overflow-wrap: anywhere; }
+    .answer.missing { color: var(--coral); }
+    .variant-details { border-top: 1px solid var(--line); }
+    .variant-details summary { padding: 9px 13px; color: var(--muted); cursor: pointer; font-size: 10px; font-weight: 800; list-style: none; }
+    .variant-details summary::-webkit-details-marker { display: none; }
+    .variant-details summary::after { float: right; color: var(--teal); content: "+"; font: 700 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .variant-details[open] summary::after { content: "-"; }
+    .raw-output { padding: 0 13px 12px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    .prompt-band { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--line-strong); }
+    .prompt-band h3 { margin: 5px 0 10px; font-size: 16px; }
+    .prompt-text { max-height: 260px; margin: 0; padding: 14px 16px; overflow: auto; color: var(--ink-soft); background: rgba(255, 255, 255, .42); border-left: 3px solid var(--violet); white-space: pre-wrap; font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .loading { padding: 34px 0; color: var(--muted); }
+
+    @media (max-width: 1480px) {
+      .comparison-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 980px) {
+      .topbar { padding-left: 20px; padding-right: 20px; }
+      .shell { padding-left: 20px; padding-right: 20px; }
+      .workspace { grid-template-columns: 210px minmax(0, 1fr); gap: 16px; }
+      .overview { grid-template-columns: 1fr; gap: 20px; }
+      .stats { width: max-content; max-width: 100%; }
+    }
+    @media (max-width: 720px) {
+      html { scroll-behavior: auto; }
+      .topbar { align-items: flex-start; flex-direction: column; gap: 13px; }
+      .top-meta { width: 100%; justify-content: space-between; gap: 10px; }
+      .shell { padding: 20px 16px 30px; }
+      .overview h2 { font-size: 28px; }
+      .stats { width: 100%; grid-template-columns: repeat(4, 1fr); }
+      .stat { min-width: 0; padding: 0 9px; }
+      .stat strong { font-size: 20px; }
+      .stat span { font-size: 9px; }
+      .toolbar { align-items: stretch; flex-direction: column; }
+      .search { width: 100%; }
+      .workspace { display: block; }
+      .case-nav { position: static; margin-bottom: 24px; }
+      .case-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; }
+      .case-button { min-height: 100px; }
+      .case-heading { display: block; }
+      .case-heading .case-tag { display: inline-block; margin-top: 10px; }
+    }
+    @media (max-width: 500px) {
+      .stats { grid-template-columns: repeat(2, 1fr); row-gap: 15px; }
+      .stat:nth-child(2) { border-right: 0; }
+      .stat:nth-child(3), .stat:nth-child(4) { padding-top: 2px; }
+      .case-list, .comparison-grid { grid-template-columns: 1fr; }
+      .case-button { min-height: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">PV</span>
+      <div>
+        <p class="eyebrow">PHYSICS VIDEO QA</p>
+        <h1>Prefix Frame Comparison</h1>
+      </div>
+    </div>
+    <div class="top-meta">
+      <span class="run-state"><i class="status-dot" aria-hidden="true"></i><span id="run-state">读取中</span></span>
+      <span id="result-state">LOCAL JSONL</span>
+      <a class="download-link" href="/download/results.jsonl" download>下载结果</a>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="overview">
+      <div>
+        <p class="eyebrow">EXPERIMENT VIEW / QWEN3-VL</p>
+        <h2>同一视频，不同时间预算。</h2>
+        <p>每个 case 的前 8、16、24 帧输入与完整视频输入并排展示，输出直接对应到各自的视频证据。</p>
+      </div>
+      <div class="stats" aria-label="结果统计">
+        <div class="stat"><strong id="stat-cases">--</strong><span>cases</span></div>
+        <div class="stat"><strong id="stat-prefix">--</strong><span>prefix runs</span></div>
+        <div class="stat"><strong id="stat-full">--</strong><span>full runs</span></div>
+        <div class="stat"><strong id="stat-visible">--</strong><span>visible</span></div>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="筛选和搜索">
+      <div class="filter-group">
+        <span class="filter-label">DATASET</span>
+        <button class="filter-button active" type="button" data-filter="all">全部</button>
+        <button class="filter-button" type="button" data-filter="0613pybullet">0613 PyBullet</button>
+        <button class="filter-button" type="button" data-filter="nnsriram97-phyco_kubric">PhyCo Kubric</button>
+      </div>
+      <input id="search" class="search" type="search" placeholder="搜索 case / 场景名称" aria-label="搜索 case 或场景名称">
+    </section>
+
+    <div class="workspace">
+      <aside class="case-nav" aria-label="Case 导航">
+        <div class="rail-head">
+          <h3>Cases</h3>
+          <span id="case-count" class="mono">读取中</span>
+        </div>
+        <div id="case-list" class="case-list"><div class="loading">正在读取结果...</div></div>
+      </aside>
+
+      <section class="results" aria-live="polite">
+        <div id="error-panel" class="error-panel"></div>
+        <div id="case-grid"><div class="loading">正在准备对照视图...</div></div>
+
+        <section class="prompt-band">
+          <p class="eyebrow">PROMPT</p>
+          <h3>本次对照使用的统一提问</h3>
+          <pre id="prompt-text" class="prompt-text">读取中...</pre>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const state = { rows: [], filter: "all", query: "" };
+    const variantOrder = ["prefix_8", "prefix_16", "prefix_24", "full"];
+    const variantNumbers = { prefix_8: "01", prefix_16: "02", prefix_24: "03", full: "04" };
+
+    const byId = (id) => document.getElementById(id);
+    const node = (tag, className, value) => {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (value !== undefined) element.textContent = value;
+      return element;
+    };
+
+    function datasetLabel(dataset) {
+      if (dataset === "0613pybullet") return "0613 PYBULLET";
+      if (dataset === "nnsriram97-phyco_kubric") return "PHYCO KUBRIC";
+      return dataset || "UNKNOWN DATASET";
+    }
+
+    function caseParts(row) {
+      const parts = String(row.case_id || "").split("/").filter(Boolean);
+      const leaf = parts[parts.length - 1] || "case";
+      const family = parts.length > 1 ? parts[parts.length - 2] : "";
+      return { leaf, family };
+    }
+
+    function frameLabel(key, variant) {
+      if (key === "full") {
+        const total = variant.video_info && variant.video_info.metadata && variant.video_info.metadata.total_num_frames;
+        const sampled = variant.video_info && Array.isArray(variant.video_info.shape) && variant.video_info.shape[0];
+        if (total && sampled) return `全长 ${total} 帧 / 输入 ${sampled} 帧`;
+        return total ? `全长 ${total} 帧` : "完整视频";
+      }
+      return `${variant.frame_count || "?"} 帧`;
+    }
+
+    function sourceLabel(key) {
+      return key === "full" ? "FULL VIDEO" : "PREFIX INPUT";
+    }
+
+    function renderStats(visibleRows) {
+      byId("stat-cases").textContent = String(state.rows.length);
+      byId("stat-prefix").textContent = String(state.rows.length * 3);
+      byId("stat-full").textContent = String(state.rows.length);
+      byId("stat-visible").textContent = String(visibleRows.length);
+      byId("case-count").textContent = `${visibleRows.length} / ${state.rows.length}`;
+    }
+
+    function renderCaseList(rows) {
+      const list = byId("case-list");
+      list.replaceChildren();
+      if (!rows.length) {
+        list.append(node("div", "empty", "没有匹配的 case"));
+        return;
+      }
+      rows.forEach((row) => {
+        const index = state.rows.indexOf(row) + 1;
+        const parts = caseParts(row);
+        const button = node("button", "case-button");
+        button.type = "button";
+        button.dataset.target = `case-${index}`;
+        const top = node("span", "case-top");
+        top.append(node("span", "case-number", String(index).padStart(2, "0")));
+        top.append(node("span", "case-dataset", datasetLabel(row.dataset)));
+        button.append(top);
+        button.append(node("span", "case-name", parts.leaf));
+        button.append(node("span", "case-family", parts.family));
+        button.addEventListener("click", () => {
+          const target = byId(button.dataset.target);
+          if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+          document.querySelectorAll(".case-button").forEach((item) => item.classList.remove("active"));
+          button.classList.add("active");
+        });
+        list.append(button);
+      });
+      list.querySelector(".case-button")?.classList.add("active");
+    }
+
+    function createVariantCard(key, variant) {
+      const card = node("article", "variant-card");
+      const head = node("header", "variant-head");
+      const titleBlock = node("div");
+      titleBlock.append(node("span", "variant-index", variantNumbers[key]));
+      titleBlock.append(node("h4", "", variant.label || (key === "full" ? "完整视频" : key)));
+      head.append(titleBlock);
+      head.append(node("span", "variant-kind", sourceLabel(key)));
+      card.append(head);
+
+      const videoWrap = node("div", "video-wrap");
+      const video = document.createElement("video");
+      video.controls = true;
+      video.preload = "metadata";
+      video.playsInline = true;
+      video.setAttribute("aria-label", `${variant.label || key} video`);
+      if (variant.video_url) video.src = variant.video_url;
+      const fallback = node("div", "video-fallback", "视频文件暂不可用");
+      video.addEventListener("error", () => fallback.classList.add("visible"));
+      videoWrap.append(video, fallback);
+      card.append(videoWrap);
+
+      const meta = node("div", "variant-meta");
+      const frameCell = node("div", "meta-cell");
+      frameCell.append(node("span", "meta-label", "INPUT"));
+      frameCell.append(node("span", "meta-value", frameLabel(key, variant)));
+      const statusCell = node("div", "meta-cell");
+      statusCell.append(node("span", "meta-label", "STATUS"));
+      const status = variant.status === "ok" ? "OK" : String(variant.status || "UNKNOWN").toUpperCase();
+      statusCell.append(node("span", `meta-value ${variant.status === "ok" ? "ok" : "failed"}`, status));
+      meta.append(frameCell, statusCell);
+      card.append(meta);
+
+      const output = node("div", "output");
+      const outputLabel = node("div", "output-label");
+      outputLabel.append(node("span", "", "MODEL OUTPUT"));
+      if (variant.elapsed_seconds !== undefined && variant.elapsed_seconds !== null) {
+        outputLabel.append(node("span", "", `${Number(variant.elapsed_seconds).toFixed(1)} s`));
+      }
+      output.append(outputLabel);
+      const text = variant.response_final || variant.error || "没有可显示的输出";
+      output.append(node("p", `answer${variant.status === "ok" ? "" : " missing"}`, text));
+      card.append(output);
+
+      if (variant.response_raw && variant.response_raw !== variant.response_final) {
+        const details = document.createElement("details");
+        details.className = "variant-details";
+        const summary = node("summary", "", "查看原始输出");
+        const raw = node("div", "raw-output", variant.response_raw);
+        details.append(summary, raw);
+        card.append(details);
+      }
+      return card;
+    }
+
+    function renderCases(rows) {
+      const grid = byId("case-grid");
+      grid.replaceChildren();
+      if (!rows.length) {
+        grid.append(node("div", "empty", "没有匹配的 case"));
+        return;
+      }
+      rows.forEach((row) => {
+        const index = state.rows.indexOf(row) + 1;
+        const parts = caseParts(row);
+        const section = node("article", "case-section");
+        section.id = `case-${index}`;
+        const heading = node("header", "case-heading");
+        const headingText = node("div");
+        headingText.append(node("p", "eyebrow", `${String(index).padStart(2, "0")} / ${datasetLabel(row.dataset)}`));
+        headingText.append(node("h3", "", `${parts.family} / ${parts.leaf}`));
+        headingText.append(node("p", "case-id", row.case_id || ""));
+        heading.append(headingText);
+        heading.append(node("span", "case-tag", "4-way comparison"));
+        section.append(heading);
+
+        const comparison = node("div", "comparison-grid");
+        variantOrder.forEach((key) => {
+          const variant = row.variants && row.variants[key];
+          if (variant) comparison.append(createVariantCard(key, variant));
+        });
+        section.append(comparison);
+        grid.append(section);
+      });
+    }
+
+    function filteredRows() {
+      const query = state.query.trim().toLowerCase();
+      return state.rows.filter((row) => {
+        if (state.filter !== "all" && row.dataset !== state.filter) return false;
+        if (!query) return true;
+        return `${row.dataset} ${row.case_id} ${row.original_prompt || ""}`.toLowerCase().includes(query);
+      });
+    }
+
+    function render() {
+      const rows = filteredRows();
+      renderStats(rows);
+      renderCaseList(rows);
+      renderCases(rows);
+    }
+
+    function bindControls() {
+      document.querySelectorAll("[data-filter]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.filter = button.dataset.filter;
+          document.querySelectorAll("[data-filter]").forEach((item) => item.classList.toggle("active", item === button));
+          render();
+        });
+      });
+      byId("search").addEventListener("input", (event) => {
+        state.query = event.target.value;
+        render();
+      });
+    }
+
+    async function load() {
+      try {
+        const response = await fetch("/api/results", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        state.rows = await response.json();
+        const prompt = state.rows.find((row) => row.question)?.question || "结果中没有保存提问文本";
+        byId("prompt-text").textContent = prompt;
+        byId("run-state").textContent = "已加载";
+        byId("result-state").textContent = `${state.rows.length} CASES / LOCAL`;
+        render();
+      } catch (error) {
+        byId("run-state").textContent = "读取失败";
+        byId("result-state").textContent = "ERROR";
+        byId("case-list").replaceChildren(node("div", "empty", "结果读取失败"));
+        byId("case-grid").replaceChildren();
+        const panel = byId("error-panel");
+        panel.textContent = `无法读取 /api/results：${error.message}`;
+        panel.classList.add("visible");
+      }
+    }
+
+    bindControls();
+    load();
+  </script>
+</body>
+</html>

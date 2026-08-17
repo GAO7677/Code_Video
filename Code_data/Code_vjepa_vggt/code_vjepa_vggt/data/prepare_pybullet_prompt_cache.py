@@ -13,9 +13,10 @@ import torch.distributed as dist
 from safetensors import safe_open
 from safetensors.torch import save_file
 
-from code_vjepa_vggt.data.prepare_pybullet_vae_cache import _distributed_context
-from code_vjepa_vggt.data.pybullet0713_no_gt_box_dataset import (
-    PyBullet0713NoGTBoxDataset,
+from code_vjepa_vggt.data.prepare_pybullet_vae_cache import (
+    _build_dataset as _build_cache_dataset,
+    _dataset_identity,
+    _distributed_context,
 )
 from code_vjepa_vggt.data.pybullet_prompt_cache import (
     ATTENTION_MASK_TENSOR_KEY,
@@ -59,17 +60,6 @@ def _broadcast_text(value: str | None, world_size: int) -> str:
     return str(payload[0])
 
 
-def _build_dataset(root: str | Path) -> PyBullet0713NoGTBoxDataset:
-    return PyBullet0713NoGTBoxDataset(
-        root=root,
-        split="all",
-        resolution=(512, 896),
-        num_frames=49,
-        num_context_frames=8,
-        sampling_strategy="prefix",
-    )
-
-
 def _clean_text_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -77,6 +67,19 @@ def _clean_text_list(value: Any) -> list[str]:
 
 
 def _sample_prompt_roles(record) -> dict[str, str | list[str]]:
+    prompt_roles = getattr(record, "prompt_roles", None)
+    if prompt_roles is not None:
+        return {
+            "positive_prompt": str(prompt_roles["positive_prompt"]),
+            "negative_prompt": str(prompt_roles["negative_prompt"]),
+            "object_phrases": _clean_text_list(prompt_roles["object_phrases"]),
+            "dynamic_object_phrases": _clean_text_list(
+                prompt_roles["dynamic_object_phrases"]
+            ),
+            "static_object_phrases": _clean_text_list(
+                prompt_roles["static_object_phrases"]
+            ),
+        }
     manifest = json.loads(Path(record.manifest_path).read_text(encoding="utf-8"))
     return {
         "positive_prompt": str(record.caption),
@@ -229,8 +232,8 @@ negative prompt, object phrase, dynamic object phrase, and static object phrase 
 the PyBullet dataset. `index.jsonl` maps stable dataset sample UIDs to prompt
 hashes; `prompt_index.jsonl` maps each unique prompt hash to a safetensors file.
 
-Training uses the positive prompt embedding through `--pybullet0713_prompt_cache_dir`
-and bypasses repeated tokenizer/UMT5 execution. All tensors preserve the online
+Training uses the positive prompt embedding and bypasses repeated tokenizer/UMT5
+execution. All tensors preserve the online
 512-token padded representation, including zeroed invalid-token embeddings.
 """
     reader = """from __future__ import annotations
@@ -266,12 +269,12 @@ def build_cache(args: argparse.Namespace) -> None:
     wan_root = Path(args.wan_root).expanduser().resolve()
     checkpoint_path = wan_root / "models_t5_umt5-xxl-enc-bf16.pth"
     tokenizer_path = wan_root / "google" / "umt5-xxl"
-    if cache_dir.parent != root:
-        raise ValueError("Prompt cache directory must be directly under the dataset root")
     if not checkpoint_path.is_file() or not tokenizer_path.is_dir():
         raise FileNotFoundError("Wan text encoder checkpoint or tokenizer is missing")
 
-    dataset = _build_dataset(root)
+    dataset = _build_cache_dataset(args)
+    dataset_name, vae_cache_kind = _dataset_identity(args)
+    cache_kind = vae_cache_kind.replace("vae_latents", "prompt_embeddings")
     prompts, sample_roles = _collect_prompts(dataset)
     checkpoint_hash = _broadcast_text(
         sha256_file(checkpoint_path) if rank == 0 else None,
@@ -317,9 +320,9 @@ def build_cache(args: argparse.Namespace) -> None:
                 raise RuntimeError(f"Existing prompt cache has incompatible encoding: {cache_dir}")
         config = {
             "schema_version": CACHE_SCHEMA_VERSION,
-            "cache_kind": "pybullet0713_wan_prompt_embeddings",
+            "cache_kind": cache_kind,
             "status": "building",
-            "dataset_name": "pybullet0713",
+            "dataset_name": dataset_name,
             "dataset_root": str(root),
             "num_samples": len(dataset.samples),
             "num_unique_prompts": len(prompts),
@@ -453,7 +456,7 @@ def verify_cache(args: argparse.Namespace) -> None:
     cache_dir = Path(args.cache_dir or root / DEFAULT_CACHE_NAME).expanduser().resolve()
     checkpoint_path = wan_root / "models_t5_umt5-xxl-enc-bf16.pth"
     tokenizer_path = wan_root / "google" / "umt5-xxl"
-    dataset = _build_dataset(root)
+    dataset = _build_cache_dataset(args)
     cache = PyBulletPromptEmbeddingCache(
         cache_dir,
         text_encoder_checkpoint_path=checkpoint_path,
@@ -505,9 +508,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build and verify PyBullet Wan prompt cache")
     parser.add_argument("command", choices=("build", "verify", "inspect"))
     parser.add_argument("--pybullet-root", required=True)
+    parser.add_argument(
+        "--dataset-format",
+        choices=("pybullet0713", "pybullet0613_raw"),
+        default="pybullet0713",
+    )
     parser.add_argument("--wan-root", required=True)
     parser.add_argument("--diffsynth-root", required=True)
     parser.add_argument("--cache-dir", default=None)
+    parser.add_argument("--height", type=int, default=512)
+    parser.add_argument("--width", type=int, default=896)
+    parser.add_argument("--num-frames", type=int, default=49)
+    parser.add_argument("--num-context-frames", type=int, default=8)
+    parser.add_argument("--sampling-strategy", choices=("prefix", "uniform"), default="prefix")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--log-every", type=int, default=20)
     parser.add_argument("--online-compare-samples", type=int, default=0)

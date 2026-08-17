@@ -72,9 +72,21 @@ def main() -> None:
             continue
         status["entries"][entry["entry_id"]]={"state":"running","completed_cases":0,"total_cases":len(case_manifest["cases"]),"checkpoint":entry["checkpoint"]}; status["current_entry"]=entry["entry_id"]; atomic(status_path,status)
         manifest_path=Path(entry["config"])
-        kind=ev.model_kind(ev.load_resolved(manifest_path))
         device=torch.device("cuda:0")
-        model,args_ns,config,kind=ev.build_model(manifest_path,device)
+        try:
+            model,args_ns,config,kind=ev.build_model(manifest_path,device)
+        except Exception as exc:
+            state="blocked" if isinstance(exc, FileNotFoundError) else "failed"
+            status["entries"][entry["entry_id"]]={
+                "state":state,
+                "completed_cases":0,
+                "total_cases":total_cases,
+                "checkpoint":entry["checkpoint"],
+                "error":str(exc),
+            }
+            atomic(status_path,status)
+            print(f"[{entry['entry_id']}] {state.upper()}: {exc}",flush=True)
+            continue
         # Ensure cached PyBullet tensors are used whenever available.
         cache_root=str(config["paths"].get("pybullet_root", "/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5"))
         for name, suffix in (("pybullet0713_vae_cache_dir","vae_latents_wan22_512x896_49f_prefix_bf16"),("pybullet0713_prompt_cache_dir","prompt_embeddings_wan22_umt5_bf16")):

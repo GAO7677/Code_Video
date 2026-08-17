@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import torch
 from safetensors.torch import save_file
 
 from code_vjepa_vggt.data.prepare_pybullet_vae_cache import (
+    _build_dataset,
     _distributed_context,
     _latent_comparison_metrics,
 )
@@ -72,6 +74,46 @@ def _write_cache(root: Path, logical_key: str = "F1/case001") -> tuple[Path, Pat
 
 
 class PyBulletVaeCacheTests(unittest.TestCase):
+    def test_raw_dataset_factory_combines_train_val_with_stable_prompt_roles(self) -> None:
+        with self._temporary_directory() as root:
+            for split, sample_id in (("train", "sample_000001"), ("val", "sample_000002")):
+                sample_dir = root / split / "F1_single_object" / sample_id
+                sample_dir.mkdir(parents=True)
+                (sample_dir / "video.mp4").write_bytes(b"video")
+                (sample_dir / "meta.json").write_text(
+                    json.dumps(
+                        {
+                            "objects": [
+                                {
+                                    "shape": "sphere",
+                                    "dynamic": True,
+                                    "linear_velocity": [1.0, 0.0, 0.0],
+                                },
+                                {"shape": "box", "dynamic": False},
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            args = argparse.Namespace(
+                dataset_format="pybullet0613_raw",
+                pybullet_root=str(root),
+                height=512,
+                width=896,
+                num_frames=49,
+                num_context_frames=8,
+                sampling_strategy="prefix",
+            )
+            dataset = _build_dataset(args)
+            self.assertEqual(len(dataset.samples), 2)
+            self.assertEqual(
+                dataset.samples[0].key,
+                "raw0613/train/F1_single_object/sample_000001",
+            )
+            self.assertIn("from left to right", dataset.samples[0].caption)
+            self.assertEqual(dataset.samples[0].dynamic_object_phrases, ("a ball",))
+            self.assertEqual(dataset.samples[0].static_object_phrases, ("a block",))
+
     def test_online_comparison_uses_bfloat16_numerical_tolerance(self) -> None:
         reference = torch.ones((16,), dtype=torch.float32)
         close = reference + 0.001

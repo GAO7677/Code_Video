@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sys
 import unittest
 from dataclasses import replace
@@ -77,9 +78,38 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             mover = next(obj for obj in blueprint.objects if obj.name == "roller_0")
             self.assertTrue(mover.dynamic)
             self.assertAlmostEqual(mover.linear_velocity[0], 1.25, places=5)
+            self.assertAlmostEqual(mover.linear_velocity[1], 0.0, places=5)
             self.assertAlmostEqual(mover.restitution, 0.95, places=5)
             speeds.append(mover.linear_velocity[0])
         self.assertTrue(all(abs(speed - speeds[0]) < 1e-6 for speed in speeds))
+
+    def test_table_rolloff_supports_multiple_velocity_directions(self) -> None:
+        speed = 1.25
+        radius = 0.14
+        for angle_deg in (-24.0, -12.0, 12.0, 24.0, 180.0):
+            blueprint = generate_scenario_blueprint(
+                "F11",
+                f"F11_table_angle_{angle_deg}",
+                20260717,
+                "left_to_right",
+                table_height_m=0.68,
+                initial_speed_mps=speed,
+                travel_angle_deg=angle_deg,
+            )
+            mover = next(obj for obj in blueprint.objects if obj.name == "roller_0")
+            heading = math.radians(angle_deg)
+            expected_vx = speed * math.cos(heading)
+            expected_vy = speed * math.sin(heading)
+            self.assertAlmostEqual(blueprint.metadata["travel_angle_deg"], angle_deg, places=5)
+            self.assertAlmostEqual(mover.linear_velocity[0], expected_vx, places=5)
+            self.assertAlmostEqual(mover.linear_velocity[1], expected_vy, places=5)
+            self.assertAlmostEqual(
+                math.hypot(mover.linear_velocity[0], mover.linear_velocity[1]),
+                speed,
+                places=5,
+            )
+            self.assertAlmostEqual(mover.angular_velocity[0], expected_vy / radius, places=5)
+            self.assertAlmostEqual(mover.angular_velocity[1], -expected_vx / radius, places=5)
 
     def test_validation_rejects_nonstandard_gravity(self) -> None:
         blueprint = generate_scenario_blueprint("F1", "invalid_gravity", seed=20260717)

@@ -10,13 +10,49 @@ import torch
 from decord import VideoReader, cpu
 from torch.utils.data import Dataset
 
+from code_vjepa_vggt.data.pybullet_prompt_cache import (
+    PyBulletPromptCacheError,
+    PyBulletPromptEmbeddingCache,
+)
+from code_vjepa_vggt.data.pybullet_vae_cache import (
+    PyBulletVaeCacheError,
+    PyBulletVaeLatentCache,
+)
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8, sample_frame_indices
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RawWindow:
     video_path: Path
+    meta_path: Path
+    split: str
+    family_slug: str
+    sample_id: str
     window_start: int
+    caption: str
+    negative_prompt: str
+    object_phrases: tuple[str, ...]
+    dynamic_object_phrases: tuple[str, ...]
+    static_object_phrases: tuple[str, ...]
+
+    @property
+    def key(self) -> str:
+        base = f"raw0613/{self.split}/{self.family_slug}/{self.sample_id}"
+        return base if self.window_start == 0 else f"{base}/window_{self.window_start:06d}"
+
+    @property
+    def manifest_path(self) -> str:
+        return str(self.meta_path)
+
+    @property
+    def prompt_roles(self) -> dict[str, str | list[str]]:
+        return {
+            "positive_prompt": self.caption,
+            "negative_prompt": self.negative_prompt,
+            "object_phrases": list(self.object_phrases),
+            "dynamic_object_phrases": list(self.dynamic_object_phrases),
+            "static_object_phrases": list(self.static_object_phrases),
+        }
 
 
 _SHAPE_PHRASES = {
@@ -24,7 +60,25 @@ _SHAPE_PHRASES = {
     "puck": ("puck", "flat round rigid object"),
     "box": ("block", "box-shaped rigid object"),
     "cylinder": ("cylinder", "cylindrical rigid object"),
+    "capsule": ("capsule", "capsule-shaped rigid object"),
 }
+
+
+def _object_prompt_roles(metadata: dict[str, Any]) -> tuple[tuple[str, ...], ...]:
+    objects: list[str] = []
+    dynamic: list[str] = []
+    static: list[str] = []
+    for item in metadata.get("objects", []):
+        if not isinstance(item, dict):
+            continue
+        shape = str(item.get("shape", "")).strip().lower()
+        noun = _SHAPE_PHRASES.get(shape, (shape, ""))[0]
+        if not noun:
+            continue
+        phrase = f"a {noun}"
+        objects.append(phrase)
+        (dynamic if bool(item.get("dynamic")) else static).append(phrase)
+    return tuple(dict.fromkeys(objects)), tuple(dict.fromkeys(dynamic)), tuple(dict.fromkeys(static))
 
 
 def _objects_by_shape(metadata: dict[str, Any], shape: str) -> list[dict[str, Any]]:
@@ -110,10 +164,15 @@ class PyBulletRawNoGTBoxDataset(Dataset):
         sampling_strategy: str = "prefix",
         window_starts: tuple[int, ...] = (0,),
         init_scan_limit: int | None = None,
+        vae_cache_dir: str | Path | None = None,
+        vae_checkpoint_path: str | Path | None = None,
+        prompt_cache_dir: str | Path | None = None,
+        text_encoder_checkpoint_path: str | Path | None = None,
+        tokenizer_path: str | Path | None = None,
     ) -> None:
-        self.root = Path(root)
-        self.split = str(split)
-        self.resolution = resolution
+        self.root = Path(root).expanduser().resolve()
+        self.split = str(split).strip().lower()
+        self.resolution = (int(resolution[0]), int(resolution[1]))
         self.num_frames = int(num_frames)
         self.num_context_frames = int(num_context_frames)
         self.sampling_strategy = str(sampling_strategy)
@@ -126,27 +185,77 @@ class PyBulletRawNoGTBoxDataset(Dataset):
             raise ValueError(f"window_starts must contain non-negative values: {self.window_starts}")
         if self.sampling_strategy == "uniform" and self.window_starts != (0,):
             raise ValueError("window_starts are only supported with prefix sampling")
+        if self.split not in {"train", "val", "test", "all"}:
+            raise ValueError(f"unsupported split={split!r}")
 
-        split_root = self.root / self.split
-        videos = sorted(split_root.glob("*/sample_*/video.mp4"))
+        split_names = ("train", "val", "test") if self.split == "all" else (self.split,)
+        videos = sorted(
+            video
+            for split_name in split_names
+            for video in (self.root / split_name).glob("*/sample_*/video.mp4")
+        )
         if init_scan_limit is not None:
             videos = videos[: max(1, int(init_scan_limit))]
-        self.samples = [
-            RawWindow(video_path=video_path, window_start=window_start)
-            for video_path in videos
-            for window_start in self.window_starts
-        ]
+        self.samples: list[RawWindow] = []
+        for video_path in videos:
+            meta_path = video_path.with_name("meta.json")
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+            family_slug = video_path.parent.parent.name
+            prompt_roles = _object_prompt_roles(metadata)
+            for window_start in self.window_starts:
+                self.samples.append(
+                    RawWindow(
+                        video_path=video_path,
+                        meta_path=meta_path,
+                        split=video_path.parent.parent.parent.name,
+                        family_slug=family_slug,
+                        sample_id=video_path.parent.name,
+                        window_start=window_start,
+                        caption=_english_caption(metadata, family_slug),
+                        negative_prompt="",
+                        object_phrases=prompt_roles[0],
+                        dynamic_object_phrases=prompt_roles[1],
+                        static_object_phrases=prompt_roles[2],
+                    )
+                )
         if not self.samples:
-            raise RuntimeError(f"no */sample_*/video.mp4 found under {split_root}")
+            raise RuntimeError(f"no */sample_*/video.mp4 found for split={self.split} under {self.root}")
+        keys = [record.key for record in self.samples]
+        if len(keys) != len(set(keys)):
+            raise RuntimeError("raw PyBullet index contains duplicate logical keys")
+
+        self.vae_cache = None
+        if vae_cache_dir is not None:
+            self.vae_cache = PyBulletVaeLatentCache(
+                vae_cache_dir,
+                resolution=self.resolution,
+                num_frames=self.num_frames,
+                sampling_strategy=self.sampling_strategy,
+                vae_checkpoint_path=vae_checkpoint_path,
+            )
+            self.vae_cache.validate_records(self.samples, self.root)
+
+        self.prompt_cache = None
+        if prompt_cache_dir is not None:
+            self.prompt_cache = PyBulletPromptEmbeddingCache(
+                prompt_cache_dir,
+                text_encoder_checkpoint_path=text_encoder_checkpoint_path,
+                tokenizer_path=tokenizer_path,
+            )
+            self.prompt_cache.validate_records(self.samples, self.root)
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        record = self.samples[idx]
+        try:
+            return self._load_sample(self.samples[idx])
+        except (PyBulletVaeCacheError, PyBulletPromptCacheError):
+            raise
+
+    def _load_sample(self, record: RawWindow) -> dict[str, Any]:
         video_path = record.video_path
-        meta_path = video_path.with_name("meta.json")
-        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+        metadata = json.loads(record.meta_path.read_text(encoding="utf-8"))
         vr = VideoReader(str(video_path), ctx=cpu(0))
         source_frames = len(vr)
         if source_frames < self.num_frames + record.window_start:
@@ -169,24 +278,44 @@ class PyBulletRawNoGTBoxDataset(Dataset):
             value_range="minus_one_to_one",
         )
         context_indices = torch.arange(self.num_context_frames, dtype=torch.long)
-        family_slug = video_path.parent.parent.name
-        caption = _english_caption(metadata, family_slug)
         metadata = {
             **metadata,
+            "dataset_name": "pybullet0613_raw",
+            "sample_key": record.key,
             "source_video_path": str(video_path),
             "source_frame_count": int(source_frames),
             "sampled_frame_indices": frame_indices_np.tolist(),
             "sampling_strategy": self.sampling_strategy,
             "window_start": record.window_start,
-            "family_slug": family_slug,
+            "family_slug": record.family_slug,
+            "manifest_path": str(record.meta_path),
+            "negative_prompt": record.negative_prompt,
+            "object_phrases": list(record.object_phrases),
+            "dynamic_object_phrases": list(record.dynamic_object_phrases),
+            "static_object_phrases": list(record.static_object_phrases),
         }
-        return {
+        sample = {
             "video": video,
             "context_video": video[:, context_indices].contiguous(),
-            "caption": caption,
+            "caption": record.caption,
             "video_path": str(video_path),
             "frame_indices": torch.arange(self.num_frames, dtype=torch.long),
             "context_frame_indices": context_indices,
             "num_context_frames": self.num_context_frames,
             "metadata": metadata,
         }
+        if self.vae_cache is not None:
+            sample["precomputed_input_latents"] = self.vae_cache.load(record.key)
+            metadata["vae_cache"] = {
+                "hit": True,
+                "encoding_id": self.vae_cache.encoding_id,
+                "cache_dir": str(self.vae_cache.cache_dir),
+            }
+        if self.prompt_cache is not None:
+            sample["precomputed_prompt_embedding"] = self.prompt_cache.load(record.key)
+            metadata["prompt_cache"] = {
+                "hit": True,
+                "encoding_id": self.prompt_cache.encoding_id,
+                "cache_dir": str(self.prompt_cache.cache_dir),
+            }
+        return sample

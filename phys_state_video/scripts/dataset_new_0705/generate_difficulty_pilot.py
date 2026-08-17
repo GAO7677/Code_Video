@@ -57,9 +57,14 @@ DIFFICULTY_LEVELS = {
 }
 
 TABLE_ROLLOFF_CASES = (
-    {"table_height_m": 0.46, "label": "low"},
-    {"table_height_m": 0.68, "label": "mid"},
-    {"table_height_m": 0.92, "label": "high"},
+    {"table_height_m": 0.46, "height_label": "low", "travel_angle_deg": 0.0, "angle_label": "a000"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 0.0, "angle_label": "a000"},
+    {"table_height_m": 0.92, "height_label": "high", "travel_angle_deg": 0.0, "angle_label": "a000"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -24.0, "angle_label": "am24"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -12.0, "angle_label": "am12"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 12.0, "angle_label": "ap12"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 24.0, "angle_label": "ap24"},
+    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": 180.0, "angle_label": "a180"},
 )
 
 
@@ -311,7 +316,8 @@ def main() -> None:
     for extra in TABLE_ROLLOFF_CASES:
         family_key = "F11"
         table_height_m = float(extra["table_height_m"])
-        case_id = f"difficulty_l2_f11_h{int(round(table_height_m * 100)):03d}"
+        travel_angle_deg = float(extra["travel_angle_deg"])
+        case_id = f"difficulty_l2_f11_h{int(round(table_height_m * 100)):03d}_{extra['angle_label']}"
         seed = int(args.seed_base + 88000)
         case_root = output_root / "cases" / "L2" / family_key / case_id
         try:
@@ -328,6 +334,7 @@ def main() -> None:
                 camera_distance_scale=args.camera_distance_scale,
                 table_height_m=table_height_m,
                 initial_speed_mps=shared_table_speed,
+                travel_angle_deg=travel_angle_deg,
             )
             render_manifest = render_blueprint_case(
                 blueprint=blueprint,
@@ -344,7 +351,7 @@ def main() -> None:
             difficulty = {
                 "level": "L2",
                 "title": "桌面滚落",
-                "description": "同初速度物体在不同桌高上滚动并越过桌缘，重点观察落体时机与接触变化。",
+                "description": "同物体、同初速度在不同桌高和不同速度方向上滚动并越过桌缘，重点观察落体时机、反弹和轨迹方向变化。",
                 "priority": 2,
             }
             pilot_metadata = {
@@ -359,8 +366,11 @@ def main() -> None:
                     "scene_style": "indoor_realistic",
                     "table_height_m": round(table_height_m, 5),
                     "initial_speed_mps": round(shared_table_speed, 5),
+                    "travel_angle_deg": round(travel_angle_deg, 5),
+                    "travel_direction_xy": blueprint.metadata.get("travel_direction_xy"),
                     "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
-                    "table_height_label": extra["label"],
+                    "table_height_label": extra["height_label"],
+                    "angle_label": extra["angle_label"],
                     "objects": [
                         {
                             "name": obj.name,

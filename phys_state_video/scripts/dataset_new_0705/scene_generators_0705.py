@@ -109,9 +109,9 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             hdri_key="studio_warm",
         ),
         CameraSpec(
-            eye=(2.40, 0.00, 0.92),
-            target=(0.10, 0.00, 0.18),
-            yfov_deg=36.0,
+            eye=(2.85, -2.25, 1.85),
+            target=(0.00, 0.00, 0.35),
+            yfov_deg=54.0,
             jitter_eye_xyz=(0.0, 0.0, 0.0),
             jitter_target_xyz=(0.0, 0.0, 0.0),
             jitter_fov_deg=0.0,
@@ -330,7 +330,7 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             motion_modes=("table_rolloff",),
             speed_range=(1.25, 1.25),
             spin_range=(0.0, 0.0),
-            angle_range_deg=(0.0, 0.0),
+            angle_range_deg=(0.0, 24.0),
         ),
     ]
     return {family.key: family for family in families}
@@ -1343,6 +1343,7 @@ def _make_f11(
     *,
     table_height_m: float | None = None,
     initial_speed_mps: float | None = None,
+    travel_angle_deg: float | None = None,
 ) -> ScenarioBlueprint:
     family = build_scenario_family_catalog()["F11"]
     materials = build_material_catalog()
@@ -1351,6 +1352,12 @@ def _make_f11(
     table_height = float(np.clip(table_height, 0.38, 1.02))
     speed = float(initial_speed_mps if initial_speed_mps is not None else rng.uniform(*family.speed_range))
     speed = float(np.clip(speed, 0.65, 2.4))
+    if travel_angle_deg is None:
+        travel_angle = 0.0
+    else:
+        travel_angle = float(np.clip(travel_angle_deg, -60.0, 180.0))
+    travel_heading = math.radians(travel_angle)
+    travel_direction = (math.cos(travel_heading), math.sin(travel_heading))
 
     table_top_thickness = 0.05 * size_scale
     table_top_half = 0.60 * size_scale
@@ -1360,8 +1367,15 @@ def _make_f11(
     top_center_z = leg_height + 0.5 * table_top_thickness
     leg_center_z = 0.5 * leg_height
     ball_radius = 0.14 * size_scale
-    ball_start_x = -0.36 * size_scale
-    ball_start_y = 0.0
+    ball_start_distance = 0.36 * size_scale
+    ball_start_x = -ball_start_distance * travel_direction[0]
+    ball_start_y = -ball_start_distance * travel_direction[1]
+    ball_velocity = (speed * travel_direction[0], speed * travel_direction[1], 0.0)
+    ball_angular_velocity = (
+        ball_velocity[1] / max(ball_radius, 1e-6),
+        -ball_velocity[0] / max(ball_radius, 1e-6),
+        0.0,
+    )
     table_top_material_key = str(rng.choice(["wood_plywood", "wood_dark", "concrete_painted"]))
 
     table_top = ObjectInstanceSpec(
@@ -1436,8 +1450,8 @@ def _make_f11(
         role="dynamic",
         position=(ball_start_x, ball_start_y, table_height + ball_radius),
         orientation_euler_deg=(0.0, 0.0, 0.0),
-        linear_velocity=(speed, 0.0, 0.0),
-        angular_velocity=(0.0, -speed / max(ball_radius, 1e-6), 0.0),
+        linear_velocity=ball_velocity,
+        angular_velocity=ball_angular_velocity,
     )
 
     camera_key = "cam_09"
@@ -1459,6 +1473,11 @@ def _make_f11(
         metadata={
             "table_height_m": round(table_height, 5),
             "initial_speed_mps": round(speed, 5),
+            "travel_angle_deg": round(travel_angle, 5),
+            "travel_direction_xy": (
+                round(float(travel_direction[0]), 5),
+                round(float(travel_direction[1]), 5),
+            ),
             "floor_restitution": 0.42,
             "table_top_thickness_m": round(table_top_thickness, 5),
             "table_top_half_width_m": round(table_top_half, 5),
@@ -1491,6 +1510,7 @@ def generate_scenario_blueprint(
     camera_distance_scale: float = DEFAULT_CAMERA_DISTANCE_SCALE,
     table_height_m: float | None = None,
     initial_speed_mps: float | None = None,
+    travel_angle_deg: float | None = None,
 ) -> ScenarioBlueprint:
     if family_key not in FAMILY_GENERATORS:
         raise KeyError(f"unsupported family_key={family_key}")
@@ -1508,6 +1528,7 @@ def generate_scenario_blueprint(
             size_scale,
             table_height_m=table_height_m,
             initial_speed_mps=initial_speed_mps,
+            travel_angle_deg=travel_angle_deg,
         )
     else:
         blueprint = FAMILY_GENERATORS[family_key](rng, sample_key, size_scale)

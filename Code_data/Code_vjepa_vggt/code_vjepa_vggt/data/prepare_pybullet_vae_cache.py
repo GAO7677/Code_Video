@@ -16,6 +16,9 @@ from safetensors.torch import save_file
 from code_vjepa_vggt.data.pybullet0713_no_gt_box_dataset import (
     PyBullet0713NoGTBoxDataset,
 )
+from code_vjepa_vggt.data.pybullet_raw_no_gt_box_dataset import (
+    PyBulletRawNoGTBoxDataset,
+)
 from code_vjepa_vggt.data.pybullet_vae_cache import (
     CACHE_SCHEMA_VERSION,
     LATENT_TENSOR_KEY,
@@ -124,15 +127,24 @@ def _latent_comparison_metrics(
     }
 
 
-def _build_dataset(args: argparse.Namespace) -> PyBullet0713NoGTBoxDataset:
-    return PyBullet0713NoGTBoxDataset(
-        root=args.pybullet_root,
-        split="all",
-        resolution=(args.height, args.width),
-        num_frames=args.num_frames,
-        num_context_frames=min(args.num_context_frames, args.num_frames),
-        sampling_strategy=args.sampling_strategy,
-    )
+def _build_dataset(args: argparse.Namespace):
+    common = {
+        "root": args.pybullet_root,
+        "split": "all",
+        "resolution": (args.height, args.width),
+        "num_frames": args.num_frames,
+        "num_context_frames": min(args.num_context_frames, args.num_frames),
+        "sampling_strategy": args.sampling_strategy,
+    }
+    if args.dataset_format == "pybullet0613_raw":
+        return PyBulletRawNoGTBoxDataset(**common, window_starts=(0,))
+    return PyBullet0713NoGTBoxDataset(**common)
+
+
+def _dataset_identity(args: argparse.Namespace) -> tuple[str, str]:
+    if args.dataset_format == "pybullet0613_raw":
+        return "pybullet0613_raw", "pybullet0613_raw_wan_vae_latents"
+    return "pybullet0713", "pybullet0713_wan_vae_latents"
 
 
 def _read_existing_entry(
@@ -211,13 +223,8 @@ def build_cache(args: argparse.Namespace) -> None:
     vae_path = Path(args.wan_root).expanduser().resolve() / "Wan2.2_VAE.pth"
     if not vae_path.is_file():
         raise FileNotFoundError(f"Wan2.2 VAE checkpoint not found: {vae_path}")
-    if cache_dir.parent != root:
-        raise ValueError(
-            f"Cache directory must be directly under the PyBullet root: root={root}, "
-            f"cache_dir={cache_dir}"
-        )
-
     dataset = _build_dataset(args)
+    dataset_name, cache_kind = _dataset_identity(args)
     keys = [record.key for record in dataset.samples]
     uids = [sample_uid(key) for key in keys]
     if len(keys) != len(set(keys)) or len(uids) != len(set(uids)):
@@ -262,9 +269,9 @@ def build_cache(args: argparse.Namespace) -> None:
             )
         config = {
             "schema_version": CACHE_SCHEMA_VERSION,
-            "cache_kind": "pybullet0713_wan_vae_latents",
+            "cache_kind": cache_kind,
             "status": "building",
-            "dataset_name": "pybullet0713",
+            "dataset_name": dataset_name,
             "dataset_root": str(root),
             "num_samples": len(dataset.samples),
             "encoding_id": current_encoding_id,
@@ -434,6 +441,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build and verify PyBullet Wan2.2 VAE latents")
     parser.add_argument("command", choices=("build", "verify", "inspect"))
     parser.add_argument("--pybullet-root", required=True)
+    parser.add_argument(
+        "--dataset-format",
+        choices=("pybullet0713", "pybullet0613_raw"),
+        default="pybullet0713",
+    )
     parser.add_argument("--wan-root", required=True)
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--height", type=int, default=512)
