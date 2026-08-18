@@ -1,0 +1,31 @@
+{
+  "extends": "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000.json",
+  "experiment": {
+    "name": "physrvg_full_sa_object_slot_dedup_xssc_loss_dinov3_movic_step50000",
+    "description": "PhysRVG full DiT; Full-SA + Object + Slot-Dedup; frozen DINOv3 MOVi-C xSSC step-050000 loss",
+    "expected_trainable_params": 49051648
+  },
+  "initialization": {
+    "type": "physrvg_dit"
+  },
+  "paths": {
+    "pretrained_lora_checkpoint": null,
+    "physrvg_dit_checkpoint": "/data/gaoya/agent-data/weights/physrvg-diffusers-d8caf2/dit/diffusion_pytorch_model.safetensors",
+    "output_root": "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_object_slot_dedup_xssc_loss"
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 2,
+    "gradient_accumulation_steps": 2
+  },
+  "launch": {
+    "gpu_set": "0,1",
+    "num_processes": 2,
+    "main_process_port": 29574
+  },
+  "logging": {
+    "report_to": "wandb",
+    "wandb_project": "physrvg-full-sa-object-xssc-loss",
+    "wandb_mode": "online",
+    "wandb_name": "physrvg_full_sa_object_slot_dedup_xssc_loss_dinov3_movic_step50000"
+  }
+}

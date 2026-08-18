@@ -26,6 +26,9 @@ XSSC_LOSS_TRAIN_SCRIPT = (
 SLOT_DEDUP_XSSC_LOSS_TRAIN_SCRIPT = (
     ROOT / "xssc_loss_project/train_full_sa_object_slot_dedup_xssc_loss.py"
 )
+PHYSRVG_SLOT_DEDUP_XSSC_LOSS_TRAIN_SCRIPT = (
+    ROOT / "xssc_loss_project/train_full_sa_object_slot_dedup_xssc_loss_physrvg_dit.py"
+)
 OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT = ROOT / "train_official_xssc_object_only.py"
 VALID_MODES = {"object_only", "full_sa", "s_head", "t_head"}
 HEAD_SELECTIVE_MODES = {"s_head", "t_head"}
@@ -457,11 +460,14 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         config.get("initialization", {}).get("type", "openvid_lora")
     )
     if xssc_loss_enabled:
-        train_script = (
-            SLOT_DEDUP_XSSC_LOSS_TRAIN_SCRIPT
-            if adaptation["enable_object_branch"]
-            else XSSC_LOSS_TRAIN_SCRIPT
-        )
+        if adaptation["enable_object_branch"]:
+            train_script = (
+                PHYSRVG_SLOT_DEDUP_XSSC_LOSS_TRAIN_SCRIPT
+                if initialization_type == "physrvg_dit"
+                else SLOT_DEDUP_XSSC_LOSS_TRAIN_SCRIPT
+            )
+        else:
+            train_script = XSSC_LOSS_TRAIN_SCRIPT
     elif vjepa_loss_enabled:
         train_script = VJEPA_LOSS_TRAIN_SCRIPT
     elif initialization_type == "physrvg_dit":
