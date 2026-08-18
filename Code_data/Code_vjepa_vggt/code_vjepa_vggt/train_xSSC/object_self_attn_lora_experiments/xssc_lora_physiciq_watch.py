@@ -17,6 +17,7 @@ from xssc_lora_checkpoint_watch import (
     try_exclusive_lock,
     load_json,
     log,
+    method_config,
     read_inputs,
     reserve_available_gpu,
     state_paths,
@@ -143,6 +144,7 @@ def run_phys_inference(
 ) -> None:
     phys = config["physiciq"]
     runtime = config["runtime"]
+    method = method_config(config, task["method_key"])
     output_root = Path(phys["output_root"]).resolve()
     name = method_name(config, task)
     result_root = output_root / name
@@ -176,7 +178,7 @@ def run_phys_inference(
         subprocess.run(
             [
                 "bash",
-                config["paths"]["run_infer_script"],
+                method.get("run_infer_script", config["paths"]["run_infer_script"]),
                 task["checkpoint_dir"],
                 str(gpu_id),
                 str(output_root),

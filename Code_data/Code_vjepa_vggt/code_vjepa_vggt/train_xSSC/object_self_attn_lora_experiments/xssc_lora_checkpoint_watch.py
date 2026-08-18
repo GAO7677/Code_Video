@@ -74,29 +74,38 @@ def read_inputs(path: Path) -> list[Path]:
     return paths
 
 
-def checkpoint_complete(path: Path) -> bool:
-    return (
-        (path / "checkpoint.safetensors").is_file()
-        and (path / "checkpoint.safetensors").stat().st_size > 0
-        and (path / "training_state.pt").is_file()
-        and (path / "training_state.pt").stat().st_size > 0
+def checkpoint_files(method: dict[str, Any] | None = None) -> tuple[str, ...]:
+    if method and method.get("checkpoint_format") == "peft_adapter":
+        return ("adapter_model.safetensors", "adapter_config.json")
+    return ("checkpoint.safetensors", "training_state.pt")
+
+
+def checkpoint_complete(path: Path, method: dict[str, Any] | None = None) -> bool:
+    return all(
+        (path / name).is_file() and (path / name).stat().st_size > 0
+        for name in checkpoint_files(method)
     )
 
 
-def checkpoint_signature(path: Path) -> tuple[tuple[int, int], tuple[int, int]]:
+def checkpoint_signature(
+    path: Path, method: dict[str, Any] | None = None
+) -> tuple[tuple[int, int], ...]:
     result: list[tuple[int, int]] = []
-    for name in ("checkpoint.safetensors", "training_state.pt"):
+    for name in checkpoint_files(method):
         stat = (path / name).stat()
         result.append((stat.st_size, stat.st_mtime_ns))
-    return result[0], result[1]
+    return tuple(result)
 
 
 def discover_checkpoints(config: dict[str, Any]) -> list[dict[str, Any]]:
     tasks: dict[tuple[str, int], dict[str, Any]] = {}
     for method_index, method in enumerate(config["methods"]):
         key = method["key"]
+        min_step = int(method.get("min_step", 0))
         for item in method.get("static_checkpoints", []):
             step = int(item["step"])
+            if step < min_step:
+                continue
             path = Path(item["path"]).resolve()
             tasks[(key, step)] = {
                 "method_key": key,
@@ -115,6 +124,8 @@ def discover_checkpoints(config: dict[str, Any]) -> list[dict[str, Any]]:
                 if not match or not path.is_dir():
                     continue
                 step = int(match.group(1))
+                if step < min_step:
+                    continue
                 tasks[(key, step)] = {
                     "method_key": key,
                     "method_label": method["label"],
@@ -499,14 +510,18 @@ def write_discovery(config: dict[str, Any], tasks: list[dict[str, Any]]) -> None
     )
 
 
-def checkpoint_is_stable(config: dict[str, Any], checkpoint: Path) -> bool:
-    if not checkpoint_complete(checkpoint):
+def checkpoint_is_stable(
+    config: dict[str, Any], checkpoint: Path, method: dict[str, Any]
+) -> bool:
+    if not checkpoint_complete(checkpoint, method):
         return False
-    before = checkpoint_signature(checkpoint)
+    before = checkpoint_signature(checkpoint, method)
     delay = int(config["runtime"]["checkpoint_stability_seconds"])
     log(f"checking checkpoint stability for {delay}s: {checkpoint}")
     time.sleep(delay)
-    return checkpoint_complete(checkpoint) and before == checkpoint_signature(checkpoint)
+    return checkpoint_complete(checkpoint, method) and before == checkpoint_signature(
+        checkpoint, method
+    )
 
 
 def run_inference_task(
@@ -517,10 +532,10 @@ def run_inference_task(
     paths = state_paths(config)
     runtime = config["runtime"]
     checkpoint = Path(task["checkpoint_dir"]).resolve()
-    if not checkpoint_is_stable(config, checkpoint):
-        raise RuntimeError(f"Checkpoint is incomplete or still changing: {checkpoint}")
     method_key = task["method_key"]
     method = method_config(config, method_key)
+    if not checkpoint_is_stable(config, checkpoint, method):
+        raise RuntimeError(f"Checkpoint is incomplete or still changing: {checkpoint}")
     step = int(task["step"])
     method_output_root = paths["results"] / method_key
     output_name = (
@@ -553,7 +568,7 @@ def run_inference_task(
         subprocess.run(
             [
                 "bash",
-                config["paths"]["run_infer_script"],
+                method.get("run_infer_script", config["paths"]["run_infer_script"]),
                 str(checkpoint),
                 str(gpu_id),
                 str(method_output_root),

@@ -75,7 +75,8 @@
       "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
       "t_head_pck32_s039_latest3350_top100_no_object_xssc_loss_dinov3_movic_step50000",
       "wan22_openvid_lora_baseline",
-      "full_sa_physrvg_dit"
+      "full_sa_physrvg_dit",
+      "full_sa_physrvg_vjepa_loss"
     ],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
     "output_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/xssc",
@@ -330,6 +331,17 @@
       "color": "#17BECF",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_physrvg_dit_gpu12_formal/formal_20260808T142258Z_physrvg_dit/checkpoints"
+      ]
+    },
+    {
+      "key": "full_sa_physrvg_vjepa_loss",
+      "label": "Full-SA + Object (PhysRVG DiT) + V-JEPA Loss",
+      "color": "#C44E52",
+      "checkpoint_format": "peft_adapter",
+      "min_step": 2000,
+      "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa/full-sa-pybullet-physrvg-vjepa-b2-gacc2-ddp-sync-20260817T190000Z/checkpoints"
       ]
     },
     {

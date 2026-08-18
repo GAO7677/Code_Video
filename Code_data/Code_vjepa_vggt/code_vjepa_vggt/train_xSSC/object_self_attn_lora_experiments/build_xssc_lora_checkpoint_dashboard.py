@@ -42,6 +42,10 @@ METHOD_PLOT_STYLES = {
         "marker": "d",
         "linestyle": (0, (3, 1, 1, 1)),
     },
+    "full_sa_physrvg_vjepa_loss": {
+        "marker": "P",
+        "linestyle": (0, (5, 1, 1, 1)),
+    },
     "full_sa_no_object_xssc_loss_dinov3_movic_step50000": {
         "marker": "D",
         "linestyle": (0, (5, 1, 1, 1)),
@@ -255,8 +259,11 @@ def load_configured_checkpoints(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Scan current config roots so stale long-running watchers cannot hide new methods."""
     records: dict[tuple[str, int], dict[str, Any]] = {}
     for method_index, method in enumerate(config["methods"]):
+        min_step = int(method.get("min_step", 0))
         for item in method.get("static_checkpoints", []):
             step = int(item["step"])
+            if step < min_step:
+                continue
             records[(str(method["key"]), step)] = {
                 "method_key": method["key"],
                 "method_label": method["label"],
@@ -273,6 +280,8 @@ def load_configured_checkpoints(config: dict[str, Any]) -> list[dict[str, Any]]:
                 try:
                     step = int(checkpoint.name.removeprefix("step-"))
                 except ValueError:
+                    continue
+                if step < min_step:
                     continue
                 records[(str(method["key"]), step)] = {
                     "method_key": method["key"],
@@ -1427,6 +1436,11 @@ MERGED_METHODS = [
         "key": "full_sa_physrvg_dit",
         "label": "Full-SA + Object (PhysRVG DiT)",
         "color": "#17BECF",
+    },
+    {
+        "key": "full_sa_physrvg_vjepa_loss",
+        "label": "Full-SA + Object (PhysRVG DiT) + V-JEPA Loss",
+        "color": "#C44E52",
     },
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
     {
