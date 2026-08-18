@@ -46,6 +46,10 @@ METHOD_PLOT_STYLES = {
         "marker": "P",
         "linestyle": (0, (5, 1, 1, 1)),
     },
+    "full_sa_physrvg_dit_gpu56": {
+        "marker": ">",
+        "linestyle": (0, (1, 1)),
+    },
     "full_sa_no_object_xssc_loss_dinov3_movic_step50000": {
         "marker": "D",
         "linestyle": (0, (5, 1, 1, 1)),
@@ -1441,6 +1445,11 @@ MERGED_METHODS = [
         "key": "full_sa_physrvg_vjepa_loss",
         "label": "Full-SA + Object (PhysRVG DiT) + V-JEPA Loss",
         "color": "#C44E52",
+    },
+    {
+        "key": "full_sa_physrvg_dit_gpu56",
+        "label": "Full-SA + Object (PhysRVG DiT) · GPU5/6 batch",
+        "color": "#2E86AB",
     },
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
     {
