@@ -348,7 +348,7 @@
     },
     {
       "key": "physrvg_test5_lora_off",
-      "label": "PhysRVG finetuned DiT · LoRA OFF · reference",
+      "label": "PHYRVG-PhysRVG finetuned DiT · LoRA OFF · reference",
       "color": "#315C87",
       "checkpoint_format": "official_baseline",
       "static_checkpoints": [
@@ -361,7 +361,7 @@
     },
     {
       "key": "physrvg_test5_lora_on",
-      "label": "PhysRVG finetuned DiT + LoRA · reference",
+      "label": "PHYRVG-PhysRVG finetuned DiT + LoRA · reference",
       "color": "#0B6E4F",
       "checkpoint_format": "official_baseline",
       "static_checkpoints": [
