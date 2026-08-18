@@ -96,6 +96,7 @@
       "full_sa_physrvg_vjepa_loss",
       "full_sa_physrvg_dit_gpu56",
       "full_sa_physrvg_latent_mask_loss",
+      "full_sa_physrvg_vjepa_loss_0613_b2g2",
       "physrvg_test5_lora_off",
       "physrvg_test5_lora_on"
     ],
@@ -389,6 +390,17 @@
       "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa/full-sa-pybullet-physrvg-vjepa-b2-gacc2-ddp-sync-20260817T190000Z/checkpoints"
+      ]
+    },
+    {
+      "key": "full_sa_physrvg_vjepa_loss_0613_b2g2",
+      "label": "PHYRVG-Full-SA + V-JEPA Loss · 0613 · b2-gacc2",
+      "color": "#E45756",
+      "checkpoint_format": "peft_adapter",
+      "min_step": 500,
+      "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_0613/physrvg-full-sa-vjepa-0613-b2-gacc2-20260818T174806Z-oom-fallback/checkpoints"
       ]
     },
     {
