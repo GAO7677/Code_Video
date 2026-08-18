@@ -95,7 +95,9 @@
       "full_sa_physrvg_dit",
       "full_sa_physrvg_vjepa_loss",
       "full_sa_physrvg_dit_gpu56",
-      "full_sa_physrvg_latent_mask_loss"
+      "full_sa_physrvg_latent_mask_loss",
+      "physrvg_test5_lora_off",
+      "physrvg_test5_lora_on"
     ],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
     "output_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/xssc",
@@ -345,8 +347,34 @@
       "watch_roots": []
     },
     {
+      "key": "physrvg_test5_lora_off",
+      "label": "PhysRVG finetuned DiT · LoRA OFF · reference",
+      "color": "#315C87",
+      "checkpoint_format": "official_baseline",
+      "static_checkpoints": [
+        {
+          "step": 0,
+          "path": "/data/gaoya/ckpt/HappyP4nda-PhysRVG/dit/diffusion_pytorch_model.safetensors"
+        }
+      ],
+      "watch_roots": []
+    },
+    {
+      "key": "physrvg_test5_lora_on",
+      "label": "PhysRVG finetuned DiT + LoRA · reference",
+      "color": "#0B6E4F",
+      "checkpoint_format": "official_baseline",
+      "static_checkpoints": [
+        {
+          "step": 0,
+          "path": "/data/gaoya/ckpt/HappyP4nda-PhysRVG/lora/checkpoint"
+        }
+      ],
+      "watch_roots": []
+    },
+    {
       "key": "full_sa_physrvg_dit",
-      "label": "Full-SA + Object (PhysRVG DiT)",
+      "label": "Full-SA (PhysRVG DiT)",
       "color": "#17BECF",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_physrvg_dit_gpu12_formal/formal_20260808T142258Z_physrvg_dit/checkpoints"
@@ -354,7 +382,7 @@
     },
     {
       "key": "full_sa_physrvg_vjepa_loss",
-      "label": "PHYRVG-Full-SA + Object (PhysRVG DiT) + V-JEPA Loss",
+      "label": "PHYRVG-Full-SA + V-JEPA Loss",
       "color": "#C44E52",
       "checkpoint_format": "peft_adapter",
       "min_step": 500,
@@ -365,7 +393,7 @@
     },
     {
       "key": "full_sa_physrvg_dit_gpu56",
-      "label": "PHYRVG-Full-SA + Object (PhysRVG DiT) · GPU5/6 batch",
+      "label": "PHYRVG-Full-SA · GPU5/6 batch",
       "color": "#2E86AB",
       "checkpoint_format": "peft_adapter",
       "min_step": 500,
@@ -376,7 +404,7 @@
     },
     {
       "key": "full_sa_physrvg_latent_mask_loss",
-      "label": "PHYRVG-Full-SA + Object (PhysRVG DiT) + Latent-Mask Loss",
+      "label": "PHYRVG-Full-SA + Latent-Mask Loss",
       "color": "#009E73",
       "checkpoint_format": "peft_adapter",
       "min_step": 500,
