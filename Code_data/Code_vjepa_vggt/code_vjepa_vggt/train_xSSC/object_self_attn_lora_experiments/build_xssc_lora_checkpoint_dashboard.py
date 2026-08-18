@@ -1421,12 +1421,12 @@ def build_combined_test_page(
 MERGED_METHODS = [
     {
         "key": "physrvg_test5_lora_on",
-        "label": "PhysRVG finetuned DiT + LoRA · reference",
+        "label": "PHYRVG-PhysRVG finetuned DiT + LoRA · reference",
         "color": "#0B6E4F",
     },
     {
         "key": "physrvg_test5_lora_off",
-        "label": "PhysRVG finetuned DiT · LoRA OFF · reference",
+        "label": "PHYRVG-PhysRVG finetuned DiT · LoRA OFF · reference",
         "color": "#315C87",
     },
     {"key": "object_only", "label": "Object-only", "color": "#4D4D4D"},
@@ -2405,7 +2405,7 @@ def build_master_hub(
                 '<a href="physiciq/">Case 合并对比</a>'
                 '<a href="physiciq-metrics/">指标曲线</a>'
                 '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
-                '<a href="physrvg-physiciq-lora-ablation/">PhysRVG LoRA ON/OFF</a>'
+                '<a href="physrvg-physiciq-lora-ablation/">PHYRVG-PhysRVG LoRA ON/OFF</a>'
             )
         elif (
             legacy_physiciq_metrics_root
@@ -2421,7 +2421,7 @@ def build_master_hub(
                 '<a href="physiciq/">Case 合并对比</a>'
                 '<a href="physiciq-metrics/">指标曲线</a>'
                 '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
-                '<a href="physrvg-physiciq-lora-ablation/">PhysRVG LoRA ON/OFF</a>'
+                '<a href="physrvg-physiciq-lora-ablation/">PHYRVG-PhysRVG LoRA ON/OFF</a>'
             )
         else:
             pending_metrics = watch_root / "site" / "physiciq-metrics"
@@ -2439,7 +2439,7 @@ def build_master_hub(
                 '<a href="physiciq/">Case 合并对比</a>'
                 '<a href="physiciq-metrics/">指标曲线</a>'
                 '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
-                '<a href="physrvg-physiciq-lora-ablation/">PhysRVG LoRA ON/OFF</a>'
+                '<a href="physrvg-physiciq-lora-ablation/">PHYRVG-PhysRVG LoRA ON/OFF</a>'
             )
         step_text = (
             "每个新 checkpoint"
@@ -2489,7 +2489,7 @@ def build_master_hub(
       <a href="physiciq-vs-physrvg-worst-cases/">进入回归审计页</a>
       <a href="physiciq-top3-vs-physrvg-top10-videos/">四指标 Top 10 · 纯视频</a>
       <a href="physiciq-top3-vs-physrvg-all-cases/">综合 Top 3 × PhysRVG · 67 case</a></div>
-      <div class="status">动态汇总<strong>全部方案</strong><small>PhysRVG OFF / +LoRA 可切换</small></div>
+      <div class="status">动态汇总<strong>全部方案</strong><small>PHYRVG-PhysRVG OFF / +LoRA 可切换</small></div>
     </section>"""
     step40_ab_entry = ""
     if (hub_root / "test5-step40-object-identity-count-ab").exists():

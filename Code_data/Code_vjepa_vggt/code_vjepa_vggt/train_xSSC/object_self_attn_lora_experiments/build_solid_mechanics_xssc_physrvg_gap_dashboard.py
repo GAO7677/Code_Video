@@ -43,12 +43,12 @@ METHODS = {
     "physrvg_off": {
         "key": "physrvg_test5_lora_off",
         "step": 40,
-        "label": "PhysRVG finetuned DiT · LoRA OFF",
+        "label": "PHYRVG-PhysRVG finetuned DiT · LoRA OFF",
     },
     "physrvg_on": {
         "key": "physrvg_test5_lora_on",
         "step": 40,
-        "label": "PhysRVG finetuned DiT + LoRA",
+        "label": "PHYRVG-PhysRVG finetuned DiT + LoRA",
     },
 }
 
@@ -123,7 +123,7 @@ def build_data(payload: dict[str, Any]) -> dict[str, Any]:
                 "delta_on": delta_on,
                 "rank_gap": max(delta_off, delta_on),
                 "max_reference": (
-                    "PhysRVG LoRA OFF" if delta_off >= delta_on else "PhysRVG +LoRA"
+                    "PHYRVG-PhysRVG LoRA OFF" if delta_off >= delta_on else "PHYRVG-PhysRVG +LoRA"
                 ),
             }
         cases.append(
@@ -222,7 +222,7 @@ HTML_TEMPLATE = r'''<!doctype html>
   <main>
     <section class="intro"><h1>Solid Mechanics 原始指标差距</h1>
       <p>共 39 个 case。四个指标分别独立排序，不做归一化；排名值为
-      max(|xSSC − PhysRVG LoRA OFF|, |xSSC − PhysRVG +LoRA|)。表格同时保留两组原始绝对差值。</p>
+      max(|xSSC − PHYRVG-PhysRVG LoRA OFF|, |xSSC − PHYRVG-PhysRVG +LoRA|)。表格同时保留两组原始绝对差值。</p>
     </section>
     <section id="extremes"></section>
     <div class="summary-grid">
@@ -236,8 +236,8 @@ HTML_TEMPLATE = r'''<!doctype html>
     <section class="video-grid">
       <div class="video-card"><div class="video-label">GT · 49 frames @ 30 FPS</div><video id="gt" muted playsinline preload="metadata"></video></div>
       <div class="video-card"><div class="video-label xssc">Full-SA + No-Object + xSSC Loss · step500</div><video id="xssc" muted playsinline preload="metadata"></video></div>
-      <div class="video-card"><div class="video-label off">PhysRVG finetuned DiT · LoRA OFF</div><video id="physrvg_off" muted playsinline preload="metadata"></video></div>
-      <div class="video-card"><div class="video-label on">PhysRVG finetuned DiT + LoRA</div><video id="physrvg_on" muted playsinline preload="metadata"></video></div>
+      <div class="video-card"><div class="video-label off">PHYRVG-PhysRVG finetuned DiT · LoRA OFF</div><video id="physrvg_off" muted playsinline preload="metadata"></video></div>
+      <div class="video-card"><div class="video-label on">PHYRVG-PhysRVG finetuned DiT + LoRA</div><video id="physrvg_on" muted playsinline preload="metadata"></video></div>
     </section>
     <section class="metric-grid" id="metric-grid"></section>
     <p class="footer">Generated from the existing PhysicIQ dashboard metrics. Built: __GENERATED__</p>
@@ -254,16 +254,16 @@ HTML_TEMPLATE = r'''<!doctype html>
       .sort((a,b)=>b.metrics[key].rank_gap-a.metrics[key].rank_gap||a.stem.localeCompare(b.stem))}
     function physrvgBest(values){
       return values.physrvg_off>=values.physrvg_on
-        ? {key:'physrvg_off',label:'PhysRVG LoRA OFF',value:values.physrvg_off}
-        : {key:'physrvg_on',label:'PhysRVG +LoRA',value:values.physrvg_on};
+        ? {key:'physrvg_off',label:'PHYRVG-PhysRVG LoRA OFF',value:values.physrvg_off}
+        : {key:'physrvg_on',label:'PHYRVG-PhysRVG +LoRA',value:values.physrvg_on};
     }
     function extremeVideos(item,spec){
       const value=item.metrics[spec.key];
       return `<div class="extreme-videos">
         <div class="mini-video"><div class="mini-label">GT</div><video src="${item.gt}" muted playsinline preload="none"></video></div>
         <div class="mini-video"><div class="mini-label" style="color:var(--xssc)">xSSC · ${spec.label} ${fmt(value.xssc)}</div><video src="${item.videos.xssc}" muted playsinline preload="none"></video></div>
-        <div class="mini-video"><div class="mini-label" style="color:var(--off)">PhysRVG OFF · ${spec.label} ${fmt(value.physrvg_off)}</div><video src="${item.videos.physrvg_off}" muted playsinline preload="none"></video></div>
-        <div class="mini-video"><div class="mini-label" style="color:var(--on)">PhysRVG +LoRA · ${spec.label} ${fmt(value.physrvg_on)}</div><video src="${item.videos.physrvg_on}" muted playsinline preload="none"></video></div>
+        <div class="mini-video"><div class="mini-label" style="color:var(--off)">PHYRVG-PhysRVG OFF · ${spec.label} ${fmt(value.physrvg_off)}</div><video src="${item.videos.physrvg_off}" muted playsinline preload="none"></video></div>
+        <div class="mini-video"><div class="mini-label" style="color:var(--on)">PHYRVG-PhysRVG +LoRA · ${spec.label} ${fmt(value.physrvg_on)}</div><video src="${item.videos.physrvg_on}" muted playsinline preload="none"></video></div>
       </div>`;
     }
     function extremeMetrics(item,selectedKey){
@@ -313,9 +313,9 @@ HTML_TEMPLATE = r'''<!doctype html>
         const v=item.metrics[spec.key];const card=document.createElement('article');
         card.className='metric-card'+(spec.key===metricSelect.value?' selected':'');
         card.innerHTML=`<h3>${spec.label} ${spec.direction}</h3><dl>
-          <dt>xSSC</dt><dd>${fmt(v.xssc)}</dd><dt>PhysRVG LoRA OFF</dt><dd>${fmt(v.physrvg_off)}</dd>
+          <dt>xSSC</dt><dd>${fmt(v.xssc)}</dd><dt>PHYRVG-PhysRVG LoRA OFF</dt><dd>${fmt(v.physrvg_off)}</dd>
           <dt>|Δ OFF|</dt><dd class="gap">${fmt(v.delta_off)}</dd>
-          <dt>PhysRVG +LoRA</dt><dd>${fmt(v.physrvg_on)}</dd>
+          <dt>PHYRVG-PhysRVG +LoRA</dt><dd>${fmt(v.physrvg_on)}</dd>
           <dt>|Δ ON|</dt><dd class="gap">${fmt(v.delta_on)}</dd>
           <dt>最大差值来源</dt><dd>${v.max_reference}</dd></dl>`;grid.append(card);
       });

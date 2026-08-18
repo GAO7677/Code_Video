@@ -225,7 +225,7 @@ HTML_TEMPLATE = r'''<!doctype html>
       <span class="stamp">67-case five-lane comparison</span></div>
     <h1>综合 Top 3 × PhysRVG 系列</h1>
     <p>选拔规则：每个方案使用最新且四项主要指标完整的 checkpoint；先对 67 个 case 求指标均值，分别排名，
-      并列值共享平均名次，再对四项名次取算术平均。下方固定展示胜出的三个方案与 PhysRVG LoRA OFF / +LoRA。</p>
+      并列值共享平均名次，再对四项名次取算术平均。下方固定展示胜出的三个方案与 PHYRVG-PhysRVG LoRA OFF / PHYRVG-PhysRVG +LoRA。</p>
     <div id="podium" class="podium"></div>
   </header>
   <nav class="toolbar">
@@ -266,13 +266,13 @@ HTML_TEMPLATE = r'''<!doctype html>
     function fmt(value){if(!Number.isFinite(value))return '—';return Math.abs(value)>=10?value.toFixed(2):value.toFixed(3)}
     function value(record,stem,key){const v=record.metrics?.[stem]?.[key];return Number.isFinite(v)?v:null}
     function seriesReference(stem,key){const off=value(refs.off,stem,key),on=value(refs.on,stem,key);const spec=specByKey[key];
-      if(off===null)return {label:'PhysRVG +LoRA',value:on};if(on===null)return {label:'PhysRVG OFF',value:off};
-      return spec.direction==='lower'?(off<=on?{label:'PhysRVG OFF',value:off}:{label:'PhysRVG +LoRA',value:on}):
-        (off>=on?{label:'PhysRVG OFF',value:off}:{label:'PhysRVG +LoRA',value:on})}
+      if(off===null)return {label:'PHYRVG-PhysRVG +LoRA',value:on};if(on===null)return {label:'PHYRVG-PhysRVG OFF',value:off};
+      return spec.direction==='lower'?(off<=on?{label:'PHYRVG-PhysRVG OFF',value:off}:{label:'PHYRVG-PhysRVG +LoRA',value:on}):
+        (off>=on?{label:'PHYRVG-PhysRVG OFF',value:off}:{label:'PHYRVG-PhysRVG +LoRA',value:on})}
     function deltaVsSeries(record,stem,key){const v=value(record,stem,key),ref=seriesReference(stem,key);if(v===null||ref.value===null)return null;
       return specByKey[key].direction==='lower'?ref.value-v:v-ref.value}
-    function allMethods(){return [...records,{...refs.off,method_label:'PhysRVG finetuned DiT · LoRA OFF',reference:'off'},
-      {...refs.on,method_label:'PhysRVG finetuned DiT + LoRA',reference:'on'}]}
+    function allMethods(){return [...records,{...refs.off,method_label:'PHYRVG-PhysRVG finetuned DiT · LoRA OFF',reference:'off'},
+      {...refs.on,method_label:'PHYRVG-PhysRVG finetuned DiT + LoRA',reference:'on'}]}
     function methodColor(record,index){if(record.reference==='off')return 'var(--off)';if(record.reference==='on')return 'var(--on)';return topByKey[record.method_key].color||medal[index]}
     function renderPodium(){const root=document.getElementById('podium');D.top3.forEach((row,index)=>{const card=document.createElement('article');
       card.className='podium-card';card.style.setProperty('--medal',medal[index]);card.innerHTML=`<span class="place">${index+1}</span><h2>${row.label}</h2>

@@ -150,7 +150,7 @@ def build_data(payload: dict[str, Any]) -> dict[str, Any]:
 
     if set(reference_records) != {"off", "on"}:
         raise ValueError(
-            f"Expected PhysRVG OFF/ON references, found {sorted(reference_records)}"
+            f"Expected PHYRVG-PHYRVG-PhysRVG OFF/ON references, found {sorted(reference_records)}"
         )
     for name, record in reference_records.items():
         incomplete = [
@@ -296,7 +296,7 @@ HTML_TEMPLATE = r'''<!doctype html>
   <header class="hero">
     <div class="hero-top"><a class="back" href="../">← 返回 8844 总览</a><span class="eyebrow">Physics regression audit</span></div>
     <h1>哪些 case 明显输给 PhysRVG？</h1>
-    <p>覆盖所有已有方案。默认以同一 case、同一指标上 PhysRVG LoRA OFF / +LoRA 中表现更好者为参考；
+    <p>覆盖所有已有方案。默认以同一 case、同一指标上 PHYRVG-PHYRVG-PhysRVG LoRA OFF / PHYRVG-PhysRVG +LoRA 中表现更好者为参考；
       按指标方向计算原始劣势，不做归一化。负差值代表该方案反而优于参考，不列入“最大劣势”。</p>
     <div class="hero-rule"><span></span><span></span><span></span><span></span></div>
   </header>
@@ -304,7 +304,7 @@ HTML_TEMPLATE = r'''<!doctype html>
     <label>方案<select id="method"></select></label>
     <label>Step<select id="step"></select></label>
     <label>参考<select id="reference"><option value="series">PhysRVG 系列最佳</option>
-      <option value="off">PhysRVG LoRA OFF</option><option value="on">PhysRVG +LoRA</option></select></label>
+      <option value="off">PHYRVG-PhysRVG LoRA OFF</option><option value="on">PHYRVG-PhysRVG +LoRA</option></select></label>
     <label>指标<select id="metric"></select></label>
     <label>范围<select id="scope"><option value="all">全部 67 case</option>
       <option value="solid">Solid Mechanics 39 case</option></select></label>
@@ -352,12 +352,12 @@ HTML_TEMPLATE = r'''<!doctype html>
     function metricValue(record,stem,key){const value=record?.metrics?.[stem]?.[key];return Number.isFinite(value)?value:null}
     function referenceFor(stem,key,choice=referenceSelect.value){
       const spec=specByKey[key];const off=metricValue(refs.off,stem,key);const on=metricValue(refs.on,stem,key);
-      if(choice==='off')return {key:'off',label:'PhysRVG LoRA OFF',value:off};
-      if(choice==='on')return {key:'on',label:'PhysRVG +LoRA',value:on};
-      if(off===null)return {key:'on',label:'PhysRVG +LoRA',value:on};
-      if(on===null)return {key:'off',label:'PhysRVG LoRA OFF',value:off};
+      if(choice==='off')return {key:'off',label:'PHYRVG-PhysRVG LoRA OFF',value:off};
+      if(choice==='on')return {key:'on',label:'PHYRVG-PhysRVG +LoRA',value:on};
+      if(off===null)return {key:'on',label:'PHYRVG-PhysRVG +LoRA',value:on};
+      if(on===null)return {key:'off',label:'PHYRVG-PhysRVG LoRA OFF',value:off};
       const offBetter=spec.direction==='lower'?off<=on:off>=on;
-      return offBetter?{key:'off',label:'PhysRVG LoRA OFF',value:off}:{key:'on',label:'PhysRVG +LoRA',value:on};
+      return offBetter?{key:'off',label:'PHYRVG-PhysRVG LoRA OFF',value:off}:{key:'on',label:'PHYRVG-PhysRVG +LoRA',value:on};
     }
     function comparison(record,item,key,choice=referenceSelect.value){
       const value=metricValue(record,item.stem,key);const ref=referenceFor(item.stem,key,choice);
@@ -398,7 +398,7 @@ HTML_TEMPLATE = r'''<!doctype html>
       const off=metricValue(refs.off,row.item.stem,key);const on=metricValue(refs.on,row.item.stem,key);const ref=referenceFor(row.item.stem,key);
       const gap=value===null||ref.value===null?null:(spec.direction==='lower'?value-ref.value:ref.value-value);
       return `<div class="metric-box ${key===metricSelect.value?'focus':''}"><h4>${spec.label} ${spec.direction==='lower'?'↓':'↑'}</h4><dl>
-        <dt>方案</dt><dd>${fmt(value)}</dd><dt>PhysRVG OFF</dt><dd>${fmt(off)}</dd><dt>PhysRVG +LoRA</dt><dd>${fmt(on)}</dd>
+        <dt>方案</dt><dd>${fmt(value)}</dd><dt>PHYRVG-PHYRVG-PhysRVG OFF</dt><dd>${fmt(off)}</dd><dt>PHYRVG-PhysRVG +LoRA</dt><dd>${fmt(on)}</dd>
         <dt>系列参考</dt><dd>${ref.label.replace('PhysRVG ','')}</dd><dt>原始劣势</dt><dd class="${gap>0?'bad':''}">${gap>0?'−'+fmt(gap):gap===null?'—':'无劣势'}</dd></dl></div>`}).join('')}
     function cardFor(row,index,maxGap){const article=document.createElement('article');article.className='case-card';
       const method=methodByKey[row.record.method_key];const width=maxGap>0?Math.max(0,Math.min(100,row.gap/maxGap*100)):0;
@@ -407,8 +407,8 @@ HTML_TEMPLATE = r'''<!doctype html>
         <div class="gap-rail"><span style="width:${width}%"></span></div><div class="videos">
         <div class="video-cell"><div class="video-label"><span>GT</span><em>49f · 30 FPS</em></div><video src="${row.item.gt}" muted playsinline controls preload="metadata"></video></div>
         <div class="video-cell"><div class="video-label" style="color:${method.color}"><span>${method.label}</span><em>step ${row.record.step}</em></div><video src="${row.record.videos[row.item.stem]}" muted playsinline controls preload="metadata"></video></div>
-        <div class="video-cell"><div class="video-label" style="color:var(--off)"><span>PhysRVG LoRA OFF</span><em>finetuned DiT</em></div><video src="${refs.off.videos[row.item.stem]}" muted playsinline controls preload="metadata"></video></div>
-        <div class="video-cell"><div class="video-label" style="color:var(--on)"><span>PhysRVG +LoRA</span><em>rank-32</em></div><video src="${refs.on.videos[row.item.stem]}" muted playsinline controls preload="metadata"></video></div>
+        <div class="video-cell"><div class="video-label" style="color:var(--off)"><span>PHYRVG-PhysRVG LoRA OFF</span><em>finetuned DiT</em></div><video src="${refs.off.videos[row.item.stem]}" muted playsinline controls preload="metadata"></video></div>
+        <div class="video-cell"><div class="video-label" style="color:var(--on)"><span>PHYRVG-PhysRVG +LoRA</span><em>rank-32</em></div><video src="${refs.on.videos[row.item.stem]}" muted playsinline controls preload="metadata"></video></div>
         </div><div class="metrics">${metricBoxes(row)}</div>`;return article}
     function selectedRows(){const key=metricSelect.value;if(methodSelect.value==='__all__')return latestRows(key);
       const record=recordFor(methodSelect.value,stepSelect.value);return record?rankedForRecord(record,key):[]}

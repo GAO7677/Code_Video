@@ -128,7 +128,7 @@ HTML_TEMPLATE = r'''<!doctype html>
   <header class="hero"><div class="links"><a href="../">← 返回 8844 总览</a>
     <a href="../physiciq-top3-vs-physrvg-all-cases/">返回完整 67-case 对比</a></div>
     <h1>四项主要指标 · 差距 Top 10</h1>
-    <p>每个指标独立选择 10 个不重复 case；每个 case 只展示 GT、综合 Top 3 与 PhysRVG LoRA OFF/+LoRA。指标数值与表格已全部隐藏。</p>
+    <p>每个指标独立选择 10 个不重复 case；每个 case 只展示 GT、综合 Top 3 与 PHYRVG-PhysRVG LoRA OFF/PHYRVG-PhysRVG +LoRA。指标数值与表格已全部隐藏。</p>
   </header>
   <nav id="tabs" class="tabs"></nav>
   <main id="content"></main>
@@ -144,8 +144,8 @@ HTML_TEMPLATE = r'''<!doctype html>
         const topFrames=item.top_videos.map((path,i)=>videoFrame(D.methods[i].label,`综合 #${i+1} · step ${D.methods[i].step}`,path,D.methods[i].color)).join('');
         strip.innerHTML=`<div class="case-head"><span class="rank">${String(index+1).padStart(2,'0')}</span><h3>${item.stem}</h3><button>↺ 重播本组</button></div>
           <div class="film-scroll"><div class="film">${videoFrame('GT','49f · 30 FPS',item.gt,'var(--ink)')}${topFrames}
-          ${videoFrame('PhysRVG finetuned DiT · LoRA OFF','inference 40',item.physrvg_off,'var(--off)')}
-          ${videoFrame('PhysRVG finetuned DiT + LoRA','inference 40',item.physrvg_on,'var(--on)')}</div></div>`;
+          ${videoFrame('PHYRVG-PhysRVG finetuned DiT · LoRA OFF','inference 40',item.physrvg_off,'var(--off)')}
+          ${videoFrame('PHYRVG-PhysRVG finetuned DiT + LoRA','inference 40',item.physrvg_on,'var(--on)')}</div></div>`;
         strip.querySelector('button').onclick=()=>{loadStrip(strip);strip.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})})};root.append(strip)});content.append(root)});
     const observer=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){loadStrip(entry.target);observer.unobserve(entry.target)}}),{rootMargin:'700px 0px'});
     document.querySelectorAll('.case-strip').forEach(strip=>observer.observe(strip));document.getElementById('replay-all').onclick=()=>document.querySelectorAll('video:not([data-src])').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})});

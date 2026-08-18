@@ -265,7 +265,7 @@ def write_csv(path: Path, payload: dict[str, Any]) -> None:
 
 def build_html(payload: dict[str, Any]) -> str:
     data = json_safe(payload)
-    title = html.escape("PhysRVG LoRA 开关：指标差异 Case 对比")
+    title = html.escape("PHYRVG-PhysRVG LoRA 开关：指标差异 Case 对比")
     return f'''<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -295,7 +295,7 @@ def build_html(payload: dict[str, Any]) -> str:
     <section class="hero panel">
       <div class="eyebrow">{payload['case_count']} paired cases · LoRA ablation</div>
       <h1>{title}</h1>
-      <p>只改变 PhysRVG LoRA 是否加载；视频并排同步查看。默认按跨指标归一化差异排序，优先展示指标差异最大的 case。</p>
+      <p>只改变 PHYRVG-PhysRVG LoRA 是否加载；视频并排同步查看。默认按跨指标归一化差异排序，优先展示指标差异最大的 case。</p>
       <div class="config" id="config"></div>
     </section>
     <section class="picker panel">
@@ -307,8 +307,8 @@ def build_html(payload: dict[str, Any]) -> str:
       <div class="stats" id="stats"></div>
     </section>
     <section class="videos">
-      <article class="video-card panel"><div class="video-head"><h3>PhysRVG DIT + LoRA</h3><span class="tag on">LoRA ON</span></div><video id="with-lora" controls loop muted playsinline preload="metadata"></video></article>
-      <article class="video-card panel"><div class="video-head"><h3>PhysRVG finetuned DIT</h3><span class="tag off">LoRA OFF</span></div><video id="no-lora" controls loop muted playsinline preload="metadata"></video></article>
+      <article class="video-card panel"><div class="video-head"><h3>PHYRVG-PhysRVG DIT + LoRA</h3><span class="tag on">LoRA ON</span></div><video id="with-lora" controls loop muted playsinline preload="metadata"></video></article>
+      <article class="video-card panel"><div class="video-head"><h3>PHYRVG-PhysRVG finetuned DIT</h3><span class="tag off">LoRA OFF</span></div><video id="no-lora" controls loop muted playsinline preload="metadata"></video></article>
     </section>
     <section class="metrics panel">
       <div class="section-title"><h3>逐项指标差异</h3><p>Δ = 无 LoRA − 有 LoRA；表格按当前 case 的归一化差异降序</p></div>
