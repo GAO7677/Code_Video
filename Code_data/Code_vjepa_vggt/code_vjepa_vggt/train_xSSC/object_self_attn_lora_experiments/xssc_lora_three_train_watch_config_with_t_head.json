@@ -21,7 +21,13 @@
     "checkpoint_stability_seconds": 30,
     "gpu_poll_seconds": 30,
     "gpu_ids": [
-      3
+      0,
+      1,
+      2,
+      3,
+      5,
+      6,
+      7
     ],
     "gpu_ready_max_used_mib": 8000,
     "gpu_metric_workers_per_gpu": 2,
