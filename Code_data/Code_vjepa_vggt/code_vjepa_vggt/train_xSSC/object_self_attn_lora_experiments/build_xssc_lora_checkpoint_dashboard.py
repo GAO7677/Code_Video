@@ -1443,12 +1443,12 @@ MERGED_METHODS = [
     },
     {
         "key": "full_sa_physrvg_vjepa_loss",
-        "label": "Full-SA + Object (PhysRVG DiT) + V-JEPA Loss",
+        "label": "PHYRVG-Full-SA + Object (PhysRVG DiT) + V-JEPA Loss",
         "color": "#C44E52",
     },
     {
         "key": "full_sa_physrvg_dit_gpu56",
-        "label": "Full-SA + Object (PhysRVG DiT) · GPU5/6 batch",
+        "label": "PHYRVG-Full-SA + Object (PhysRVG DiT) · GPU5/6 batch",
         "color": "#2E86AB",
     },
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},

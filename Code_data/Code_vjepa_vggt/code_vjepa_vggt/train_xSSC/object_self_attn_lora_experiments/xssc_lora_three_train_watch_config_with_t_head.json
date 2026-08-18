@@ -336,7 +336,7 @@
     },
     {
       "key": "full_sa_physrvg_vjepa_loss",
-      "label": "Full-SA + Object (PhysRVG DiT) + V-JEPA Loss",
+      "label": "PHYRVG-Full-SA + Object (PhysRVG DiT) + V-JEPA Loss",
       "color": "#C44E52",
       "checkpoint_format": "peft_adapter",
       "min_step": 2000,
@@ -347,7 +347,7 @@
     },
     {
       "key": "full_sa_physrvg_dit_gpu56",
-      "label": "Full-SA + Object (PhysRVG DiT) · GPU5/6 batch",
+      "label": "PHYRVG-Full-SA + Object (PhysRVG DiT) · GPU5/6 batch",
       "color": "#2E86AB",
       "checkpoint_format": "peft_adapter",
       "min_step": 1500,
