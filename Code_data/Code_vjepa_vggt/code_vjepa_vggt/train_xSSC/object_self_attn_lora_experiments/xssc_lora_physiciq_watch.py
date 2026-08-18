@@ -23,6 +23,7 @@ from xssc_lora_checkpoint_watch import (
     log,
     method_config,
     read_inputs,
+    reserve_available_gpu,
     reserve_metric_gpu,
     state_paths,
     timestamp,
