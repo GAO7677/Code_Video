@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from pathlib import Path
@@ -13,13 +14,16 @@ from typing import Any
 
 from xssc_lora_checkpoint_watch import (
     atomic_write_json,
+    candidate_gpu_ids,
     exclusive_lock,
+    gpu_metric_can_share,
+    gpu_metric_worker_count,
     try_exclusive_lock,
     load_json,
     log,
     method_config,
     read_inputs,
-    reserve_available_gpu,
+    reserve_metric_gpu,
     state_paths,
     timestamp,
     validate_result_root,
@@ -35,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--methods", default=None)
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--gpu-ready-max-used-mib", type=int, default=None)
+    parser.add_argument("--gpu-metric-workers-per-gpu", type=int, default=None)
     parser.add_argument("--once", action="store_true")
     return parser.parse_args()
 
@@ -395,6 +400,33 @@ def run_metric(
     refresh_plots_if_complete(config, manifest)
 
 
+def run_gpu_metric_concurrent(
+    config: dict[str, Any], task: dict[str, Any]
+) -> bool:
+    """Run one PhysicIQ GPU metric while preserving watcher task locking."""
+    manifest = task["manifest"]
+    method_key = manifest["method_key"]
+    step = int(manifest["step"])
+    metric = task["metric"]
+    task_lock = (
+        phys_state_root(config)
+        / "metric_locks"
+        / "gpu"
+        / method_key
+        / f"step-{step:06d}"
+        / f"{metric}.lock"
+    )
+    with try_exclusive_lock(task_lock) as acquired:
+        if not acquired or phys_metric_marker_path(config, method_key, step, metric).is_file():
+            return False
+        with reserve_metric_gpu(
+            config,
+            allow_parallel=gpu_metric_can_share(config, metric),
+        ) as gpu_id:
+            run_metric(config, "gpu", task, gpu_id)
+        return True
+
+
 def refresh_plots(
     config: dict[str, Any],
     manifest: dict[str, Any],
@@ -476,6 +508,41 @@ def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
                 return
             time.sleep(int(config["runtime"]["poll_seconds"]))
             continue
+
+        if kind == "gpu":
+            # Keep one metric model per worker and spread independent metrics
+            # over all configured, dynamically reserved GPUs.
+            parallelism = (
+                len(candidate_gpu_ids(config))
+                * gpu_metric_worker_count(config)
+            )
+            batch = tasks[:parallelism]
+            handled = False
+            with ThreadPoolExecutor(
+                max_workers=parallelism,
+                thread_name_prefix="physiciq-gpu-metric",
+            ) as executor:
+                future_tasks = {
+                    executor.submit(run_gpu_metric_concurrent, config, task): task
+                    for task in batch
+                }
+                for future in as_completed(future_tasks):
+                    try:
+                        handled = future.result() or handled
+                    except Exception as exc:
+                        task = future_tasks[future]
+                        manifest = task["manifest"]
+                        log(
+                            f"PhysicIQ metric failed kind=gpu "
+                            f"method={manifest['method_key']} "
+                            f"step={manifest['step']} metric={task['metric']}: {exc}"
+                        )
+            if not handled:
+                time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
+            if once:
+                return
+            continue
+
         handled = False
         for task in tasks:
             manifest = task["manifest"]
@@ -543,6 +610,10 @@ def main() -> None:
         if args.gpu_ready_max_used_mib < 0:
             raise ValueError("--gpu-ready-max-used-mib must be non-negative")
         config["runtime"]["gpu_ready_max_used_mib"] = args.gpu_ready_max_used_mib
+    if args.gpu_metric_workers_per_gpu is not None:
+        if args.gpu_metric_workers_per_gpu < 1:
+            raise ValueError("--gpu-metric-workers-per-gpu must be positive")
+        config["runtime"]["gpu_metric_workers_per_gpu"] = args.gpu_metric_workers_per_gpu
     if not config.get("physiciq", {}).get("enabled"):
         raise SystemExit("PhysicIQ watcher is disabled in config")
     phys_state_root(config).mkdir(parents=True, exist_ok=True)

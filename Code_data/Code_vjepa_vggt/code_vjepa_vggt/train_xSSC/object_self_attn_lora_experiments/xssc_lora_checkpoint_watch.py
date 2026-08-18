@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import csv
 import fcntl
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--methods", default=None)
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--gpu-ready-max-used-mib", type=int, default=None)
+    parser.add_argument("--gpu-metric-workers-per-gpu", type=int, default=None)
     parser.add_argument("--once", action="store_true")
     return parser.parse_args()
 
@@ -465,6 +467,101 @@ def reserve_available_gpu(config: dict[str, Any]) -> Iterator[int]:
         time.sleep(int(runtime["gpu_poll_seconds"]))
 
 
+def gpu_metric_worker_count(config: dict[str, Any]) -> int:
+    return max(1, int(config["runtime"].get("gpu_metric_workers_per_gpu", 1)))
+
+
+def gpu_metric_can_share(config: dict[str, Any], metric: str) -> bool:
+    parallel_metrics = set(
+        config["runtime"].get(
+            "gpu_metric_parallel_metrics",
+            [
+                "wmreward",
+                "vbench_subject_consistency",
+                "vbench_background_consistency",
+                "vbench_temporal_flickering",
+                "vbench_motion_smoothness",
+                "vbench_dynamic_degree",
+                "vbench_aesthetic_quality",
+                "vbench_imaging_quality",
+            ],
+        )
+    )
+    return metric in parallel_metrics and gpu_metric_worker_count(config) > 1
+
+
+@contextlib.contextmanager
+def reserve_metric_gpu(
+    config: dict[str, Any],
+    *,
+    allow_parallel: bool,
+) -> Iterator[int]:
+    """Reserve an exclusive GPU or one of its shared metric slots.
+
+    Shared slots use a shared physical-GPU lock, so inference remains
+    exclusive while multiple light metric models can coexist.
+    """
+    runtime = config["runtime"]
+    gpu_ids = candidate_gpu_ids(config)
+    threshold = int(runtime["gpu_ready_max_used_mib"])
+    slot_count = gpu_metric_worker_count(config)
+    lock_root = state_paths(config)["state"] / "gpu_locks"
+    lock_root.mkdir(parents=True, exist_ok=True)
+    while True:
+        for gpu_id in sorted(gpu_ids):
+            gpu_lock = (lock_root / f"gpu-{gpu_id}.lock").open("a+", encoding="utf-8")
+            slot_handles: list[Any] = []
+            try:
+                lock_mode = fcntl.LOCK_SH if allow_parallel else fcntl.LOCK_EX
+                try:
+                    fcntl.flock(gpu_lock.fileno(), lock_mode | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    continue
+
+                if not allow_parallel:
+                    current_used = gpu_memory_used(gpu_id)
+                    if current_used > threshold:
+                        continue
+                    log(f"reserved exclusive metric GPU{gpu_id} used={current_used} MiB")
+                    yield gpu_id
+                    return
+
+                for slot in range(slot_count):
+                    slot_path = lock_root / f"gpu-{gpu_id}.metric-slot-{slot}.lock"
+                    slot_handle = slot_path.open("a+", encoding="utf-8")
+                    try:
+                        fcntl.flock(
+                            slot_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+                        )
+                    except BlockingIOError:
+                        slot_handle.close()
+                        continue
+                    slot_handles.append(slot_handle)
+
+                if not slot_handles:
+                    continue
+                current_used = gpu_memory_used(gpu_id)
+                all_slots_were_free = len(slot_handles) == slot_count
+                if current_used > threshold and all_slots_were_free:
+                    continue
+                log(
+                    f"reserved shared metric GPU{gpu_id} "
+                    f"slot={len(slot_handles) - 1} used={current_used} MiB"
+                )
+                yield gpu_id
+                return
+            finally:
+                for slot_handle in slot_handles:
+                    fcntl.flock(slot_handle.fileno(), fcntl.LOCK_UN)
+                    slot_handle.close()
+                try:
+                    fcntl.flock(gpu_lock.fileno(), fcntl.LOCK_UN)
+                except (OSError, ValueError):
+                    pass
+                gpu_lock.close()
+        time.sleep(int(runtime["gpu_poll_seconds"]))
+
+
 def refresh_site(config: dict[str, Any]) -> None:
     paths = state_paths(config)
     with exclusive_lock(paths["refresh_lock"]):
@@ -754,6 +851,35 @@ def run_metric_task(
     log(f"metric complete method={method_key} step={step} metric={metric}")
 
 
+def run_gpu_metric_task_concurrent(
+    config: dict[str, Any], task: dict[str, Any]
+) -> bool:
+    """Run one GPU metric while preserving cross-watcher task locking."""
+    manifest = task["manifest"]
+    method_key = manifest["method_key"]
+    step = int(manifest["step"])
+    metric = task["metric"]
+    paths = state_paths(config)
+    task_lock = (
+        paths["state"]
+        / "metric_locks"
+        / "gpu"
+        / method_key
+        / f"step-{step:06d}"
+        / f"{metric}.lock"
+    )
+    with try_exclusive_lock(task_lock) as acquired:
+        if not acquired or metric_marker_path(config, method_key, step, metric).is_file():
+            return False
+        with reserve_metric_gpu(
+            config,
+            allow_parallel=gpu_metric_can_share(config, metric),
+        ) as gpu_id:
+            run_metric_task(config, "gpu", task, gpu_id)
+        refresh_site(config)
+        return True
+
+
 def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
     paths = state_paths(config)
     while True:
@@ -764,6 +890,41 @@ def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
                 return
             time.sleep(int(config["runtime"]["poll_seconds"]))
             continue
+
+        if kind == "gpu":
+            # One process per metric model keeps CUDA memory isolated while
+            # allowing independent metrics to use separate physical GPUs.
+            parallelism = (
+                len(candidate_gpu_ids(config))
+                * gpu_metric_worker_count(config)
+            )
+            batch = tasks[:parallelism]
+            handled = False
+            with ThreadPoolExecutor(
+                max_workers=parallelism,
+                thread_name_prefix="gpu-metric",
+            ) as executor:
+                future_tasks = {
+                    executor.submit(run_gpu_metric_task_concurrent, config, task): task
+                    for task in batch
+                }
+                for future in as_completed(future_tasks):
+                    try:
+                        handled = future.result() or handled
+                    except Exception as exc:
+                        task = future_tasks[future]
+                        manifest = task["manifest"]
+                        log(
+                            f"metric failed kind=gpu "
+                            f"method={manifest['method_key']} "
+                            f"step={manifest['step']} metric={task['metric']}: {exc}"
+                        )
+            if not handled:
+                time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
+            if once:
+                return
+            continue
+
         handled = False
         for task in tasks:
             manifest = task["manifest"]
@@ -832,6 +993,10 @@ def main() -> None:
         if args.gpu_ready_max_used_mib < 0:
             raise ValueError("--gpu-ready-max-used-mib must be non-negative")
         config["runtime"]["gpu_ready_max_used_mib"] = args.gpu_ready_max_used_mib
+    if args.gpu_metric_workers_per_gpu is not None:
+        if args.gpu_metric_workers_per_gpu < 1:
+            raise ValueError("--gpu-metric-workers-per-gpu must be positive")
+        config["runtime"]["gpu_metric_workers_per_gpu"] = args.gpu_metric_workers_per_gpu
     prepare_directories(config)
     tasks = discover_checkpoints(config)
     write_discovery(config, tasks)

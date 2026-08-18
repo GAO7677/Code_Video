@@ -445,6 +445,16 @@ def derive_method_name(result_payload: dict[str, Any], fallback_video_path: Path
 def build_case_payload(record: CaseRecord) -> dict[str, Any]:
     payload = dict(record.result_payload)
     payload["video"] = str(record.candidate_video_path)
+    if not isinstance(payload.get("caption"), str) or not payload["caption"].strip():
+        input_caption = payload.get("input_caption")
+        if isinstance(input_caption, str) and input_caption.strip():
+            payload["caption"] = input_caption.strip()
+        else:
+            nested_input = payload.get("input")
+            if isinstance(nested_input, dict):
+                nested_caption = nested_input.get("caption")
+                if isinstance(nested_caption, str) and nested_caption.strip():
+                    payload["caption"] = nested_caption.strip()
     context_video_path = resolve_context_video_path(record.input_json_path)
     if context_video_path is not None:
         payload["context_video"] = str(context_video_path)
