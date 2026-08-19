@@ -22,7 +22,10 @@ EARTH_GRAVITY = 9.81
 NOMINAL_RENDER_WIDTH = 1280
 NOMINAL_RENDER_HEIGHT = 720
 DIRECTION_MODES = {"left_to_right", "right_to_left", "vertical"}
-DEFAULT_CAMERA_DISTANCE_SCALE = 0.82
+# Generic scenes keep the established conservative framing.  Dedicated F11,
+# F12, and V2V cameras below are tightened independently after their motion
+# envelopes are known.
+DEFAULT_CAMERA_DISTANCE_SCALE = 0.88
 F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG = -48.0
 INITIAL_GROUND_CLEARANCE_M = 0.006
 
@@ -848,7 +851,7 @@ def _select_best_camera_for_motion(
     preferred_camera_keys: tuple[str, ...],
     dynamic_objects: tuple[ObjectInstanceSpec, ...],
     *,
-    camera_distance_scale: float = DEFAULT_CAMERA_DISTANCE_SCALE,
+    camera_distance_scale: float = 1.0,
 ) -> tuple[str, CameraSpec]:
     camera_keys = list(preferred_camera_keys)
     rng.shuffle(camera_keys)
@@ -863,6 +866,99 @@ def _select_best_camera_for_motion(
             best_camera = candidate_camera
             best_score = candidate_score
     return best_key, best_camera
+
+
+def _camera_envelope_extent(obj: ObjectInstanceSpec) -> np.ndarray:
+    """Return a conservative world-space half extent for camera fitting."""
+    size = obj.size
+    if obj.shape == "sphere":
+        radius = float(size.get("radius", 0.10))
+        return np.asarray([radius, radius, radius], dtype=np.float64)
+    if obj.shape in {"box", "slab"}:
+        return np.asarray(
+            [
+                float(size.get("hx", 0.10)),
+                float(size.get("hy", 0.10)),
+                float(size.get("hz", 0.10)),
+            ],
+            dtype=np.float64,
+        )
+    radius = float(size.get("radius", 0.10))
+    height = float(size.get("height", 2.0 * radius))
+    return np.asarray([radius, radius, max(radius, 0.5 * height)], dtype=np.float64)
+
+
+def _fit_generic_camera_to_motion_envelope(blueprint: ScenarioBlueprint) -> ScenarioBlueprint:
+    """Frame every generic scene's plausible 3-second motion envelope.
+
+    Sampling only the first 1.5 seconds when selecting cameras allowed fast
+    objects to leave the view late in a clip. F1-F10 use this conservative
+    envelope fit after direction mirroring; dedicated control scenes retain
+    their explicit cameras.
+    """
+    if not blueprint.family_key.startswith("F") or blueprint.family_key in {"F11", "F12"}:
+        return blueprint
+    duration_s = 3.0 + float(blueprint.pre_roll_s)
+    sample_times = np.linspace(0.0, duration_s, 13, dtype=np.float64)
+    low = np.full(3, np.inf, dtype=np.float64)
+    high = np.full(3, -np.inf, dtype=np.float64)
+    for obj in blueprint.objects:
+        extent = _camera_envelope_extent(obj) + np.asarray([0.08, 0.08, 0.05])
+        pos0 = np.asarray(obj.position, dtype=np.float64)
+        if obj.dynamic:
+            velocity = np.asarray(obj.linear_velocity, dtype=np.float64)
+            points = pos0[None, :] + sample_times[:, None] * velocity[None, :]
+            points[:, 2] = np.maximum(points[:, 2], extent[2])
+        else:
+            points = pos0[None, :]
+        low = np.minimum(low, np.min(points - extent[None, :], axis=0))
+        high = np.maximum(high, np.max(points + extent[None, :], axis=0))
+
+    center = 0.5 * (low + high)
+    camera = blueprint.camera
+    forward = np.asarray(camera.target, dtype=np.float64) - np.asarray(camera.eye, dtype=np.float64)
+    forward /= np.linalg.norm(forward) + 1e-8
+    right = np.cross(forward, np.asarray(camera.up, dtype=np.float64))
+    right /= np.linalg.norm(right) + 1e-8
+    true_up = np.cross(right, forward)
+    half_extents = 0.5 * (high - low)
+    corners = np.asarray(
+        [
+            center + np.asarray([sx, sy, sz]) * half_extents
+            for sx in (-1.0, 1.0)
+            for sy in (-1.0, 1.0)
+            for sz in (-1.0, 1.0)
+        ],
+        dtype=np.float64,
+    )
+    relative = corners - center[None, :]
+    horizontal = np.abs(relative @ right)
+    vertical = np.abs(relative @ true_up)
+    depth = relative @ forward
+    vertical_tan = math.tan(math.radians(float(camera.yfov_deg)) * 0.5)
+    horizontal_tan = vertical_tan * (NOMINAL_RENDER_WIDTH / NOMINAL_RENDER_HEIGHT)
+    safe_fraction = 0.80
+    required_distance = max(
+        float(np.max(horizontal / max(horizontal_tan * safe_fraction, 1e-6) - depth)),
+        float(np.max(vertical / max(vertical_tan * safe_fraction, 1e-6) - depth)),
+        float(np.max(-depth)) + 0.45,
+        1.5,
+    )
+    fitted_camera = replace(
+        camera,
+        eye=tuple(float(value) for value in center - forward * required_distance),
+        target=tuple(float(value) for value in center),
+    )
+    return replace(
+        blueprint,
+        camera=fitted_camera,
+        metadata={
+            **blueprint.metadata,
+            "auto_motion_envelope_camera": True,
+            "camera_motion_envelope_duration_s": round(duration_s, 4),
+            "camera_motion_envelope_safe_fraction": safe_fraction,
+        },
+    )
 
 
 def _material_keys_by_category() -> dict[str, list[str]]:
@@ -1831,6 +1927,7 @@ def generate_scenario_blueprint(
         )
         blueprint = replace(blueprint, camera=adjusted_camera)
     blueprint = _set_blueprint_direction(blueprint, direction_mode)
+    blueprint = _fit_generic_camera_to_motion_envelope(blueprint)
     validate_blueprint_physics(blueprint)
     return blueprint
 
