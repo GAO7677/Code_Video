@@ -302,7 +302,11 @@ def main() -> None:
                     config, task["method_key"], int(task["step"])
                 ).is_file():
                     return
-                with reserve_available_gpu(config) as reserved_gpu_id:
+                worker_config = {
+                    **config,
+                    "runtime": {**config["runtime"], "gpu_ids": [gpu_id]},
+                }
+                with reserve_available_gpu(worker_config) as reserved_gpu_id:
                     run_task(
                         config,
                         task,
