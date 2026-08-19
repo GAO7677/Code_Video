@@ -31,6 +31,9 @@ from build_physiciq_top3_physrvg_all_cases_dashboard import (
 from build_physiciq_top3_physrvg_top10_videos import (
     build_dashboard as build_physiciq_top3_physrvg_top10_videos,
 )
+from build_metric_extremes_dashboard import (
+    build_dashboard as build_metric_extremes_dashboard,
+)
 
 
 METHOD_PLOT_STYLES = {
@@ -2385,6 +2388,13 @@ def build_master_hub(
         ),
         encoding="utf-8",
     )
+    test5_metric_extremes_root = hub_root / "test5-metric-extremes"
+    build_metric_extremes_dashboard(
+        test5_page_root / "index.html",
+        test5_metric_extremes_root,
+        page_title="test_5 · 每 case 每指标 best/worst",
+        subtitle="按 source case 分组；每个 case 的每个指标都在所有生成结果里横向比较，展示 best/worst，视频懒加载。",
+    )
     legacy_state_root = (
         Path(legacy_watch_root).resolve().parent / "state"
         if legacy_watch_root
@@ -2653,6 +2663,23 @@ def build_master_hub(
       <a href="physiciq-top3-vs-physrvg-all-cases/">综合 Top 3 × PhysRVG · 67 case</a></div>
       <div class="status">动态汇总<strong>全部方案</strong><small>PHYRVG-PhysRVG OFF / +LoRA 可切换</small></div>
     </section>"""
+    metric_extremes_entry = ""
+    phys_metric_extremes_root = hub_root / "physiciq-metric-extremes"
+    test5_metric_extremes_root = hub_root / "test5-metric-extremes"
+    if (hub_root / "physiciq" / "index.html").is_file():
+        build_metric_extremes_dashboard(
+            hub_root / "physiciq" / "index.html",
+            phys_metric_extremes_root,
+            page_title="PhysicIQ · 每 case 每指标 best/worst",
+            subtitle="按 source case 分组；每个 case 的每个指标都在所有生成结果里横向比较，展示 best/worst，视频懒加载。",
+        )
+        metric_extremes_entry = f"""
+    <section class="entry"><div><h2>每 case 每指标 best / worst</h2>
+      <div class="meta">按 source case 分组；每个 case 的每个指标都在所有生成结果里比较 best/worst，视频懒加载</div>
+      <a href="physiciq-metric-extremes/">PhysicIQ 67-case</a>
+      <a href="test5-metric-extremes/">test_5</a></div>
+      <div class="status">统一极值视图<strong>case 内横向比较</strong><small>所有生成结果参与 best/worst 选择</small></div>
+    </section>"""
     step40_ab_entry = ""
     if (hub_root / "test5-step40-object-identity-count-ab").exists():
         step40_ab_entry = """
@@ -2726,6 +2753,7 @@ def build_master_hub(
     {physrvg_test5_entry}
     {physrvg_physiciq_entry}
     {physiciq_entry}
+    {metric_extremes_entry}
     {solid_mechanics_entry}
     {physrvg_worst_case_entry}
     {phyrvg_train_validation_entry}

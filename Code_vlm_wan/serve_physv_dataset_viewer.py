@@ -29,6 +29,15 @@ def _read_json(path: Path) -> dict:
 
 
 def load_cases(dataset_root: Path) -> list[dict]:
+    vbench_report_path = dataset_root / "reports/vbench_metrics.json"
+    vbench_report = _read_json(vbench_report_path) if vbench_report_path.is_file() else {}
+    vbench_cases = vbench_report.get("cases", {})
+    amplitude_report_path = dataset_root / "reports/motion_amplitude.json"
+    amplitude_report = _read_json(amplitude_report_path) if amplitude_report_path.is_file() else {}
+    amplitude_cases = amplitude_report.get("cases", {})
+    similarity_report_path = dataset_root / "reports/trajectory_similarity.json"
+    similarity_report = _read_json(similarity_report_path) if similarity_report_path.is_file() else {}
+    similarity_cases = similarity_report.get("cases", {})
     cases = []
     for sample_dir in sorted((dataset_root / "samples").iterdir()):
         if not sample_dir.is_dir():
@@ -60,11 +69,34 @@ def load_cases(dataset_root: Path) -> list[dict]:
                     "contact_point_count": physics.get("contact_point_count", 0),
                     "objects": physics.get("objects", {}),
                 },
+                "vbench": vbench_cases.get(sample_dir.name, {}).get("dimensions", {}),
+                "motion_amplitude": amplitude_cases.get(sample_dir.name, {}),
+                "trajectory_similarity": similarity_cases.get(sample_dir.name, {}),
                 "dynamic_actors": manifest.get("dynamic_actors", []),
                 "video": wrapper.get("video", {}),
             }
         )
     return cases
+
+
+def load_dataset(dataset_root: Path) -> dict:
+    similarity_path = dataset_root / "reports/trajectory_similarity.json"
+    similarity = _read_json(similarity_path) if similarity_path.is_file() else {}
+    cases = load_cases(dataset_root)
+    grouped: dict[str, list[dict]] = {}
+    for case in cases:
+        grouped.setdefault(case.get("family_key", ""), []).append(case)
+    return {
+        "cases": cases,
+        "groups": [
+            {
+                "family_key": family_key,
+                "cases": members,
+                "trajectory_similarity": similarity.get("groups", {}).get(family_key, {}),
+            }
+            for family_key, members in grouped.items()
+        ],
+    }
 
 
 class DatasetViewerServer(ThreadingHTTPServer):
@@ -149,6 +181,12 @@ class DatasetViewerHandler(BaseHTTPRequestHandler):
         if path == "/api/cases":
             payload = json.dumps(
                 load_cases(self.server.dataset_root), ensure_ascii=False
+            ).encode("utf-8")
+            self._send_bytes(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/dataset":
+            payload = json.dumps(
+                load_dataset(self.server.dataset_root), ensure_ascii=False
             ).encode("utf-8")
             self._send_bytes(payload, "application/json; charset=utf-8")
             return
