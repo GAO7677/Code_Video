@@ -90,7 +90,10 @@ def selected_tasks(
         checkpoint_dir = Path(task["checkpoint_dir"]).resolve()
         if step not in steps or method_key not in methods or method_key not in phys_methods:
             continue
-        if not checkpoint_complete(checkpoint_dir):
+        method_config = next(
+            item for item in config["methods"] if item["key"] == method_key
+        )
+        if not checkpoint_complete(checkpoint_dir, method_config):
             continue
         if phys_manifest_path(config, method_key, step).is_file():
             continue

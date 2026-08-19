@@ -58,7 +58,10 @@ def complete_tasks(config: dict) -> list[dict]:
     return [
         task
         for task in checkpoint_watch.discover_checkpoints(config)
-        if checkpoint_watch.checkpoint_complete(Path(task["checkpoint_dir"]))
+        if checkpoint_watch.checkpoint_complete(
+            Path(task["checkpoint_dir"]),
+            checkpoint_watch.method_config(config, task["method_key"]),
+        )
     ]
 
 
