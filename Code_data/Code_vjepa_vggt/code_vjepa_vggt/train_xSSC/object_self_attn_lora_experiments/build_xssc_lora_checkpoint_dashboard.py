@@ -81,6 +81,19 @@ METHOD_PLOT_STYLES = {
 }
 DEFAULT_PLOT_STYLE = {"marker": "o", "linestyle": "-"}
 
+PHYRVG_DISPLAY_ORDER = (
+    "physrvg_test5_lora_off",
+    "physrvg_test5_lora_on",
+    "full_sa_physrvg_dit",
+    "full_sa_physrvg_dit_gpu56",
+    "full_sa_physrvg_vjepa_loss",
+    "full_sa_physrvg_vjepa_loss_0613_b2g2",
+    "full_sa_physrvg_latent_mask_loss",
+)
+PHYRVG_DISPLAY_INDEX = {
+    key: index for index, key in enumerate(PHYRVG_DISPLAY_ORDER)
+}
+
 CASE_METRIC_SPECS = [
     {"key": "videophy2_pc_raw", "label": "VideoPhy2 PC raw", "direction": "higher", "path": ("videophy2", "pc_raw_score")},
     {"key": "cosmos_reason1", "label": "Cosmos Reason", "direction": "higher", "path": ("cosmos_reason1", "score")},
@@ -114,6 +127,27 @@ def load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TypeError(f"Expected JSON object: {path}")
     return payload
+
+
+def is_phyrvg_method(method: dict[str, Any]) -> bool:
+    """Return whether a method belongs to the shared PhysRVG comparison family."""
+    key = str(method.get("key", "")).lower()
+    label = str(method.get("label", "")).upper()
+    return "physrvg" in key or "phyrvg" in key or label.startswith("PHYRVG-")
+
+
+def method_display_group(method: dict[str, Any]) -> str:
+    return "phyrvg" if is_phyrvg_method(method) else "other"
+
+
+def display_methods(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Place all PhysRVG-family methods in one leading comparison block."""
+    phyrvg = [method for method in methods if is_phyrvg_method(method)]
+    others = [method for method in methods if not is_phyrvg_method(method)]
+    phyrvg.sort(
+        key=lambda method: PHYRVG_DISPLAY_INDEX.get(str(method.get("key")), 999)
+    )
+    return phyrvg + others
 
 
 def extract_case_metrics(payload: dict[str, Any]) -> dict[str, float]:
@@ -471,6 +505,10 @@ def build_physiciq_status(config: dict[str, Any]) -> dict[str, Any] | None:
     expected_cases = int(phys["expected_cases"])
     metrics = physiciq_metric_names(config)
     methods = {method["key"]: method for method in config["methods"]}
+    display_order = {
+        method["key"]: index
+        for index, method in enumerate(display_methods(config["methods"]))
+    }
     pending_path = watch_root / "state" / "physiciq" / "inference.pending"
     pending = load_json(pending_path) if pending_path.is_file() else None
     configured_steps = phys.get("trigger_steps", "all")
@@ -482,7 +520,7 @@ def build_physiciq_status(config: dict[str, Any]) -> dict[str, Any] | None:
                 for manifest in discovered
                 if manifest["method_key"] in phys["method_keys"]
             },
-            key=lambda item: (item[1], phys["method_keys"].index(item[0])),
+            key=lambda item: (display_order.get(item[0], 999), item[1]),
         )
     else:
         task_pairs = [
@@ -490,6 +528,7 @@ def build_physiciq_status(config: dict[str, Any]) -> dict[str, Any] | None:
             for step in configured_steps
             for method_key in phys["method_keys"]
         ]
+        task_pairs.sort(key=lambda item: (display_order.get(item[0], 999), item[1]))
     rows: list[dict[str, Any]] = []
     for method_key, step in task_pairs:
         method = methods.get(method_key, {"label": method_key, "color": "#657278"})
@@ -547,6 +586,7 @@ def build_physiciq_status(config: dict[str, Any]) -> dict[str, Any] | None:
                 "method_key": method_key,
                 "method_label": method["label"],
                 "color": method["color"],
+                "display_group": method_display_group(method),
                 "step": step,
                 "result_root": str(result_root),
                 "generated": generated,
@@ -601,7 +641,14 @@ def build_physiciq_section(phys_status: dict[str, Any] | None) -> str:
     if phys_status is None:
         return ""
     rows = []
+    phyrvg_header_added = False
     for row in phys_status["rows"]:
+        if row["display_group"] == "phyrvg" and not phyrvg_header_added:
+            rows.append(
+                '<tr class="comparison-group"><td colspan="6">'
+                'PHYRVG 系列 · 统一 checkpoint 对比</td></tr>'
+            )
+            phyrvg_header_added = True
         partial_label = (
             f"{row['partial_metrics_done']}/{row['metric_total']} · {row['partial_cases']} cases"
             if row["partial_cases"] > 0
@@ -706,9 +753,9 @@ def build_videos_page(
     methods_override: list[dict[str, str]] | None = None,
 ) -> str:
     if methods_override is None:
-        method_order = config["methods"]
+        method_order = display_methods(config["methods"])
     else:
-        method_order = methods_override
+        method_order = display_methods(methods_override)
     methods = [
         {
             "key": method["key"],
@@ -717,9 +764,19 @@ def build_videos_page(
             "condition": method.get("condition"),
             "schemeKey": method.get("scheme_key", method["key"]),
             "schemeLabel": method.get("scheme_label", method["label"]),
+            "displayGroup": method_display_group(method),
         }
         for method in method_order
     ]
+    phyrvg_count = sum(
+        1 for method in method_order if method_display_group(method) == "phyrvg"
+    )
+    comparison_band = (
+        '<div class="comparison-band"><strong>PHYRVG 系列</strong>'
+        f'<span>{phyrvg_count} 个方案已集中排列在矩阵左侧，指标表使用同一顺序。</span></div>'
+        if phyrvg_count
+        else ""
+    )
     data = json.dumps(
         {
             "methods": methods,
@@ -765,6 +822,9 @@ def build_videos_page(
     .source-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
     .generated-head{{display:flex;align-items:baseline;gap:10px;margin:20px 0 10px}}
     .generated-head h2{{margin:0;font-size:16px}}.count{{color:var(--muted);font-size:12px}}
+    .comparison-band{{display:flex;align-items:baseline;gap:9px;margin:0 0 10px;padding:8px 10px;
+      color:#075d63;background:#e8f5f4;border-left:4px solid #0b7285;font-size:12px}}
+    .comparison-band strong{{font-size:13px}}.comparison-band span{{color:#45646a}}
     .matrix-wrap{{overflow-x:auto;padding-bottom:8px}}
     .generated-matrix{{display:grid;gap:10px;min-width:1180px;align-items:stretch}}
     .generated-matrix.ab{{min-width:960px;grid-template-columns:minmax(220px,.55fr)
@@ -773,6 +833,9 @@ def build_videos_page(
       min-height:44px;padding:8px;background:var(--surface);border:1px solid var(--line);
       font-size:13px;font-weight:850;text-align:center}}
     .matrix-head.method{{border-top-width:4px}}
+    .matrix-head.method.phyrvg{{background:#eef7f8}}
+    .matrix-head.method.phyrvg-start{{border-left:3px solid #0b7285}}
+    .matrix-head.method.phyrvg-end{{border-right:3px solid #0b7285}}
     .step-label{{position:sticky;left:0;z-index:2;color:var(--accent);
       font-variant-numeric:tabular-nums}}
     .scheme-label{{position:sticky;left:0;z-index:2;display:flex;align-items:center;
@@ -780,12 +843,16 @@ def build_videos_page(
       border-left:4px solid var(--accent);font-size:13px;font-weight:850;line-height:1.4}}
     .cell{{min-width:0;padding:9px;background:var(--surface);border:1px solid var(--line);
       border-radius:6px}}
+    .cell.phyrvg{{background:#fbfefe}}.cell.phyrvg-start{{border-left:3px solid #0b7285}}
+    .cell.phyrvg-end{{border-right:3px solid #0b7285}}
     .label{{min-height:24px;padding:1px 2px 7px;color:var(--warm);
       font-size:13px;font-weight:800}}
     video{{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#101416}}
     .checkpoint{{margin-top:7px;color:var(--muted);font-size:11px;overflow-wrap:anywhere}}
     .missing{{display:flex;align-items:center;justify-content:center;min-height:180px;
       background:#eef1f2;border:1px dashed #bdc6ca;color:var(--muted);font-size:12px}}
+    .missing.phyrvg{{background:#f3faf9}}.missing.phyrvg-start{{border-left:3px solid #0b7285}}
+    .missing.phyrvg-end{{border-right:3px solid #0b7285}}
     .empty{{padding:26px;background:var(--surface);border:1px solid var(--line);
       color:var(--muted);text-align:center}}
     .metrics-section{{margin-top:24px;padding-top:16px;border-top:1px solid var(--line)}}
@@ -805,6 +872,8 @@ def build_videos_page(
     .metrics-table thead .step-col{{z-index:4;background:#e5ebed}}
     .metrics-table td.best{{background:#dff3e7;color:#075d37;font-weight:900}}
     .metrics-table td.missing-value{{color:#9aa5aa}}.direction{{color:#66757c;font-size:10px}}
+    .metrics-table .comparison-group td{{height:28px;padding:5px 8px;background:#e8f5f4;
+      border-top:3px solid #0b7285;color:#075d63;text-align:left;font-size:11px;font-weight:900}}
     a{{color:var(--accent);font-weight:750;text-decoration:none}}
     @media(max-width:900px){{.toolbar{{flex-wrap:wrap}}.title{{width:100%}}
       .source-grid{{grid-template-columns:1fr}}
@@ -830,6 +899,7 @@ def build_videos_page(
         <video id="context" preload="metadata" playsinline muted></video></div>
     </div>
     <div class="generated-head"><h2 id="generated-title">已完成 checkpoint</h2><span class="count" id="count"></span></div>
+    {comparison_band}
     <div class="matrix-wrap"><div class="generated-matrix" id="generated-matrix"></div></div>
     <section class="metrics-section"><h2>当前 case 指标对比</h2>
       <p class="metrics-note">每行一个方法 checkpoint；★ 表示当前筛选范围内该指标最佳。WMReward surprise 越低越好，其余越高越好。</p>
@@ -895,9 +965,18 @@ def build_videos_page(
         header.append(th);
       }});thead.append(header);table.append(thead);
       const tbody=document.createElement("tbody");
+      let previousGroup=null;
       rows.forEach(row=>{{
+        if(row.method?.displayGroup==="phyrvg"&&previousGroup!=="phyrvg"){{
+          const groupRow=document.createElement("tr");groupRow.className="comparison-group";
+          const groupCell=document.createElement("td");groupCell.colSpan=2+D.metricSpecs.length;
+          groupCell.textContent="PHYRVG 系列 · 统一 checkpoint 对比";
+          groupRow.append(groupCell);tbody.append(groupRow);
+        }}
+        previousGroup=row.method?.displayGroup??"other";
         const tr=document.createElement("tr");
         const methodCell=document.createElement("td");methodCell.className="method-col";
+        if(row.method?.displayGroup==="phyrvg")methodCell.classList.add("phyrvg");
         methodCell.textContent=row.record.method_label;
         methodCell.style.color=row.method?.color??"#172126";tr.append(methodCell);
         const stepCell=document.createElement("td");stepCell.className="step-col";
@@ -995,6 +1074,12 @@ def build_videos_page(
       corner.textContent="Step / Reference";matrix.append(corner);
       D.methods.forEach(method=>{{
         const header=document.createElement("div");header.className="matrix-head method";
+        if(method.displayGroup==="phyrvg"){{
+          header.classList.add("phyrvg");
+          if(D.methods.indexOf(method)===0)header.classList.add("phyrvg-start");
+          if(D.methods.indexOf(method)===D.methods.filter(item=>item.displayGroup==="phyrvg").length-1)
+            header.classList.add("phyrvg-end");
+        }}
         header.textContent=method.label;header.style.color=method.color;
         header.style.borderTopColor=method.color;matrix.append(header);
       }});
@@ -1007,10 +1092,22 @@ def build_videos_page(
             item.step===step&&item.method_key===method.key);
           if(!record){{
             const missing=document.createElement("div");missing.className="missing";
+            if(method.displayGroup==="phyrvg"){{
+              missing.classList.add("phyrvg");
+              if(D.methods.indexOf(method)===0)missing.classList.add("phyrvg-start");
+              if(D.methods.indexOf(method)===D.methods.filter(item=>item.displayGroup==="phyrvg").length-1)
+                missing.classList.add("phyrvg-end");
+            }}
             missing.textContent="该 step 无此方法权重";matrix.append(missing);return;
           }}
           count+=1;
           const cell=document.createElement("div");cell.className="cell";
+          if(method.displayGroup==="phyrvg"){{
+            cell.classList.add("phyrvg");
+            if(D.methods.indexOf(method)===0)cell.classList.add("phyrvg-start");
+            if(D.methods.indexOf(method)===D.methods.filter(item=>item.displayGroup==="phyrvg").length-1)
+              cell.classList.add("phyrvg-end");
+          }}
           cell.style.borderTop=`3px solid ${{method.color}}`;
           const label=document.createElement("div");label.className="label";
           label.textContent=`${{record.method_label}} · ${{record.step_kind==="inference"?"inference":"step"}} ${{record.step}}`;
@@ -1082,7 +1179,7 @@ def build_metric_plots(
         count_field = metric["count"]
         figure, axis = plt.subplots(figsize=(6.4, 3.6), dpi=140)
         has_data = False
-        for method in config["methods"]:
+        for method in display_methods(config["methods"]):
             values: list[tuple[int, float]] = []
             if not frame.empty and field in frame.columns and count_field in frame.columns:
                 for _, row in frame.iterrows():
@@ -1264,7 +1361,7 @@ def build_merged_metric_plots_from_points(
         field = metric["field"]
         figure, axis = plt.subplots(figsize=(6.4, 3.6), dpi=140)
         has_data = False
-        for method in MERGED_METHODS:
+        for method in display_methods(MERGED_METHODS):
             values: list[tuple[int, float, int]] = []
             if not frame.empty:
                 subset = frame[
@@ -1445,6 +1542,11 @@ MERGED_METHODS = [
         "key": "full_sa_physrvg_vjepa_loss",
         "label": "PHYRVG-Full-SA + V-JEPA Loss",
         "color": "#C44E52",
+    },
+    {
+        "key": "full_sa_physrvg_vjepa_loss_0613_b2g2",
+        "label": "PHYRVG-Full-SA + V-JEPA Loss · 0613 · b2-gacc2",
+        "color": "#E45756",
     },
     {
         "key": "full_sa_physrvg_dit_gpu56",
@@ -1695,7 +1797,9 @@ def merge_video_records(
         current_site_prefix,
     ):
         deduplicated[(str(record["method_key"]), int(record["step"]))] = record
-    methods = MERGED_METHODS if methods_override is None else methods_override
+    methods = display_methods(
+        MERGED_METHODS if methods_override is None else methods_override
+    )
     method_keys = [method["key"] for method in methods]
     return sorted(
         deduplicated.values(),
@@ -1751,7 +1855,10 @@ def build_average_metrics_page(
                 "mean": sum(values) / len(values) if values else None,
             }
         summaries.append(summary)
-    methods = MERGED_METHODS if methods_override is None else methods_override
+    methods = display_methods(
+        MERGED_METHODS if methods_override is None else methods_override
+    )
+    phyrvg_count = sum(1 for method in methods if is_phyrvg_method(method))
     method_colors = {method["key"]: method["color"] for method in methods}
     method_order = {
         method["key"]: index for index, method in enumerate(methods)
@@ -1790,6 +1897,12 @@ def build_average_metrics_page(
         )
     method_order_json = json.dumps(method_order, ensure_ascii=True)
     metric_directions_json = json.dumps(metric_directions, ensure_ascii=True)
+    comparison_band = (
+        '<div class="comparison-band"><strong>PHYRVG 系列</strong>'
+        f'<span>{phyrvg_count} 个方案已集中排列，按模型视图可直接横向比较。</span></div>'
+        if phyrvg_count
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1813,6 +1926,9 @@ thead .method{{z-index:4;background:#dce4e7}}.step{{position:sticky;left:190px;z
 min-width:72px;background:#fff;color:#657278}}thead .step{{z-index:4;background:#dce4e7}}
 td.best{{background:#dff3e7;color:#075d37;font-weight:900}}td.pending{{color:#98a3a8;font-size:10px}}
 .best::before{{content:"★ ";}}tr.group-start td{{border-top:3px solid #aebbc0}}
+.comparison-band{{display:flex;align-items:baseline;gap:9px;margin:0 0 10px;padding:8px 10px;
+  color:#075d63;background:#e8f5f4;border-left:4px solid #0b7285;font-size:12px}}
+.comparison-band strong{{font-size:13px}}.comparison-band span{{color:#45646a}}
 .back{{display:inline-block;margin-top:12px}}
 </style></head><body><header><h1>{escape(page_title)}</h1>
 <p>覆盖全部 {expected} 个 case 的均值才参与组内 ★ 最佳值比较；WMReward surprise 越低越好，其余越高越好。</p></header>
@@ -1820,7 +1936,7 @@ td.best{{background:#dff3e7;color:#075d37;font-weight:900}}td.pending{{color:#98
 <button type="button" data-view="model" class="active">按模型</button>
 <button type="button" data-view="step">按 Step</button></div>
 <span class="view-note" id="view-note">同一模型内比较不同训练 step</span></div>
-<div class="wrap"><table><thead><tr><th class="method">方法</th><th class="step">Step</th>
+{comparison_band}<div class="wrap"><table><thead><tr><th class="method">方法</th><th class="step">Step</th>
 {header_cells}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>
 <a class="back" href="../">返回总览</a></main><script>
 const methodOrder={method_order_json};
@@ -1905,7 +2021,7 @@ def build_status(
     discovered = load_configured_checkpoints(config)
     total_metrics = len(config["metrics"]["cpu"]) + len(config["metrics"]["gpu"])
     rows: list[dict[str, Any]] = []
-    for method in config["methods"]:
+    for method in display_methods(config["methods"]):
         method_discovered = [
             row for row in discovered if row["method_key"] == method["key"]
         ]
@@ -1921,6 +2037,7 @@ def build_status(
                 "method_key": method["key"],
                 "method_label": method["label"],
                 "color": method["color"],
+                "display_group": method_display_group(method),
                 "discovered": len(method_discovered),
                 "inferred": len(method_manifests),
                 "latest_step": max(
@@ -1983,13 +2100,22 @@ def build_watch_index(
     pending: bool,
     phys_status: dict[str, Any] | None,
 ) -> str:
-    rows = "".join(
-        f"""<tr><td><span class="swatch" style="background:{escape(row['color'])}"></span>
-        {escape(row['method_label'])}</td><td>{row['discovered']}</td><td>{row['inferred']}</td>
-        <td>{escape(row['latest_step'] if row['latest_step'] is not None else '—')}</td>
-        <td>{row['metric_done']}/{row['metric_total']}</td></tr>"""
-        for row in status
-    )
+    row_html: list[str] = []
+    phyrvg_header_added = False
+    for row in status:
+        if row["display_group"] == "phyrvg" and not phyrvg_header_added:
+            row_html.append(
+                '<tr class="comparison-group"><td colspan="5">'
+                'PHYRVG 系列 · 统一 checkpoint 对比</td></tr>'
+            )
+            phyrvg_header_added = True
+        row_html.append(
+            f"""<tr><td><span class="swatch" style="background:{escape(row['color'])}"></span>
+            {escape(row['method_label'])}</td><td>{row['discovered']}</td><td>{row['inferred']}</td>
+            <td>{escape(row['latest_step'] if row['latest_step'] is not None else '—')}</td>
+            <td>{row['metric_done']}/{row['metric_total']}</td></tr>"""
+        )
+    rows = "".join(row_html)
     state = "推理排队中" if pending else "持续监听"
     phys_section = build_physiciq_section(phys_status)
     weight_provenance_section = (
@@ -2032,6 +2158,8 @@ def build_watch_index(
     .weights-note{{margin:0;color:var(--muted);font-size:13px;line-height:1.5}}
     .weights-footnote{{margin-top:10px}}
     .swatch{{display:inline-block;width:10px;height:10px;margin-right:7px;border-radius:2px}}
+    .comparison-group td{{padding:7px 8px;background:#e8f5f4;border-top:3px solid #0b7285;
+      color:#075d63;font-size:12px;font-weight:900}}
     .progress{{position:relative;width:100%;height:7px;margin-bottom:4px;overflow:hidden;
       background:#e7ecee;border-radius:999px}}.progress span{{display:block;height:100%;
       background:var(--accent);border-radius:999px}}.progtext{{color:var(--muted);
@@ -2448,7 +2576,7 @@ def build_master_hub(
         )
         method_text = "、".join(
             method["label"]
-            for method in config["methods"]
+            for method in display_methods(config["methods"])
             if method["key"] in phys_config["method_keys"]
         )
         physiciq_entry = f"""
@@ -2531,7 +2659,7 @@ def build_master_hub(
 </head>
 <body>
   <header><h1>xSSC LoRA 训练可视化总览</h1>
-    <p>{escape('、'.join(method['label'] for method in config['methods']))}</p></header>
+    <p>{escape('、'.join(method['label'] for method in display_methods(config['methods'])))}</p></header>
   <main><div class="section-title">项目</div><div class="entries">
     <section class="entry"><div><h2>项目与权重溯源</h2>
       <div class="meta">完整方法流程、上游训练数据、训练模块与参数量、每个checkpoint配置链和Head分类依据</div>
