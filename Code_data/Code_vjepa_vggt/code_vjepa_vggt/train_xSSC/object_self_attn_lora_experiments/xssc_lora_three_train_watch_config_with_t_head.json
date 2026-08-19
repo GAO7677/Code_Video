@@ -50,6 +50,15 @@
     "context_frames": 8,
     "seed": 42
   },
+  "context_sweep": {
+    "enabled": true,
+    "sweep_root": "/data/gaoya/agent-data/outputs/physrvg_dynamic_effective_context_reference_profiles_seed42_20260819_combined",
+    "context_lengths": [
+      4,
+      8,
+      12
+    ]
+  },
   "metrics": {
     "cpu": [
       "physics_iq_with_context",

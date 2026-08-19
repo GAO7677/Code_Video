@@ -332,7 +332,7 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
     ball_radius = 0.11
     barrier_hz = 0.24
     barrier_x = 0.80
-    initial_speed = 2.40
+    initial_speed = 3.40
     objects = [
         _object(
             name="obstacle_ball",
@@ -346,7 +346,7 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
             dynamic=True,
             mass=1.0,
             friction=0.22,
-            restitution=0.72,
+            restitution=0.85,
             velocity=(initial_speed, 0.0, 0.0),
             angular_velocity=(0.0, -initial_speed / ball_radius, 0.0),
             linear_damping=0.045,
@@ -361,16 +361,18 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
             name="obstacle_barrier",
             family_key="barrier_box",
             shape="box",
-            size={"hx": 0.075, "hy": 0.32, "hz": barrier_hz},
+            # Slightly thicken the fixed barrier so the high-speed ball cannot
+            # tunnel through its collision shape between simulation steps.
+            size={"hx": 0.12, "hy": 0.32, "hz": barrier_hz},
             material_key="painted_metal_teal",
             position=(barrier_x, 0.0, barrier_hz),
             dynamic=False,
             mass=0.0,
-            friction=0.75,
+            friction=0.12,
             # A high-restitution blue barrier makes the incoming-speed
             # difference observable in the rebound while leaving the floor
             # restitution unchanged.
-            restitution=0.82,
+            restitution=0.90,
         ),
     ]
     camera = _camera(
@@ -391,9 +393,11 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
             "controlled_variable": "ball_start_x_m",
             "ball_start_x_m": ball_start_x,
             "obstacle_x_m": barrier_x,
-            "barrier_restitution": 0.82,
+            "barrier_restitution": 0.90,
             "initial_speed_mps": initial_speed,
-            "barrier_half_x_m": 0.075,
+            "barrier_half_x_m": 0.12,
+            "ball_radius_m": ball_radius,
+            "contact_margin_m": 0.03,
         },
     )
     return DemoCase(
@@ -726,9 +730,12 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
     # A horizontal cylindrical fulcrum replaces the old rectangular block.
     # It is just below the board, so the initial state has no penetration; the
     # paired hinge anchors define the board's rotation axis.
-    pivot_radius = 0.14
+    pivot_radius = 0.10
     pivot_height = pivot_radius
     pivot_center_z = pivot_radius
+    # Keep the small physical hinge anchor just above the visible shaft so
+    # neither fixture intersects the cylinder or the board at initialization.
+    pivot_axis_z = 2.0 * pivot_radius + 0.03
     board_center_z = 0.335
     board_hx = 1.02
     board_hy = 0.26
@@ -757,6 +764,19 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
             friction=0.90,
             restitution=0.02,
             orientation=(90.0, 0.0, 0.0),
+        ),
+        _object(
+            name="seesaw_hinge_anchor",
+            family_key="hinge_anchor",
+            shape="sphere",
+            size={"radius": 0.018},
+            material_key="concrete_painted",
+            position=(0.0, 0.0, pivot_axis_z),
+            dynamic=False,
+            mass=0.0,
+            friction=0.0,
+            restitution=0.0,
+            role="anchored_fixture",
         ),
         _object(
             name="seesaw_board",
@@ -809,23 +829,28 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
             "controlled_variable": "load_position_x_m",
             "load_position_x_m": load_x,
             "pivot_z_m": pivot_height,
+            "pivot_axis_z_m": pivot_axis_z,
             "pivot_shape": "horizontal_cylinder",
             "pivot_radius_m": pivot_radius,
+            # The shaft is a visual support; the paired anchors define the
+            # hinge response and prevent shaft-board impact from ejecting the
+            # load during initialization or rotation.
+            "disable_collision_pairs": [("seesaw_pivot", "seesaw_board")],
             "initial_board_angle_deg": board_angle,
             "constraints": [
                 {
                     "type": "point2point",
                     "body": "seesaw_board",
-                    "parent_body": "seesaw_pivot",
-                    "parent_frame": (0.0, -0.20, pivot_center_z),
-                    "child_frame": (0.0, -0.20, pivot_height - board_center_z),
+                    "parent_body": "seesaw_hinge_anchor",
+                    "parent_frame": (0.0, -0.20, 0.0),
+                    "child_frame": (0.0, -0.20, pivot_axis_z - board_center_z),
                 },
                 {
                     "type": "point2point",
                     "body": "seesaw_board",
-                    "parent_body": "seesaw_pivot",
-                    "parent_frame": (0.0, 0.20, pivot_center_z),
-                    "child_frame": (0.0, 0.20, pivot_height - board_center_z),
+                    "parent_body": "seesaw_hinge_anchor",
+                    "parent_frame": (0.0, 0.20, 0.0),
+                    "child_frame": (0.0, 0.20, pivot_axis_z - board_center_z),
                 },
             ],
         },
@@ -1074,7 +1099,11 @@ def _first_event_frame(
     elif case.family_key == "V2V_OBSTACLE":
         ball = positions[:, index["obstacle_ball"], 0]
         barrier = float(metadata["obstacle_x_m"])
-        contact_distance = float(metadata.get("barrier_half_x_m", 0.075)) + 0.115 + 0.015
+        contact_distance = (
+            float(metadata.get("barrier_half_x_m", 0.12))
+            + float(metadata.get("ball_radius_m", 0.11))
+            + float(metadata.get("contact_margin_m", 0.03))
+        )
         frames = np.flatnonzero(np.abs(ball - barrier) <= contact_distance)
     elif case.family_key == "V2V_BOWL":
         ball_x = positions[:, index["bowl_ball"], 0]
@@ -1086,10 +1115,9 @@ def _first_event_frame(
     elif case.family_key == "V2V_SEESAW":
         board_idx = index["seesaw_board"]
         angles = np.asarray([_quat_to_y_angle(quat) for quat in quats[:, board_idx]])
-        # The grounded fulcrum visibly limits this compact setup to roughly
-        # 7.2 degrees.  A 7-degree threshold records its first observable
-        # rotation without claiming an unachieved 10-degree event.
-        frames = np.flatnonzero(np.abs(angles) > math.radians(7.0))
+        # The cylindrical fulcrum and paired axis anchors produce a compact
+        # rotation, so use a 1-degree threshold for the first visible motion.
+        frames = np.flatnonzero(np.abs(angles) > math.radians(1.0))
     elif case.family_key == "V2V_DOMINO":
         domino_idx = index["domino_1"]
         angles = np.asarray([abs(_quat_to_y_angle(quat)) for quat in quats[:, domino_idx]])

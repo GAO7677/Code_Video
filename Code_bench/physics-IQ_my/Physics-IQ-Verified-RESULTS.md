@@ -1,6 +1,6 @@
 # Physics-IQ-Verified 评测结果登记
 
-最后更新：2026-08-12 UTC
+最后更新：2026-08-19 UTC
 
 本文档是本项目 Physics-IQ-Verified 评测结果的唯一登记入口。新增评测方案时必须先在本文档登记，生成和官方评分完成后必须补充最终进度、分数与产物路径。不得覆盖、删除或静默修改历史结果的含义。
 
@@ -227,10 +227,59 @@ SSH 118上的结果产物：
 
 | 最近状态 | 模型与 Run | 协议 | 进度 | 分数 |
 |---|---|---:|---:|---|
+| 运行中 | PhysRVG Full-SA VJEPA step-000500 | P0 | smoke 1/1 已通过；全量 0/198 | 暂无 |
 | 已中断，可续跑 | xSSC slot-dedup step-2000 | P0 | 73/198 raw | 暂无 |
 | 未完成 | stage1b step-2500 | 非P0 | 11/198 | 暂无 |
 | 未完成 | stage1b step-2500 with negative prompt | 非P0 | 1/198 | 暂无 |
 | 未完成 | Wan2.2 BoN16 | P3衍生 | 仅有部分候选结果 | 暂无 |
+
+## PhysRVG Full-SA VJEPA step-000500 P0 运行
+
+状态：运行中。单 case smoke 已通过；该方案使用用户指定的 Full-SA VJEPA LoRA checkpoint，并复用
+`run_infer_full_sa_physrvg_vjepa.sh` 的 PhysRVG DiT 严格加载和 Full-SA LoRA 推理逻辑。
+
+Run ID：
+
+`physrvg-full-sa-vjepa-step000500-bpp-run_01`
+
+Checkpoint：
+
+`/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa/full-sa-pybullet-physrvg-vjepa-b2-gacc2-ddp-sync-20260817T190000Z/checkpoints/step-000500`
+
+Checkpoint `adapter_model.safetensors` SHA256：
+
+`7b538c39136e0122c50562987b6cf8d040b9b32c2a124fbb820d37151ed2b476`
+
+P0 执行配置：
+
+- 198 个官方 take-1 case，使用统一 BPP V2V 输入清单：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/inputs/bpp/verified_v2v_bpp_198.txt`
+- 条件视频：72帧、24 FPS、3秒；分辨率：512x896。
+- 推理：40步、Guidance 5、Seed 42、`do_cfg=False`；每个 case 重置全局 seed。
+- 模型输出：189帧、24 FPS；采用 `dynamic_effective` 条件 mask，使72帧条件编码得到的时序 latent 全部作为有效条件。
+- 后处理：删除前69帧干净条件前缀，仅提交后120帧、24 FPS、5秒预测视频。
+- 评分：官方 `physiq/run_physics_iq.py`，再按 `--score-type verified` 官方聚合。
+
+实际入口与适配文件：
+
+- 原始推理 shell：`/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh`
+- P0 总控：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/run_full_sa_vjepa_verified.sh`
+- 推理 worker：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/run_physrvg_full_sa_vjepa_verified.sh`
+- 输入适配：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/prepare_full_sa_vjepa_verified_inputs.py`
+
+Smoke 证据：GPU 7 上第一个 case 已生成并核验为 raw `189@24 FPS`；metadata 记录
+`context_frames=72`、`effective_context_latent_frames=18`、`context_mask_mode=dynamic_effective`、
+`num_inference_steps=40`、`guidance_scale=5`、`seed=42`。后处理产物已核验为 `120@24 FPS`、5 秒。
+
+全量产物规划：
+
+- Raw：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/raw/physrvg-full-sa-vjepa-step000500-bpp-run_01`
+- Submission：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/generated_videos_5s/physrvg-full-sa-vjepa-step000500-bpp-run_01`
+- Evaluation：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-full-sa-vjepa-step000500-bpp-run_01`
+
+严格可比性说明：
+
+- 评测输入和输出协议与现有 P0 结果完全一致；完成全量格式校验和官方聚合后，才将主表标记为“严格可比：是”。
+- 该 checkpoint 的训练配置是49帧、8帧 context、2个 clean latent；本次使用189帧/72帧 P0 推理属于统一评测所需的时序适配，训练分布差异会在最终记录中保留说明。
 
 ## PhysRVG-72f-adapted P0 运行
 

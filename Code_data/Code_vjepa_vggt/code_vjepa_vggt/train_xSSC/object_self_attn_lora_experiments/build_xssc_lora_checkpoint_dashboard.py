@@ -87,6 +87,9 @@ DEFAULT_PLOT_STYLE = {"marker": "o", "linestyle": "-"}
 PHYRVG_DISPLAY_ORDER = (
     "physrvg_test5_lora_off",
     "physrvg_test5_lora_on",
+    "physrvg_context_ctx04",
+    "physrvg_context_ctx08",
+    "physrvg_context_ctx12",
     "full_sa_physrvg_dit",
     "full_sa_physrvg_dit_gpu56",
     "full_sa_physrvg_vjepa_loss",
@@ -1558,6 +1561,21 @@ MERGED_METHODS = [
         "label": "PHYRVG-PhysRVG finetuned DiT · LoRA OFF · reference",
         "color": "#315C87",
     },
+    {
+        "key": "physrvg_context_ctx04",
+        "label": "PHYRVG-PhysRVG finetuned DiT · LoRA OFF · ctx=4 · seed=42 reset",
+        "color": "#7A5195",
+    },
+    {
+        "key": "physrvg_context_ctx08",
+        "label": "PHYRVG-PhysRVG finetuned DiT · LoRA OFF · ctx=8 · seed=42 reset",
+        "color": "#EF5675",
+    },
+    {
+        "key": "physrvg_context_ctx12",
+        "label": "PHYRVG-PhysRVG finetuned DiT · LoRA OFF · ctx=12 · seed=42 reset",
+        "color": "#FFA600",
+    },
     {"key": "object_only", "label": "Object-only", "color": "#4D4D4D"},
     {
         "key": "wan22_openvid_lora_baseline",
@@ -1787,6 +1805,89 @@ def load_reference_records(
             }
         )
     return records
+
+
+def load_context_sweep_records(
+    config: dict[str, Any],
+    *,
+    dataset: str,
+    cases: list[dict[str, Any]],
+    site_name: str,
+) -> list[dict[str, Any]]:
+    """Expose completed dynamic-context outputs in the existing 8844 pages."""
+    settings = config.get("context_sweep", {})
+    if not isinstance(settings, dict) or not settings.get("enabled"):
+        return []
+    sweep_root_value = settings.get("sweep_root")
+    if not isinstance(sweep_root_value, str) or not sweep_root_value:
+        return []
+    manifest_path = Path(sweep_root_value).expanduser().resolve() / "sweep_manifest.json"
+    if not manifest_path.is_file():
+        return []
+    try:
+        manifest = load_json(manifest_path)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return []
+    selected_lengths = {
+        int(value)
+        for value in settings.get("context_lengths", (4, 8, 12))
+    }
+    watch_root = Path(config["paths"]["watch_root"]).resolve()
+    videos_root = watch_root / "site" / site_name
+    records: list[dict[str, Any]] = []
+    profiles = manifest.get("inference", {}).get("dataset_profiles", {})
+    for row in manifest.get("records", []):
+        if not isinstance(row, dict) or row.get("dataset") != dataset:
+            continue
+        try:
+            context_frames = int(row["context_frames"])
+            steps = int(row["num_inference_steps"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if context_frames not in selected_lengths:
+            continue
+        result_root_value = row.get("result_root")
+        if not isinstance(result_root_value, str):
+            continue
+        result_root = Path(result_root_value).expanduser().resolve()
+        if not result_root.is_dir():
+            continue
+        method_key = f"physrvg_context_ctx{context_frames:02d}"
+        method = METHOD_BY_KEY.get(method_key)
+        if method is None:
+            continue
+        profile = row.get("inference_profile")
+        if not isinstance(profile, dict):
+            profile = profiles.get(dataset, {}) if isinstance(profiles, dict) else {}
+        do_cfg = bool(profile.get("do_cfg", False)) if isinstance(profile, dict) else False
+        mask_mode = str(row.get("context_mask_mode", "dynamic_effective"))
+        record = {
+            "method_key": method_key,
+            "method_label": method["label"],
+            "step": steps,
+            "step_kind": "inference",
+            "checkpoint_dir": (
+                f"ctx={context_frames} · {mask_mode} · seed=42 reset/case · "
+                f"CFG={'on' if do_cfg else 'off'}"
+            ),
+            "origin": "dynamic-context-sweep",
+            "videos": {},
+            "metrics": load_case_metrics(result_root, cases),
+        }
+        for case in cases:
+            source = result_root / f"{case['stem']}.mp4"
+            if not source.is_file():
+                continue
+            relative = (
+                Path("media")
+                / method_key
+                / f"inference-{steps:02d}"
+                / f"{case['stem']}.mp4"
+            )
+            link_file(source, videos_root / relative)
+            record["videos"][case["stem"]] = relative.as_posix()
+        records.append(record)
+    return sorted(records, key=lambda row: (int(row["step"]), str(row["method_key"])))
 
 
 def load_physiciq_video_records_from_state(
@@ -2342,6 +2443,13 @@ def build_master_hub(
         test_cases,
     )
     legacy_test_records.extend(test5_reference_records)
+    context_test_records = load_context_sweep_records(
+        config,
+        dataset="test5",
+        cases=test_cases,
+        site_name="videos",
+    )
+    merged_test_records = test_records + context_test_records
     site_titles = config.get("site_titles", {})
     test5_page_root = hub_root / "test5"
     test5_media_prefix = "../gallery"
@@ -2356,7 +2464,7 @@ def build_master_hub(
         config=config,
         page_root=test5_page_root,
         cases=test_cases,
-        current_records=test_records,
+        current_records=merged_test_records,
         legacy_records=legacy_test_records,
         current_site_prefix=test5_media_prefix,
         page_title=str(
@@ -2368,7 +2476,7 @@ def build_master_hub(
     (test5_average_root / "index.html").write_text(
         build_average_metrics_page(
             merge_video_records(
-                test_records,
+                merged_test_records,
                 legacy_test_records,
                 test5_media_prefix,
                 methods_override=(
@@ -2414,13 +2522,20 @@ def build_master_hub(
         phys_cases,
     )
     legacy_phys_records.extend(physiciq_reference_records)
+    context_phys_records = load_context_sweep_records(
+        config,
+        dataset="physiciq",
+        cases=phys_cases,
+        site_name="physiciq-videos",
+    )
+    merged_phys_current_records = phys_records + context_phys_records
     solid_mechanics_cases: list[dict[str, Any]] = []
     if phys_cases:
         write_unified_videos_page(
             config=config,
             page_root=hub_root / "physiciq",
             cases=phys_cases,
-            current_records=phys_records,
+            current_records=merged_phys_current_records,
             legacy_records=legacy_phys_records,
             current_site_prefix="../physiciq-gallery",
             page_title="PhysicIQ 67-case · 全 checkpoint 合并对比",
@@ -2428,7 +2543,7 @@ def build_master_hub(
         phys_average_root = hub_root / "physiciq-average-metrics"
         phys_average_root.mkdir(parents=True, exist_ok=True)
         merged_phys_records = merge_video_records(
-            phys_records,
+            merged_phys_current_records,
             legacy_phys_records,
             "../physiciq-gallery",
         )
@@ -2455,7 +2570,7 @@ def build_master_hub(
             config=config,
             page_root=solid_mechanics_video_root,
             cases=solid_mechanics_cases,
-            current_records=phys_records,
+            current_records=merged_phys_current_records,
             legacy_records=legacy_phys_records,
             current_site_prefix="../physiciq-gallery",
             page_title=(
@@ -2522,6 +2637,17 @@ def build_master_hub(
       <a href="physiciq/">进入全模型合并视图</a>
       <a href="physiciq-average-metrics/">查看 67-case 平均指标</a></div>
       <div class="status">固定参考<strong>{len(physiciq_reference_records)}/2 组结果</strong><small>67 case · 40 inference steps</small></div>
+    </section>"""
+    context_sweep_entry = ""
+    context_settings = config.get("context_sweep", {})
+    if isinstance(context_settings, dict) and context_settings.get("enabled"):
+        context_sweep_entry = f"""
+    <section class="entry"><div><h2>PhysRVG · dynamic effective context sweep</h2>
+      <div class="meta">LoRA OFF strict DiT；ctx=4/8/12 使用 seed=42 且每个 case 重置。结果已并入 test_5、PhysicIQ 的 case 页面和平均指标表。</div>
+      <a href="physrvg-context-length-test5/">test_5 ctx 对比</a>
+      <a href="physrvg-context-length-physiciq/">PhysicIQ ctx 对比</a>
+      <a href="physrvg-context-length-metrics/">独立 ctx 指标</a></div>
+      <div class="status">自动刷新<strong>test5 {len(context_test_records)} · PhysicIQ {len(context_phys_records)}</strong><small>ctx=4 / 8 / 12 · 40 steps</small></div>
     </section>"""
     physiciq_entry = ""
     if config.get("physiciq", {}).get("enabled"):
@@ -2752,6 +2878,7 @@ def build_master_hub(
     {step40_ab_entry}
     {physrvg_test5_entry}
     {physrvg_physiciq_entry}
+    {context_sweep_entry}
     {physiciq_entry}
     {metric_extremes_entry}
     {solid_mechanics_entry}
