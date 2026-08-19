@@ -2631,6 +2631,15 @@ def build_master_hub(
       <div class="status">GPU 7<strong>36 组 · 720 视频</strong><small>推理完成后自动评测</small></div>
     </section>
     <!-- TEST5_STEP40_OBJECT_COUNT_AB_END -->"""
+    phyrvg_train_validation_entry = ""
+    if (hub_root / "phyrvg-full-sa-train-validation-30cases").exists():
+        phyrvg_train_validation_entry = """
+    <section class="entry"><div><h2>PHYRVG-Full-SA · 30-case train validation</h2>
+      <div class="meta">原生 PhysRVG strict DiT + Full-SA adapter 的全部历史 checkpoint；固定 PyBullet train 30-case，视频浏览与统一 flow MSE 排行分离展示</div>
+      <a href="phyrvg-full-sa-train-validation-30cases/">浏览 case 视频</a>
+      <a href="phyrvg-full-sa-train-validation-30cases-metrics/">查看指标排行</a></div>
+      <div class="status">GPU 0/1/2<strong>历史 checkpoint 回填</strong><small>新 Object+xSSC checkpoint 自动进入队列</small></div>
+    </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -2685,6 +2694,7 @@ def build_master_hub(
     {physiciq_entry}
     {solid_mechanics_entry}
     {physrvg_worst_case_entry}
+    {phyrvg_train_validation_entry}
     <section class="entry"><div><h2>30-case train validation · 方法对比</h2>
       <div class="meta">固定 PyBullet train 30-case；当前三种方法 resume/latest 与标准 18-method inventory 的其他最新权重，包含视频同步对比和 validation loss</div>
       <a href="train-validation-30cases/">进入 30-case validation</a>

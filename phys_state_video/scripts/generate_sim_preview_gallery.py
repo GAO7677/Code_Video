@@ -53,6 +53,7 @@ WOOD_TEXTURES = {
     "dark_wood": TEXTURE_ROOT / "dark_wood_diff_4k.jpg",
     "weathered_planks": TEXTURE_ROOT / "weathered_brown_planks_diff_4k.jpg",
     "wood_floor": Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1/textures/wood_floor/wood_floor_diff_2k.jpg"),
+    "rubber_grain": Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1/textures/brown_leather/brown_leather_albedo_2k.jpg"),
 }
 TEXTURE_CACHE: Dict[str, np.ndarray] = {}
 FFMPEG_CANDIDATES = [
@@ -60,6 +61,87 @@ FFMPEG_CANDIDATES = [
     "/data/gaoya/miniconda3/envs/vjepa2/bin/ffmpeg",
     "/data/gaoya/miniconda3/envs/wan/bin/ffmpeg",
 ]
+
+INITIALIZATION_PENETRATION_TOLERANCE_M = 0.001
+INITIALIZATION_NEAR_CONTACT_DISTANCE_M = 0.003
+
+
+class InitializationPenetrationError(RuntimeError):
+    """Raised when a generated scene starts with a measurable overlap."""
+
+
+def inspect_initialization_contacts(
+    body_ids: Dict[str, int],
+    plane_id: int,
+    *,
+    stage: str,
+    penetration_tolerance_m: float = INITIALIZATION_PENETRATION_TOLERANCE_M,
+    near_contact_distance_m: float = INITIALIZATION_NEAR_CONTACT_DISTANCE_M,
+) -> dict:
+    """Inspect every object pair and object-floor pair at one simulator stage.
+
+    The check deliberately includes pairs whose collision response is disabled
+    by a constraint.  A constraint may remove a response, but it must not hide
+    an invalid initial geometry.
+    """
+    names = list(body_ids)
+    pair_records: list[dict] = []
+
+    def collect(left_name: str, left_id: int, right_name: str, right_id: int) -> None:
+        points = p.getClosestPoints(
+            int(left_id),
+            int(right_id),
+            distance=float(near_contact_distance_m),
+        )
+        if not points:
+            return
+        distance = min(float(point[8]) for point in points)
+        if distance <= float(near_contact_distance_m):
+            pair_records.append(
+                {
+                    "body_a": left_name,
+                    "body_b": right_name,
+                    "distance_m": round(distance, 6),
+                    "penetrating": bool(distance < -float(penetration_tolerance_m)),
+                }
+            )
+
+    for name in names:
+        collect(name, body_ids[name], "ground", plane_id)
+    for index, left_name in enumerate(names):
+        for right_name in names[index + 1 :]:
+            collect(left_name, body_ids[left_name], right_name, body_ids[right_name])
+
+    penetrations = [record for record in pair_records if record["penetrating"]]
+    return {
+        "stage": stage,
+        "passed": not penetrations,
+        "penetration_tolerance_m": float(penetration_tolerance_m),
+        "near_contact_distance_m": float(near_contact_distance_m),
+        "checked_object_count": len(names),
+        "checked_pair_count": len(names) + (len(names) * (len(names) - 1)) // 2,
+        "near_contacts": pair_records,
+        "penetrations": penetrations,
+    }
+
+
+def assert_initialization_contacts(
+    body_ids: Dict[str, int],
+    plane_id: int,
+    *,
+    stage: str,
+) -> dict:
+    report = inspect_initialization_contacts(body_ids, plane_id, stage=stage)
+    if not report["passed"]:
+        details = "; ".join(
+            f"{item['body_a']} vs {item['body_b']}={item['distance_m']:.6f}m"
+            for item in report["penetrations"]
+        )
+        raise InitializationPenetrationError(
+            f"initialization penetration at {stage}: {details} "
+            f"(tolerance={INITIALIZATION_PENETRATION_TOLERANCE_M:.4f}m)"
+        )
+    return report
 
 
 @dataclass
@@ -266,6 +348,20 @@ def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
             colors[:, 2] = np.clip(colors[:, 2] * (0.88 + 0.08 * warp), 0.0, 1.0)
         else:
             colors = sampled
+    elif style == "rubber_real":
+        sampled = _textured_vertex_colors(
+            mesh,
+            obj.texture_asset,
+            np.asarray(obj.color, dtype=np.float32),
+            repeat=2.2,
+        )
+        if sampled is None:
+            grain = 0.5 + 0.5 * np.sin(verts[:, 0] * 18.0 + verts[:, 1] * 13.0 + verts[:, 2] * 9.0)
+        else:
+            grain = np.mean(sampled, axis=1)
+            grain = (grain - float(grain.min())) / max(float(np.ptp(grain)), 1e-6)
+        colors = base * (0.76 + 0.22 * grain[:, None])
+        colors += np.asarray(obj.color, dtype=np.float32)[None, :] * (0.02 * grain[:, None])
     elif style == "painted":
         band = 0.5 + 0.5 * np.sin(verts[:, 2] * 11.0 + verts[:, 0] * 2.3)
         streak = 0.5 + 0.5 * np.sin(verts[:, 0] * 9.0 + verts[:, 1] * 5.0 + verts[:, 2] * 3.0)
@@ -1251,6 +1347,15 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text
         p.resetBaseVelocity(body_id, linearVelocity=obj.linear_velocity, angularVelocity=obj.angular_velocity)
         bodies.append({"spec": obj, "body_id": body_id})
 
+    body_ids = {body["spec"].name: int(body["body_id"]) for body in bodies}
+    initialization_qa = [
+        assert_initialization_contacts(
+            body_ids,
+            plane_id,
+            stage="post_creation",
+        )
+    ]
+
     total_steps = int(SIM_DURATION * SIM_HZ)
     pre_roll_steps = int(scenario.pre_roll_s * SIM_HZ)
     max_frames = math.ceil(total_steps / RECORD_EVERY)
@@ -1261,14 +1366,29 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text
     angvels = np.zeros((max_frames, object_count, 3), dtype=np.float32)
     frames: List[np.ndarray] = []
 
-    frame_index = 0
-    for step in range(pre_roll_steps + total_steps):
+    for _ in range(pre_roll_steps):
         p.stepSimulation()
-        if step < pre_roll_steps:
-            continue
-        record_step = step - pre_roll_steps
+    initialization_qa.append(
+        assert_initialization_contacts(
+            body_ids,
+            plane_id,
+            stage="post_pre_roll",
+        )
+    )
+
+    frame_index = 0
+    for record_step in range(total_steps):
         if record_step % RECORD_EVERY != 0:
+            p.stepSimulation()
             continue
+        if frame_index == 0:
+            initialization_qa.append(
+                assert_initialization_contacts(
+                    body_ids,
+                    plane_id,
+                    stage="video_frame_0",
+                )
+            )
         visible_time = record_step / SIM_HZ
         for obj_index, body in enumerate(bodies):
             body_id = body["body_id"]
@@ -1289,9 +1409,10 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text
                     f"{scenario.family} | {scenario.title}",
                     f"{scenario.key} | t={visible_time:0.2f}s | pre-roll={scenario.pre_roll_s:0.2f}s | floor_mu={scenario.floor_friction:0.2f} | objects={object_count}",
                 ],
-            )
+        )
         frames.append(frame_bgr)
         frame_index += 1
+        p.stepSimulation()
 
     for body in bodies:
         p.removeBody(body["body_id"])
@@ -1340,6 +1461,11 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text
             "yfov_deg": 50.0,
         },
         "objects": [asdict(obj) for obj in scenario.objects],
+        "initialization_qa": {
+            "passed": True,
+            "penetration_tolerance_m": INITIALIZATION_PENETRATION_TOLERANCE_M,
+            "stages": initialization_qa,
+        },
     }
     (META_DIR / f"{scenario.key}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return meta

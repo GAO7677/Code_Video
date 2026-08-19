@@ -79,6 +79,13 @@ def read_inputs(path: Path) -> list[Path]:
 def checkpoint_files(method: dict[str, Any] | None = None) -> tuple[str, ...]:
     if method and method.get("checkpoint_format") == "peft_adapter":
         return ("adapter_model.safetensors", "adapter_config.json")
+    if method and method.get("checkpoint_format") == "physrvg_object_xssc_adapter":
+        return (
+            "adapter_model.safetensors",
+            "adapter_config.json",
+            "physrvg_object_xssc_trainable.safetensors",
+            "physrvg_object_xssc_manifest.json",
+        )
     return ("checkpoint.safetensors", "training_state.pt")
 
 

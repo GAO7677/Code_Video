@@ -392,7 +392,13 @@ def _apply_texture_2d_pattern(
             colors[dominant == 1] = _sample_map_bilinear(albedo, uv_xz[dominant == 1])
         if np.any(dominant == 2):
             colors[dominant == 2] = _sample_map_bilinear(albedo, uv_xy[dominant == 2])
-    if albedo is not None and natural:
+    if albedo is not None and material.texture_style == "rubber_real":
+        grain = np.mean(colors, axis=1)
+        grain = (grain - float(grain.min())) / max(float(np.ptp(grain)), 1e-6)
+        base = np.asarray(material.base_color, dtype=np.float32)
+        colors = base[None, :] * (0.76 + 0.22 * grain[:, None])
+        colors += base[None, :] * (0.02 * grain[:, None])
+    elif albedo is not None and natural:
         base_tint = np.clip(np.asarray(material.base_color, dtype=np.float32), 0.0, 1.0)
         base_max = max(float(base_tint.max()), 1e-6)
         tint = 0.58 + 0.42 * (base_tint / base_max)
@@ -491,6 +497,89 @@ def blueprint_to_legacy_scenario(blueprint: ScenarioBlueprint, seed: int) -> leg
         sim_type="rigid_realism_v2",
         floor_restitution=float(blueprint.metadata.get("floor_restitution", 0.02)),
     )
+
+
+def audit_blueprint_initialization(
+    *,
+    blueprint: ScenarioBlueprint,
+    seed: int,
+) -> dict[str, object]:
+    """Run the three required no-penetration checks without rendering frames."""
+    scenario = blueprint_to_legacy_scenario(blueprint, seed=seed)
+    client = legacy.p.connect(legacy.p.DIRECT)
+    if client < 0:
+        raise RuntimeError("could not connect to PyBullet DIRECT for initialization audit")
+    try:
+        legacy.p.resetSimulation()
+        legacy.p.setAdditionalSearchPath(legacy.pybullet_data.getDataPath())
+        plane_id = legacy.p.loadURDF("plane.urdf")
+        legacy.p.setGravity(0.0, 0.0, -scenario.gravity)
+        legacy.p.setPhysicsEngineParameter(
+            fixedTimeStep=1.0 / legacy.SIM_HZ,
+            numSolverIterations=120,
+            numSubSteps=1,
+        )
+        legacy.p.changeDynamics(
+            plane_id,
+            -1,
+            lateralFriction=scenario.floor_friction,
+            restitution=scenario.floor_restitution,
+            activationState=legacy.p.ACTIVATION_STATE_DISABLE_SLEEPING,
+        )
+        body_ids: dict[str, int] = {}
+        for obj in scenario.objects:
+            body_id = legacy.p.createMultiBody(
+                baseMass=obj.mass if obj.dynamic else 0.0,
+                baseCollisionShapeIndex=legacy._collision_shape(obj),
+                basePosition=obj.position,
+                baseOrientation=legacy._quat_from_euler_deg(obj.orientation_euler_deg),
+            )
+            legacy.p.changeDynamics(
+                body_id,
+                -1,
+                restitution=obj.restitution,
+                lateralFriction=obj.friction,
+                linearDamping=obj.linear_damping,
+                angularDamping=obj.angular_damping,
+                activationState=legacy.p.ACTIVATION_STATE_DISABLE_SLEEPING,
+            )
+            legacy.p.resetBaseVelocity(
+                body_id,
+                linearVelocity=obj.linear_velocity,
+                angularVelocity=obj.angular_velocity,
+            )
+            body_ids[obj.name] = int(body_id)
+
+        stages = [
+            legacy.assert_initialization_contacts(
+                body_ids,
+                plane_id,
+                stage="post_creation",
+            )
+        ]
+        for _ in range(int(scenario.pre_roll_s * legacy.SIM_HZ)):
+            legacy.p.stepSimulation()
+        stages.append(
+            legacy.assert_initialization_contacts(
+                body_ids,
+                plane_id,
+                stage="post_pre_roll",
+            )
+        )
+        stages.append(
+            legacy.assert_initialization_contacts(
+                body_ids,
+                plane_id,
+                stage="video_frame_0",
+            )
+        )
+        return {
+            "passed": True,
+            "penetration_tolerance_m": legacy.INITIALIZATION_PENETRATION_TOLERANCE_M,
+            "stages": stages,
+        }
+    finally:
+        legacy.p.disconnect(client)
 
 
 def _style_bg(surface_key: str) -> list[float]:
@@ -595,6 +684,7 @@ class RealismPreviewRenderer:
         self.scene_style = scene_style
         self.materials = materials
         self.object_materials: dict[str, MaterialSpec] = {}
+        self.object_texture_seeds: dict[str, int] = {}
 
         if scene_style == "indoor_realistic":
             bg_color = [0.09, 0.09, 0.10]
@@ -1071,7 +1161,7 @@ class RealismPreviewRenderer:
                 _apply_texture_2d_pattern(
                     mesh,
                     material,
-                    seed=_stable_name_seed(obj.name),
+                    seed=self.object_texture_seeds.get(obj.name, _stable_name_seed(obj.name)),
                     natural=True,
                 )
                 rendered = legacy.pyrender.Mesh.from_trimesh(
@@ -1217,6 +1307,12 @@ def render_blueprint_case(
                 capture_instance_masks=export_instance_masks,
             )
             renderer.object_materials = {obj.name: materials[obj.material_key] for obj in blueprint.objects}
+            renderer.object_texture_seeds = {
+                obj.name: _stable_name_seed(
+                    str(obj.metadata.get("appearance_group", obj.name))
+                )
+                for obj in blueprint.objects
+            }
             try:
                 meta = legacy.run_scenario(renderer, scenario, overlay_text=False)
                 if export_instance_masks:
@@ -1334,6 +1430,7 @@ def render_blueprint_case(
         "static_object_phrases": payload["static_object_phrases"],
         "object_phrase_details": payload["object_phrase_details"],
         "negative_prompt": payload["negative_prompt"],
+        "initialization_qa": payload.get("initialization_qa"),
         "hdri_catalog": build_hdri_catalog(),
         "asset_pack": build_indoor_asset_pack_manifest(),
     }

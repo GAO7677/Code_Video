@@ -301,6 +301,7 @@ def main() -> None:
                     "difficulty": difficulty,
                     "scene_family": family_summary,
                     "state_summary": state_summary,
+                    "initialization_qa": render_manifest["initialization_qa"],
                     "scene_style": args.scene_style,
                     "scenario_spec": {
                         "surface_key": blueprint.surface_key,
@@ -308,6 +309,7 @@ def main() -> None:
                         "lighting_key": blueprint.lighting_key,
                         "scene_style": args.scene_style,
                         "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
+                        "initialization_qa": render_manifest["initialization_qa"],
                         "objects": [
                             {
                                 "name": obj.name,
@@ -351,6 +353,7 @@ def main() -> None:
                         "scene_style": args.scene_style,
                         "scenario_spec": pilot_metadata["scenario_spec"],
                         "state_summary": state_summary,
+                        "initialization_qa": render_manifest["initialization_qa"],
                         "video": render_manifest["video"],
                         "video_url": "/media/" + case_id,
                         "meta": render_manifest["meta"],
@@ -423,6 +426,7 @@ def main() -> None:
                 "difficulty": difficulty,
                 "scene_family": family_summary,
                 "state_summary": state_summary,
+                "initialization_qa": render_manifest["initialization_qa"],
                 "scene_style": "indoor_realistic",
                 "scenario_spec": {
                     "surface_key": blueprint.surface_key,
@@ -434,6 +438,7 @@ def main() -> None:
                     "travel_angle_deg": round(travel_angle_deg, 5),
                     "travel_direction_xy": blueprint.metadata.get("travel_direction_xy"),
                     "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
+                    "initialization_qa": render_manifest["initialization_qa"],
                     "table_height_label": extra["height_label"],
                     "angle_label": extra["angle_label"],
                     "objects": _scenario_objects(blueprint),
@@ -464,6 +469,7 @@ def main() -> None:
                     "scene_style": "indoor_realistic",
                     "scenario_spec": pilot_metadata["scenario_spec"],
                     "state_summary": state_summary,
+                    "initialization_qa": render_manifest["initialization_qa"],
                     "video": render_manifest["video"],
                     "video_url": "/media/" + case_id,
                     "meta": render_manifest["meta"],
@@ -533,6 +539,7 @@ def main() -> None:
                 "difficulty": difficulty,
                 "scene_family": family_summary,
                 "state_summary": state_summary,
+                "initialization_qa": render_manifest["initialization_qa"],
                 "scene_style": "indoor_realistic",
                 "scenario_spec": {
                     "surface_key": blueprint.surface_key,
@@ -548,6 +555,7 @@ def main() -> None:
                     "controlled_variable": "ramp_angle_deg",
                     "support_mode": blueprint.metadata["support_mode"],
                     "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
+                    "initialization_qa": render_manifest["initialization_qa"],
                     "objects": _scenario_objects(blueprint),
                 },
                 "label_policy": "scene mechanism is not an observed motion label",
@@ -575,6 +583,7 @@ def main() -> None:
                     "scene_style": "indoor_realistic",
                     "scenario_spec": pilot_metadata["scenario_spec"],
                     "state_summary": state_summary,
+                    "initialization_qa": render_manifest["initialization_qa"],
                     "video": render_manifest["video"],
                     "video_url": "/media/" + case_id,
                     "meta": render_manifest["meta"],

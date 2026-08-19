@@ -24,6 +24,7 @@ NOMINAL_RENDER_HEIGHT = 720
 DIRECTION_MODES = {"left_to_right", "right_to_left", "vertical"}
 DEFAULT_CAMERA_DISTANCE_SCALE = 0.88
 F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG = -48.0
+INITIAL_GROUND_CLEARANCE_M = 0.006
 
 
 def build_camera_catalog() -> dict[str, CameraSpec]:
@@ -531,6 +532,48 @@ def _collision_vertical_extent(obj: ObjectInstanceSpec) -> float:
     raise ValueError(f"unsupported collision shape for grounding: {obj.shape}")
 
 
+def _place_dynamic_on_ground(
+    obj: ObjectInstanceSpec,
+    *,
+    clearance_m: float = INITIAL_GROUND_CLEARANCE_M,
+) -> ObjectInstanceSpec:
+    """Place a dynamic rigid body just above the floor using its true extent."""
+    if not obj.dynamic:
+        raise ValueError(f"expected a dynamic object, got {obj.name}")
+    return replace(
+        obj,
+        position=(
+            obj.position[0],
+            obj.position[1],
+            _collision_vertical_extent(obj) + float(clearance_m),
+        ),
+    )
+
+
+def _horizontal_clearance_radius(obj: ObjectInstanceSpec) -> float:
+    """Conservative radius used to separate sampled floor objects at spawn."""
+    size = obj.size
+    if obj.shape in {"sphere", "ellipsoid"}:
+        return float(size.get("radius", max(size.get("rx", 0.0), size.get("ry", 0.0))))
+    if obj.shape in {"box", "rounded_box", "wedge"}:
+        return float(math.hypot(size["hx"], size["hy"]))
+    if obj.shape in {"cylinder", "puck", "wheel_thick", "spool", "cone_frustum"}:
+        return float(
+            max(
+                size.get("radius", 0.0),
+                size.get("flange_radius", 0.0),
+                size.get("r_top", 0.0),
+                size.get("r_base", 0.0),
+                0.5 * size.get("height", size.get("width", 0.0)),
+            )
+        )
+    if obj.shape == "capsule":
+        return float(size["radius"] + 0.5 * size["height"])
+    if obj.shape == "dumbbell":
+        return float(size["weight_radius"] + 0.5 * size["length"])
+    raise ValueError(f"unsupported collision shape for horizontal clearance: {obj.shape}")
+
+
 def validate_blueprint_physics(blueprint: ScenarioBlueprint) -> None:
     if not math.isclose(float(blueprint.gravity), EARTH_GRAVITY, rel_tol=0.0, abs_tol=1e-9):
         raise ValueError(
@@ -859,6 +902,7 @@ def _make_f1(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         linear_velocity=linear_velocity,
         angular_velocity=angular_velocity,
     )
+    driver = _place_dynamic_on_ground(driver)
     camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (driver,))
     return ScenarioBlueprint(
         family_key=family.key,
@@ -901,6 +945,7 @@ def _make_f2(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         linear_velocity=driver_linear,
         angular_velocity=driver_angular,
     )
+    driver = _place_dynamic_on_ground(driver)
     target = _sample_object(
         rng,
         target_family,
@@ -910,6 +955,7 @@ def _make_f2(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         position=(rng.uniform(-0.10, 0.40), rng.uniform(-0.16, 0.18), 0.18 + rng.uniform(-0.02, 0.06)),
         orientation_euler_deg=(0.0, 0.0, rng.uniform(-12.0, 12.0)),
     )
+    target = _place_dynamic_on_ground(target)
     camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (driver, target))
     return ScenarioBlueprint(
         family_key=family.key,
@@ -953,6 +999,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         linear_velocity=lead_linear,
         angular_velocity=lead_angular,
     )
+    lead = _place_dynamic_on_ground(lead)
     mid = _sample_object(
         rng,
         mid_family,
@@ -962,6 +1009,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         position=(rng.uniform(-0.30, -0.02), rng.uniform(-0.18, 0.18), 0.18),
         orientation_euler_deg=(0.0, 0.0, rng.uniform(-10.0, 10.0)),
     )
+    mid = _place_dynamic_on_ground(mid)
     tail = _sample_object(
         rng,
         tail_family,
@@ -971,6 +1019,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         position=(rng.uniform(0.58, 0.92), rng.uniform(-0.18, 0.18), 0.18),
         orientation_euler_deg=(0.0, 0.0, rng.uniform(-10.0, 10.0)),
     )
+    tail = _place_dynamic_on_ground(tail)
     camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (lead, mid, tail))
     return ScenarioBlueprint(
         family_key=family.key,
@@ -1013,8 +1062,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
             angle_deg=motion["angle_deg"],
             axis="x",
         )
-        movers.append(
-            _sample_object(
+        mover = _sample_object(
                 rng,
                 mover_family,
                 name=f"mover_{idx}",
@@ -1026,7 +1074,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
                 angular_velocity=mover_angular,
                 forced_material_key=forced_mover_materials[idx] if idx < len(forced_mover_materials) else None,
             )
-        )
+        movers.append(_place_dynamic_on_ground(mover))
     occluders = [
         _sample_object(
             rng,
@@ -1107,6 +1155,20 @@ def _make_f5(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(drop_orientation, dynamic_family.orientation_jitter_deg)),
         linear_velocity=drop_linear,
         angular_velocity=drop_angular,
+    )
+    dynamic = replace(
+        dynamic,
+        position=(
+            dynamic.position[0],
+            dynamic.position[1],
+            max(
+                dynamic.position[2],
+                support.position[2]
+                + _collision_vertical_extent(support)
+                + _collision_vertical_extent(dynamic)
+                + INITIAL_GROUND_CLEARANCE_M,
+            ),
+        ),
     )
     camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (dynamic,))
     return ScenarioBlueprint(
@@ -1204,6 +1266,7 @@ def _make_f7(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         linear_velocity=(mover_linear[0] * 0.55, mover_linear[1], mover_linear[2]),
         angular_velocity=(mover_angular[0], mover_angular[1] * 1.2, mover_angular[2]),
     )
+    mover = _place_dynamic_on_ground(mover)
     camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (mover,))
     return ScenarioBlueprint(
         family_key=family.key,
@@ -1282,6 +1345,7 @@ def _make_f9(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         linear_velocity=mover_a_lin,
         angular_velocity=mover_a_ang,
     )
+    mover_a = _place_dynamic_on_ground(mover_a)
     mover_b = _sample_object(
         rng,
         mover_b_family,
@@ -1293,6 +1357,7 @@ def _make_f9(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         linear_velocity=mover_b_lin,
         angular_velocity=mover_b_ang,
     )
+    mover_b = _place_dynamic_on_ground(mover_b)
     support = _sample_object(
         rng,
         object_families[str(rng.choice(["slab_box", "stack_box"]))],
@@ -1305,6 +1370,20 @@ def _make_f9(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0)
         forced_material_key=str(rng.choice(["wood_plywood", "cardboard_kraft", "concrete_painted"])),
     )
     support = _dynamicize_support(support)
+    side = 1.0 if mover_b.position[1] >= support.position[1] else -1.0
+    mover_b = replace(
+        mover_b,
+        position=(
+            mover_b.position[0],
+            support.position[1]
+            + side * (
+                _horizontal_clearance_radius(support)
+                + _horizontal_clearance_radius(mover_b)
+                + 0.08
+            ),
+            mover_b.position[2],
+        ),
+    )
     camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (mover_a, mover_b))
     return ScenarioBlueprint(
         family_key=family.key,
@@ -1340,6 +1419,7 @@ def _make_f10(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0
         linear_velocity=mover_lin,
         angular_velocity=mover_ang,
     )
+    mover = _place_dynamic_on_ground(mover)
     support = _sample_object(
         rng,
         object_families[str(rng.choice(["slab_box", "stack_box", "platform_block"]))],
@@ -1485,6 +1565,10 @@ def _make_f11(
         orientation_euler_deg=(0.0, 0.0, 0.0),
         linear_velocity=ball_velocity,
         angular_velocity=ball_angular_velocity,
+        metadata={
+            "appearance_group": "f11_table_rolloff_red_rubber_ball_v1",
+            "appearance_contract": "same_ball_material_and_texture_mapping_for_all_f11_controls",
+        },
     )
 
     camera_key = "cam_09"
@@ -1578,10 +1662,15 @@ def _make_f12(
     support_half_x = 0.10 * size_scale
     support_half_y = 0.10 * size_scale
     support_clearance = 0.004 * size_scale
+    # The board underside falls across the horizontal footprint of a riser.
+    # Clear the lowest point of that footprint, not only its center, so the
+    # dynamic riser starts below the board rather than cutting through it.
+    support_footprint_drop = support_half_x * math.tan(theta)
     support_top_z = (
         board_center_z
         - support_local_x * sin_theta
         - board_half_thickness * cos_theta
+        - support_footprint_drop
         - support_clearance
     )
     support_height = max(0.10 * size_scale, support_top_z)

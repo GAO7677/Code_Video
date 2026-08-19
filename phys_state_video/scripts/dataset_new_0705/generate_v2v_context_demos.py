@@ -45,6 +45,7 @@ FPS = 30
 SIM_HZ = 240
 SIM_DURATION_S = 3.0
 CONTEXT_FRAMES = 8
+CONTEXT_FRAME_OPTIONS = (8, 16)
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 SCENE_STYLE = "indoor_natural"
@@ -53,7 +54,7 @@ DEFAULT_OUTPUT_ROOT = Path(
 )
 
 V2V_QUESTION = (
-    "Use the first 8 frames as the visual context for a video continuation task. "
+    "Use the selected context segment as the visual context for a video continuation task. "
     "Identify the visible geometry, object state, contact or support relation, "
     "and the single physical condition that constrains what happens next. "
     "Separate observations in the context from later simulated events, and "
@@ -177,6 +178,7 @@ def _blueprint(
             "duration_s": SIM_DURATION_S,
             "context_frames": CONTEXT_FRAMES,
             "context_duration_s": CONTEXT_FRAMES / FPS,
+            "context_frame_options": list(CONTEXT_FRAME_OPTIONS),
             "scene_style": SCENE_STYLE,
         },
     )
@@ -231,6 +233,7 @@ def _make_gap_case(sample_key: str, gap_width: float) -> DemoCase:
             angular_velocity=(0.0, -1.85 / ball_radius, 0.0),
             linear_damping=0.01,
             angular_damping=0.01,
+            metadata={"appearance_group": "v2v_gap_red_rubber_ball_v1"},
         ),
         _object(
             name="left_platform",
@@ -260,9 +263,9 @@ def _make_gap_case(sample_key: str, gap_width: float) -> DemoCase:
             name="left_platform_support",
             family_key="table_leg",
             shape="box",
-            size={"hx": 0.24, "hy": 0.28, "hz": (platform_top - platform_hz) * 0.5},
+            size={"hx": 0.24, "hy": 0.28, "hz": (platform_top - 2.0 * platform_hz) * 0.5},
             material_key="concrete_painted",
-            position=(left_center, 0.0, (platform_top - platform_hz) * 0.5),
+            position=(left_center, 0.0, (platform_top - 2.0 * platform_hz) * 0.5),
             dynamic=False,
             mass=0.0,
             friction=0.84,
@@ -272,9 +275,9 @@ def _make_gap_case(sample_key: str, gap_width: float) -> DemoCase:
             name="right_platform_support",
             family_key="table_leg",
             shape="box",
-            size={"hx": 0.24, "hy": 0.28, "hz": (platform_top - platform_hz) * 0.5},
+            size={"hx": 0.24, "hy": 0.28, "hz": (platform_top - 2.0 * platform_hz) * 0.5},
             material_key="concrete_painted",
-            position=(right_center, 0.0, (platform_top - platform_hz) * 0.5),
+            position=(right_center, 0.0, (platform_top - 2.0 * platform_hz) * 0.5),
             dynamic=False,
             mass=0.0,
             friction=0.84,
@@ -330,7 +333,7 @@ def _make_obstacle_case(sample_key: str, obstacle_x: float) -> DemoCase:
             family_key="ball",
             shape="sphere",
             size={"radius": ball_radius},
-            material_key="plastic_orange",
+            material_key="rubber_red",
             position=(-0.66, 0.0, ball_radius + 0.004),
             dynamic=True,
             mass=1.0,
@@ -340,6 +343,7 @@ def _make_obstacle_case(sample_key: str, obstacle_x: float) -> DemoCase:
             angular_velocity=(0.0, -2.15 / ball_radius, 0.0),
             linear_damping=0.01,
             angular_damping=0.01,
+            metadata={"appearance_group": "v2v_obstacle_red_rubber_ball_v1"},
         ),
         _object(
             name="obstacle_barrier",
@@ -404,18 +408,22 @@ def _bowl_segment(
     slope = x / math.sqrt(root)
     theta = math.atan(slope)
     surface_z = bottom_z + radius - math.sqrt(root)
-    thickness = 0.075
+    thickness = 0.065
     normal = (-math.sin(theta), 0.0, math.cos(theta))
     center = (
-        x + normal[0] * thickness * 0.5,
+        # The curve describes the interior (upper) contact face.  Put the
+        # solid slab below that face rather than growing it into the bowl.
+        x - normal[0] * thickness * 0.5,
         0.0,
-        surface_z + normal[2] * thickness * 0.5,
+        surface_z - normal[2] * thickness * 0.5,
     )
     return _object(
         name=f"bowl_segment_{index:02d}",
         family_key="slab_box",
         shape="box",
-        size={"hx": segment_dx * 0.56, "hy": 0.48, "hz": thickness * 0.5},
+        # Leave a physical gap between adjacent tangent slabs.  The previous
+        # 0.56 multiplier made neighbouring collision boxes overlap.
+        size={"hx": segment_dx * 0.40, "hy": 0.48, "hz": thickness * 0.5},
         material_key="wood_plywood",
         position=center,
         dynamic=False,
@@ -428,20 +436,30 @@ def _bowl_segment(
 
 def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
     span = 0.86
-    bottom_z = 0.18
+    bottom_z = 0.16
     xs = np.linspace(-span, span, 15)
     segment_dx = float(xs[1] - xs[0])
     ball_radius = 0.115
-    ball_x = -0.64
-    ball_surface_z = bottom_z + radius - math.sqrt(radius * radius - ball_x * ball_x)
+    ball_surface_x = float(xs[2])
+    root = math.sqrt(radius * radius - ball_surface_x * ball_surface_x)
+    surface_slope = ball_surface_x / root
+    surface_theta = math.atan(surface_slope)
+    surface_normal = (-math.sin(surface_theta), 0.0, math.cos(surface_theta))
+    ball_surface_z = bottom_z + radius - root
+    ball_clearance = 0.012
+    ball_position = (
+        ball_surface_x + surface_normal[0] * (ball_radius + ball_clearance),
+        0.0,
+        ball_surface_z + surface_normal[2] * (ball_radius + ball_clearance),
+    )
     objects: list[ObjectInstanceSpec] = [
         _object(
             name="bowl_base",
             family_key="platform_block",
             shape="box",
-            size={"hx": 1.16, "hy": 0.56, "hz": 0.09},
+            size={"hx": 1.16, "hy": 0.56, "hz": 0.045},
             material_key="wood_dark",
-            position=(0.0, 0.0, 0.09),
+            position=(0.0, 0.0, 0.045),
             dynamic=False,
             mass=0.0,
             friction=0.82,
@@ -453,7 +471,7 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
             shape="sphere",
             size={"radius": ball_radius},
             material_key="rubber_blue",
-            position=(ball_x, 0.0, ball_surface_z + ball_radius + 0.008),
+            position=ball_position,
             dynamic=True,
             mass=1.1,
             friction=0.28,
@@ -462,6 +480,7 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
             angular_velocity=(0.0, -0.42 / ball_radius, 0.0),
             linear_damping=0.01,
             angular_damping=0.01,
+            metadata={"appearance_group": "v2v_bowl_blue_rubber_ball_v1"},
         ),
     ]
     objects.extend(
@@ -510,14 +529,20 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
 
 def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
     anchor_x = -0.82
-    anchor_z = 1.72
+    anchor_z = 1.70
     angle_deg = 18.0
     angle = math.radians(angle_deg)
     bob_radius = 0.13
     bob_x = anchor_x + length * math.sin(angle)
     bob_z = anchor_z - length * math.cos(angle)
-    rope_center = ((anchor_x + bob_x) * 0.5, 0.0, (anchor_z + bob_z) * 0.5)
-    rope_vec = (bob_x - anchor_x, 0.0, bob_z - anchor_z)
+    rope_clearance = 0.022
+    rope_length = max(0.04, length - bob_radius - rope_clearance)
+    rope_end_x = anchor_x + rope_length * math.sin(angle)
+    rope_end_z = anchor_z - rope_length * math.cos(angle)
+    rope_center = ((anchor_x + rope_end_x) * 0.5, 0.0, (anchor_z + rope_end_z) * 0.5)
+    rope_vec = (rope_end_x - anchor_x, 0.0, rope_end_z - anchor_z)
+    post_half_height = 0.76
+    post_center_z = 0.18 + post_half_height
     objects = [
         _object(
             name="pendulum_base",
@@ -535,9 +560,21 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
             name="pendulum_post",
             family_key="table_leg",
             shape="box",
-            size={"hx": 0.065, "hy": 0.065, "hz": 0.82},
+            size={"hx": 0.065, "hy": 0.05, "hz": post_half_height},
             material_key="painted_metal_teal",
-            position=(anchor_x, 0.0, 0.91),
+            position=(anchor_x, 0.26, post_center_z),
+            dynamic=False,
+            mass=0.0,
+            friction=0.80,
+            restitution=0.02,
+        ),
+        _object(
+            name="pendulum_crossbar",
+            family_key="platform_block",
+            shape="box",
+            size={"hx": 0.14, "hy": 0.15, "hz": 0.03},
+            material_key="painted_metal_teal",
+            position=(anchor_x, 0.11, 1.77),
             dynamic=False,
             mass=0.0,
             friction=0.80,
@@ -547,8 +584,8 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
             name="pendulum_rope",
             family_key="table_leg",
             shape="cylinder",
-            size={"radius": 0.018, "height": length},
-            material_key="painted_metal_teal",
+            size={"radius": 0.018, "height": rope_length},
+            material_key="painted_metal_yellow",
             position=rope_center,
             dynamic=False,
             mass=0.0,
@@ -560,6 +597,7 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
                 "visual_only": True,
                 "visual_anchor": (anchor_x, 0.0, anchor_z),
                 "visual_target": "pendulum_bob",
+                "visual_target_surface_offset_m": bob_radius + rope_clearance,
             },
         ),
         _object(
@@ -576,11 +614,12 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
             orientation=(0.0, -angle_deg, 0.0),
             linear_damping=0.015,
             angular_damping=0.02,
+            metadata={"appearance_group": "v2v_pendulum_red_rubber_bob_v1"},
         ),
     ]
     camera = _camera(
-        eye=(-0.28, -4.55, 1.36),
-        target=(-0.25, 0.0, 0.92),
+        eye=(0.38, -4.55, 1.36),
+        target=(-0.40, 0.0, 0.96),
         yfov_deg=48.0,
         hdri_key="hall_bright",
     )
@@ -603,7 +642,7 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
                     "type": "point2point",
                     "body": "pendulum_bob",
                     "parent_body": "pendulum_post",
-                    "parent_frame": (0.0, 0.0, anchor_z - 0.91),
+                    "parent_frame": (0.0, -0.26, anchor_z - post_center_z),
                     "child_frame": (
                         -length * math.sin(angle),
                         0.0,
@@ -611,7 +650,6 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
                     ),
                 }
             ],
-            "disable_collision_pairs": [("pendulum_post", "pendulum_bob")],
         },
     )
     return DemoCase(
@@ -632,9 +670,11 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
 
 
 def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
-    pivot_height = 0.50
+    # Keep a small visible clearance between the fulcrum and the board at
+    # initialization; the hinge constraint supplies the shared pivot point.
+    pivot_height = 0.44
     pivot_center_z = 0.5 * pivot_height
-    board_center_z = pivot_height
+    board_center_z = 0.50
     board_hx = 1.02
     board_hy = 0.26
     board_hz = 0.045
@@ -710,7 +750,7 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
         metadata={
             "controlled_variable": "load_position_x_m",
             "load_position_x_m": load_x,
-            "pivot_z_m": board_center_z,
+            "pivot_z_m": pivot_height,
             "initial_board_angle_deg": board_angle,
             "constraints": [
                 {
@@ -718,17 +758,16 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
                     "body": "seesaw_board",
                     "parent_body": "seesaw_pivot",
                     "parent_frame": (0.0, -0.20, pivot_center_z),
-                    "child_frame": (0.0, -0.20, 0.0),
+                    "child_frame": (0.0, -0.20, pivot_height - board_center_z),
                 },
                 {
                     "type": "point2point",
                     "body": "seesaw_board",
                     "parent_body": "seesaw_pivot",
                     "parent_frame": (0.0, 0.20, pivot_center_z),
-                    "child_frame": (0.0, 0.20, 0.0),
+                    "child_frame": (0.0, 0.20, pivot_height - board_center_z),
                 },
             ],
-            "disable_collision_pairs": [("seesaw_pivot", "seesaw_board")],
         },
     )
     return DemoCase(
@@ -771,6 +810,7 @@ def _make_domino_case(sample_key: str, spacing: float) -> DemoCase:
             linear_damping=0.01,
             angular_damping=0.01,
             role="dynamic_trigger",
+            metadata={"appearance_group": "v2v_domino_red_rubber_trigger_v1"},
         ),
         _object(
             name="domino_0",
@@ -1005,7 +1045,10 @@ def _visual_pose(
     if length <= 1e-8:
         vector = np.asarray([0.0, 0.0, -1.0], dtype=np.float64)
         length = 1.0
-    midpoint = (anchor + target) * 0.5
+    surface_offset = float(obj.metadata.get("visual_target_surface_offset_m", 0.0))
+    endpoint = target - vector * min(surface_offset / length, 0.95)
+    vector = endpoint - anchor
+    midpoint = (anchor + endpoint) * 0.5
     euler = _quat_vector_as_euler((float(vector[0]), float(vector[1]), float(vector[2])))
     quat = legacy._quat_from_euler_deg(list(euler))
     return (tuple(float(value) for value in midpoint), quat)
@@ -1046,6 +1089,176 @@ def _make_constraint(descriptor: dict[str, object], body_ids: dict[str, int]) ->
     return int(constraint_id)
 
 
+def _create_visual_audit_bodies(
+    visual_objects: list[ObjectInstanceSpec],
+    legacy_by_name: dict[str, legacy.ObjectSpec],
+) -> dict[str, int]:
+    """Create non-interacting collision proxies for visual-only geometry."""
+    body_ids: dict[str, int] = {}
+    for obj in visual_objects:
+        body_id = p.createMultiBody(
+            baseMass=0.0,
+            baseCollisionShapeIndex=legacy._collision_shape(legacy_by_name[obj.name]),
+            basePosition=list(obj.position),
+            baseOrientation=legacy._quat_from_euler_deg(list(obj.orientation_euler_deg)),
+        )
+        # Proxies stay queryable by getClosestPoints while contributing no
+        # collision response to the actual simulation.
+        p.setCollisionFilterGroupMask(body_id, -1, 0, 0)
+        body_ids[obj.name] = int(body_id)
+    return body_ids
+
+
+def _physical_positions(body_ids: dict[str, int]) -> dict[str, np.ndarray]:
+    return {
+        name: np.asarray(p.getBasePositionAndOrientation(body_id)[0], dtype=np.float64)
+        for name, body_id in body_ids.items()
+    }
+
+
+def _update_visual_audit_bodies(
+    visual_objects: list[ObjectInstanceSpec],
+    audit_body_ids: dict[str, int],
+    physical_positions: dict[str, np.ndarray],
+) -> None:
+    for obj in visual_objects:
+        pose_pos, pose_quat = _visual_pose(obj, physical_positions)
+        p.resetBasePositionAndOrientation(
+            audit_body_ids[obj.name],
+            list(pose_pos),
+            pose_quat,
+        )
+
+
+def audit_v2v_case_initialization(
+    case: DemoCase,
+    *,
+    seed: int = 0,
+) -> dict[str, object]:
+    """Run the mandatory initialization checks without rendering a video."""
+    blueprint = case.blueprint
+    scenario = blueprint_to_legacy_scenario(blueprint, seed=seed)
+    all_objects = list(blueprint.objects)
+    visual_only_names = {
+        obj.name for obj in all_objects if bool(obj.metadata.get("visual_only"))
+    }
+    physical_objects = [obj for obj in all_objects if obj.name not in visual_only_names]
+    visual_objects = [obj for obj in all_objects if obj.name in visual_only_names]
+    legacy_by_name = {obj.name: obj for obj in scenario.objects}
+
+    client = p.connect(p.DIRECT)
+    if client < 0:
+        raise RuntimeError("could not connect to PyBullet DIRECT for V2V initialization audit")
+    constraint_ids: list[int] = []
+    try:
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        p.resetSimulation()
+        p.setGravity(0.0, 0.0, -EARTH_GRAVITY)
+        p.setPhysicsEngineParameter(
+            fixedTimeStep=1.0 / SIM_HZ,
+            numSolverIterations=120,
+            numSubSteps=1,
+        )
+        plane_id = p.loadURDF("plane.urdf")
+        surface = build_surface_catalog()[blueprint.surface_key]
+        floor_mu = float(np.clip(surface.floor_friction_range.midpoint(), 0.05, 1.20))
+        p.changeDynamics(
+            plane_id,
+            -1,
+            lateralFriction=floor_mu,
+            restitution=0.02,
+            activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING,
+        )
+
+        body_ids: dict[str, int] = {}
+        for obj in physical_objects:
+            legacy_obj = legacy_by_name[obj.name]
+            body_id = p.createMultiBody(
+                baseMass=float(obj.mass) if obj.dynamic else 0.0,
+                baseCollisionShapeIndex=legacy._collision_shape(legacy_obj),
+                basePosition=list(obj.position),
+                baseOrientation=legacy._quat_from_euler_deg(list(obj.orientation_euler_deg)),
+            )
+            p.changeDynamics(
+                body_id,
+                -1,
+                restitution=float(obj.restitution),
+                lateralFriction=float(obj.friction),
+                linearDamping=float(obj.linear_damping),
+                angularDamping=float(obj.angular_damping),
+                activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING,
+            )
+            p.resetBaseVelocity(
+                body_id,
+                linearVelocity=list(obj.linear_velocity),
+                angularVelocity=list(obj.angular_velocity),
+            )
+            body_ids[obj.name] = int(body_id)
+
+        for descriptor in blueprint.metadata.get("constraints", []):
+            constraint_ids.append(_make_constraint(dict(descriptor), body_ids))
+        for left_name, right_name in blueprint.metadata.get("disable_collision_pairs", []):
+            p.setCollisionFilterPair(
+                body_ids[str(left_name)], body_ids[str(right_name)], -1, -1, 0
+            )
+
+        visual_audit_body_ids = _create_visual_audit_bodies(
+            visual_objects,
+            legacy_by_name,
+        )
+        audit_body_ids = {**body_ids, **visual_audit_body_ids}
+        stages = [
+            legacy.assert_initialization_contacts(
+                audit_body_ids,
+                plane_id,
+                stage="post_creation",
+            )
+        ]
+        for _ in range(int(round(blueprint.pre_roll_s * SIM_HZ))):
+            p.stepSimulation()
+        positions = _physical_positions(body_ids)
+        _update_visual_audit_bodies(
+            visual_objects,
+            visual_audit_body_ids,
+            positions,
+        )
+        stages.append(
+            legacy.assert_initialization_contacts(
+                audit_body_ids,
+                plane_id,
+                stage="post_pre_roll",
+            )
+        )
+        stages.append(
+            legacy.assert_initialization_contacts(
+                audit_body_ids,
+                plane_id,
+                stage="video_frame_0",
+            )
+        )
+        return {
+            "case_id": case.case_id,
+            "passed": True,
+            "penetration_tolerance_m": legacy.INITIALIZATION_PENETRATION_TOLERANCE_M,
+            "stages": stages,
+        }
+    finally:
+        for constraint_id in constraint_ids:
+            try:
+                p.removeConstraint(constraint_id)
+            except Exception:
+                pass
+        p.disconnect(client)
+
+
+def _appearance_seed(obj: ObjectInstanceSpec) -> int:
+    appearance_group = str(obj.metadata.get("appearance_group", obj.name))
+    return sum(
+        (index + 1) * ord(character)
+        for index, character in enumerate(appearance_group)
+    ) % (2**32 - 1)
+
+
 def _render_case(
     case: DemoCase,
     *,
@@ -1065,6 +1278,7 @@ def _render_case(
         obj.name for obj in all_objects if bool(obj.metadata.get("visual_only"))
     }
     physical_objects = [obj for obj in all_objects if obj.name not in visual_only_names]
+    visual_objects = [obj for obj in all_objects if obj.name in visual_only_names]
     legacy_by_name = {obj.name: obj for obj in scenario.objects}
 
     with override_legacy_runtime(
@@ -1078,6 +1292,7 @@ def _render_case(
             raise RuntimeError("could not connect to PyBullet DIRECT")
         renderer = None
         body_ids: dict[str, int] = {}
+        visual_audit_body_ids: dict[str, int] = {}
         constraint_ids: list[int] = []
         try:
             p.setAdditionalSearchPath(pybullet_data.getDataPath())
@@ -1109,6 +1324,9 @@ def _render_case(
             )
             renderer.object_materials = {
                 obj.name: materials[obj.material_key] for obj in all_objects
+            }
+            renderer.object_texture_seeds = {
+                obj.name: _appearance_seed(obj) for obj in all_objects
             }
             for obj in all_objects:
                 renderer.add_object(legacy_by_name[obj.name])
@@ -1143,6 +1361,36 @@ def _render_case(
                     body_ids[str(left_name)], body_ids[str(right_name)], -1, -1, 0
                 )
 
+            visual_audit_body_ids = _create_visual_audit_bodies(
+                visual_objects,
+                legacy_by_name,
+            )
+            audit_body_ids = {**body_ids, **visual_audit_body_ids}
+            initialization_qa = [
+                legacy.assert_initialization_contacts(
+                    audit_body_ids,
+                    plane_id,
+                    stage="post_creation",
+                )
+            ]
+
+            pre_roll_steps = int(round(blueprint.pre_roll_s * SIM_HZ))
+            for _ in range(pre_roll_steps):
+                p.stepSimulation()
+            pre_roll_positions = _physical_positions(body_ids)
+            _update_visual_audit_bodies(
+                visual_objects,
+                visual_audit_body_ids,
+                pre_roll_positions,
+            )
+            initialization_qa.append(
+                legacy.assert_initialization_contacts(
+                    audit_body_ids,
+                    plane_id,
+                    stage="post_pre_roll",
+                )
+            )
+
             object_names = [obj.name for obj in all_objects]
             object_index = {name: idx for idx, name in enumerate(object_names)}
             total_steps = int(SIM_DURATION_S * SIM_HZ)
@@ -1154,8 +1402,8 @@ def _render_case(
             angular_velocities = np.zeros((frame_count, len(all_objects), 3), dtype=np.float32)
             frames: list[np.ndarray] = []
             for step in range(total_steps):
-                p.stepSimulation()
                 if step % record_every != 0:
+                    p.stepSimulation()
                     continue
                 frame_index = step // record_every
                 current_positions: dict[str, np.ndarray] = {}
@@ -1172,6 +1420,19 @@ def _render_case(
                     linear_velocities[frame_index, idx] = np.asarray(linvel, dtype=np.float32)
                     angular_velocities[frame_index, idx] = np.asarray(angvel, dtype=np.float32)
                     renderer.update_pose(obj.name, list(pos), list(quat))
+                if frame_index == 0:
+                    _update_visual_audit_bodies(
+                        visual_objects,
+                        visual_audit_body_ids,
+                        current_positions,
+                    )
+                    initialization_qa.append(
+                        legacy.assert_initialization_contacts(
+                            audit_body_ids,
+                            plane_id,
+                            stage="video_frame_0",
+                        )
+                    )
                 for obj in all_objects:
                     if obj.name not in visual_only_names:
                         continue
@@ -1185,16 +1446,19 @@ def _render_case(
                         ) * FPS
                     renderer.update_pose(obj.name, list(pose_pos), pose_quat)
                 frames.append(cv2.cvtColor(renderer.render(), cv2.COLOR_RGB2BGR))
+                p.stepSimulation()
             positions = positions[: len(frames)]
             quats = quats[: len(frames)]
             linear_velocities = linear_velocities[: len(frames)]
             angular_velocities = angular_velocities[: len(frames)]
             video_path = output_root / "videos" / f"{case.case_id}.mp4"
             context_path = output_root / "context" / f"{case.case_id}_context8f.mp4"
+            context16_path = output_root / "context" / f"{case.case_id}_context16f.mp4"
             video_path.parent.mkdir(parents=True, exist_ok=True)
             context_path.parent.mkdir(parents=True, exist_ok=True)
             legacy._write_video_h264(video_path, frames)
             legacy._write_video_h264(context_path, frames[:CONTEXT_FRAMES])
+            legacy._write_video_h264(context16_path, frames[:CONTEXT_FRAME_OPTIONS[-1]])
             states_path = output_root / "meta" / f"{case.case_id}_states.npz"
             states_path.parent.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(
@@ -1240,6 +1504,8 @@ def _render_case(
             qa = {
                 "context_frames": CONTEXT_FRAMES,
                 "context_duration_s": CONTEXT_FRAMES / FPS,
+                "context_frame_options": list(CONTEXT_FRAME_OPTIONS),
+                "context16_duration_s": CONTEXT_FRAME_OPTIONS[-1] / FPS,
                 "first_event_frame": first_event_frame,
                 "first_event_time_s": (
                     round(first_event_frame / FPS, 4) if first_event_frame is not None else None
@@ -1249,6 +1515,11 @@ def _render_case(
                 ),
                 "all_objects_visible_every_frame": all_visible,
                 "frame_count": len(frames),
+                "initialization": {
+                    "passed": True,
+                    "penetration_tolerance_m": legacy.INITIALIZATION_PENETRATION_TOLERANCE_M,
+                    "stages": initialization_qa,
+                },
             }
             meta = {
                 "case_id": case.case_id,
@@ -1266,6 +1537,7 @@ def _render_case(
                 "context_duration_s": CONTEXT_FRAMES / FPS,
                 "video": str(video_path),
                 "context_video": str(context_path),
+                "context16_video": str(context16_path),
                 "states": str(states_path),
                 "mask_video": str(mask_video_path),
                 "mask_ids": str(mask_path),
@@ -1294,6 +1566,7 @@ def _render_case(
                 "family_key": case.family_key,
                 "video": str(video_path),
                 "context_video": str(context_path),
+                "context16_video": str(context16_path),
                 "states": str(states_path),
                 "meta": str(meta_path),
                 "mask_video": str(mask_video_path),
@@ -1303,6 +1576,7 @@ def _render_case(
                 "height": height,
                 "caption": case.description,
                 "context_caption": f"First {CONTEXT_FRAMES} frames before {case.event_rule}.",
+                "context16_caption": f"First {CONTEXT_FRAME_OPTIONS[-1]} frames before {case.event_rule}.",
             }
             (output_root / "cases" / case.family_key / case.case_id).mkdir(
                 parents=True, exist_ok=True
@@ -1344,8 +1618,10 @@ def _render_case(
                 "state_summary": state_summary,
                 "video": str(video_path),
                 "context_video": str(context_path),
+                "context16_video": str(context16_path),
                 "video_url": "/media/" + case.case_id,
                 "context_video_url": "/media-context/" + case.case_id,
+                "context16_video_url": "/media-context16/" + case.case_id,
                 "meta": str(meta_path),
                 "states": str(states_path),
                 "mask_video": str(mask_video_path),
