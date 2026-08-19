@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 
 from .common_specs import CameraSpec, ScenarioBlueprint
+from .caption_templates_0819 import CAPTION_FILES, attach_caption_metadata
 from .generate_difficulty_pilot import (
     ANALYSIS_QUESTION,
     RAMP_INCLINE_CASES,
@@ -52,7 +53,7 @@ DEFAULT_DIFFICULTY_SEED_BASE = 20260817
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 CONTEXT_FRAME_OPTIONS = (8, 16)
-SCHEMA_VERSION = "physv_v2v_rigidbench_style_v1"
+SCHEMA_VERSION = "physv_v2v_rigidbench_style_v2"
 MOTION_THRESHOLD_MPS = 0.03
 
 
@@ -665,13 +666,6 @@ def _derive_event_frame(case: ExportCase, positions: np.ndarray, quats: np.ndarr
     return int(frames[0]) if len(frames) else -1
 
 
-def _continuation_prompt() -> str:
-    return (
-        "Continue the video from the supplied context frames. Infer subsequent motion only from "
-        "visible geometry, object state, contacts, and observed motion. Do not assume unobserved events."
-    )
-
-
 def _package_case(
     *,
     case: ExportCase,
@@ -862,6 +856,7 @@ def _package_case(
         "depth_visualization": depth_visualization,
         "initialization_qa": render_metadata.get("initialization_qa"),
     }
+    caption_bundle = attach_caption_metadata(metadata)
     manifest = {
         "sample_id": case.case_id,
         "task_type": case.task_type,
@@ -870,6 +865,11 @@ def _package_case(
         "seed": case.seed,
         "controlled_variable": case.controlled_variable,
         "controlled_value": case.controlled_value,
+        "captions": {
+            "specific": CAPTION_FILES["specific"],
+            "abstract": CAPTION_FILES["abstract"],
+            "bundle": CAPTION_FILES["bundle"],
+        },
         "objects": object_names,
         "dynamic_actors": actor_names,
     }
@@ -901,7 +901,9 @@ def _package_case(
             },
         },
         "content": {
-            "prompt": "prompt.txt",
+            "caption_specific": CAPTION_FILES["specific"],
+            "caption_abstract": CAPTION_FILES["abstract"],
+            "captions": CAPTION_FILES["bundle"],
             "metadata": "metadata.json",
             "physics_supervision": "physics_supervision.npz",
             "physics_supervision_summary": "physics_supervision.json",
@@ -918,7 +920,7 @@ def _package_case(
         },
         "mask_policy": "raw/masks.npz contains dynamic actors only; raw/instance_ids.npz contains all rendered simulator objects.",
         "status": {
-            "prompt": True,
+            "captions": True,
             "lossless_frames": True,
             "metadata": True,
             "contacts": True,
@@ -931,7 +933,18 @@ def _package_case(
     _write_json(sample_dir / "manifest.json", manifest)
     _write_json(sample_dir / "metadata.json", metadata)
     _write_json(sample_dir / "meta.json", wrapper)
-    (sample_dir / "prompt.txt").write_text(_continuation_prompt() + "\n", encoding="utf-8")
+    caption_dir = sample_dir / "captions"
+    caption_dir.mkdir(parents=True, exist_ok=True)
+    (caption_dir / "caption_specific.txt").write_text(caption_bundle["specific"] + "\n", encoding="utf-8")
+    (caption_dir / "caption_abstract.txt").write_text(caption_bundle["abstract"] + "\n", encoding="utf-8")
+    _write_json(
+        caption_dir / "captions.json",
+        {
+            "schema_version": "physv_caption_v1",
+            "source": "metadata.json",
+            **caption_bundle,
+        },
+    )
     _write_json(
         sample_dir / "export_summary.json",
         {
@@ -991,7 +1004,9 @@ def _render_export_case(
 def _validate_sample(sample_dir: Path) -> None:
     meta = json.loads((sample_dir / "meta.json").read_text(encoding="utf-8"))
     required = [
-        "prompt.txt",
+        "captions/caption_specific.txt",
+        "captions/caption_abstract.txt",
+        "captions/captions.json",
         "manifest.json",
         "metadata.json",
         "contacts.json",
@@ -1046,13 +1061,18 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
         {
             "dataset": "PhysV V2V controls",
             "schema_version": SCHEMA_VERSION,
-            "description": "Deterministic PyBullet rigid-body continuation controls with RigidBench-style ground truth.",
+            "description": "Deterministic PyBullet rigid-body continuation controls with RigidBench-style ground truth and metadata-driven captions.",
             "coordinate_system": "PyBullet world coordinates in meters; z is up.",
             "rgb": "Lossless PNG frames are direct renderer captures. MP4 files are convenience encodes.",
             "mask_policy": "masks.npz contains dynamic actors; instance_ids.npz contains all rendered simulator objects.",
             "depth": "raw/depth.npz contains PyRender Z-depth in scene meters; zero denotes background.",
             "contacts": "contacts.json records motion-relevant PyBullet contacts sampled at video frames.",
             "source_selection": "30 V2V cases, 5 F11 table-height cases, 5 F12 incline cases; F11 direction variants excluded.",
+            "captions": {
+                "specific": "captions/caption_specific.txt exposes the controlled variable and value.",
+                "abstract": "captions/caption_abstract.txt hides the controlled variable and value.",
+                "bundle": "captions/captions.json contains both caption versions.",
+            },
         },
     )
     readme = """# PhysV V2V 0819
@@ -1071,7 +1091,10 @@ Each `samples/<case_id>/` directory follows a RigidBench-inspired layout:
 - `raw/trajectories.npz`: per-object world trajectories with wxyz rotations.
 - `contacts.json`: sampled PyBullet contact points, normals, distance, and normal force.
 - `physics_supervision.npz`: aligned states, velocities, accelerations, visibility, contact arrays, and derived motion indices.
-- `metadata.json`, `meta.json`, `manifest.json`, `prompt.txt`: sample metadata and continuation conditioning metadata.
+- `captions/caption_specific.txt`: caption with the controlled variable and value exposed.
+- `captions/caption_abstract.txt`: caption with the controlled variable and value hidden.
+- `captions/captions.json`: structured copy of both caption versions.
+- `metadata.json`, `meta.json`, `manifest.json`: sample metadata and caption references.
 
 The raw state file retains PyBullet xyzw quaternions; exported trajectory and
 physics-supervision files use wxyz and declare this convention in metadata.

@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhysV V2V / Caption Review</title>
+  <style>
+    :root {
+      --canvas: #edf2ef;
+      --surface: #ffffff;
+      --surface-soft: #f6f8f6;
+      --ink: #172a23;
+      --muted: #64756d;
+      --line: #ccd8d1;
+      --forest: #183d30;
+      --teal: #087d73;
+      --teal-soft: #dff1eb;
+      --orange: #bc633f;
+      --orange-soft: #f8e7df;
+      --gold: #a67718;
+      --blue: #496b87;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--canvas); }
+    body { min-width: 320px; margin: 0; color: var(--ink); background: var(--canvas); font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible { outline: 3px solid #54a89a; outline-offset: 2px; }
+    [hidden] { display: none !important; }
+
+    .topbar { min-height: 72px; padding: 14px 30px; color: #f5faf7; background: var(--forest); border-bottom: 4px solid var(--orange); }
+    .topbar-inner { max-width: 1800px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand-mark { display: grid; place-items: center; width: 38px; height: 38px; color: var(--forest); background: #c8df76; border-radius: 4px; font: 800 11px/1 ui-monospace, monospace; }
+    .eyebrow, .label { color: var(--teal); font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .eyebrow { margin: 0 0 4px; color: #c8df76; }
+    .brand h1 { margin: 0; font-size: 18px; line-height: 1.15; }
+    .top-status { color: #c6d7ce; font: 11px/1.4 ui-monospace, monospace; text-align: right; }
+
+    .shell { max-width: 1800px; margin: 0 auto; padding: 24px 30px 44px; }
+    .overview { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+    .overview h2 { max-width: 780px; margin: 5px 0 0; font-size: 30px; line-height: 1.12; letter-spacing: 0; }
+    .overview p { max-width: 800px; margin: 10px 0 0; color: var(--muted); }
+    .metrics { display: grid; grid-template-columns: repeat(4, auto); border-left: 1px solid var(--line); }
+    .metric { min-width: 88px; padding: 0 14px; border-right: 1px solid var(--line); }
+    .metric strong { display: block; font: 800 23px/1 ui-monospace, monospace; }
+    .metric span { display: block; margin-top: 6px; color: var(--muted); font: 9px/1.2 ui-monospace, monospace; text-transform: uppercase; }
+
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 17px 0; }
+    .filters { display: flex; gap: 7px; flex-wrap: wrap; }
+    .filter, .copy-button { min-height: 34px; padding: 7px 11px; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 700; }
+    .filter:hover, .copy-button:hover { background: var(--teal-soft); border-color: var(--teal); }
+    .filter.active { color: #fff; background: var(--teal); border-color: var(--teal); }
+    .search { width: 280px; min-height: 34px; padding: 7px 10px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
+
+    .workspace { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 22px; align-items: start; }
+    .rail { position: sticky; top: 16px; min-width: 0; border-top: 2px solid var(--ink); }
+    .rail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 11px 2px; }
+    .rail-head h3 { margin: 0; font-size: 14px; }
+    .rail-count { color: var(--muted); font: 11px ui-monospace, monospace; }
+    .case-list { max-height: calc(100vh - 250px); overflow: auto; border-bottom: 1px solid var(--line); }
+    .case-group-title { display: block; padding: 9px 8px 6px; color: var(--muted); font: 700 10px/1.2 ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase; }
+    .case-button { display: block; width: 100%; padding: 11px 10px; text-align: left; background: transparent; border: 1px solid transparent; border-left: 3px solid transparent; cursor: pointer; }
+    .case-button:hover { background: rgba(255,255,255,.65); }
+    .case-button.active { background: var(--orange-soft); border-color: #ebc4b4; border-left-color: var(--orange); }
+    .case-title { display: block; font-size: 12px; font-weight: 800; overflow-wrap: anywhere; }
+    .case-id { display: block; margin-top: 4px; color: var(--muted); font: 10px/1.35 ui-monospace, monospace; overflow-wrap: anywhere; }
+
+    .case-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding-bottom: 14px; border-bottom: 2px solid var(--ink); }
+    .case-header h3 { margin: 5px 0 0; font-size: 22px; line-height: 1.2; }
+    .case-header p { margin: 5px 0 0; color: var(--muted); font: 11px/1.4 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .family-tag { flex: 0 0 auto; padding: 6px 8px; color: var(--teal); background: var(--teal-soft); border-radius: 3px; font: 700 10px/1 ui-monospace, monospace; }
+    .fact-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .fact { min-width: 0; padding: 10px 11px; border-right: 1px solid var(--line); }
+    .fact:last-child { border-right: 0; }
+    .fact-value { display: block; margin-top: 4px; font-size: 13px; font-weight: 800; overflow-wrap: anywhere; }
+    .fact-note { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+
+    .caption-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .caption-block { min-width: 0; padding: 14px 15px; background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--teal); }
+    .caption-block.abstract { border-top-color: var(--orange); }
+    .caption-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .caption-head h4 { margin: 0; font-size: 14px; }
+    .caption-block p { min-height: 48px; margin: 10px 0 0; color: #33483e; font-size: 14px; line-height: 1.6; }
+    .copy-button { min-height: 28px; padding: 4px 8px; color: var(--muted); font-size: 11px; font-weight: 600; }
+
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 20px 0 9px; }
+    .section-heading h4 { margin: 0; font-size: 15px; }
+    .section-heading span { color: var(--muted); font-size: 11px; }
+    .media-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .truth-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .media-card { min-width: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 5px; }
+    .media-card header { min-height: 52px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    .media-card h5 { margin: 4px 0 0; font-size: 14px; }
+    .media-card video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #14231d; }
+    .media-meta { padding: 8px 11px; color: var(--muted); font: 10px/1.4 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .truth-grid .media-card h5 { font-size: 13px; }
+    .truth-grid .media-card video { aspect-ratio: 16 / 9; }
+
+    .details-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, .8fr); gap: 12px; margin-top: 18px; }
+    .info-panel { min-width: 0; padding: 14px 15px; background: var(--surface); border: 1px solid var(--line); }
+    .info-panel h4 { margin: 0 0 10px; font-size: 14px; }
+    .info-panel p { margin: 7px 0 0; color: #3a5045; overflow-wrap: anywhere; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .data-table th, .data-table td { padding: 7px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid #e1e8e3; }
+    .data-table th { width: 34%; color: var(--muted); font-weight: 600; }
+    .data-table tr:last-child th, .data-table tr:last-child td { border-bottom: 0; }
+    .empty, .error { padding: 25px 16px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); text-align: center; }
+    .error { color: #8b3e2b; background: var(--orange-soft); border-color: #e6b8a5; }
+
+    @media (max-width: 1180px) {
+      .workspace { grid-template-columns: 245px minmax(0, 1fr); }
+      .truth-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .details-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 860px) {
+      .topbar, .shell { padding-left: 18px; padding-right: 18px; }
+      .topbar-inner, .overview { align-items: flex-start; flex-direction: column; }
+      .overview { grid-template-columns: 1fr; }
+      .metrics { border-left: 0; }
+      .toolbar { align-items: stretch; flex-direction: column; }
+      .search { width: 100%; }
+      .workspace { grid-template-columns: 1fr; }
+      .rail { position: static; }
+      .case-list { max-height: 260px; }
+      .fact-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .fact:nth-child(2) { border-right: 0; }
+      .fact:nth-child(n + 3) { border-top: 1px solid var(--line); }
+    }
+    @media (max-width: 620px) {
+      .metrics { width: 100%; grid-template-columns: repeat(2, 1fr); }
+      .metric { padding: 8px 10px; border-top: 1px solid var(--line); }
+      .metric:nth-child(-n + 2) { border-top: 0; }
+      .overview h2 { font-size: 25px; }
+      .caption-grid, .media-grid, .truth-grid { grid-template-columns: 1fr; }
+      .case-header { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark">PHYSV</div>
+        <div><p class="eyebrow">V2V / caption review</p><h1>PhysV 物理视频与 Prompt 对照</h1></div>
+      </div>
+      <div id="top-status" class="top-status">读取数据集...</div>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="overview">
+      <div>
+        <div class="label">all cases / full video / context video / captions</div>
+        <h2 id="overview-title">统一数据集可视化</h2>
+        <p>逐个查看 40 个仿真 case 的完整视频、ctx=8、ctx=16、监督可视化视频，以及显式变量版和模糊变量版 caption。</p>
+      </div>
+      <div id="metrics" class="metrics"></div>
+    </section>
+
+    <section class="toolbar">
+      <div id="filters" class="filters"></div>
+      <input id="search" class="search" type="search" placeholder="搜索 case、场景或控制变量">
+    </section>
+
+    <section class="workspace">
+      <aside class="rail">
+        <div class="rail-head"><h3>Cases</h3><span id="rail-count" class="rail-count"></span></div>
+        <div id="case-list" class="case-list"></div>
+      </aside>
+      <section id="case-content" aria-live="polite"><div class="empty">读取中...</div></section>
+    </section>
+  </main>
+
+  <script>
+    const state = { cases: [], filtered: [], selected: "", filter: "all", query: "" };
+    const $ = (id) => document.getElementById(id);
+    const FAMILY_NAMES = {
+      V2V_GAP: "平台间隙",
+      V2V_OBSTACLE: "障碍物碰撞",
+      V2V_BOWL: "碗内滚动",
+      V2V_PENDULUM: "摆锤运动",
+      V2V_SEESAW: "跷跷板",
+      V2V_DOMINO: "多米诺链",
+      F11: "F11 / 桌高",
+      F12: "F12 / 斜面",
+    };
+    const GROUP_NAMES = { all: "全部", v2v_control: "V2V", f11_table_height: "F11 桌高", f12_incline: "F12 斜面" };
+    const MEDIA = [
+      ["full", "完整视频", "90 帧 / 30 FPS"],
+      ["context8", "ctx=8", "前 8 帧上下文"],
+      ["context16", "ctx=16", "前 16 帧上下文"],
+    ];
+    const TRUTH_MEDIA = [
+      ["masks", "实例掩码", "动态 actor / 全实例 ID"],
+      ["depth", "深度", "PyRender depth 可视化"],
+      ["trajectory", "轨迹", "世界坐标轨迹投影"],
+      ["contacts", "接触", "接触点与法线投影"],
+    ];
+
+    function node(tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined && text !== null) element.textContent = String(text);
+      return element;
+    }
+    function number(value, digits = 2) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric.toFixed(digits) : "-";
+    }
+    function groupName(value) { return GROUP_NAMES[value] || value || "未分类"; }
+    function familyName(value) { return FAMILY_NAMES[value] || value || "物理场景"; }
+    function selectedCase() { return state.cases.find((item) => item.case_id === state.selected) || null; }
+    function mediaUrl(item, kind) { return `/media/${encodeURIComponent(item.case_id)}/${kind}`; }
+    function controlLabel(item) {
+      const control = item.control || {};
+      return control.value_label || `${control.variable || "-"} = ${control.value ?? "-"}`;
+    }
+    function matches(item) {
+      const q = state.query.trim().toLowerCase();
+      const haystack = [item.case_id, item.title, item.family_key, item.task_type, item.scene_description, controlLabel(item)].join(" ").toLowerCase();
+      return (state.filter === "all" || item.source_group === state.filter) && (!q || haystack.includes(q));
+    }
+    function renderMetrics() {
+      const counts = state.cases.reduce((result, item) => { result[item.source_group] = (result[item.source_group] || 0) + 1; return result; }, {});
+      const metrics = [[state.cases.length, "cases"], [counts.v2v_control || 0, "V2V"], [counts.f11_table_height || 0, "F11"], [counts.f12_incline || 0, "F12"]];
+      const host = $("metrics"); host.replaceChildren();
+      metrics.forEach(([value, label]) => { const box = node("div", "metric"); box.append(node("strong", "", value), node("span", "", label)); host.append(box); });
+    }
+    function renderFilters() {
+      const host = $("filters"); host.replaceChildren();
+      ["all", "v2v_control", "f11_table_height", "f12_incline"].forEach((value) => {
+        const button = node("button", `filter${state.filter === value ? " active" : ""}`, groupName(value));
+        button.type = "button"; button.setAttribute("aria-pressed", String(state.filter === value));
+        button.onclick = () => { state.filter = value; render(); };
+        host.append(button);
+      });
+    }
+    function renderList() {
+      state.filtered = state.cases.filter(matches);
+      if (!state.filtered.some((item) => item.case_id === state.selected)) state.selected = state.filtered[0]?.case_id || "";
+      const host = $("case-list"); host.replaceChildren(); $("rail-count").textContent = `${state.filtered.length} / ${state.cases.length}`;
+      const groups = new Map();
+      state.filtered.forEach((item) => { if (!groups.has(item.source_group)) groups.set(item.source_group, []); groups.get(item.source_group).push(item); });
+      groups.forEach((items, sourceGroup) => {
+        host.append(node("span", "case-group-title", groupName(sourceGroup)));
+        items.forEach((item, index) => {
+          const button = node("button", `case-button${item.case_id === state.selected ? " active" : ""}`);
+          button.type = "button"; button.setAttribute("aria-pressed", String(item.case_id === state.selected));
+          button.append(node("span", "case-title", `${String(index + 1).padStart(2, "0")}  ${item.title}`), node("span", "case-id", item.case_id));
+          button.onclick = () => { state.selected = item.case_id; render(); };
+          host.append(button);
+        });
+      });
+      if (!state.filtered.length) host.append(node("div", "empty", "没有匹配的 case"));
+    }
+    function copyText(text, button) {
+      const done = () => { const old = button.textContent; button.textContent = "已复制"; setTimeout(() => { button.textContent = old; }, 1200); };
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done).catch(() => {});
+      else { const area = document.createElement("textarea"); area.value = text; document.body.append(area); area.select(); document.execCommand("copy"); area.remove(); done(); }
+    }
+    function captionBlock(label, text, extraClass) {
+      const block = node("article", `caption-block ${extraClass || ""}`);
+      const head = node("div", "caption-head"); const title = node("h4", "", label); const copy = node("button", "copy-button", "复制");
+      copy.type = "button"; copy.title = `复制${label}`; copy.onclick = () => copyText(text, copy); head.append(title, copy);
+      block.append(head, node("p", "", text || "暂无 caption")); return block;
+    }
+    function mediaCard(item, definition, truth = false) {
+      const [kind, title, note] = definition; const card = node("article", "media-card"); const header = document.createElement("header");
+      header.append(node("div", "label", truth ? "ground truth video" : "conditioning video"), node("h5", "", title));
+      const video = document.createElement("video"); video.controls = true; video.playsInline = true; video.preload = "metadata"; video.src = mediaUrl(item, kind);
+      card.append(header, video, node("div", "media-meta", note)); return card;
+    }
+    function fact(label, value, note) { const box = node("div", "fact"); box.append(node("div", "label", label), node("span", "fact-value", value), node("span", "fact-note", note || "")); return box; }
+    function renderCase() {
+      const host = $("case-content"); host.replaceChildren(); const item = selectedCase();
+      if (!item) { host.append(node("div", "empty", "没有可显示的 case")); return; }
+      const control = item.control || {}; const conditioning = item.conditioning || {}; const simulation = item.simulation || {};
+      const header = node("header", "case-header"); const titleWrap = document.createElement("div");
+      titleWrap.append(node("div", "label", `${groupName(item.source_group)} / ${item.family_key}`), node("h3", "", item.title), node("p", "", item.case_id));
+      header.append(titleWrap, node("div", "family-tag", familyName(item.family_key))); host.append(header);
+      const facts = node("section", "fact-strip");
+      facts.append(fact("控制变量", control.variable || "-", control.value_label || ""), fact("首事件", conditioning.first_event_rule || "-", conditioning.first_event_frame == null ? "未记录" : `第 ${conditioning.first_event_frame} 帧 / ${number(conditioning.first_event_time_s, 2)} s`), fact("视频", `${simulation.frame_count || 90} 帧 / ${simulation.fps || 30} FPS`, `${number(simulation.duration_seconds, 2)} s`), fact("接触点", item.physics?.contact_point_count ?? 0, `${item.dynamic_actors?.length || 0} 个动态 actor`));
+      host.append(facts);
+      const captions = node("section", "caption-grid"); captions.append(captionBlock("具体变量版", item.captions?.specific, "specific"), captionBlock("模糊变量版", item.captions?.abstract, "abstract")); host.append(captions);
+      const heading = node("div", "section-heading"); heading.append(node("h4", "", "视频"), node("span", "", "完整视频与短上下文")); host.append(heading);
+      const media = node("section", "media-grid"); MEDIA.forEach((definition) => media.append(mediaCard(item, definition))); host.append(media);
+      const truthHeading = node("div", "section-heading"); truthHeading.append(node("h4", "", "物理监督可视化"), node("span", "", "mask / depth / trajectory / contacts")); host.append(truthHeading);
+      const truth = node("section", "truth-grid"); TRUTH_MEDIA.forEach((definition) => truth.append(mediaCard(item, definition, true))); host.append(truth);
+      const details = node("section", "details-grid"); const scene = node("article", "info-panel"); scene.append(node("h4", "场景描述"), node("p", "", item.scene_description || "-"));
+      const table = node("table", "data-table"); const rows = [["场景族", familyName(item.family_key)], ["任务类型", item.task_type], ["控制值", controlLabel(item)], ["初始事件后 ctx=8", conditioning.event_after_context8 ? "是" : "否"], ["初始事件后 ctx=16", conditioning.event_after_context16 ? "是" : "否"], ["画面风格", item.scene_style]];
+      rows.forEach(([key, value]) => { const row = document.createElement("tr"); row.append(node("th", "", key), node("td", "", value || "-")); table.append(row); });
+      const info = node("article", "info-panel"); info.append(node("h4", "样本信息"), table); details.append(scene, info); host.append(details);
+    }
+    function render() { renderMetrics(); renderFilters(); renderList(); renderCase(); }
+    $("search").oninput = (event) => { state.query = event.target.value; render(); };
+    fetch("/api/cases", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }).then((cases) => {
+      state.cases = cases; state.selected = cases[0]?.case_id || "";
+      $("overview-title").textContent = `${cases.length} 个物理视频的 caption 对照`; $("top-status").textContent = `${cases.length} cases | RGB + ctx=8/16 + 4 truth videos`;
+      render();
+    }).catch((error) => { $("top-status").textContent = "读取失败"; $("case-content").replaceChildren(node("div", "error", `无法读取数据集：${error.message}`)); });
+  </script>
+</body>
+</html>
