@@ -102,9 +102,10 @@ def run_test5(config: dict, tasks: list[dict], gpus: list[int]) -> None:
                     continue
                 checkpoint_watch.log(
                     f"manual parallel test_5 start method={task['method_key']} "
-                    f"step={task['step']} gpu={gpu}"
+                    f"step={task['step']} requested_gpu={gpu}"
                 )
-                checkpoint_watch.run_inference_task(config, task, gpu)
+                with checkpoint_watch.reserve_available_gpu(config) as gpu_id:
+                    checkpoint_watch.run_inference_task(config, task, gpu_id)
 
     queues = [[] for _ in gpus]
     for index, task in enumerate(tasks):
@@ -160,6 +161,7 @@ def main() -> None:
     config_path = args.config.expanduser().resolve()
     config = json.loads(config_path.read_text(encoding="utf-8"))
     config["_config_path"] = str(config_path)
+    config["runtime"]["gpu_ids"] = args.gpus
     tasks = complete_tasks(config)
     if args.methods is not None:
         methods = set(args.methods)
@@ -182,15 +184,7 @@ def main() -> None:
         run_test5(config, test5, args.gpus)
     if not args.test5_only:
         run_physiciq(config_path, config, tasks, args.gpus)
-    subprocess.run(
-        [
-            config["paths"]["python"],
-            config["paths"]["dashboard_builder"],
-            "--config",
-            str(config_path),
-        ],
-        check=True,
-    )
+    checkpoint_watch.refresh_site(config)
     print("[missing-generation] all generation gaps filled", flush=True)
 
 

@@ -83,6 +83,13 @@ def checkpoint_files(method: dict[str, Any] | None = None) -> tuple[str, ...]:
 
 
 def checkpoint_complete(path: Path, method: dict[str, Any] | None = None) -> bool:
+    if method and method.get("checkpoint_format") == "official_baseline":
+        if path.is_file():
+            return path.stat().st_size > 0
+        return all(
+            (path / name).is_file() and (path / name).stat().st_size > 0
+            for name in ("adapter_model.safetensors", "adapter_config.json")
+        )
     return all(
         (path / name).is_file() and (path / name).stat().st_size > 0
         for name in checkpoint_files(method)

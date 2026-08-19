@@ -25,7 +25,9 @@ from xssc_lora_checkpoint_watch import (
     discover_checkpoints,
     load_json,
     log,
+    reserve_available_gpu,
     timestamp,
+    try_exclusive_lock,
     validate_result_root,
 )
 from xssc_lora_physiciq_watch import (
@@ -259,6 +261,7 @@ def main() -> None:
     config_path = args.config.resolve()
     config = load_json(config_path)
     config["_config_path"] = str(config_path)
+    config["runtime"]["gpu_ids"] = args.gpus
     phys_state_root(config).mkdir(parents=True, exist_ok=True)
 
     tasks = selected_tasks(config, set(args.steps), set(args.methods))
@@ -282,13 +285,31 @@ def main() -> None:
 
     def worker(task: dict[str, Any], gpu_id: int) -> None:
         try:
-            run_task(
-                config,
-                task,
-                gpu_id,
-                adopt_existing=args.adopt_existing,
-                poll_seconds=args.poll_seconds,
+            task_lock = (
+                phys_state_root(config)
+                / "inference_locks"
+                / task["method_key"]
+                / f"step-{int(task['step']):06d}.lock"
             )
+            with try_exclusive_lock(task_lock) as acquired:
+                if not acquired:
+                    log(
+                        f"PhysicIQ task already running method={task['method_key']} "
+                        f"step={task['step']}"
+                    )
+                    return
+                if phys_manifest_path(
+                    config, task["method_key"], int(task["step"])
+                ).is_file():
+                    return
+                with reserve_available_gpu(config) as reserved_gpu_id:
+                    run_task(
+                        config,
+                        task,
+                        reserved_gpu_id,
+                        adopt_existing=args.adopt_existing,
+                        poll_seconds=args.poll_seconds,
+                    )
         finally:
             with remaining_lock:
                 remaining[:] = [

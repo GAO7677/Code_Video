@@ -23,6 +23,7 @@ from xssc_lora_checkpoint_watch import (
     log,
     method_config,
     read_inputs,
+    refresh_site,
     reserve_available_gpu,
     reserve_metric_gpu,
     state_paths,
@@ -269,15 +270,7 @@ def inference_loop(config: dict[str, Any], once: bool) -> None:
                 try:
                     with reserve_available_gpu(config) as gpu_id:
                         run_phys_inference(config, task, gpu_id)
-                    subprocess.run(
-                        [
-                            config["paths"]["python"],
-                            config["paths"]["dashboard_builder"],
-                            "--config",
-                            config["_config_path"],
-                        ],
-                        check=True,
-                    )
+                    refresh_site(config)
                 except Exception as exc:
                     log(
                         f"PhysicIQ inference failed method={task['method_key']} "
@@ -487,17 +480,7 @@ def refresh_plots_if_complete(
 
 def refresh_dashboard(config: dict[str, Any]) -> None:
     """Rebuild the dashboard after a complete PhysicIQ metric set is committed."""
-    lock_path = phys_state_root(config) / "dashboard_refresh.lock"
-    with exclusive_lock(lock_path):
-        subprocess.run(
-            [
-                config["paths"]["python"],
-                config["paths"]["dashboard_builder"],
-                "--config",
-                config["_config_path"],
-            ],
-            check=True,
-        )
+    refresh_site(config)
     log("PhysicIQ dashboard refreshed after metric completion")
 
 
