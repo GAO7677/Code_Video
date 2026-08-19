@@ -234,7 +234,10 @@ def run_task(
         subprocess.run(
             [
                 "bash",
-                config["paths"]["run_infer_script"],
+                next(
+                    item for item in config["methods"]
+                    if item["key"] == task["method_key"]
+                ).get("run_infer_script", config["paths"]["run_infer_script"]),
                 task["checkpoint_dir"],
                 str(gpu_id),
                 str(output_root),
