@@ -337,9 +337,10 @@ def _stable_name_seed(name: str) -> int:
 
 
 def _make_pbr_material(material: MaterialSpec) -> legacy.pyrender.MetallicRoughnessMaterial:
+    base_color = [float(value) for value in material.base_color]
     return legacy.pyrender.MetallicRoughnessMaterial(
         alphaMode="OPAQUE",
-        baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+        baseColorFactor=[*base_color, 1.0],
         metallicFactor=float(np.clip(material.metallic, 0.0, 1.0)),
         roughnessFactor=float(np.clip(material.roughness, 0.05, 1.0)),
         doubleSided=True,

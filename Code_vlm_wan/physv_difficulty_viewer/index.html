@@ -141,6 +141,10 @@
 
     .video-stage { background: #13221b; }
     #video { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: min(68vh, 680px); background: #13221b; object-fit: contain; }
+    .video-mode-tabs { display: flex; gap: 2px; padding: 7px 10px; background: #e8efeb; border-bottom: 1px solid var(--line); }
+    .video-mode-tab { min-height: 29px; padding: 4px 9px; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 11px; }
+    .video-mode-tab:hover { color: var(--forest); background: #f5f8f6; }
+    .video-mode-tab[aria-selected="true"] { color: var(--forest); background: var(--surface); border-color: var(--line-strong); font-weight: 700; }
     .video-caption { padding: 10px 15px 0; color: var(--muted); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
     .metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
     .metric { min-width: 0; padding: 9px 11px; border-right: 1px solid var(--line); }
@@ -226,6 +230,7 @@
         <button class="mode-tab" type="button" role="tab" data-mode="height" aria-selected="true">F11 桌高对照</button>
         <button class="mode-tab" type="button" role="tab" data-mode="incline" aria-selected="false">F12 斜面倾角</button>
         <button class="mode-tab" type="button" role="tab" data-mode="direction" aria-selected="false">F11 方向变体</button>
+        <button class="mode-tab" type="button" role="tab" data-mode="v2v" aria-selected="false">V2V 短上下文</button>
         <button class="mode-tab" type="button" role="tab" data-mode="all" aria-selected="false">全部案例</button>
       </div>
       <div class="filter-group">
@@ -263,6 +268,10 @@
 
       <section class="pane video-pane">
         <div class="pane-heading"><h2 id="video-title">视频</h2><span class="count" id="video-status"></span></div>
+        <div class="video-mode-tabs" id="video-mode-tabs" hidden>
+          <button class="video-mode-tab" type="button" data-video-mode="context" aria-selected="false">前 8 帧上下文</button>
+          <button class="video-mode-tab" type="button" data-video-mode="full" aria-selected="true">完整模拟</button>
+        </div>
         <div class="video-stage"><video id="video" controls playsinline preload="auto"></video></div>
         <div class="video-caption" id="video-caption"></div>
         <div class="metric-grid" id="metric-grid"></div>
@@ -288,11 +297,13 @@
   </main>
 
   <script>
-    const state = { rows: [], filtered: [], mode: "height", selectedId: "", query: "", level: "all" };
+    const state = { rows: [], filtered: [], mode: "height", selectedId: "", query: "", level: "all", videoMode: "full" };
     const $ = (id) => document.getElementById(id);
 
     function isF11(row) { return row.scene_family && row.scene_family.family_key === "F11"; }
     function isF12(row) { return row.scene_family && row.scene_family.family_key === "F12"; }
+    function isV2V(row) { return Boolean(row && row.scene_family && String(row.scene_family.family_key || "").startsWith("V2V_")); }
+    function v2v(row) { return row.v2v || {}; }
     function spec(row) { return row.scenario_spec || {}; }
     function tableHeight(row) {
       const value = Number(spec(row).table_height_m);
@@ -330,10 +341,22 @@
     function f11Primary(row) { return isF11(row) && angleLabel(row) === "sr048"; }
     function f11DirectionSet(row) { return isF11(row) && Math.abs((tableHeight(row) || 0) - 0.68) < 0.001; }
     function f12Control(row) { return isF12(row); }
+    function controlledValue(row) {
+      const value = Number(spec(row).controlled_value ?? v2v(row).controlled_value);
+      return Number.isFinite(value) ? value : null;
+    }
+    function controlledLabel(row) {
+      return String(spec(row).controlled_value_label || v2v(row).controlled_value_label || "-");
+    }
+    function firstEventFrame(row) {
+      const value = Number(v2v(row).first_event_frame);
+      return Number.isFinite(value) ? value : null;
+    }
 
     function displayTitle(row) {
       if (isF11(row)) return `桌高 ${metric(tableHeight(row), " m")} / ${angleLabel(row).toUpperCase() || "SR -"}`;
       if (isF12(row)) return `斜面 ${metric(rampAngle(row), "°", 0)}`;
+      if (isV2V(row)) return `${(row.scene_family && row.scene_family.title) || "V2V"} / ${controlledLabel(row)}`;
       return row.scene_title || row.case_id;
     }
     function displayMeta(row) {
@@ -341,11 +364,17 @@
       const family = row.scene_family || {};
       if (isF11(row)) return `F11 · ${spec(row).travel_angle_deg ?? "-"} deg · ${motionState(row.state_summary && row.state_summary.final_motion_state)}`;
       if (isF12(row)) return `F12 · 静止释放 · ${motionState(row.state_summary && row.state_summary.final_motion_state)}`;
+      if (isV2V(row)) return `V2V · 前 ${v2v(row).context_frames || 8} 帧 · 首事件 ${firstEventFrame(row) == null ? "-" : `第 ${firstEventFrame(row)} 帧`}`;
       return `${difficulty.title || difficulty.level || "-"} · ${family.family_key || "-"}`;
     }
     function rowsForMode() {
       if (state.mode === "height") return state.rows.filter(f11Primary).sort((a, b) => (tableHeight(a) || 0) - (tableHeight(b) || 0));
       if (state.mode === "incline") return state.rows.filter(f12Control).sort((a, b) => (rampAngle(a) || 0) - (rampAngle(b) || 0));
+      if (state.mode === "v2v") return state.rows.filter(isV2V).sort((a, b) => {
+        const familyA = (a.scene_family && a.scene_family.family_key) || "";
+        const familyB = (b.scene_family && b.scene_family.family_key) || "";
+        return familyA.localeCompare(familyB) || (controlledValue(a) || 0) - (controlledValue(b) || 0);
+      });
       if (state.mode === "direction") {
         return state.rows.filter(f11DirectionSet).sort((a, b) => {
           if (f11Primary(a)) return -1;
@@ -362,7 +391,7 @@
       const query = state.query.trim().toLowerCase();
       return rowsForMode().filter((row) => {
         const matchesLevel = state.mode !== "all" || state.level === "all" || (row.difficulty && row.difficulty.level === state.level);
-        const haystack = [row.case_id, row.scene_title, row.scene_description, row.scene_family && row.scene_family.title].filter(Boolean).join(" ").toLowerCase();
+        const haystack = [row.case_id, row.scene_title, row.scene_description, row.scene_family && row.scene_family.title, controlledLabel(row)].filter(Boolean).join(" ").toLowerCase();
         return matchesLevel && (!query || haystack.includes(query));
       });
     }
@@ -370,6 +399,8 @@
       if (rows.some((row) => row.case_id === state.selectedId)) return;
       const preferredCaseId = state.mode === "incline"
         ? "difficulty_l2_f12_a024"
+        : state.mode === "v2v"
+          ? "v2v_gap_012"
         : "difficulty_l2_f11_h068_sr048";
       const preferred = rows.find((row) => row.case_id === preferredCaseId);
       state.selectedId = (preferred || rows[0] || {}).case_id || "";
@@ -378,6 +409,7 @@
       if (state.mode === "height") return "桌高控制组";
       if (state.mode === "incline") return "斜面倾角控制组";
       if (state.mode === "direction") return "0.68 m 方向组";
+      if (state.mode === "v2v") return `${(row.scene_family && row.scene_family.title) || "V2V"} 控制组`;
       const difficulty = row.difficulty || {};
       return `${difficulty.level || "-"} / ${difficulty.title || "未分类"}`;
     }
@@ -418,7 +450,7 @@
         });
         list.appendChild(group);
       });
-      const labels = { height: "桌高控制组", incline: "斜面倾角控制组", direction: "方向变体", all: "案例" };
+      const labels = { height: "桌高控制组", incline: "斜面倾角控制组", direction: "方向变体", v2v: "V2V 短上下文", all: "案例" };
       $("case-list-title").textContent = labels[state.mode];
       $("case-count").textContent = `${state.filtered.length} 个`;
     }
@@ -426,30 +458,47 @@
     function renderComparison() {
       const section = $("comparison");
       const inclineMode = state.mode === "incline";
-      const controls = (inclineMode ? state.rows.filter(f12Control) : state.rows.filter(f11Primary)).sort((a, b) => {
-        const left = inclineMode ? rampAngle(a) : tableHeight(a);
-        const right = inclineMode ? rampAngle(b) : tableHeight(b);
-        return (left || 0) - (right || 0);
-      });
-      const show = (state.mode === "height" || inclineMode) && controls.length > 0;
+      const v2vMode = state.mode === "v2v";
+      let controls;
+      if (v2vMode) {
+        controls = state.filtered.filter(isV2V);
+      } else {
+        controls = (inclineMode ? state.rows.filter(f12Control) : state.rows.filter(f11Primary)).sort((a, b) => {
+          const left = inclineMode ? rampAngle(a) : tableHeight(a);
+          const right = inclineMode ? rampAngle(b) : tableHeight(b);
+          return (left || 0) - (right || 0);
+        });
+      }
+      const show = (state.mode === "height" || inclineMode || v2vMode) && controls.length > 0;
       section.hidden = !show;
       if (!show) return;
+
+      if (v2vMode) {
+        $("comparison-title").textContent = "V2V / 短上下文控制组";
+        $("comparison-controls").textContent = "每个场景只改变一个可见控制变量；卡片视频为前 8 帧上下文，完整模拟可在右侧切换。";
+        $("comparison-count").textContent = `${controls.length} 个案例 · ${new Set(controls.map((row) => row.scene_family && row.scene_family.family_key)).size} 个场景族`;
+      }
+
       const baseline = dynamicObject(controls[0]) || {};
       const uniform = controls.every((row) => {
         const object = dynamicObject(row) || {};
         return object.mass_kg === baseline.mass_kg && object.restitution === baseline.restitution && object.friction === baseline.friction;
       });
-      const floor = spec(controls[0]).floor_restitution;
-      $("comparison-title").textContent = inclineMode ? "F12 / 斜面倾角对照" : "F11 / 桌高对照";
-      $("comparison-controls").textContent = uniform
-          ? inclineMode
-          ? `红色木块参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 静止释放 · 斜板 ${metric(spec(controls[0]).ramp_length_m, " m")} · 地面 e=${number(floor)}`
-          : `滚球参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 地面 e=${number(floor)}`
-        : "运动物体参数存在差异";
-      $("comparison-count").textContent = `${controls.length} 个控制案例`;
-      const tableHeaders = inclineMode
-        ? ["斜面角度", "初速度", "最高线速度", "路径长度", "末速度", "末态"]
-        : ["桌高", "初速度", "最高线速度", "高度范围", "末速度", "末态"];
+      if (!v2vMode) {
+        const floor = spec(controls[0]).floor_restitution;
+        $("comparison-title").textContent = inclineMode ? "F12 / 斜面倾角对照" : "F11 / 桌高对照";
+        $("comparison-controls").textContent = uniform
+            ? inclineMode
+            ? `红色木块参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 静止释放 · 斜板 ${metric(spec(controls[0]).ramp_length_m, " m")} · 地面 e=${number(floor)}`
+            : `滚球参数一致：${metric(baseline.mass_kg, " kg")} · e=${number(baseline.restitution)} · mu=${number(baseline.friction)} · 地面 e=${number(floor)}`
+          : "运动物体参数存在差异";
+        $("comparison-count").textContent = `${controls.length} 个控制案例`;
+      }
+      const tableHeaders = v2vMode
+        ? ["控制变量", "上下文", "首事件", "最高线速度", "末态", "可见性"]
+        : inclineMode
+          ? ["斜面角度", "初速度", "最高线速度", "路径长度", "末速度", "末态"]
+          : ["桌高", "初速度", "最高线速度", "高度范围", "末速度", "末态"];
       const tableHead = $("comparison-table-head");
       tableHead.replaceChildren();
       tableHeaders.forEach((label) => {
@@ -459,7 +508,7 @@
       });
 
       const grid = $("comparison-grid");
-      grid.className = `comparison-grid${inclineMode ? " four-up" : ""}`;
+      grid.className = `comparison-grid${inclineMode || v2vMode ? " four-up" : ""}`;
       grid.replaceChildren();
       controls.forEach((row) => {
         const summary = row.state_summary || {};
@@ -468,7 +517,7 @@
         card.className = `compare-case${row.case_id === state.selectedId ? " active" : ""}`;
         card.setAttribute("aria-label", `选择 ${displayTitle(row)}`);
         const video = document.createElement("video");
-        video.src = row.video_url;
+        video.src = v2vMode ? (row.context_video_url || row.video_url) : row.video_url;
         video.autoplay = true;
         video.loop = true;
         video.muted = true;
@@ -480,16 +529,20 @@
         const left = document.createElement("div");
         const height = document.createElement("div");
         height.className = "compare-height";
-        height.textContent = inclineMode
-          ? `斜面 ${metric(rampAngle(row), "°", 0)}`
-          : `桌高 ${metric(tableHeight(row), " m")}`;
+        height.textContent = v2vMode
+          ? `${(row.scene_family && row.scene_family.title) || "V2V"} · ${controlledLabel(row)}`
+          : inclineMode
+            ? `斜面 ${metric(rampAngle(row), "°", 0)}`
+            : `桌高 ${metric(tableHeight(row), " m")}`;
         const id = document.createElement("div");
         id.className = "compare-id";
         id.textContent = row.case_id;
         left.append(height, id);
         const speed = document.createElement("span");
         speed.className = "compare-speed";
-        speed.textContent = `vmax ${metric(summary.max_linear_speed_mps, " m/s")}`;
+        speed.textContent = v2vMode
+          ? `事件 ${firstEventFrame(row) == null ? "-" : `F${firstEventFrame(row)}`}`
+          : `vmax ${metric(summary.max_linear_speed_mps, " m/s")}`;
         meta.append(left, speed);
         card.append(video, meta);
         card.addEventListener("click", () => { state.selectedId = row.case_id; render(); });
@@ -500,17 +553,26 @@
       const body = $("comparison-table-body");
       body.replaceChildren();
       controls.forEach((row) => {
-        const object = objectSummary(row);
         const tr = document.createElement("tr");
         if (row.case_id === state.selectedId) tr.className = "selected-row";
-        const values = [
-          inclineMode ? metric(rampAngle(row), "°", 0) : metric(tableHeight(row), " m"),
-          metric(initialSpeed(row), " m/s"),
-          metric(row.state_summary && row.state_summary.max_linear_speed_mps, " m/s"),
-          inclineMode ? metric(object.path_length_m, " m") : metric(object.height_range_m, " m"),
-          metric(object.final_speed_mps, " m/s"),
-          motionState(row.state_summary && row.state_summary.final_motion_state),
-        ];
+        const object = objectSummary(row);
+        const values = v2vMode
+          ? [
+              controlledLabel(row),
+              `${v2v(row).context_frames || 8} 帧`,
+              firstEventFrame(row) == null ? "未检测" : `第 ${firstEventFrame(row)} 帧`,
+              metric(row.state_summary && row.state_summary.max_linear_speed_mps, " m/s"),
+              motionState(row.state_summary && row.state_summary.final_motion_state),
+              v2v(row).all_objects_visible_every_frame ? "全程可见" : "需复核",
+            ]
+          : [
+              inclineMode ? metric(rampAngle(row), "°", 0) : metric(tableHeight(row), " m"),
+              metric(initialSpeed(row), " m/s"),
+              metric(row.state_summary && row.state_summary.max_linear_speed_mps, " m/s"),
+              inclineMode ? metric(object.path_length_m, " m") : metric(object.height_range_m, " m"),
+              metric(object.final_speed_mps, " m/s"),
+              motionState(row.state_summary && row.state_summary.final_motion_state),
+            ];
         values.forEach((value) => {
           const cell = document.createElement("td");
           cell.textContent = value;
@@ -523,6 +585,16 @@
     function metricsFor(row) {
       const summary = row.state_summary || {};
       const object = objectSummary(row);
+      if (isV2V(row)) {
+        return [
+          ["场景族", (row.scene_family && row.scene_family.title) || "V2V"],
+          ["控制变量", controlledLabel(row)],
+          ["上下文", `${v2v(row).context_frames || 8} 帧 / ${metric(v2v(row).context_duration_s, " s")}`],
+          ["首事件", firstEventFrame(row) == null ? "未检测" : `第 ${firstEventFrame(row)} 帧`],
+          ["最高线速度", metric(summary.max_linear_speed_mps, " m/s")],
+          ["末态", motionState(summary.final_motion_state)],
+        ];
+      }
       if (isF11(row)) {
         return [
           ["桌高", metric(tableHeight(row), " m")],
@@ -570,6 +642,21 @@
       });
     }
 
+    function activeVideoUrl(row) {
+      if (isV2V(row) && state.videoMode === "context") return row.context_video_url || row.video_url;
+      return row.video_url;
+    }
+
+    function renderVideoModeControls(row) {
+      const controls = $("video-mode-tabs");
+      const available = Boolean(isV2V(row) && row.context_video_url);
+      controls.hidden = !available;
+      if (!available) return;
+      document.querySelectorAll(".video-mode-tab").forEach((button) => {
+        button.setAttribute("aria-selected", String(button.dataset.videoMode === state.videoMode));
+      });
+    }
+
     function renderSelected() {
       const row = state.filtered.find((item) => item.case_id === state.selectedId);
       if (!row) return;
@@ -577,15 +664,20 @@
       const difficulty = row.difficulty || {};
       const family = row.scene_family || {};
       const video = $("video");
-      if (video.dataset.caseId !== row.case_id) {
+      renderVideoModeControls(row);
+      const videoMode = isV2V(row) ? state.videoMode : "full";
+      if (video.dataset.caseId !== row.case_id || video.dataset.videoMode !== videoMode) {
         video.pause();
-        video.src = row.video_url;
+        video.src = activeVideoUrl(row);
         video.dataset.caseId = row.case_id;
+        video.dataset.videoMode = videoMode;
         video.load();
       }
       $("video-title").textContent = row.case_id;
       $("video-status").textContent = row.status || "rendered";
-      $("video-caption").textContent = row.video || "";
+      $("video-caption").textContent = isV2V(row)
+        ? `${state.videoMode === "context" ? "前 8 帧上下文" : "完整模拟"} · ${row.caption_intent_only || row.scene_description || ""}`
+        : row.video || "";
       $("question").textContent = row.question || "未记录问题。";
       $("response").textContent = row.response_final || "尚无输出。";
       $("answer-source").textContent = row.answer_source || "-";
@@ -599,6 +691,8 @@
         ? `滚球：${metric(object.mass_kg, " kg")} · e=${number(object.restitution)} · mu=${number(object.friction)} · 屏幕右向 ${angleLabel(row).toUpperCase() || "-"}`
         : isF12(row)
           ? `红色木块：${metric(object.mass_kg, " kg")} · e=${number(object.restitution)} · mu=${number(object.friction)} · 静止释放 · 斜板和支撑均为受重力的动态物体`
+          : isV2V(row)
+            ? `${family.title || "V2V"} · 只改变 ${spec(row).controlled_variable || v2v(row).controlled_variable || "控制变量"} · ${v2v(row).event_after_context ? "首事件晚于上下文" : "首事件需复核"} · ${v2v(row).all_objects_visible_every_frame ? "全程可见" : "存在出画风险"}`
           : `${row.width || 1280} x ${row.height || 720} · ${summary.frames || "-"} 帧 · mask ${row.mask_ids ? "已保留" : "缺失"}`;
     }
 
@@ -623,7 +717,16 @@
       renderSelected();
     }
 
-    document.querySelectorAll(".mode-tab").forEach((button) => button.addEventListener("click", () => { state.mode = button.dataset.mode; render(); }));
+    document.querySelectorAll(".mode-tab").forEach((button) => button.addEventListener("click", () => {
+      state.mode = button.dataset.mode;
+      if (state.mode === "v2v") state.videoMode = "context";
+      else state.videoMode = "full";
+      render();
+    }));
+    document.querySelectorAll(".video-mode-tab").forEach((button) => button.addEventListener("click", () => {
+      state.videoMode = button.dataset.videoMode;
+      render();
+    }));
     $("level-filter").addEventListener("change", (event) => { state.level = event.target.value; render(); });
     $("case-search").addEventListener("input", (event) => { state.query = event.target.value; render(); });
     fetch("/api/results")

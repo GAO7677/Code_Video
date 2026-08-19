@@ -99,14 +99,23 @@ class ViewerHandler(BaseHTTPRequestHandler):
     def _rows(self):
         return load_rows(self.server.results_path)
 
-    def _video_path(self, case_id):
+    def _row_media_path(self, case_id, field):
         for row in self._rows():
             if row.get("case_id") == case_id:
-                path = Path(row["video"])
+                raw_path = row.get(field)
+                if not raw_path:
+                    return None
+                path = Path(raw_path)
                 if path.is_file():
                     return path
                 return None
         return None
+
+    def _video_path(self, case_id):
+        return self._row_media_path(case_id, "video")
+
+    def _context_video_path(self, case_id):
+        return self._row_media_path(case_id, "context_video")
 
     def _handle(self):
         parsed = urlparse(self.path)
@@ -119,6 +128,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 public_row["video_url"] = "/media/" + quote(
                     row["case_id"], safe=""
                 )
+                if row.get("context_video"):
+                    public_row["context_video_url"] = "/media-context/" + quote(
+                        row["case_id"], safe=""
+                    )
                 rows.append(public_row)
             payload = json.dumps(rows, ensure_ascii=False).encode("utf-8")
             self._send_bytes(payload, "application/json; charset=utf-8")
@@ -129,6 +142,17 @@ class ViewerHandler(BaseHTTPRequestHandler):
             video_path = self._video_path(case_id)
             if video_path is None:
                 self._send_bytes(b"Video not found", "text/plain; charset=utf-8", 404)
+                return
+            self._send_file(video_path, "video/mp4")
+            return
+
+        if path.startswith("/media-context/"):
+            case_id = unquote(path.removeprefix("/media-context/"))
+            video_path = self._context_video_path(case_id)
+            if video_path is None:
+                self._send_bytes(
+                    b"Context video not found", "text/plain; charset=utf-8", 404
+                )
                 return
             self._send_file(video_path, "video/mp4")
             return

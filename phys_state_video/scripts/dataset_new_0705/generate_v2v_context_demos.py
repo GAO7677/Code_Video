@@ -750,24 +750,39 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
 
 def _make_domino_case(sample_key: str, spacing: float) -> DemoCase:
     hx, hy, hz = 0.045, 0.12, 0.24
-    first_angle = -8.0
-    first_theta = math.radians(first_angle)
-    first_z = hx * math.sin(first_theta) + hz * math.cos(first_theta)
-    start_x = -0.90
+    trigger_ball_radius = 0.085
+    trigger_ball_x = -1.45
+    trigger_ball_speed = 1.80
+    start_x = -0.55
     center_step = 2.0 * hx + spacing
     objects: list[ObjectInstanceSpec] = [
+        _object(
+            name="domino_trigger_ball",
+            family_key="trigger_ball",
+            shape="sphere",
+            size={"radius": trigger_ball_radius},
+            material_key="rubber_red",
+            position=(trigger_ball_x, 0.0, trigger_ball_radius),
+            dynamic=True,
+            mass=1.20,
+            friction=0.30,
+            restitution=0.45,
+            velocity=(trigger_ball_speed, 0.0, 0.0),
+            linear_damping=0.01,
+            angular_damping=0.01,
+            role="dynamic_trigger",
+        ),
         _object(
             name="domino_0",
             family_key="tall_box",
             shape="box",
             size={"hx": hx, "hy": hy, "hz": hz},
             material_key="rubber_red",
-            position=(start_x, 0.0, first_z),
+            position=(start_x, 0.0, hz),
             dynamic=True,
             mass=0.42,
             friction=0.72,
             restitution=0.08,
-            orientation=(0.0, first_angle, 0.0),
             linear_damping=0.015,
             angular_damping=0.035,
         )
@@ -799,7 +814,7 @@ def _make_domino_case(sample_key: str, spacing: float) -> DemoCase:
         family_key="V2V_DOMINO",
         sample_key=sample_key,
         title=f"Domino chain with {spacing:.2f} m spacing",
-        description="A slightly tilted first domino starts a visible chain; only the spacing changes.",
+        description="A moving red ball strikes the first upright domino; only the spacing changes.",
         objects=objects,
         camera=camera,
         surface_key="painted_concrete_floor",
@@ -808,7 +823,10 @@ def _make_domino_case(sample_key: str, spacing: float) -> DemoCase:
             "controlled_variable": "domino_gap_m",
             "domino_gap_m": spacing,
             "domino_center_step_m": center_step,
-            "initial_tilt_deg": first_angle,
+            "trigger_ball_start_x_m": trigger_ball_x,
+            "trigger_ball_speed_mps": trigger_ball_speed,
+            "trigger_ball_radius_m": trigger_ball_radius,
+            "trigger_ball_mass_kg": 1.20,
         },
     )
     return DemoCase(
@@ -847,7 +865,7 @@ def build_demo_cases(seed_base: int = 20260819) -> list[DemoCase]:
         cases.append(_make_pendulum_case(f"v2v_pendulum_l{int(value * 100):03d}", value))
     for value in (0.28, 0.48, 0.68):
         cases.append(_make_seesaw_case(f"v2v_seesaw_x{int(value * 100):03d}", value))
-    for value in (0.04, 0.12, 0.20):
+    for value in (0.02, 0.06, 0.12):
         cases.append(_make_domino_case(f"v2v_domino_g{int(value * 100):03d}", value))
     return cases
 
