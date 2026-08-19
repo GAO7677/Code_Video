@@ -207,7 +207,14 @@ def _make_v2v_cases(seed_base: int) -> list[ExportCase]:
                 units=demo.units,
                 event_rule=demo.event_rule,
                 blueprint=demo.blueprint,
-                seed=int(seed_base + index * 1009),
+                # Keep the seed fixed within a control group.  The obstacle
+                # group must differ only by the ball start position; other
+                # families retain their existing per-case seed convention.
+                seed=(
+                    int(seed_base + 5000)
+                    if demo.family_key == "V2V_OBSTACLE"
+                    else int(seed_base + index * 1009)
+                ),
                 scene_style=V2V_SCENE_STYLE,
                 v2v_case=demo,
             )
@@ -792,7 +799,12 @@ def _package_case(
 
     render_metadata = json.loads((raw_dir / "simulator_render_metadata.json").read_text(encoding="utf-8"))
     v2v_qa = render_metadata.get("qa", {}) if isinstance(render_metadata, dict) else {}
-    event_frame = int(v2v_qa.get("first_event_frame", -1)) if case.v2v_case is not None else _derive_event_frame(case, positions, quats, object_names)
+    raw_event_frame = v2v_qa.get("first_event_frame", -1)
+    event_frame = (
+        int(raw_event_frame)
+        if raw_event_frame is not None
+        else -1
+    ) if case.v2v_case is not None else _derive_event_frame(case, positions, quats, object_names)
     event_time_s = float(frame_times[event_frame]) if 0 <= event_frame < len(frame_times) else None
     actor_details = {
         name: {

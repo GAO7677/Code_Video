@@ -28,6 +28,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-list", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--p0-index-parity",
+        choices=("all", "odd", "even"),
+        default="all",
+        help=(
+            "Select all cases or a 1-based P0 list parity.  This preserves the "
+            "official source index and is used to resume a single-GPU interleaved run."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -87,26 +96,31 @@ def main() -> None:
         raise ValueError(
             f"P0 input list must contain {EXPECTED_CASES} cases, found {len(declared)}"
         )
-    selected = declared if args.limit is None else declared[: args.limit]
+    indexed = list(enumerate(declared, start=1))
+    if args.p0_index_parity == "odd":
+        indexed = [(index, path) for index, path in indexed if index % 2 == 1]
+    elif args.p0_index_parity == "even":
+        indexed = [(index, path) for index, path in indexed if index % 2 == 0]
+    selected = indexed if args.limit is None else indexed[: args.limit]
 
     output_root.mkdir(parents=True, exist_ok=True)
     normalized_paths: list[Path] = []
     manifest_cases: list[dict[str, object]] = []
-    for index, source_json in enumerate(selected, start=1):
+    for selected_position, (source_index, source_json) in enumerate(selected, start=1):
         if not source_json.is_file():
             raise FileNotFoundError(source_json)
         payload = json.loads(source_json.read_text(encoding="utf-8"))
         if payload.get("prompt_setting") != "bpp" or payload.get("input_mode") != "v2v":
-            raise ValueError(f"case {index} is not BPP V2V: {source_json}")
+            raise ValueError(f"case {source_index} is not BPP V2V: {source_json}")
         if payload.get("conditioning_frames") != EXPECTED_FRAMES:
-            raise ValueError(f"case {index} does not declare 72 frames: {source_json}")
+            raise ValueError(f"case {source_index} does not declare 72 frames: {source_json}")
         if float(payload.get("conditioning_fps", -1)) != EXPECTED_FPS:
-            raise ValueError(f"case {index} does not declare 24 FPS: {source_json}")
+            raise ValueError(f"case {source_index} does not declare 24 FPS: {source_json}")
 
         generated_name = str(payload.get("generated_video_name", ""))
-        if not generated_name.startswith(f"{index:04d}_"):
+        if not generated_name.startswith(f"{source_index:04d}_"):
             raise ValueError(
-                f"case order/name mismatch at {index}: {generated_name!r}"
+                f"case order/name mismatch at {source_index}: {generated_name!r}"
             )
         if source_json.stem != Path(generated_name).stem:
             raise ValueError(
@@ -142,7 +156,8 @@ def main() -> None:
         normalized_paths.append(normalized_path)
         manifest_cases.append(
             {
-                "index": index,
+                "index": source_index,
+                "selected_position": selected_position,
                 "source_json": str(source_json),
                 "normalized_json": str(normalized_path),
                 "generated_video_name": generated_name,
@@ -161,6 +176,7 @@ def main() -> None:
         "protocol": "physics-iq-verified-bpp-v2v-strict",
         "source_input_list": str(input_list),
         "source_input_list_sha256": sha256(input_list),
+        "p0_index_parity": args.p0_index_parity,
         "normalized_input_list": str(output_list),
         "normalized_input_list_sha256": sha256(output_list),
         "num_cases": len(normalized_paths),

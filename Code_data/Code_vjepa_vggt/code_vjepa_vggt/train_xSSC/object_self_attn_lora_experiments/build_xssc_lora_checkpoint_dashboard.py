@@ -2640,7 +2640,11 @@ def build_master_hub(
     </section>"""
     context_sweep_entry = ""
     context_settings = config.get("context_sweep", {})
-    if isinstance(context_settings, dict) and context_settings.get("enabled"):
+    if (
+        isinstance(context_settings, dict)
+        and context_settings.get("enabled")
+        and (context_test_records or context_phys_records)
+    ):
         context_sweep_entry = f"""
     <section class="entry"><div><h2>PhysRVG · dynamic effective context sweep</h2>
       <div class="meta">LoRA OFF strict DiT；ctx=4/8/12 使用 seed=42 且每个 case 重置。结果已并入 test_5、PhysicIQ 的 case 页面和平均指标表。</div>
@@ -2827,6 +2831,15 @@ def build_master_hub(
       <a href="phyrvg-full-sa-train-validation-30cases-metrics/">查看指标排行</a></div>
       <div class="status">GPU 0/1/2<strong>历史 checkpoint 回填</strong><small>新 Object+xSSC checkpoint 自动进入队列</small></div>
     </section>"""
+    physv_v2v_0819_entry = ""
+    if (hub_root / "physv-v2v-0819-physrvg").exists():
+        physv_v2v_0819_entry = """
+    <section class="entry"><div><h2>PhysV V2V 0819 · 全 PhysRVG DiT 系列</h2>
+      <div class="meta">40-case ctx8 测试；8 个 PhysRVG 模型族、29 个完整 checkpoint，先完成每族 demo 验收，再做全量生成；视频 case 与指标排行独立展示</div>
+      <a href="physv-v2v-0819-physrvg/">Case 视频与 demo 状态</a>
+      <a href="physv-v2v-0819-physrvg/metrics/">指标可视化</a></div>
+      <div class="status">GPU 0/1/3<strong>40 cases · 29 checkpoints</strong><small>demo 通过后自动进入全量队列</small></div>
+    </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -2884,6 +2897,7 @@ def build_master_hub(
     {solid_mechanics_entry}
     {physrvg_worst_case_entry}
     {phyrvg_train_validation_entry}
+    {physv_v2v_0819_entry}
     <section class="entry"><div><h2>30-case train validation · 方法对比</h2>
       <div class="meta">固定 PyBullet train 30-case；当前三种方法 resume/latest 与标准 18-method inventory 的其他最新权重，包含视频同步对比和 validation loss</div>
       <a href="train-validation-30cases/">进入 30-case validation</a>

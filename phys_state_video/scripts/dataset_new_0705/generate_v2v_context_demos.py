@@ -332,7 +332,7 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
     ball_radius = 0.11
     barrier_hz = 0.24
     barrier_x = 0.80
-    initial_speed = 3.40
+    initial_speed = 3.00
     objects = [
         _object(
             name="obstacle_ball",
@@ -348,13 +348,16 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
             friction=0.22,
             restitution=0.85,
             velocity=(initial_speed, 0.0, 0.0),
-            angular_velocity=(0.0, -initial_speed / ball_radius, 0.0),
+            # For motion along +X, positive Y rotation makes the bottom
+            # contact point stationary relative to the floor.
+            angular_velocity=(0.0, initial_speed / ball_radius, 0.0),
             linear_damping=0.045,
             angular_damping=0.03,
             metadata={
                 "appearance_group": "v2v_obstacle_red_rubber_ball_v1",
                 "rolling_friction": 0.006,
                 "spinning_friction": 0.006,
+                "ccd_swept_sphere_radius_m": ball_radius * 0.95,
             },
         ),
         _object(
@@ -397,7 +400,8 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
             "initial_speed_mps": initial_speed,
             "barrier_half_x_m": 0.12,
             "ball_radius_m": ball_radius,
-            "contact_margin_m": 0.03,
+            "contact_margin_m": 0.05,
+            "physics_sub_steps": 8,
         },
     )
     return DemoCase(
@@ -1250,7 +1254,7 @@ def audit_v2v_case_initialization(
         p.setPhysicsEngineParameter(
             fixedTimeStep=1.0 / SIM_HZ,
             numSolverIterations=legacy.PHYSICS_SOLVER_ITERATIONS,
-            numSubSteps=legacy.PHYSICS_SUB_STEPS,
+            numSubSteps=int(blueprint.metadata.get("physics_sub_steps", legacy.PHYSICS_SUB_STEPS)),
             contactERP=legacy.PHYSICS_CONTACT_ERP,
             erp=legacy.PHYSICS_CONTACT_ERP,
         )
@@ -1274,9 +1278,7 @@ def audit_v2v_case_initialization(
                 basePosition=list(obj.position),
                 baseOrientation=legacy._quat_from_euler_deg(list(obj.orientation_euler_deg)),
             )
-            p.changeDynamics(
-                body_id,
-                -1,
+            dynamics_kwargs = dict(
                 restitution=float(obj.restitution),
                 lateralFriction=float(obj.friction),
                 rollingFriction=float(obj.metadata.get("rolling_friction", 0.0)),
@@ -1285,6 +1287,12 @@ def audit_v2v_case_initialization(
                 angularDamping=float(obj.angular_damping),
                 activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING,
             )
+            if "ccd_swept_sphere_radius_m" in obj.metadata:
+                dynamics_kwargs.update(
+                    ccdSweptSphereRadius=float(obj.metadata["ccd_swept_sphere_radius_m"]),
+                    contactProcessingThreshold=0.0,
+                )
+            p.changeDynamics(body_id, -1, **dynamics_kwargs)
             p.resetBaseVelocity(
                 body_id,
                 linearVelocity=list(obj.linear_velocity),
@@ -1399,7 +1407,7 @@ def _render_case(
             p.setPhysicsEngineParameter(
                 fixedTimeStep=1.0 / SIM_HZ,
                 numSolverIterations=legacy.PHYSICS_SOLVER_ITERATIONS,
-                numSubSteps=legacy.PHYSICS_SUB_STEPS,
+                numSubSteps=int(blueprint.metadata.get("physics_sub_steps", legacy.PHYSICS_SUB_STEPS)),
                 contactERP=legacy.PHYSICS_CONTACT_ERP,
                 erp=legacy.PHYSICS_CONTACT_ERP,
             )
@@ -1450,9 +1458,7 @@ def _render_case(
                     basePosition=list(obj.position),
                     baseOrientation=legacy._quat_from_euler_deg(list(obj.orientation_euler_deg)),
                 )
-                p.changeDynamics(
-                    body_id,
-                    -1,
+                dynamics_kwargs = dict(
                     restitution=float(obj.restitution),
                     lateralFriction=float(obj.friction),
                     rollingFriction=float(obj.metadata.get("rolling_friction", 0.0)),
@@ -1461,6 +1467,12 @@ def _render_case(
                     angularDamping=float(obj.angular_damping),
                     activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING,
                 )
+                if "ccd_swept_sphere_radius_m" in obj.metadata:
+                    dynamics_kwargs.update(
+                        ccdSweptSphereRadius=float(obj.metadata["ccd_swept_sphere_radius_m"]),
+                        contactProcessingThreshold=0.0,
+                    )
+                p.changeDynamics(body_id, -1, **dynamics_kwargs)
                 p.resetBaseVelocity(
                     body_id,
                     linearVelocity=list(obj.linear_velocity),

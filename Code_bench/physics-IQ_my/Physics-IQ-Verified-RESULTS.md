@@ -264,17 +264,23 @@ P0 执行配置：
 - 原始推理 shell：`/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh`
 - P0 总控：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/run_full_sa_vjepa_verified.sh`
 - 推理 worker：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/run_physrvg_full_sa_vjepa_verified.sh`
+- GPU2-only 可恢复流水线：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/run_full_sa_vjepa_verified_gpu2_only.sh`
 - 输入适配：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/prepare_full_sa_vjepa_verified_inputs.py`
 
 Smoke 证据：GPU 7 上第一个 case 已生成并核验为 raw `189@24 FPS`；metadata 记录
 `context_frames=72`、`effective_context_latent_frames=18`、`context_mask_mode=dynamic_effective`、
 `num_inference_steps=40`、`guidance_scale=5`、`seed=42`。后处理产物已核验为 `120@24 FPS`、5 秒。
 
+资源安排：用户在全量运行开始后要求仅使用 GPU 2。GPU 7 的 shard 已安全中断（退出码 `130`），
+其已完成的两个 raw case 不进入最终 submission。GPU 2 先完成 1-based P0 奇数序号的99个 case，
+随后使用同一 checkpoint 和参数补齐偶数序号的99个 case；最终198个视频均由 GPU 2 生成。
+
 全量产物规划：
 
 - Raw：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/raw/physrvg-full-sa-vjepa-step000500-bpp-run_01`
 - Submission：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/generated_videos_5s/physrvg-full-sa-vjepa-step000500-bpp-run_01`
 - Evaluation：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-full-sa-vjepa-step000500-bpp-run_01`
+- 当前持久会话：`physrvg_full_sa_vjepa_physiciq_gpu2_only`
 
 严格可比性说明：
 
