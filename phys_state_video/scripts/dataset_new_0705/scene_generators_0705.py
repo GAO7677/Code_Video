@@ -898,7 +898,11 @@ def _fit_generic_camera_to_motion_envelope(blueprint: ScenarioBlueprint) -> Scen
     """
     if not blueprint.family_key.startswith("F") or blueprint.family_key in {"F11", "F12"}:
         return blueprint
-    duration_s = 3.0 + float(blueprint.pre_roll_s)
+    # Most floor interactions lose their initial velocity before the clip
+    # ends. A two-second envelope is wide enough for the observed rollout
+    # while avoiding the severe over-zoom-out caused by linear extrapolation
+    # over the entire three-second duration.
+    duration_s = 2.0 + float(blueprint.pre_roll_s)
     sample_times = np.linspace(0.0, duration_s, 13, dtype=np.float64)
     low = np.full(3, np.inf, dtype=np.float64)
     high = np.full(3, -np.inf, dtype=np.float64)
@@ -949,6 +953,16 @@ def _fit_generic_camera_to_motion_envelope(blueprint: ScenarioBlueprint) -> Scen
         eye=tuple(float(value) for value in center - forward * required_distance),
         target=tuple(float(value) for value in center),
     )
+    if blueprint.family_key == "F8":
+        # The bouncer settles near the floor after its rebound. Shift the
+        # camera and target together so the late floor motion stays visible
+        # without changing the viewing angle or the simulated trajectory.
+        frame_shift = np.asarray([0.0, 0.0, -0.32], dtype=np.float64)
+        fitted_camera = replace(
+            fitted_camera,
+            eye=tuple(float(value) for value in np.asarray(fitted_camera.eye) + frame_shift),
+            target=tuple(float(value) for value in np.asarray(fitted_camera.target) + frame_shift),
+        )
     return replace(
         blueprint,
         camera=fitted_camera,

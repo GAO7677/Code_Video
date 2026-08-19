@@ -292,6 +292,12 @@ def _control_context_artifacts(
     visibility = _control_visibility_contract(
         blueprint, Path(str(render_manifest["mask_ids"]))
     )
+    controlled_variable = blueprint.metadata.get("controlled_variable")
+    if not controlled_variable:
+        controlled_variable = {
+            "F11": "table_height_m",
+            "F12": "ramp_angle_deg",
+        }.get(blueprint.family_key)
     return {
         "context_video": str(context_path),
         "context16_video": str(context16_path),
@@ -301,7 +307,7 @@ def _control_context_artifacts(
             "context_duration_s": round(8 / 30, 4),
             "context_frame_options": [8, 16],
             "context16_duration_s": round(16 / 30, 4),
-            "controlled_variable": blueprint.metadata.get("controlled_variable"),
+            "controlled_variable": controlled_variable,
             "controlled_value": blueprint.metadata.get(
                 "table_height_m", blueprint.metadata.get("ramp_angle_deg")
             ),
