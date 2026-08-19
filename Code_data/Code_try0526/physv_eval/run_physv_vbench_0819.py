@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--gpu", type=int, default=2)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--force-case-id", action="append", default=[], help="Re-evaluate these case IDs even when a prior score exists.")
     parser.add_argument("--dimensions", nargs="+", choices=DIMENSIONS, default=list(DIMENSIONS))
     parser.add_argument("--load-ckpt-from-local", action="store_true")
     parser.add_argument("--read-frame", action="store_true")
@@ -123,14 +124,19 @@ def main() -> None:
     path_to_case = {str(Path(case["video_path"]).resolve()): case["case_id"] for case in cases}
 
     for dimension in args.dimensions:
-        existing = [case_metrics[case_id]["dimensions"].get(dimension, {}) for case_id in case_metrics]
-        if run_status[dimension].get("status") == "ok" and all(item.get("status") == "ok" for item in existing):
+        pending_cases = [
+            case for case in cases
+            if case["case_id"] in set(args.force_case_id)
+            or case_metrics[case["case_id"]]["dimensions"].get(dimension, {}).get("status") != "ok"
+        ]
+        pending_case_ids = {case["case_id"] for case in pending_cases}
+        if not pending_cases:
             print(f"skip {dimension}: complete result already exists", flush=True)
             continue
-        print(f"run {dimension}: {len(eval_cases)} cases on cuda:{args.gpu}", flush=True)
+        print(f"run {dimension}: {len(pending_cases)} pending cases on cuda:{args.gpu}", flush=True)
         try:
             result = runner.score_batch(
-                eval_cases,
+                [EvalCase(video_path=Path(case["video_path"]), caption=case["caption"]) for case in pending_cases],
                 dimension=dimension,
                 output_path=args.output_root / "official_runs" / dimension,
                 run_name=f"physv_v2v_0819_{dimension}",
@@ -147,7 +153,7 @@ def main() -> None:
                     "score": float(score) if score is not None else None,
                 }
                 seen.add(case_id)
-            for case_id in case_metrics:
+            for case_id in pending_case_ids:
                 if case_id not in seen:
                     case_metrics[case_id]["dimensions"][dimension] = {
                         "status": "error",
@@ -165,7 +171,7 @@ def main() -> None:
             error = f"{type(exc).__name__}: {exc}"
             print(f"error {dimension}: {error}", flush=True)
             run_status[dimension] = {"status": "error", "error": error}
-            for case_id in case_metrics:
+            for case_id in pending_case_ids:
                 case_metrics[case_id]["dimensions"][dimension] = {"status": "error", "score": None, "error": error}
         report = {
             "schema_version": "physv_vbench_metrics_v1",

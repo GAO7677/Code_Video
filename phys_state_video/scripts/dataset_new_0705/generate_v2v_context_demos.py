@@ -328,9 +328,11 @@ def _make_gap_case(sample_key: str, gap_width: float) -> DemoCase:
     )
 
 
-def _make_obstacle_case(sample_key: str, obstacle_x: float) -> DemoCase:
+def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
     ball_radius = 0.11
     barrier_hz = 0.24
+    barrier_x = 0.80
+    initial_speed = 2.40
     objects = [
         _object(
             name="obstacle_ball",
@@ -338,17 +340,22 @@ def _make_obstacle_case(sample_key: str, obstacle_x: float) -> DemoCase:
             shape="sphere",
             size={"radius": ball_radius},
             material_key="rubber_red",
-            # The nearest barrier remains visibly separated during ctx=8/16.
-            position=(-1.40, 0.0, ball_radius + 0.004),
+            # The barrier is fixed; the control variable is the ball's initial
+            # distance so all cases share the same visible obstacle and ball.
+            position=(ball_start_x, 0.0, ball_radius + 0.004),
             dynamic=True,
             mass=1.0,
             friction=0.22,
-            restitution=0.40,
-            velocity=(2.00, 0.0, 0.0),
-            angular_velocity=(0.0, -2.00 / ball_radius, 0.0),
-            linear_damping=0.01,
-            angular_damping=0.01,
-            metadata={"appearance_group": "v2v_obstacle_red_rubber_ball_v1"},
+            restitution=0.72,
+            velocity=(initial_speed, 0.0, 0.0),
+            angular_velocity=(0.0, -initial_speed / ball_radius, 0.0),
+            linear_damping=0.045,
+            angular_damping=0.03,
+            metadata={
+                "appearance_group": "v2v_obstacle_red_rubber_ball_v1",
+                "rolling_friction": 0.006,
+                "spinning_friction": 0.006,
+            },
         ),
         _object(
             name="obstacle_barrier",
@@ -356,11 +363,14 @@ def _make_obstacle_case(sample_key: str, obstacle_x: float) -> DemoCase:
             shape="box",
             size={"hx": 0.075, "hy": 0.32, "hz": barrier_hz},
             material_key="painted_metal_teal",
-            position=(obstacle_x, 0.0, barrier_hz),
+            position=(barrier_x, 0.0, barrier_hz),
             dynamic=False,
             mass=0.0,
             friction=0.75,
-            restitution=0.16,
+            # A high-restitution blue barrier makes the incoming-speed
+            # difference observable in the rebound while leaving the floor
+            # restitution unchanged.
+            restitution=0.82,
         ),
     ]
     camera = _camera(
@@ -371,30 +381,32 @@ def _make_obstacle_case(sample_key: str, obstacle_x: float) -> DemoCase:
     blueprint = _blueprint(
         family_key="V2V_OBSTACLE",
         sample_key=sample_key,
-        title=f"Ball and obstacle at x={obstacle_x:.2f} m",
-        description="A rolling ball approaches a visible barrier; only the barrier position changes.",
+        title=f"Ball starts at x={ball_start_x:.2f} m before a fixed obstacle",
+        description="A rolling ball starts at a controlled position and approaches the same blue barrier.",
         objects=objects,
         camera=camera,
         surface_key="studio_wood_floor",
-        tags=("v2v", "obstacle_distance", "collision", "left_to_right"),
+        tags=("v2v", "ball_start_position", "collision", "left_to_right", "rebound"),
         metadata={
-            "controlled_variable": "obstacle_x_m",
-            "obstacle_x_m": obstacle_x,
-            "initial_speed_mps": 2.00,
+            "controlled_variable": "ball_start_x_m",
+            "ball_start_x_m": ball_start_x,
+            "obstacle_x_m": barrier_x,
+            "barrier_restitution": 0.82,
+            "initial_speed_mps": initial_speed,
             "barrier_half_x_m": 0.075,
         },
     )
     return DemoCase(
         case_id=sample_key,
         family_key="V2V_OBSTACLE",
-        family_title="障碍物位置",
-        family_description="球朝可见障碍物滚动，障碍物距离决定碰撞发生的时间和碰撞后的轨迹。",
+        family_title="小球起始位置与障碍反弹",
+        family_description="蓝色挡板固定，小球从不同位置以相同初速度出发，碰撞前速度和反弹后的运动距离因此不同。",
         level="L2",
         title=blueprint.title,
         description=blueprint.description,
-        controlled_variable="obstacle_x_m",
-        controlled_value=obstacle_x,
-        controlled_value_label=f"x={obstacle_x:.2f} m",
+        controlled_variable="ball_start_x_m",
+        controlled_value=ball_start_x,
+        controlled_value_label=f"x={ball_start_x:.2f} m",
         units="m",
         blueprint=blueprint,
         event_rule="ball_contacts_barrier",
@@ -711,18 +723,22 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
 
 
 def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
-    # Keep a small visible clearance between the fulcrum and the board at
-    # initialization; the hinge constraint supplies the shared pivot point.
-    pivot_height = 0.44
-    pivot_center_z = 0.5 * pivot_height
-    board_center_z = 0.50
+    # A horizontal cylindrical fulcrum replaces the old rectangular block.
+    # It is just below the board, so the initial state has no penetration; the
+    # paired hinge anchors define the board's rotation axis.
+    pivot_radius = 0.14
+    pivot_height = pivot_radius
+    pivot_center_z = pivot_radius
+    board_center_z = 0.335
     board_hx = 1.02
     board_hy = 0.26
     board_hz = 0.045
     board_angle = 0.0
     theta = math.radians(board_angle)
     load_hx, load_hy, load_hz = 0.14, 0.14, 0.12
-    local_z = board_hz + load_hz + 0.012
+    # Keep a small but robust clearance after the pre-roll settles the board
+    # and load under gravity.
+    local_z = board_hz + load_hz + 0.025
     load_position = (
         load_x * math.cos(theta) + local_z * math.sin(theta),
         0.0,
@@ -731,15 +747,16 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
     objects = [
         _object(
             name="seesaw_pivot",
-            family_key="platform_block",
-            shape="box",
-            size={"hx": 0.12, "hy": 0.30, "hz": pivot_center_z},
+            family_key="cylindrical_fulcrum",
+            shape="cylinder",
+            size={"radius": pivot_radius, "height": 0.64},
             material_key="concrete_painted",
             position=(0.0, 0.0, pivot_center_z),
             dynamic=False,
             mass=0.0,
             friction=0.90,
             restitution=0.02,
+            orientation=(90.0, 0.0, 0.0),
         ),
         _object(
             name="seesaw_board",
@@ -775,7 +792,7 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
     ]
     camera = _camera(
         eye=(0.0, -3.95, 1.30),
-        target=(0.0, 0.0, 0.62),
+        target=(0.0, 0.0, 0.46),
         yfov_deg=48.0,
         hdri_key="studio_warm",
     )
@@ -792,6 +809,8 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
             "controlled_variable": "load_position_x_m",
             "load_position_x_m": load_x,
             "pivot_z_m": pivot_height,
+            "pivot_shape": "horizontal_cylinder",
+            "pivot_radius_m": pivot_radius,
             "initial_board_angle_deg": board_angle,
             "constraints": [
                 {
@@ -938,13 +957,13 @@ def build_demo_cases(seed_base: int = 20260819) -> list[DemoCase]:
     cases: list[DemoCase] = []
     for value in (0.06, 0.22, 0.38, 0.54, 0.70):
         cases.append(_make_gap_case(f"v2v_gap_{int(value * 100):03d}", value))
-    for value in (0.10, 0.38, 0.66, 0.94, 1.20):
-        cases.append(_make_obstacle_case(f"v2v_obstacle_{int(value * 100):03d}", value))
+    for value in (-1.60, -1.45, -1.30, -1.15, -1.00):
+        cases.append(_make_obstacle_case(f"v2v_obstacle_s{int(abs(value) * 100):03d}", value))
     for value in (0.80, 1.30, 1.80, 2.30, 2.80):
         cases.append(_make_bowl_case(f"v2v_bowl_r{int(value * 100):03d}", value))
     for value in (0.55, 0.83, 1.10, 1.38, 1.65):
         cases.append(_make_pendulum_case(f"v2v_pendulum_l{int(value * 100):03d}", value))
-    for value in (0.15, 0.33, 0.51, 0.69, 0.85):
+    for value in (0.69, 0.73, 0.77, 0.81, 0.85):
         cases.append(_make_seesaw_case(f"v2v_seesaw_x{int(value * 100):03d}", value))
     for value in (0.00, 0.045, 0.09, 0.135, 0.18):
         cases.append(_make_domino_case(f"v2v_domino_g{int(round(value * 1000)):03d}", value))
@@ -961,6 +980,8 @@ def _object_payload(obj: ObjectInstanceSpec) -> dict[str, object]:
         "mass_kg": round(float(obj.mass), 5),
         "friction": round(float(obj.friction), 5),
         "restitution": round(float(obj.restitution), 5),
+        "rolling_friction": round(float(obj.metadata.get("rolling_friction", 0.0)), 5),
+        "spinning_friction": round(float(obj.metadata.get("spinning_friction", 0.0)), 5),
         "position": [round(float(value), 5) for value in obj.position],
         "orientation_euler_deg": [round(float(value), 5) for value in obj.orientation_euler_deg],
         "linear_velocity": [round(float(value), 5) for value in obj.linear_velocity],
@@ -1230,6 +1251,8 @@ def audit_v2v_case_initialization(
                 -1,
                 restitution=float(obj.restitution),
                 lateralFriction=float(obj.friction),
+                rollingFriction=float(obj.metadata.get("rolling_friction", 0.0)),
+                spinningFriction=float(obj.metadata.get("spinning_friction", 0.0)),
                 linearDamping=float(obj.linear_damping),
                 angularDamping=float(obj.angular_damping),
                 activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING,
@@ -1404,6 +1427,8 @@ def _render_case(
                     -1,
                     restitution=float(obj.restitution),
                     lateralFriction=float(obj.friction),
+                    rollingFriction=float(obj.metadata.get("rolling_friction", 0.0)),
+                    spinningFriction=float(obj.metadata.get("spinning_friction", 0.0)),
                     linearDamping=float(obj.linear_damping),
                     angularDamping=float(obj.angular_damping),
                     activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING,
