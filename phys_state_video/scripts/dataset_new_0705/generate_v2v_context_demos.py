@@ -32,6 +32,7 @@ from .render_sim_0705 import (
     blueprint_to_legacy_scenario,
     override_legacy_runtime,
     register_material_assets,
+    write_ground_truth_capture,
 )
 from .scene_generators_0705 import EARTH_GRAVITY, _collision_vertical_extent
 
@@ -1311,6 +1312,7 @@ def _render_case(
     output_root: Path,
     width: int,
     height: int,
+    ground_truth_output_dir: Path | None = None,
 ) -> dict[str, object]:
     output_root.mkdir(parents=True, exist_ok=True)
     materials = build_material_catalog()
@@ -1368,7 +1370,18 @@ def _render_case(
                 height=height,
                 scene_style=SCENE_STYLE,
                 capture_instance_masks=True,
+                capture_rgb_frames_dir=(
+                    ground_truth_output_dir / "frames"
+                    if ground_truth_output_dir is not None
+                    else None
+                ),
+                capture_depth_frames=ground_truth_output_dir is not None,
             )
+            if ground_truth_output_dir is not None:
+                renderer.capture_contact_records = True
+                renderer.contact_dynamic_names = {
+                    obj.name for obj in physical_objects if obj.dynamic
+                }
             renderer.object_materials = {
                 obj.name: materials[obj.material_key] for obj in all_objects
             }
@@ -1492,6 +1505,16 @@ def _render_case(
                             positions[frame_index, idx] - positions[frame_index - 1, idx]
                         ) * FPS
                     renderer.update_pose(obj.name, list(pose_pos), pose_quat)
+                if renderer.capture_contact_records:
+                    renderer.contact_records.extend(
+                        legacy.collect_frame_contacts(
+                            body_ids,
+                            plane_id,
+                            frame_index=frame_index,
+                            time_s=frame_index / FPS,
+                            dynamic_names=renderer.contact_dynamic_names,
+                        )
+                    )
                 frames.append(cv2.cvtColor(renderer.render(), cv2.COLOR_RGB2BGR))
                 p.stepSimulation()
             positions = positions[: len(frames)]
@@ -1539,6 +1562,13 @@ def _render_case(
                 mask_video_path,
                 [palette_bgr[np.minimum(frame, len(palette_bgr) - 1)] for frame in mask_ids],
             )
+            if ground_truth_output_dir is not None:
+                ground_truth_capture = write_ground_truth_capture(
+                    output_dir=ground_truth_output_dir,
+                    renderer=renderer,
+                )
+            else:
+                ground_truth_capture = None
             all_visible = bool(
                 all(
                     np.all(np.any(mask_ids == object_id, axis=(1, 2)))
@@ -1593,6 +1623,7 @@ def _render_case(
                 "states": str(states_path),
                 "mask_video": str(mask_video_path),
                 "mask_ids": str(mask_path),
+                "ground_truth_capture": ground_truth_capture,
                 "camera": {
                     "eye": list(blueprint.camera.eye),
                     "target": list(blueprint.camera.target),

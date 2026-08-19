@@ -147,6 +147,64 @@ def assert_initialization_contacts(
     return report
 
 
+def collect_frame_contacts(
+    body_ids: Dict[str, int],
+    plane_id: int,
+    *,
+    frame_index: int,
+    time_s: float,
+    dynamic_names: set[str] | None = None,
+    max_points_per_pair: int = 5,
+) -> list[dict]:
+    """Return sampled PyBullet contacts in a RigidBench-compatible form.
+
+    The normal follows PyBullet's convention: it points from ``obj_b`` toward
+    ``obj_a``.  Static-static fixture contacts are omitted when
+    ``dynamic_names`` is supplied so exported labels focus on motion-relevant
+    interactions.
+    """
+    if max_points_per_pair <= 0:
+        raise ValueError("max_points_per_pair must be positive")
+    name_by_body_id = {int(body_id): name for name, body_id in body_ids.items()}
+    name_by_body_id[int(plane_id)] = "ground"
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for point in p.getContactPoints():
+        body_a = int(point[1])
+        body_b = int(point[2])
+        obj_a = name_by_body_id.get(body_a)
+        obj_b = name_by_body_id.get(body_b)
+        if obj_a is None or obj_b is None:
+            continue
+        if dynamic_names is not None and obj_a not in dynamic_names and obj_b not in dynamic_names:
+            continue
+        key = (obj_a, obj_b)
+        contacts = grouped.setdefault(key, [])
+        if len(contacts) >= max_points_per_pair:
+            continue
+        contacts.append(
+            {
+                # Match the compact RigidBench fields while retaining raw
+                # solver quantities needed for contact-supervised training.
+                "point": [float(value) for value in point[6]],
+                "normal": [float(value) for value in point[7]],
+                "position_on_a": [float(value) for value in point[5]],
+                "position_on_b": [float(value) for value in point[6]],
+                "distance_m": float(point[8]),
+                "normal_force_n": float(point[9]),
+            }
+        )
+    return [
+        {
+            "frame": int(frame_index),
+            "time_s": float(time_s),
+            "obj_a": obj_a,
+            "obj_b": obj_b,
+            "contacts": contacts,
+        }
+        for (obj_a, obj_b), contacts in grouped.items()
+    ]
+
+
 @dataclass
 class ObjectSpec:
     name: str
@@ -1422,6 +1480,17 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text
             linvels[frame_index, obj_index] = np.asarray(linvel, dtype=np.float32)
             angvels[frame_index, obj_index] = np.asarray(angvel, dtype=np.float32)
             renderer.update_pose(body["spec"].name, pos, quat)
+
+        if getattr(renderer, "capture_contact_records", False):
+            renderer.contact_records.extend(
+                collect_frame_contacts(
+                    body_ids,
+                    plane_id,
+                    frame_index=frame_index,
+                    time_s=visible_time,
+                    dynamic_names=getattr(renderer, "contact_dynamic_names", None),
+                )
+            )
 
         frame_rgb = renderer.render()
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)

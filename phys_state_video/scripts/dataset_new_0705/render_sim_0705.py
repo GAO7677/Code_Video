@@ -677,6 +677,8 @@ class RealismPreviewRenderer:
         height: int,
         scene_style: str = "indoor_realistic",
         capture_instance_masks: bool = False,
+        capture_rgb_frames_dir: Path | None = None,
+        capture_depth_frames: bool = False,
     ) -> None:
         materials = build_material_catalog()
         surfaces = build_surface_catalog()
@@ -726,6 +728,18 @@ class RealismPreviewRenderer:
         self.nodes: dict[str, legacy.pyrender.Node] = {}
         self.capture_instance_masks = capture_instance_masks
         self.mask_frames: list[np.ndarray] = []
+        self.capture_rgb_frames_dir = capture_rgb_frames_dir
+        if self.capture_rgb_frames_dir is not None:
+            self.capture_rgb_frames_dir.mkdir(parents=True, exist_ok=True)
+        self.capture_depth_frames = capture_depth_frames
+        self.depth_frames: list[np.ndarray] = []
+        self._rgb_frame_index = 0
+        # The generic runner checks these optional attributes. Keeping the
+        # flags on the renderer makes physics capture opt-in for existing
+        # rendering call sites.
+        self.capture_contact_records = False
+        self.contact_dynamic_names: set[str] | None = None
+        self.contact_records: list[dict[str, object]] = []
         self.instance_ids: dict[str, int] = {}
         self._seg_node_map: dict[legacy.pyrender.Node, tuple[int, int, int]] = {}
         self.shadow_strength = lighting.shadow_strength
@@ -1191,7 +1205,19 @@ class RealismPreviewRenderer:
 
     def render(self):
         flags = legacy.RenderFlags.SHADOWS_SPOT if self.shadow_strength > 0.1 else 0
-        color, _ = self.renderer.render(self.scene, flags=flags)
+        color, depth = self.renderer.render(self.scene, flags=flags)
+        if self.capture_rgb_frames_dir is not None:
+            frame_path = self.capture_rgb_frames_dir / f"{self._rgb_frame_index:05d}.png"
+            written = legacy.cv2.imwrite(
+                str(frame_path),
+                legacy.cv2.cvtColor(color, legacy.cv2.COLOR_RGB2BGR),
+                [legacy.cv2.IMWRITE_PNG_COMPRESSION, 3],
+            )
+            if not written:
+                raise RuntimeError(f"failed to write lossless RGB frame: {frame_path}")
+        if self.capture_depth_frames:
+            self.depth_frames.append(np.asarray(depth, dtype=np.float32).copy())
+        self._rgb_frame_index += 1
         if self.capture_instance_masks:
             segmentation, _ = self.renderer.render(
                 self.scene,
@@ -1280,6 +1306,33 @@ def _write_instance_mask_outputs(
     legacy._write_video_h264(mask_dir / f"{sample_key}_instance_mask.mp4", preview_frames)
 
 
+def write_ground_truth_capture(
+    *,
+    output_dir: Path,
+    renderer: RealismPreviewRenderer,
+) -> dict[str, str]:
+    """Persist optional render-time depth and PyBullet contact supervision."""
+    if not renderer.capture_depth_frames or not renderer.depth_frames:
+        raise RuntimeError("ground-truth export requires captured depth frames")
+    raw_dir = output_dir / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    depth_path = raw_dir / "depth.npz"
+    np.savez_compressed(
+        depth_path,
+        depth=np.stack(renderer.depth_frames).astype(np.float32, copy=False),
+    )
+    contacts_path = output_dir / "contacts.json"
+    contacts_path.write_text(
+        json.dumps(renderer.contact_records, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return {
+        "frames_dir": str(renderer.capture_rgb_frames_dir) if renderer.capture_rgb_frames_dir else "",
+        "depth": str(depth_path),
+        "contacts": str(contacts_path),
+    }
+
+
 def render_blueprint_case(
     *,
     blueprint: ScenarioBlueprint,
@@ -1290,6 +1343,7 @@ def render_blueprint_case(
     scene_style: str = "indoor_realistic",
     export_instance_masks: bool = False,
     preserve_states: bool = False,
+    ground_truth_output_dir: Path | None = None,
 ) -> dict:
     output_root.mkdir(parents=True, exist_ok=True)
     materials = build_material_catalog()
@@ -1307,7 +1361,18 @@ def render_blueprint_case(
                 height=height,
                 scene_style=scene_style,
                 capture_instance_masks=export_instance_masks,
+                capture_rgb_frames_dir=(
+                    ground_truth_output_dir / "frames"
+                    if ground_truth_output_dir is not None
+                    else None
+                ),
+                capture_depth_frames=ground_truth_output_dir is not None,
             )
+            if ground_truth_output_dir is not None:
+                renderer.capture_contact_records = True
+                renderer.contact_dynamic_names = {
+                    obj.name for obj in blueprint.objects if obj.dynamic
+                }
             renderer.object_materials = {obj.name: materials[obj.material_key] for obj in blueprint.objects}
             renderer.object_texture_seeds = {
                 obj.name: _stable_name_seed(
@@ -1324,6 +1389,13 @@ def render_blueprint_case(
                         mask_frames=renderer.mask_frames,
                         instance_ids=renderer.instance_ids,
                     )
+                if ground_truth_output_dir is not None:
+                    ground_truth_capture = write_ground_truth_capture(
+                        output_dir=ground_truth_output_dir,
+                        renderer=renderer,
+                    )
+                else:
+                    ground_truth_capture = None
             finally:
                 renderer.cleanup()
         finally:
@@ -1433,6 +1505,7 @@ def render_blueprint_case(
         "object_phrase_details": payload["object_phrase_details"],
         "negative_prompt": payload["negative_prompt"],
         "initialization_qa": payload.get("initialization_qa"),
+        "ground_truth_capture": ground_truth_capture,
         "hdri_catalog": build_hdri_catalog(),
         "asset_pack": build_indoor_asset_pack_manifest(),
     }
