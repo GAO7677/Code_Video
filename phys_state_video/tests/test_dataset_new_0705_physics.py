@@ -157,7 +157,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             self.assertAlmostEqual(mover.angular_velocity[1], -expected_vx / radius, places=5)
 
     def test_incline_control_uses_dynamic_floor_supported_bodies(self) -> None:
-        expected_angles = [4.0, 12.0, 22.0, 32.0, 42.0]
+        expected_angles = [8.0, 16.0, 24.0, 33.0, 42.0]
         self.assertEqual(
             [float(case["ramp_angle_deg"]) for case in RAMP_INCLINE_CASES],
             expected_angles,
@@ -206,7 +206,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             self.assertAlmostEqual(block.size["hy"], 0.16, places=5)
             self.assertAlmostEqual(block.size["hz"], 0.14, places=5)
             self.assertAlmostEqual(block.mass, 2.50, places=5)
-            self.assertAlmostEqual(block.friction, 0.02, places=5)
+            self.assertAlmostEqual(block.friction, 0.12, places=5)
             self.assertAlmostEqual(block.restitution, 0.08, places=5)
             self.assertEqual(block.linear_velocity, (0.0, 0.0, 0.0))
             self.assertEqual(block.angular_velocity, (0.0, 0.0, 0.0))

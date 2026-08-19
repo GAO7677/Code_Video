@@ -85,10 +85,10 @@ TABLE_DIRECTION_VARIANT_CASES = (
 TABLE_ROLLOFF_CASES = TABLE_HEIGHT_CONTROL_CASES + TABLE_DIRECTION_VARIANT_CASES
 
 RAMP_INCLINE_CASES = (
-    {"ramp_angle_deg": 4.0, "angle_label": "a004", "angle_name": "very_shallow"},
-    {"ramp_angle_deg": 12.0, "angle_label": "a012", "angle_name": "shallow"},
-    {"ramp_angle_deg": 22.0, "angle_label": "a022", "angle_name": "moderate"},
-    {"ramp_angle_deg": 32.0, "angle_label": "a032", "angle_name": "steep"},
+    {"ramp_angle_deg": 8.0, "angle_label": "a008", "angle_name": "shallow"},
+    {"ramp_angle_deg": 16.0, "angle_label": "a016", "angle_name": "moderate_shallow"},
+    {"ramp_angle_deg": 24.0, "angle_label": "a024", "angle_name": "moderate"},
+    {"ramp_angle_deg": 33.0, "angle_label": "a033", "angle_name": "steep"},
     {"ramp_angle_deg": 42.0, "angle_label": "a042", "angle_name": "very_steep"},
 )
 

@@ -1624,7 +1624,7 @@ def _make_f12(
     materials = build_material_catalog()
 
     ramp_angle = float(ramp_angle_deg if ramp_angle_deg is not None else 20.0)
-    ramp_angle = float(np.clip(ramp_angle, 4.0, 42.0))
+    ramp_angle = float(np.clip(ramp_angle, 8.0, 42.0))
     theta = math.radians(ramp_angle)
     cos_theta = math.cos(theta)
     sin_theta = math.sin(theta)
@@ -1710,9 +1710,7 @@ def _make_f12(
         semantic_role="sliding_dynamic",
         size={"hx": block_half_x, "hy": block_half_y, "hz": block_half_z},
         mass=2.50,
-        # Keep the same low-friction block across the angle group so even the
-        # 4-degree ramp visibly accelerates under gravity from rest.
-        friction=0.02,
+        friction=0.12,
         restitution=0.08,
         linear_damping=0.02,
         angular_damping=0.04,
