@@ -89,9 +89,21 @@ PHYRVG_DISPLAY_ORDER = (
     "full_sa_physrvg_vjepa_loss",
     "full_sa_physrvg_vjepa_loss_0613_b2g2",
     "full_sa_physrvg_latent_mask_loss",
+    "full_sa_physrvg_object_xssc_loss",
 )
 PHYRVG_DISPLAY_INDEX = {
     key: index for index, key in enumerate(PHYRVG_DISPLAY_ORDER)
+}
+
+# Keep every PHYRVG-Full-SA + variant adjacent in all gallery and metric views.
+PHYRVG_FULL_SA_PLUS_ORDER = (
+    "full_sa_physrvg_vjepa_loss",
+    "full_sa_physrvg_vjepa_loss_0613_b2g2",
+    "full_sa_physrvg_latent_mask_loss",
+    "full_sa_physrvg_object_xssc_loss",
+)
+PHYRVG_FULL_SA_PLUS_INDEX = {
+    key: index for index, key in enumerate(PHYRVG_FULL_SA_PLUS_ORDER)
 }
 
 CASE_METRIC_SPECS = [
@@ -136,18 +148,35 @@ def is_phyrvg_method(method: dict[str, Any]) -> bool:
     return "physrvg" in key or "phyrvg" in key or label.startswith("PHYRVG-")
 
 
+def is_phyrvg_full_sa_plus_method(method: dict[str, Any]) -> bool:
+    """Return whether a method belongs to the PHYRVG-Full-SA + sub-group."""
+    key = str(method.get("key", ""))
+    label = str(method.get("label", "")).strip().upper()
+    return (
+        key in PHYRVG_FULL_SA_PLUS_INDEX
+        or label.startswith("PHYRVG-FULL-SA +")
+    )
+
+
 def method_display_group(method: dict[str, Any]) -> str:
     return "phyrvg" if is_phyrvg_method(method) else "other"
 
 
 def display_methods(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Place all PhysRVG-family methods in one leading comparison block."""
-    phyrvg = [method for method in methods if is_phyrvg_method(method)]
-    others = [method for method in methods if not is_phyrvg_method(method)]
-    phyrvg.sort(
-        key=lambda method: PHYRVG_DISPLAY_INDEX.get(str(method.get("key")), 999)
-    )
-    return phyrvg + others
+    """Place PhysRVG methods first, with PHYRVG-Full-SA + methods contiguous."""
+
+    def sort_key(
+        indexed_method: tuple[int, dict[str, Any]]
+    ) -> tuple[int, int, str]:
+        original_index, method = indexed_method
+        key = str(method.get("key", ""))
+        if is_phyrvg_full_sa_plus_method(method):
+            return (1, PHYRVG_FULL_SA_PLUS_INDEX.get(key, 999), key)
+        if is_phyrvg_method(method):
+            return (0, PHYRVG_DISPLAY_INDEX.get(key, 999), key)
+        return (2, original_index, key)
+
+    return [method for _, method in sorted(enumerate(methods), key=sort_key)]
 
 
 def extract_case_metrics(payload: dict[str, Any]) -> dict[str, float]:
@@ -1557,6 +1586,11 @@ MERGED_METHODS = [
         "key": "full_sa_physrvg_latent_mask_loss",
         "label": "PHYRVG-Full-SA + Latent-Mask Loss",
         "color": "#009E73",
+    },
+    {
+        "key": "full_sa_physrvg_object_xssc_loss",
+        "label": "PHYRVG-Full-SA + Object + XSSC Loss",
+        "color": "#7B61A8",
     },
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
     {

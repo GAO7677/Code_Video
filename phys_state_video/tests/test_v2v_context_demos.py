@@ -2,7 +2,9 @@ import unittest
 
 from dataset_new_0705.generate_v2v_context_demos import (
     CONTEXT_FRAMES,
+    CONTEXT_FRAME_OPTIONS,
     FPS,
+    audit_v2v_case_initialization,
     build_demo_cases,
 )
 from dataset_new_0705.scene_generators_0705 import EARTH_GRAVITY
@@ -35,6 +37,10 @@ class V2VContextDemoTests(unittest.TestCase):
             self.assertAlmostEqual(blueprint.gravity, EARTH_GRAVITY)
             self.assertEqual(blueprint.metadata["fps"], FPS)
             self.assertEqual(blueprint.metadata["context_frames"], CONTEXT_FRAMES)
+            self.assertEqual(
+                tuple(blueprint.metadata["context_frame_options"]),
+                CONTEXT_FRAME_OPTIONS,
+            )
             self.assertAlmostEqual(
                 blueprint.metadata["context_duration_s"], CONTEXT_FRAMES / FPS
             )
@@ -52,6 +58,34 @@ class V2VContextDemoTests(unittest.TestCase):
             {case.blueprint.metadata["domino_gap_m"] for case in cases},
             {0.02, 0.06, 0.12},
         )
+
+    def test_ball_appearance_mapping_is_fixed_within_each_control_group(self):
+        for family_key in (
+            "V2V_GAP",
+            "V2V_OBSTACLE",
+            "V2V_BOWL",
+            "V2V_PENDULUM",
+            "V2V_DOMINO",
+        ):
+            groups = {
+                next(
+                    obj.metadata["appearance_group"]
+                    for obj in case.blueprint.objects
+                    if obj.metadata.get("appearance_group")
+                )
+                for case in self.cases
+                if case.family_key == family_key
+            }
+            self.assertEqual(len(groups), 1, family_key)
+
+    def test_all_v2v_cases_pass_initialization_geometry_audit(self):
+        for index, case in enumerate(self.cases):
+            report = audit_v2v_case_initialization(case, seed=20260819 + index * 1009)
+            self.assertTrue(report["passed"], case.case_id)
+            self.assertEqual(
+                [stage["stage"] for stage in report["stages"]],
+                ["post_creation", "post_pre_roll", "video_frame_0"],
+            )
 
 
 if __name__ == "__main__":

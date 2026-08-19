@@ -117,6 +117,9 @@ class ViewerHandler(BaseHTTPRequestHandler):
     def _context_video_path(self, case_id):
         return self._row_media_path(case_id, "context_video")
 
+    def _context16_video_path(self, case_id):
+        return self._row_media_path(case_id, "context16_video")
+
     def _handle(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -130,6 +133,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 )
                 if row.get("context_video"):
                     public_row["context_video_url"] = "/media-context/" + quote(
+                        row["case_id"], safe=""
+                    )
+                if row.get("context16_video"):
+                    public_row["context16_video_url"] = "/media-context16/" + quote(
                         row["case_id"], safe=""
                     )
                 rows.append(public_row)
@@ -152,6 +159,17 @@ class ViewerHandler(BaseHTTPRequestHandler):
             if video_path is None:
                 self._send_bytes(
                     b"Context video not found", "text/plain; charset=utf-8", 404
+                )
+                return
+            self._send_file(video_path, "video/mp4")
+            return
+
+        if path.startswith("/media-context16/"):
+            case_id = unquote(path.removeprefix("/media-context16/"))
+            video_path = self._context16_video_path(case_id)
+            if video_path is None:
+                self._send_bytes(
+                    b"Context16 video not found", "text/plain; charset=utf-8", 404
                 )
                 return
             self._send_file(video_path, "video/mp4")

@@ -19,6 +19,7 @@ from scripts.dataset_new_0705.scene_generators_0705 import (
     validate_blueprint_physics,
 )
 from scripts.dataset_new_0705.render_sim_0705 import build_object_phrase_bundle
+from scripts.dataset_new_0705.audit_physv_initialization import audit_suite
 from scripts.dataset_new_0705.generate_difficulty_pilot import (
     RAMP_INCLINE_CASES,
     TABLE_ROLLOFF_CASES,
@@ -270,6 +271,16 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
         )
         self.assertGreater(len(bundle["static_object_phrases"]), 0)
         self.assertEqual(len(bundle["object_phrase_details"]), len(blueprint.objects))
+
+    def test_full_difficulty_pilot_passes_initialization_audit(self) -> None:
+        report = audit_suite(
+            difficulty_seed_base=20260817,
+            per_level=4,
+            include_difficulty=True,
+            include_v2v=False,
+        )
+        self.assertEqual(report["total_cases"], 24)
+        self.assertEqual(report["failed_cases"], 0)
 
 
 if __name__ == "__main__":

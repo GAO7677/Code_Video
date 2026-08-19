@@ -516,8 +516,10 @@ def audit_blueprint_initialization(
         legacy.p.setGravity(0.0, 0.0, -scenario.gravity)
         legacy.p.setPhysicsEngineParameter(
             fixedTimeStep=1.0 / legacy.SIM_HZ,
-            numSolverIterations=120,
-            numSubSteps=1,
+            numSolverIterations=legacy.PHYSICS_SOLVER_ITERATIONS,
+            numSubSteps=legacy.PHYSICS_SUB_STEPS,
+            contactERP=legacy.PHYSICS_CONTACT_ERP,
+            erp=legacy.PHYSICS_CONTACT_ERP,
         )
         legacy.p.changeDynamics(
             plane_id,

@@ -40,6 +40,9 @@ SIM_HZ = 240
 FPS = 30
 SIM_DURATION = 3.0
 RECORD_EVERY = max(1, SIM_HZ // FPS)
+PHYSICS_SOLVER_ITERATIONS = 120
+PHYSICS_SUB_STEPS = 2
+PHYSICS_CONTACT_ERP = 0.20
 
 CAM_EYE = np.array([0.0, -3.0, 1.42], dtype=np.float64)
 CAM_TARGET = np.array([0.0, 0.28, 0.38], dtype=np.float64)
@@ -1314,7 +1317,15 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     plane_id = p.loadURDF("plane.urdf")
     p.setGravity(0.0, 0.0, -scenario.gravity)
-    p.setPhysicsEngineParameter(fixedTimeStep=1.0 / SIM_HZ, numSolverIterations=120, numSubSteps=1)
+    # Use the same contact solve for pre-roll, QA, and recorded frames.  Two
+    # substeps keep fast floor contact from accumulating a visible overlap.
+    p.setPhysicsEngineParameter(
+        fixedTimeStep=1.0 / SIM_HZ,
+        numSolverIterations=PHYSICS_SOLVER_ITERATIONS,
+        numSubSteps=PHYSICS_SUB_STEPS,
+        contactERP=PHYSICS_CONTACT_ERP,
+        erp=PHYSICS_CONTACT_ERP,
+    )
     p.changeDynamics(
         plane_id,
         -1,

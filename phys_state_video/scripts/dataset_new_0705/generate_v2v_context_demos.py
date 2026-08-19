@@ -2,8 +2,8 @@
 
 Each control group keeps the object, materials, camera, and simulation settings
 fixed while changing one visible geometric or initial-state variable.  The
-first eight 30-fps frames are exported separately so the continuation boundary
-can be reviewed alongside the complete simulated trajectory.
+first 8 and 16 30-fps frames are exported separately so two continuation
+boundaries can be reviewed alongside the complete simulated trajectory.
 """
 
 from __future__ import annotations
@@ -873,7 +873,7 @@ def _make_domino_case(sample_key: str, spacing: float) -> DemoCase:
         case_id=sample_key,
         family_key="V2V_DOMINO",
         family_title="多米诺间距",
-        family_description="前 8 帧显示第一块的倾斜、排列方向和物体间距，间距决定后续碰撞能否连续传播。",
+        family_description="短上下文显示第一块的倾斜、排列方向和物体间距，间距决定后续碰撞能否连续传播。",
         level="L3",
         title=blueprint.title,
         description=blueprint.description,
@@ -1024,7 +1024,10 @@ def _first_event_frame(
     elif case.family_key == "V2V_SEESAW":
         board_idx = index["seesaw_board"]
         angles = np.asarray([_quat_to_y_angle(quat) for quat in quats[:, board_idx]])
-        frames = np.flatnonzero(np.abs(angles) > math.radians(10.0))
+        # The grounded fulcrum visibly limits this compact setup to roughly
+        # 7.2 degrees.  A 7-degree threshold records its first observable
+        # rotation without claiming an unachieved 10-degree event.
+        frames = np.flatnonzero(np.abs(angles) > math.radians(7.0))
     elif case.family_key == "V2V_DOMINO":
         domino_idx = index["domino_1"]
         angles = np.asarray([abs(_quat_to_y_angle(quat)) for quat in quats[:, domino_idx]])
@@ -1156,8 +1159,10 @@ def audit_v2v_case_initialization(
         p.setGravity(0.0, 0.0, -EARTH_GRAVITY)
         p.setPhysicsEngineParameter(
             fixedTimeStep=1.0 / SIM_HZ,
-            numSolverIterations=120,
-            numSubSteps=1,
+            numSolverIterations=legacy.PHYSICS_SOLVER_ITERATIONS,
+            numSubSteps=legacy.PHYSICS_SUB_STEPS,
+            contactERP=legacy.PHYSICS_CONTACT_ERP,
+            erp=legacy.PHYSICS_CONTACT_ERP,
         )
         plane_id = p.loadURDF("plane.urdf")
         surface = build_surface_catalog()[blueprint.surface_key]
@@ -1300,8 +1305,10 @@ def _render_case(
             p.setGravity(0.0, 0.0, -EARTH_GRAVITY)
             p.setPhysicsEngineParameter(
                 fixedTimeStep=1.0 / SIM_HZ,
-                numSolverIterations=120,
-                numSubSteps=1,
+                numSolverIterations=legacy.PHYSICS_SOLVER_ITERATIONS,
+                numSubSteps=legacy.PHYSICS_SUB_STEPS,
+                contactERP=legacy.PHYSICS_CONTACT_ERP,
+                erp=legacy.PHYSICS_CONTACT_ERP,
             )
             plane_id = p.loadURDF("plane.urdf")
             surface = build_surface_catalog()[blueprint.surface_key]
@@ -1513,6 +1520,10 @@ def _render_case(
                 "event_after_context": bool(
                     first_event_frame is not None and first_event_frame >= CONTEXT_FRAMES
                 ),
+                "event_after_context16": bool(
+                    first_event_frame is not None
+                    and first_event_frame >= CONTEXT_FRAME_OPTIONS[-1]
+                ),
                 "all_objects_visible_every_frame": all_visible,
                 "frame_count": len(frames),
                 "initialization": {
@@ -1535,6 +1546,7 @@ def _render_case(
                 "duration_s": SIM_DURATION_S,
                 "context_frames": CONTEXT_FRAMES,
                 "context_duration_s": CONTEXT_FRAMES / FPS,
+                "context_frame_options": list(CONTEXT_FRAME_OPTIONS),
                 "video": str(video_path),
                 "context_video": str(context_path),
                 "context16_video": str(context16_path),
@@ -1557,6 +1569,7 @@ def _render_case(
                 "scenario_spec": _json_safe(blueprint.metadata),
                 "objects": [_json_safe(_object_payload(obj)) for obj in all_objects],
                 "state_summary": state_summary,
+                "initialization_qa": qa["initialization"],
                 "qa": qa,
             }
             meta_path = output_root / "meta" / f"{case.case_id}.json"
@@ -1577,6 +1590,7 @@ def _render_case(
                 "caption": case.description,
                 "context_caption": f"First {CONTEXT_FRAMES} frames before {case.event_rule}.",
                 "context16_caption": f"First {CONTEXT_FRAME_OPTIONS[-1]} frames before {case.event_rule}.",
+                "initialization_qa": qa["initialization"],
             }
             (output_root / "cases" / case.family_key / case.case_id).mkdir(
                 parents=True, exist_ok=True
@@ -1591,9 +1605,9 @@ def _render_case(
                 "case_id": case.case_id,
                 "status": "rendered",
                 "difficulty": {
-                    "level": case.level,
-                    "title": "短上下文物理条件",
-                    "description": "前 8 帧可观察决定后续运动的几何或状态条件。",
+                        "level": case.level,
+                        "title": "短上下文物理条件",
+                        "description": "短上下文中可观察决定后续运动的几何或状态条件。",
                     "priority": 2 if case.level == "L2" else 3,
                 },
                 "scene_family": {
@@ -1626,6 +1640,7 @@ def _render_case(
                 "states": str(states_path),
                 "mask_video": str(mask_video_path),
                 "mask_ids": str(mask_path),
+                "initialization_qa": qa["initialization"],
                 "question": V2V_QUESTION,
                 "response_final": "仅记录仿真条件与轨迹，尚未运行 VLM。",
                 "response_raw": "",

@@ -145,6 +145,8 @@
     .video-mode-tab { min-height: 29px; padding: 4px 9px; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 11px; }
     .video-mode-tab:hover { color: var(--forest); background: #f5f8f6; }
     .video-mode-tab[aria-selected="true"] { color: var(--forest); background: var(--surface); border-color: var(--line-strong); font-weight: 700; }
+    .video-mode-tab:disabled { color: #9aa8a0; background: transparent; cursor: not-allowed; }
+    .comparison-video-tabs { margin-bottom: 12px; padding: 0; background: transparent; border: 0; }
     .video-caption { padding: 10px 15px 0; color: var(--muted); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
     .metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
     .metric { min-width: 0; padding: 9px 11px; border-right: 1px solid var(--line); }
@@ -251,6 +253,11 @@
         <div><h1 id="comparison-title">F11 / 桌高对照</h1><p id="comparison-controls"></p></div>
         <span class="count" id="comparison-count"></span>
       </div>
+      <div class="video-mode-tabs comparison-video-tabs" id="comparison-video-mode-tabs" hidden>
+        <button class="video-mode-tab" type="button" data-video-mode="full" aria-selected="false">完整视频</button>
+        <button class="video-mode-tab" type="button" data-video-mode="context8" aria-selected="false">ctx=8</button>
+        <button class="video-mode-tab" type="button" data-video-mode="context16" aria-selected="false">ctx=16</button>
+      </div>
       <div class="comparison-grid" id="comparison-grid"></div>
       <div class="comparison-table-wrap">
         <table class="comparison-table">
@@ -269,8 +276,9 @@
       <section class="pane video-pane">
         <div class="pane-heading"><h2 id="video-title">视频</h2><span class="count" id="video-status"></span></div>
         <div class="video-mode-tabs" id="video-mode-tabs" hidden>
-          <button class="video-mode-tab" type="button" data-video-mode="context" aria-selected="false">前 8 帧上下文</button>
-          <button class="video-mode-tab" type="button" data-video-mode="full" aria-selected="true">完整模拟</button>
+          <button class="video-mode-tab" type="button" data-video-mode="full" aria-selected="false">完整视频</button>
+          <button class="video-mode-tab" type="button" data-video-mode="context8" aria-selected="false">ctx=8</button>
+          <button class="video-mode-tab" type="button" data-video-mode="context16" aria-selected="false">ctx=16</button>
         </div>
         <div class="video-stage"><video id="video" controls playsinline preload="auto"></video></div>
         <div class="video-caption" id="video-caption"></div>
@@ -475,7 +483,7 @@
 
       if (v2vMode) {
         $("comparison-title").textContent = "V2V / 短上下文控制组";
-        $("comparison-controls").textContent = "每个场景只改变一个可见控制变量；卡片视频为前 8 帧上下文，完整模拟可在右侧切换。";
+        $("comparison-controls").textContent = `每个场景只改变一个可见控制变量；当前网格视频：${videoModeLabel(state.videoMode)}。`;
         $("comparison-count").textContent = `${controls.length} 个案例 · ${new Set(controls.map((row) => row.scene_family && row.scene_family.family_key)).size} 个场景族`;
       }
 
@@ -495,7 +503,7 @@
         $("comparison-count").textContent = `${controls.length} 个控制案例`;
       }
       const tableHeaders = v2vMode
-        ? ["控制变量", "上下文", "首事件", "最高线速度", "末态", "可见性"]
+        ? ["控制变量", "当前视频", "首事件", "最高线速度", "末态", "可见性"]
         : inclineMode
           ? ["斜面角度", "初速度", "最高线速度", "路径长度", "末速度", "末态"]
           : ["桌高", "初速度", "最高线速度", "高度范围", "末速度", "末态"];
@@ -517,7 +525,7 @@
         card.className = `compare-case${row.case_id === state.selectedId ? " active" : ""}`;
         card.setAttribute("aria-label", `选择 ${displayTitle(row)}`);
         const video = document.createElement("video");
-        video.src = v2vMode ? (row.context_video_url || row.video_url) : row.video_url;
+        video.src = v2vMode ? activeVideoUrl(row) : row.video_url;
         video.autoplay = true;
         video.loop = true;
         video.muted = true;
@@ -559,7 +567,7 @@
         const values = v2vMode
           ? [
               controlledLabel(row),
-              `${v2v(row).context_frames || 8} 帧`,
+              videoModeLabel(state.videoMode),
               firstEventFrame(row) == null ? "未检测" : `第 ${firstEventFrame(row)} 帧`,
               metric(row.state_summary && row.state_summary.max_linear_speed_mps, " m/s"),
               motionState(row.state_summary && row.state_summary.final_motion_state),
@@ -589,7 +597,7 @@
         return [
           ["场景族", (row.scene_family && row.scene_family.title) || "V2V"],
           ["控制变量", controlledLabel(row)],
-          ["上下文", `${v2v(row).context_frames || 8} 帧 / ${metric(v2v(row).context_duration_s, " s")}`],
+          ["当前视频", videoModeLabel(state.videoMode)],
           ["首事件", firstEventFrame(row) == null ? "未检测" : `第 ${firstEventFrame(row)} 帧`],
           ["最高线速度", metric(summary.max_linear_speed_mps, " m/s")],
           ["末态", motionState(summary.final_motion_state)],
@@ -642,18 +650,31 @@
       });
     }
 
+    function videoModeLabel(mode) {
+      return { full: "完整视频", context8: "ctx=8", context16: "ctx=16" }[mode] || "完整视频";
+    }
+
     function activeVideoUrl(row) {
-      if (isV2V(row) && state.videoMode === "context") return row.context_video_url || row.video_url;
+      if (!isV2V(row)) return row.video_url;
+      if (state.videoMode === "context16") {
+        return row.context16_video_url || row.context_video_url || row.video_url;
+      }
+      if (state.videoMode === "context8") {
+        return row.context_video_url || row.video_url;
+      }
       return row.video_url;
     }
 
     function renderVideoModeControls(row) {
-      const controls = $("video-mode-tabs");
-      const available = Boolean(isV2V(row) && row.context_video_url);
-      controls.hidden = !available;
-      if (!available) return;
+      const available = Boolean(isV2V(row) && (row.context_video_url || row.context16_video_url));
+      $("video-mode-tabs").hidden = !available;
+      $("comparison-video-mode-tabs").hidden = !(state.mode === "v2v" && available);
       document.querySelectorAll(".video-mode-tab").forEach((button) => {
         button.setAttribute("aria-selected", String(button.dataset.videoMode === state.videoMode));
+        const modeAvailable = button.dataset.videoMode === "full"
+          || (button.dataset.videoMode === "context8" && Boolean(row.context_video_url))
+          || (button.dataset.videoMode === "context16" && Boolean(row.context16_video_url));
+        button.disabled = !available || !modeAvailable;
       });
     }
 
@@ -676,7 +697,7 @@
       $("video-title").textContent = row.case_id;
       $("video-status").textContent = row.status || "rendered";
       $("video-caption").textContent = isV2V(row)
-        ? `${state.videoMode === "context" ? "前 8 帧上下文" : "完整模拟"} · ${row.caption_intent_only || row.scene_description || ""}`
+        ? `${videoModeLabel(state.videoMode)} · ${row.caption_intent_only || row.scene_description || ""}`
         : row.video || "";
       $("question").textContent = row.question || "未记录问题。";
       $("response").textContent = row.response_final || "尚无输出。";
@@ -719,7 +740,7 @@
 
     document.querySelectorAll(".mode-tab").forEach((button) => button.addEventListener("click", () => {
       state.mode = button.dataset.mode;
-      if (state.mode === "v2v") state.videoMode = "context";
+      if (state.mode === "v2v") state.videoMode = "context8";
       else state.videoMode = "full";
       render();
     }));
