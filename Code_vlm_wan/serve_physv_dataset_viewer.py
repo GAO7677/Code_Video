@@ -82,6 +82,8 @@ def load_cases(dataset_root: Path) -> list[dict]:
 def load_dataset(dataset_root: Path) -> dict:
     similarity_path = dataset_root / "reports/trajectory_similarity.json"
     similarity = _read_json(similarity_path) if similarity_path.is_file() else {}
+    amplitude_pairs_path = dataset_root / "reports/motion_amplitude_pairs.json"
+    amplitude_pairs = _read_json(amplitude_pairs_path) if amplitude_pairs_path.is_file() else {}
     cases = load_cases(dataset_root)
     grouped: dict[str, list[dict]] = {}
     for case in cases:
@@ -93,9 +95,11 @@ def load_dataset(dataset_root: Path) -> dict:
                 "family_key": family_key,
                 "cases": members,
                 "trajectory_similarity": similarity.get("groups", {}).get(family_key, {}),
+                "amplitude_pair_filter": amplitude_pairs.get("groups", {}).get(family_key, {}),
             }
             for family_key, members in grouped.items()
         ],
+        "amplitude_pair_threshold": amplitude_pairs.get("threshold"),
     }
 
 
