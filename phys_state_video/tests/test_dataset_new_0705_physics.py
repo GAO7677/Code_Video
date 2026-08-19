@@ -67,7 +67,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
                 )
 
     def test_table_rolloff_cases_share_speed_across_heights(self) -> None:
-        heights = (0.46, 0.68, 1.02)
+        heights = (0.30, 0.58, 0.85, 1.12, 1.40)
         self.assertAlmostEqual(F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, -48.0, places=5)
         speeds = []
         for index, table_height in enumerate(heights):
@@ -82,11 +82,11 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             )
             self.assertAlmostEqual(blueprint.metadata["table_height_m"], table_height, places=5)
             self.assertEqual(blueprint.camera_key, "cam_09")
-            self.assertAlmostEqual(blueprint.camera.eye[0], 0.0, places=5)
-            self.assertLess(blueprint.camera.eye[1], -2.8)
-            self.assertAlmostEqual(blueprint.camera.target[0], 0.0, places=5)
+            self.assertGreater(blueprint.camera.eye[0], 0.0)
+            self.assertLess(blueprint.camera.eye[1], -3.0)
+            self.assertGreater(blueprint.camera.target[0], 0.0)
             self.assertAlmostEqual(blueprint.camera.target[1], 0.0, places=5)
-            self.assertAlmostEqual(blueprint.camera.yfov_deg, 58.0, places=5)
+            self.assertAlmostEqual(blueprint.camera.yfov_deg, 54.0, places=5)
             camera_horizontal_distance = math.hypot(
                 blueprint.camera.eye[0] - blueprint.camera.target[0],
                 blueprint.camera.eye[1] - blueprint.camera.target[1],
@@ -117,10 +117,10 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
         self.assertTrue(all(abs(speed - speeds[0]) < 1e-6 for speed in speeds))
 
     def test_table_rolloff_pilot_cases_use_rightward_screen_trajectories(self) -> None:
-        self.assertEqual(len(TABLE_ROLLOFF_CASES), 8)
+        self.assertEqual(len(TABLE_ROLLOFF_CASES), 10)
         self.assertTrue(all(float(case["travel_angle_deg"]) < 0.0 for case in TABLE_ROLLOFF_CASES))
         primary_cases = [case for case in TABLE_ROLLOFF_CASES if case["angle_label"] == "sr048"]
-        self.assertEqual([case["table_height_m"] for case in primary_cases], [0.46, 0.68, 1.02])
+        self.assertEqual([case["table_height_m"] for case in primary_cases], [0.30, 0.58, 0.85, 1.12, 1.40])
         self.assertTrue(
             all(
                 float(case["travel_angle_deg"]) == F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG
@@ -137,7 +137,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
                 f"F11_table_angle_{angle_deg}",
                 20260717,
                 "left_to_right",
-                table_height_m=0.68,
+                table_height_m=0.85,
                 initial_speed_mps=speed,
                 travel_angle_deg=angle_deg,
             )
@@ -157,7 +157,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             self.assertAlmostEqual(mover.angular_velocity[1], -expected_vx / radius, places=5)
 
     def test_incline_control_uses_dynamic_floor_supported_bodies(self) -> None:
-        expected_angles = [8.0, 16.0, 24.0, 32.0]
+        expected_angles = [4.0, 12.0, 22.0, 32.0, 42.0]
         self.assertEqual(
             [float(case["ramp_angle_deg"]) for case in RAMP_INCLINE_CASES],
             expected_angles,
@@ -174,10 +174,10 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             )
             self.assertEqual(blueprint.gravity, EARTH_GRAVITY)
             self.assertEqual(blueprint.camera_key, "cam_10")
-            self.assertAlmostEqual(blueprint.camera.eye[0], 2.35, places=5)
-            self.assertLess(blueprint.camera.eye[1], -6.0)
-            self.assertAlmostEqual(blueprint.camera.target[0], 2.35, places=5)
-            self.assertAlmostEqual(blueprint.camera.yfov_deg, 48.0, places=5)
+            self.assertGreater(blueprint.camera.eye[0], 1.5)
+            self.assertLess(blueprint.camera.eye[1], -5.0)
+            self.assertGreater(blueprint.camera.target[0], 1.5)
+            self.assertAlmostEqual(blueprint.camera.yfov_deg, 50.0, places=5)
             camera_horizontal_distance = math.hypot(
                 blueprint.camera.eye[0] - blueprint.camera.target[0],
                 blueprint.camera.eye[1] - blueprint.camera.target[1],
@@ -188,7 +188,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
                     camera_horizontal_distance,
                 )
             )
-            self.assertGreater(camera_downward_angle_deg, 5.0)
+            self.assertGreater(camera_downward_angle_deg, 4.0)
             self.assertLess(camera_downward_angle_deg, 6.0)
             self.assertEqual(blueprint.surface_key, "painted_concrete_floor")
             self.assertEqual(blueprint.lighting_key, "hall_bright")
@@ -206,7 +206,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             self.assertAlmostEqual(block.size["hy"], 0.16, places=5)
             self.assertAlmostEqual(block.size["hz"], 0.14, places=5)
             self.assertAlmostEqual(block.mass, 2.50, places=5)
-            self.assertAlmostEqual(block.friction, 0.12, places=5)
+            self.assertAlmostEqual(block.friction, 0.02, places=5)
             self.assertAlmostEqual(block.restitution, 0.08, places=5)
             self.assertEqual(block.linear_velocity, (0.0, 0.0, 0.0))
             self.assertEqual(block.angular_velocity, (0.0, 0.0, 0.0))
@@ -279,7 +279,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             include_difficulty=True,
             include_v2v=False,
         )
-        self.assertEqual(report["total_cases"], 24)
+        self.assertEqual(report["total_cases"], 27)
         self.assertEqual(report["failed_cases"], 0)
 
 

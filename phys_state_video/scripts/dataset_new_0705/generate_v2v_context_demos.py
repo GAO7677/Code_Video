@@ -49,6 +49,8 @@ CONTEXT_FRAME_OPTIONS = (8, 16)
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 SCENE_STYLE = "indoor_natural"
+BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M = 0.42
+BOWL_BALL_CLEARANCE_M = 0.012
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/physv_v2v_context_demos_20260819"
 )
@@ -224,7 +226,8 @@ def _make_gap_case(sample_key: str, gap_width: float) -> DemoCase:
             shape="sphere",
             size={"radius": ball_radius},
             material_key="rubber_red",
-            position=(-0.56, 0.0, platform_top + ball_radius),
+            # Leave enough visible approach distance for both context lengths.
+            position=(-1.16, 0.0, platform_top + ball_radius),
             dynamic=True,
             mass=1.2,
             friction=0.26,
@@ -285,7 +288,7 @@ def _make_gap_case(sample_key: str, gap_width: float) -> DemoCase:
         ),
     ]
     camera = _camera(
-        eye=(0.15, -4.85, 1.30),
+        eye=(0.25, -4.25, 1.30),
         target=(0.30, 0.0, 0.62),
         yfov_deg=50.0,
     )
@@ -334,13 +337,14 @@ def _make_obstacle_case(sample_key: str, obstacle_x: float) -> DemoCase:
             shape="sphere",
             size={"radius": ball_radius},
             material_key="rubber_red",
-            position=(-0.66, 0.0, ball_radius + 0.004),
+            # The nearest barrier remains visibly separated during ctx=8/16.
+            position=(-1.40, 0.0, ball_radius + 0.004),
             dynamic=True,
             mass=1.0,
             friction=0.22,
             restitution=0.40,
-            velocity=(2.15, 0.0, 0.0),
-            angular_velocity=(0.0, -2.15 / ball_radius, 0.0),
+            velocity=(2.00, 0.0, 0.0),
+            angular_velocity=(0.0, -2.00 / ball_radius, 0.0),
             linear_damping=0.01,
             angular_damping=0.01,
             metadata={"appearance_group": "v2v_obstacle_red_rubber_ball_v1"},
@@ -359,7 +363,7 @@ def _make_obstacle_case(sample_key: str, obstacle_x: float) -> DemoCase:
         ),
     ]
     camera = _camera(
-        eye=(0.05, -4.55, 1.12),
+        eye=(0.05, -4.00, 1.12),
         target=(0.05, 0.0, 0.48),
         yfov_deg=48.0,
     )
@@ -375,7 +379,7 @@ def _make_obstacle_case(sample_key: str, obstacle_x: float) -> DemoCase:
         metadata={
             "controlled_variable": "obstacle_x_m",
             "obstacle_x_m": obstacle_x,
-            "initial_speed_mps": 2.15,
+            "initial_speed_mps": 2.00,
             "barrier_half_x_m": 0.075,
         },
     )
@@ -434,19 +438,51 @@ def _bowl_segment(
     )
 
 
+def _bowl_inner_wall_x_for_ball_height(
+    *,
+    radius: float,
+    ball_center_height_above_bottom: float,
+    ball_surface_offset: float,
+) -> float:
+    """Return the left inner-wall contact coordinate for a target ball height.
+
+    The contact face is a circular arc.  Solving the sphere-center height
+    analytically keeps the ball's gravitational potential fixed while radius
+    is the only controlled variable.
+    """
+    if radius <= ball_surface_offset:
+        raise ValueError("bowl radius must exceed ball surface offset")
+    if not ball_surface_offset < ball_center_height_above_bottom < radius:
+        raise ValueError("target ball center height must lie inside the bowl radius")
+    root = radius * (radius - ball_center_height_above_bottom) / (radius - ball_surface_offset)
+    root = float(np.clip(root, 0.0, radius))
+    return -math.sqrt(max(radius * radius - root * root, 0.0))
+
+
 def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
-    span = 0.86
     bottom_z = 0.16
-    xs = np.linspace(-span, span, 15)
-    segment_dx = float(xs[1] - xs[0])
     ball_radius = 0.115
-    ball_surface_x = float(xs[2])
+    ball_clearance = BOWL_BALL_CLEARANCE_M
+    ball_surface_offset = ball_radius + ball_clearance
+    ball_surface_x = _bowl_inner_wall_x_for_ball_height(
+        radius=radius,
+        ball_center_height_above_bottom=BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M,
+        ball_surface_offset=ball_surface_offset,
+    )
+    # Use the second leftmost segment as the contact patch.  This retains a
+    # small physical rim beyond the ball while keeping the exact contact point
+    # on a rendered and collidable segment for every curvature.
+    span = abs(ball_surface_x) / 0.90
+    base_xs = np.linspace(-span, span, 21)
+    # Insert the analytically solved contact coordinate so the release height
+    # is independent of the discretization of the visible bowl wall.
+    xs = np.sort(np.unique(np.concatenate([base_xs, [ball_surface_x]])))
+    segment_dx = float(np.diff(xs).min())
     root = math.sqrt(radius * radius - ball_surface_x * ball_surface_x)
     surface_slope = ball_surface_x / root
     surface_theta = math.atan(surface_slope)
     surface_normal = (-math.sin(surface_theta), 0.0, math.cos(surface_theta))
     ball_surface_z = bottom_z + radius - root
-    ball_clearance = 0.012
     ball_position = (
         ball_surface_x + surface_normal[0] * (ball_radius + ball_clearance),
         0.0,
@@ -457,7 +493,7 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
             name="bowl_base",
             family_key="platform_block",
             shape="box",
-            size={"hx": 1.16, "hy": 0.56, "hz": 0.045},
+            size={"hx": span + 0.18, "hy": 0.56, "hz": 0.045},
             material_key="wood_dark",
             position=(0.0, 0.0, 0.045),
             dynamic=False,
@@ -476,8 +512,10 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
             mass=1.1,
             friction=0.28,
             restitution=0.22,
-            velocity=(0.42, 0.0, 0.0),
-            angular_velocity=(0.0, -0.42 / ball_radius, 0.0),
+            # The release has no imposed kinetic energy.  Motion is driven by
+            # the fixed, visible gravitational potential on the inner wall.
+            velocity=(0.0, 0.0, 0.0),
+            angular_velocity=(0.0, 0.0, 0.0),
             linear_damping=0.01,
             angular_damping=0.01,
             metadata={"appearance_group": "v2v_bowl_blue_rubber_ball_v1"},
@@ -488,16 +526,16 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
         for index, x in enumerate(xs)
     )
     camera = _camera(
-        eye=(0.05, -4.55, 1.30),
-        target=(0.05, 0.0, 0.68),
-        yfov_deg=48.0,
+        eye=(0.10, -3.85, 1.35),
+        target=(0.00, 0.0, 0.60),
+        yfov_deg=46.0,
         hdri_key="studio_warm",
     )
     blueprint = _blueprint(
         family_key="V2V_BOWL",
         sample_key=sample_key,
         title=f"Ball in a bowl with radius {radius:.2f} m",
-        description="A blue rubber ball enters a visible curved container; only the bowl curvature changes.",
+        description="A blue rubber ball is released from the same visible height on the inner wall of a curved container; only the bowl curvature changes.",
         objects=objects,
         camera=camera,
         surface_key="residential_wood_floor",
@@ -507,7 +545,9 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
             "bowl_radius_m": radius,
             "bowl_span_m": span,
             "bowl_bottom_z_m": bottom_z,
-            "initial_speed_mps": 0.42,
+            "ball_center_height_above_bottom_m": BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M,
+            "ball_initial_surface_x_m": ball_surface_x,
+            "initial_speed_mps": 0.0,
         },
     )
     return DemoCase(
@@ -529,7 +569,7 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
 
 def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
     anchor_x = -0.82
-    anchor_z = 1.70
+    anchor_z = 2.25
     angle_deg = 18.0
     angle = math.radians(angle_deg)
     bob_radius = 0.13
@@ -541,7 +581,7 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
     rope_end_z = anchor_z - rope_length * math.cos(angle)
     rope_center = ((anchor_x + rope_end_x) * 0.5, 0.0, (anchor_z + rope_end_z) * 0.5)
     rope_vec = (rope_end_x - anchor_x, 0.0, rope_end_z - anchor_z)
-    post_half_height = 0.76
+    post_half_height = (anchor_z - 0.18) * 0.5
     post_center_z = 0.18 + post_half_height
     objects = [
         _object(
@@ -574,7 +614,7 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
             shape="box",
             size={"hx": 0.14, "hy": 0.15, "hz": 0.03},
             material_key="painted_metal_teal",
-            position=(anchor_x, 0.11, 1.77),
+            position=(anchor_x, 0.11, anchor_z + 0.07),
             dynamic=False,
             mass=0.0,
             friction=0.80,
@@ -618,8 +658,8 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
         ),
     ]
     camera = _camera(
-        eye=(0.38, -4.55, 1.36),
-        target=(-0.40, 0.0, 0.96),
+        eye=(0.42, -3.85, 1.68),
+        target=(-0.48, 0.0, 1.25),
         yfov_deg=48.0,
         hdri_key="hall_bright",
     )
@@ -733,7 +773,7 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
         ),
     ]
     camera = _camera(
-        eye=(0.0, -4.75, 1.30),
+        eye=(0.0, -3.95, 1.30),
         target=(0.0, 0.0, 0.62),
         yfov_deg=48.0,
         hdri_key="studio_warm",
@@ -845,8 +885,8 @@ def _make_domino_case(sample_key: str, spacing: float) -> DemoCase:
             )
         )
     camera = _camera(
-        eye=(0.0, -4.45, 1.02),
-        target=(-0.25, 0.0, 0.48),
+        eye=(0.20, -3.90, 1.02),
+        target=(0.00, 0.0, 0.48),
         yfov_deg=46.0,
         hdri_key="hall_bright",
     )
@@ -895,18 +935,18 @@ def _quat_vector_as_euler(vector: tuple[float, float, float]) -> tuple[float, fl
 def build_demo_cases(seed_base: int = 20260819) -> list[DemoCase]:
     del seed_base  # Geometry is deterministic; seeds are assigned by the runner.
     cases: list[DemoCase] = []
-    for value in (0.12, 0.30, 0.48):
+    for value in (0.06, 0.22, 0.38, 0.54, 0.70):
         cases.append(_make_gap_case(f"v2v_gap_{int(value * 100):03d}", value))
-    for value in (0.20, 0.55, 0.90):
+    for value in (0.10, 0.38, 0.66, 0.94, 1.20):
         cases.append(_make_obstacle_case(f"v2v_obstacle_{int(value * 100):03d}", value))
-    for value in (1.10, 1.50, 2.00):
+    for value in (0.80, 1.30, 1.80, 2.30, 2.80):
         cases.append(_make_bowl_case(f"v2v_bowl_r{int(value * 100):03d}", value))
-    for value in (0.70, 1.00, 1.30):
+    for value in (0.55, 0.83, 1.10, 1.38, 1.65):
         cases.append(_make_pendulum_case(f"v2v_pendulum_l{int(value * 100):03d}", value))
-    for value in (0.28, 0.48, 0.68):
+    for value in (0.15, 0.33, 0.51, 0.69, 0.85):
         cases.append(_make_seesaw_case(f"v2v_seesaw_x{int(value * 100):03d}", value))
-    for value in (0.02, 0.06, 0.12):
-        cases.append(_make_domino_case(f"v2v_domino_g{int(value * 100):03d}", value))
+    for value in (0.00, 0.045, 0.09, 0.135, 0.18):
+        cases.append(_make_domino_case(f"v2v_domino_g{int(round(value * 1000)):03d}", value))
     return cases
 
 

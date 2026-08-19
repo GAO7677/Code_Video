@@ -54,11 +54,18 @@ def merge_results(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
         encoding="utf-8",
     )
+    def is_v2v_row(row: dict[str, object]) -> bool:
+        v2v = row.get("v2v")
+        return bool(
+            str(row.get("case_id", "")).startswith("v2v_")
+            or (isinstance(v2v, dict) and v2v.get("short_context_control_group"))
+        )
+
     summary = {
         "output": str(output),
         "total_cases": len(rows),
-        "difficulty_cases": sum(not str(row.get("case_id", "")).startswith("v2v_") for row in rows),
-        "v2v_cases": sum(str(row.get("case_id", "")).startswith("v2v_") for row in rows),
+        "difficulty_cases": sum(not is_v2v_row(row) for row in rows),
+        "v2v_cases": sum(is_v2v_row(row) for row in rows),
         "all_initialization_qa_passed": True,
     }
     summary_path = output.parent / "reports" / "combined_results_summary.json"

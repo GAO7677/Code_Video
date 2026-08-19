@@ -13,6 +13,7 @@ import math
 import shutil
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from .common_specs import ScenarioBlueprint
@@ -23,6 +24,11 @@ from .scene_generators_0705 import (
     build_scenario_family_catalog,
     generate_scenario_blueprint,
 )
+
+try:
+    from .. import generate_sim_preview_gallery as legacy
+except ImportError:  # pragma: no cover - direct script fallback
+    import generate_sim_preview_gallery as legacy
 
 
 DEFAULT_OUTPUT_ROOT = Path(
@@ -58,22 +64,32 @@ DIFFICULTY_LEVELS = {
     },
 }
 
-TABLE_ROLLOFF_CASES = (
-    {"table_height_m": 0.46, "height_label": "low", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
-    {"table_height_m": 1.02, "height_label": "high", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -12.0, "angle_label": "sr012"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -18.0, "angle_label": "sr018"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -24.0, "angle_label": "sr024"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -30.0, "angle_label": "sr030"},
-    {"table_height_m": 0.68, "height_label": "mid", "travel_angle_deg": -36.0, "angle_label": "sr036"},
+TABLE_HEIGHT_CONTROL_CASES = (
+    {"table_height_m": 0.30, "height_label": "low", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
+    {"table_height_m": 0.58, "height_label": "low_mid", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
+    {"table_height_m": 0.85, "height_label": "mid", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
+    {"table_height_m": 1.12, "height_label": "high_mid", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
+    {"table_height_m": 1.40, "height_label": "high", "travel_angle_deg": F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG, "angle_label": "sr048"},
 )
 
+# Direction variants remain a separate F11 view and are intentionally not
+# included in the V2V short-context overview.
+TABLE_DIRECTION_VARIANT_CASES = (
+    {"table_height_m": 0.85, "height_label": "mid", "travel_angle_deg": -12.0, "angle_label": "sr012"},
+    {"table_height_m": 0.85, "height_label": "mid", "travel_angle_deg": -18.0, "angle_label": "sr018"},
+    {"table_height_m": 0.85, "height_label": "mid", "travel_angle_deg": -24.0, "angle_label": "sr024"},
+    {"table_height_m": 0.85, "height_label": "mid", "travel_angle_deg": -30.0, "angle_label": "sr030"},
+    {"table_height_m": 0.85, "height_label": "mid", "travel_angle_deg": -36.0, "angle_label": "sr036"},
+)
+
+TABLE_ROLLOFF_CASES = TABLE_HEIGHT_CONTROL_CASES + TABLE_DIRECTION_VARIANT_CASES
+
 RAMP_INCLINE_CASES = (
-    {"ramp_angle_deg": 8.0, "angle_label": "a008", "angle_name": "shallow"},
-    {"ramp_angle_deg": 16.0, "angle_label": "a016", "angle_name": "moderate"},
-    {"ramp_angle_deg": 24.0, "angle_label": "a024", "angle_name": "steep"},
-    {"ramp_angle_deg": 32.0, "angle_label": "a032", "angle_name": "very_steep"},
+    {"ramp_angle_deg": 4.0, "angle_label": "a004", "angle_name": "very_shallow"},
+    {"ramp_angle_deg": 12.0, "angle_label": "a012", "angle_name": "shallow"},
+    {"ramp_angle_deg": 22.0, "angle_label": "a022", "angle_name": "moderate"},
+    {"ramp_angle_deg": 32.0, "angle_label": "a032", "angle_name": "steep"},
+    {"ramp_angle_deg": 42.0, "angle_label": "a042", "angle_name": "very_steep"},
 )
 
 
@@ -187,6 +203,125 @@ def _scenario_objects(blueprint: ScenarioBlueprint) -> list[dict[str, object]]:
         }
         for obj in blueprint.objects
     ]
+
+
+def _export_context_videos(video_path: Path, case_root: Path, case_id: str) -> tuple[Path, Path]:
+    """Export the same first 8/16 frames used by the V2V viewer controls."""
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise RuntimeError(f"failed to open rendered video for context export: {video_path}")
+    frames: list[np.ndarray] = []
+    try:
+        while len(frames) < 16:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            frames.append(frame)
+    finally:
+        capture.release()
+    if len(frames) < 16:
+        raise RuntimeError(
+            f"{case_id}: expected at least 16 frames for short-context controls, got {len(frames)}"
+        )
+    context_root = case_root / "context"
+    context_root.mkdir(parents=True, exist_ok=True)
+    context_path = context_root / f"{case_id}_context8f.mp4"
+    context16_path = context_root / f"{case_id}_context16f.mp4"
+    legacy._write_video_h264(context_path, frames[:8])
+    legacy._write_video_h264(context16_path, frames[:16])
+    return context_path, context16_path
+
+
+def _control_first_event_frame(blueprint: ScenarioBlueprint, states_path: Path) -> int | None:
+    payload = np.load(states_path, allow_pickle=True)
+    positions = np.asarray(payload["positions"], dtype=np.float64)
+    names = [_decode_name(value) for value in payload["object_names"]]
+    index = {name: idx for idx, name in enumerate(names)}
+    if blueprint.family_key == "F11":
+        mover = next(obj for obj in blueprint.objects if obj.name == "roller_0")
+        threshold = float(blueprint.metadata["table_top_half_width_m"])
+        frames = np.flatnonzero(positions[:, index[mover.name], 0] > threshold)
+    elif blueprint.family_key == "F12":
+        block = next(obj for obj in blueprint.objects if obj.name == "block_0")
+        theta = math.radians(float(blueprint.metadata["ramp_angle_deg"]))
+        ramp_edge_x = 0.5 * float(blueprint.metadata["ramp_length_m"]) * math.cos(theta)
+        frames = np.flatnonzero(positions[:, index[block.name], 0] > ramp_edge_x - 0.02)
+    else:
+        return None
+    return int(frames[0]) if len(frames) else None
+
+
+def _control_visibility_contract(
+    blueprint: ScenarioBlueprint,
+    mask_ids_path: Path,
+) -> dict[str, object]:
+    payload = np.load(mask_ids_path, allow_pickle=True)
+    mask_ids = np.asarray(payload["instance_ids"])
+    object_names = [_decode_name(value) for value in payload["object_names"]]
+    object_ids = [int(value) for value in payload["object_ids"]]
+    visible_by_name = {
+        name: bool(np.all(np.any(mask_ids == object_id, axis=(1, 2))))
+        for name, object_id in zip(object_names, object_ids)
+    }
+    dynamic_names = [obj.name for obj in blueprint.objects if obj.dynamic]
+    dynamic_visibility = {
+        name: bool(visible_by_name.get(name, False)) for name in dynamic_names
+    }
+    return {
+        # The training-relevant contract is that every moving object remains
+        # in frame; static fixture pixel visibility is reported separately.
+        "all_objects_visible_every_frame": bool(dynamic_visibility and all(dynamic_visibility.values())),
+        "dynamic_object_visibility": dynamic_visibility,
+        "rendered_object_visibility": visible_by_name,
+        "rendered_objects_visible_every_frame": bool(visible_by_name and all(visible_by_name.values())),
+    }
+
+
+def _control_context_artifacts(
+    blueprint: ScenarioBlueprint,
+    render_manifest: dict[str, object],
+    case_root: Path,
+    case_id: str,
+) -> dict[str, object]:
+    context_path, context16_path = _export_context_videos(
+        Path(str(render_manifest["video"])), case_root, case_id
+    )
+    first_event_frame = _control_first_event_frame(
+        blueprint, Path(str(render_manifest["states"]))
+    )
+    visibility = _control_visibility_contract(
+        blueprint, Path(str(render_manifest["mask_ids"]))
+    )
+    return {
+        "context_video": str(context_path),
+        "context16_video": str(context16_path),
+        "v2v": {
+            "short_context_control_group": True,
+            "context_frames": 8,
+            "context_duration_s": round(8 / 30, 4),
+            "context_frame_options": [8, 16],
+            "context16_duration_s": round(16 / 30, 4),
+            "controlled_variable": blueprint.metadata.get("controlled_variable"),
+            "controlled_value": blueprint.metadata.get(
+                "table_height_m", blueprint.metadata.get("ramp_angle_deg")
+            ),
+            "controlled_value_label": (
+                f"{float(blueprint.metadata['table_height_m']):.2f} m"
+                if blueprint.family_key == "F11"
+                else f"{float(blueprint.metadata['ramp_angle_deg']):.0f}°"
+            ),
+            "event_rule": (
+                "ball_crosses_table_right_edge"
+                if blueprint.family_key == "F11"
+                else "block_exits_ramp_lower_edge"
+            ),
+            "first_event_frame": first_event_frame,
+            "first_event_time_s": round(first_event_frame / 30, 4) if first_event_frame is not None else None,
+            "event_after_context": bool(first_event_frame is not None and first_event_frame >= 8),
+            "event_after_context16": bool(first_event_frame is not None and first_event_frame >= 16),
+            **visibility,
+        },
+    }
 
 
 def _load_existing_rows(results_path: Path) -> list[dict[str, object]]:
@@ -414,6 +549,11 @@ def main() -> None:
                 export_instance_masks=True,
                 preserve_states=True,
             )
+            context_artifacts = (
+                _control_context_artifacts(blueprint, render_manifest, case_root, case_id)
+                if extra["angle_label"] == "sr048"
+                else None
+            )
             state_summary = _summarize_states(Path(render_manifest["states"]))
             family_summary = _family_summary(family_key)
             difficulty = {
@@ -438,6 +578,9 @@ def main() -> None:
                     "travel_angle_deg": round(travel_angle_deg, 5),
                     "travel_direction_xy": blueprint.metadata.get("travel_direction_xy"),
                     "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
+                    "controlled_variable": "table_height_m",
+                    "controlled_value": round(table_height_m, 5),
+                    "controlled_value_label": f"{table_height_m:.2f} m",
                     "initialization_qa": render_manifest["initialization_qa"],
                     "table_height_label": extra["height_label"],
                     "angle_label": extra["angle_label"],
@@ -445,6 +588,8 @@ def main() -> None:
                 },
                 "label_policy": "scene mechanism is not an observed motion label",
             }
+            if context_artifacts is not None:
+                pilot_metadata["v2v"] = context_artifacts["v2v"]
             meta_path = Path(render_manifest["meta"])
             meta_payload = json.loads(meta_path.read_text(encoding="utf-8"))
             meta_payload["difficulty_pilot"] = pilot_metadata
@@ -470,9 +615,20 @@ def main() -> None:
                     "scenario_spec": pilot_metadata["scenario_spec"],
                     "state_summary": state_summary,
                     "initialization_qa": render_manifest["initialization_qa"],
-                    "video": render_manifest["video"],
-                    "video_url": "/media/" + case_id,
-                    "meta": render_manifest["meta"],
+                        "video": render_manifest["video"],
+                        "video_url": "/media/" + case_id,
+                        **(
+                            {
+                                "context_video": context_artifacts["context_video"],
+                                "context16_video": context_artifacts["context16_video"],
+                                "context_video_url": "/media-context/" + case_id,
+                                "context16_video_url": "/media-context16/" + case_id,
+                                "v2v": context_artifacts["v2v"],
+                            }
+                            if context_artifacts is not None
+                            else {}
+                        ),
+                        "meta": render_manifest["meta"],
                     "states": render_manifest["states"],
                     "mask_video": render_manifest["mask_video"],
                     "mask_ids": render_manifest["mask_ids"],
@@ -527,6 +683,9 @@ def main() -> None:
                 export_instance_masks=True,
                 preserve_states=True,
             )
+            context_artifacts = _control_context_artifacts(
+                blueprint, render_manifest, case_root, case_id
+            )
             state_summary = _summarize_states(Path(render_manifest["states"]))
             family_summary = _family_summary(family_key)
             difficulty = {
@@ -553,12 +712,15 @@ def main() -> None:
                     "initial_speed_mps": 0.0,
                     "released_from_rest": True,
                     "controlled_variable": "ramp_angle_deg",
+                    "controlled_value": round(ramp_angle_deg, 5),
+                    "controlled_value_label": f"{ramp_angle_deg:.0f}°",
                     "support_mode": blueprint.metadata["support_mode"],
                     "floor_restitution": round(float(blueprint.metadata.get("floor_restitution", 0.02)), 5),
                     "initialization_qa": render_manifest["initialization_qa"],
                     "objects": _scenario_objects(blueprint),
                 },
                 "label_policy": "scene mechanism is not an observed motion label",
+                "v2v": context_artifacts["v2v"],
             }
             meta_path = Path(render_manifest["meta"])
             meta_payload = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -586,6 +748,10 @@ def main() -> None:
                     "initialization_qa": render_manifest["initialization_qa"],
                     "video": render_manifest["video"],
                     "video_url": "/media/" + case_id,
+                    "context_video": context_artifacts["context_video"],
+                    "context16_video": context_artifacts["context16_video"],
+                    "context_video_url": "/media-context/" + case_id,
+                    "context16_video_url": "/media-context16/" + case_id,
                     "meta": render_manifest["meta"],
                     "states": render_manifest["states"],
                     "mask_video": render_manifest["mask_video"],
@@ -595,6 +761,7 @@ def main() -> None:
                     "response_raw": "",
                     "answer_source": "simulation_pilot",
                     "caption_intent_only": render_manifest["caption"],
+                    "v2v": context_artifacts["v2v"],
                 }
             )
             print(f"rendered {case_id} -> {render_manifest['video']}", flush=True)

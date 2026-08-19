@@ -1,6 +1,7 @@
 import unittest
 
 from dataset_new_0705.generate_v2v_context_demos import (
+    BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M,
     CONTEXT_FRAMES,
     CONTEXT_FRAME_OPTIONS,
     FPS,
@@ -15,11 +16,11 @@ class V2VContextDemoTests(unittest.TestCase):
     def setUpClass(cls):
         cls.cases = build_demo_cases()
 
-    def test_six_families_have_three_control_values(self):
+    def test_six_families_have_five_control_values(self):
         families = {}
         for case in self.cases:
             families.setdefault(case.family_key, []).append(case)
-        self.assertEqual(len(self.cases), 18)
+        self.assertEqual(len(self.cases), 30)
         self.assertEqual(set(families), {
             "V2V_GAP",
             "V2V_OBSTACLE",
@@ -28,8 +29,8 @@ class V2VContextDemoTests(unittest.TestCase):
             "V2V_SEESAW",
             "V2V_DOMINO",
         })
-        self.assertTrue(all(len(cases) == 3 for cases in families.values()))
-        self.assertTrue(all(len({case.controlled_value for case in cases}) == 3 for cases in families.values()))
+        self.assertTrue(all(len(cases) == 5 for cases in families.values()))
+        self.assertTrue(all(len({case.controlled_value for case in cases}) == 5 for cases in families.values()))
 
     def test_physics_and_context_contract(self):
         for case in self.cases:
@@ -56,8 +57,29 @@ class V2VContextDemoTests(unittest.TestCase):
         self.assertEqual(len(set(trigger_specs)), 1)
         self.assertEqual(
             {case.blueprint.metadata["domino_gap_m"] for case in cases},
-            {0.02, 0.06, 0.12},
+            {0.0, 0.045, 0.09, 0.135, 0.18},
         )
+
+    def test_bowl_ball_starts_at_one_fixed_physical_height(self):
+        cases = [case for case in self.cases if case.family_key == "V2V_BOWL"]
+        for case in cases:
+            metadata = case.blueprint.metadata
+            ball = next(obj for obj in case.blueprint.objects if obj.name == "bowl_ball")
+            self.assertAlmostEqual(
+                ball.position[2] - float(metadata["bowl_bottom_z_m"]),
+                BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M,
+                places=5,
+            )
+            self.assertEqual(ball.linear_velocity, (0.0, 0.0, 0.0))
+            self.assertEqual(ball.angular_velocity, (0.0, 0.0, 0.0))
+
+    def test_pendulum_longest_bob_remains_above_the_floor_at_release(self):
+        cases = [case for case in self.cases if case.family_key == "V2V_PENDULUM"]
+        lowest_bob_z = min(
+            next(obj for obj in case.blueprint.objects if obj.name == "pendulum_bob").position[2]
+            for case in cases
+        )
+        self.assertGreater(lowest_bob_z, 0.60)
 
     def test_ball_appearance_mapping_is_fixed_within_each_control_group(self):
         for family_key in (

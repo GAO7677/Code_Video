@@ -257,8 +257,20 @@ def _resolve_ffmpeg() -> str:
 
 
 def _write_video_h264(output_mp4: Path, frames: List[np.ndarray]) -> None:
+    if not frames:
+        raise ValueError(f"cannot encode an empty video: {output_mp4}")
+    frame_height, frame_width = frames[0].shape[:2]
+    if frame_width <= 0 or frame_height <= 0:
+        raise ValueError(f"invalid video frame shape for {output_mp4}: {frames[0].shape}")
+    if any(frame.shape[:2] != (frame_height, frame_width) for frame in frames):
+        raise ValueError(f"inconsistent frame sizes while encoding {output_mp4}")
     tmp_mp4v = output_mp4.with_suffix(".tmp_mp4v.mp4")
-    writer = cv2.VideoWriter(str(tmp_mp4v), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (IMG_W, IMG_H))
+    writer = cv2.VideoWriter(
+        str(tmp_mp4v),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        FPS,
+        (frame_width, frame_height),
+    )
     if not writer.isOpened():
         raise RuntimeError(f"failed to open temporary mp4v writer for {tmp_mp4v}")
     try:

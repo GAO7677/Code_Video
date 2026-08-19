@@ -310,7 +310,14 @@
 
     function isF11(row) { return row.scene_family && row.scene_family.family_key === "F11"; }
     function isF12(row) { return row.scene_family && row.scene_family.family_key === "F12"; }
-    function isV2V(row) { return Boolean(row && row.scene_family && String(row.scene_family.family_key || "").startsWith("V2V_")); }
+    function isV2V(row) {
+      const familyKey = String((row && row.scene_family && row.scene_family.family_key) || "");
+      return Boolean(
+        row
+        && row.v2v
+        && (familyKey.startsWith("V2V_") || ((familyKey === "F11" || familyKey === "F12") && row.v2v.short_context_control_group))
+      );
+    }
     function v2v(row) { return row.v2v || {}; }
     function spec(row) { return row.scenario_spec || {}; }
     function tableHeight(row) {
@@ -347,7 +354,7 @@
       return labels[value] || value || "-";
     }
     function f11Primary(row) { return isF11(row) && angleLabel(row) === "sr048"; }
-    function f11DirectionSet(row) { return isF11(row) && Math.abs((tableHeight(row) || 0) - 0.68) < 0.001; }
+    function f11DirectionSet(row) { return isF11(row) && Math.abs((tableHeight(row) || 0) - 0.85) < 0.001; }
     function f12Control(row) { return isF12(row); }
     function controlledValue(row) {
       const value = Number(spec(row).controlled_value ?? v2v(row).controlled_value);
@@ -370,8 +377,8 @@
     function displayMeta(row) {
       const difficulty = row.difficulty || {};
       const family = row.scene_family || {};
-      if (isF11(row)) return `F11 · ${spec(row).travel_angle_deg ?? "-"} deg · ${motionState(row.state_summary && row.state_summary.final_motion_state)}`;
-      if (isF12(row)) return `F12 · 静止释放 · ${motionState(row.state_summary && row.state_summary.final_motion_state)}`;
+      if (isF11(row)) return `${isV2V(row) ? "V2V · " : ""}F11 · ${spec(row).travel_angle_deg ?? "-"} deg · ${motionState(row.state_summary && row.state_summary.final_motion_state)}`;
+      if (isF12(row)) return `${isV2V(row) ? "V2V · " : ""}F12 · 静止释放 · ${motionState(row.state_summary && row.state_summary.final_motion_state)}`;
       if (isV2V(row)) return `V2V · 前 ${v2v(row).context_frames || 8} 帧 · 首事件 ${firstEventFrame(row) == null ? "-" : `第 ${firstEventFrame(row)} 帧`}`;
       return `${difficulty.title || difficulty.level || "-"} · ${family.family_key || "-"}`;
     }
@@ -406,17 +413,17 @@
     function chooseSelected(rows) {
       if (rows.some((row) => row.case_id === state.selectedId)) return;
       const preferredCaseId = state.mode === "incline"
-        ? "difficulty_l2_f12_a024"
+        ? "difficulty_l2_f12_a022"
         : state.mode === "v2v"
-          ? "v2v_gap_012"
-        : "difficulty_l2_f11_h068_sr048";
+          ? "v2v_gap_038"
+        : "difficulty_l2_f11_h085_sr048";
       const preferred = rows.find((row) => row.case_id === preferredCaseId);
       state.selectedId = (preferred || rows[0] || {}).case_id || "";
     }
     function groupLabel(row) {
       if (state.mode === "height") return "桌高控制组";
       if (state.mode === "incline") return "斜面倾角控制组";
-      if (state.mode === "direction") return "0.68 m 方向组";
+      if (state.mode === "direction") return "0.85 m 方向组";
       if (state.mode === "v2v") return `${(row.scene_family && row.scene_family.title) || "V2V"} 控制组`;
       const difficulty = row.difficulty || {};
       return `${difficulty.level || "-"} / ${difficulty.title || "未分类"}`;

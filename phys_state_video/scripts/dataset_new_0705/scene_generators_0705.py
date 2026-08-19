@@ -22,7 +22,7 @@ EARTH_GRAVITY = 9.81
 NOMINAL_RENDER_WIDTH = 1280
 NOMINAL_RENDER_HEIGHT = 720
 DIRECTION_MODES = {"left_to_right", "right_to_left", "vertical"}
-DEFAULT_CAMERA_DISTANCE_SCALE = 0.88
+DEFAULT_CAMERA_DISTANCE_SCALE = 0.82
 F11_SCREEN_RIGHT_TRAVEL_ANGLE_DEG = -48.0
 INITIAL_GROUND_CLEARANCE_M = 0.006
 
@@ -111,9 +111,11 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             hdri_key="studio_warm",
         ),
         CameraSpec(
-            eye=(0.0, -3.64, 1.05),
-            target=(0.0, 0.0, 0.50),
-            yfov_deg=58.0,
+            # F11: a mostly frontal view that includes both the high table
+            # surface and the floor-side rebound without a top-down angle.
+            eye=(0.0, -4.05, 1.20),
+            target=(0.25, 0.0, 0.82),
+            yfov_deg=54.0,
             jitter_eye_xyz=(0.0, 0.0, 0.0),
             jitter_target_xyz=(0.0, 0.0, 0.0),
             jitter_fov_deg=0.0,
@@ -124,9 +126,9 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             # floor. Center the full simulated rollout rather than only the
             # support, with a shallow downward view that keeps the ramp
             # surface and block-floor contact visually legible.
-            eye=(2.35, -6.90, 1.20),
-            target=(2.35, 0.0, 0.54),
-            yfov_deg=48.0,
+            eye=(2.00, -6.40, 1.25),
+            target=(2.00, 0.0, 0.62),
+            yfov_deg=50.0,
             jitter_eye_xyz=(0.0, 0.0, 0.0),
             jitter_target_xyz=(0.0, 0.0, 0.0),
             jitter_fov_deg=0.0,
@@ -1461,8 +1463,8 @@ def _make_f11(
     family = build_scenario_family_catalog()["F11"]
     materials = build_material_catalog()
 
-    table_height = float(table_height_m if table_height_m is not None else rng.uniform(0.45, 0.95))
-    table_height = float(np.clip(table_height, 0.38, 1.02))
+    table_height = float(table_height_m if table_height_m is not None else rng.uniform(0.35, 1.25))
+    table_height = float(np.clip(table_height, 0.30, 1.40))
     speed = float(initial_speed_mps if initial_speed_mps is not None else rng.uniform(*family.speed_range))
     speed = float(np.clip(speed, 0.65, 2.4))
     if travel_angle_deg is None:
@@ -1622,7 +1624,7 @@ def _make_f12(
     materials = build_material_catalog()
 
     ramp_angle = float(ramp_angle_deg if ramp_angle_deg is not None else 20.0)
-    ramp_angle = float(np.clip(ramp_angle, 8.0, 32.0))
+    ramp_angle = float(np.clip(ramp_angle, 4.0, 42.0))
     theta = math.radians(ramp_angle)
     cos_theta = math.cos(theta)
     sin_theta = math.sin(theta)
@@ -1691,7 +1693,7 @@ def _make_f12(
             color=materials["painted_metal_yellow"].base_color,
             dynamic=True,
             role="dynamic_support",
-            position=(support_x, side * 0.20 * size_scale, 0.5 * support_height),
+            position=(support_x, side * 0.30 * size_scale, 0.5 * support_height),
             orientation_euler_deg=(0.0, 0.0, 0.0),
             linear_velocity=(0.0, 0.0, 0.0),
             angular_velocity=(0.0, 0.0, 0.0),
@@ -1708,7 +1710,9 @@ def _make_f12(
         semantic_role="sliding_dynamic",
         size={"hx": block_half_x, "hy": block_half_y, "hz": block_half_z},
         mass=2.50,
-        friction=0.12,
+        # Keep the same low-friction block across the angle group so even the
+        # 4-degree ramp visibly accelerates under gravity from rest.
+        friction=0.02,
         restitution=0.08,
         linear_damping=0.02,
         angular_damping=0.04,
