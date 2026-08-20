@@ -2838,7 +2838,7 @@ def build_master_hub(
       <div class="meta">40-case ctx8 测试；8 个 PhysRVG 模型族、29 个完整 checkpoint，先完成每族 demo 验收，再做全量生成；视频 case 与指标排行独立展示</div>
       <a href="physv-v2v-0819-physrvg/">Case 视频与 demo 状态</a>
       <a href="physv-v2v-0819-physrvg/metrics/">指标可视化</a></div>
-      <div class="status">GPU 0/1/3<strong>40 cases · 29 checkpoints</strong><small>demo 通过后自动进入全量队列</small></div>
+      <div class="status" id="physv-v2v-0819-status"><span>生成 GPU3 · 指标 GPU0/1</span><strong>正在读取实时进度…</strong><small>demo 通过后自动进入全量队列</small><button id="physv-v2v-refresh" type="button">手动刷新</button></div>
     </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
@@ -2913,6 +2913,38 @@ def build_master_hub(
 </body>
 </html>
 """
+    live_physv_script = """
+<script>
+(() => {
+  const status = document.getElementById("physv-v2v-0819-status");
+  const refreshButton = document.getElementById("physv-v2v-refresh");
+  if (!status) return;
+  const escapeHtml = (value) => String(value ?? "").replace(/[&<>\"]/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[ch]));
+  async function refreshPhysV() {
+    try {
+      const response = await fetch("physv-v2v-0819-physrvg/dashboard.json?ts=" + Date.now(), {cache: "no-store"});
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const dashboard = await response.json();
+      const models = Array.isArray(dashboard.models) ? dashboard.models : [];
+      const records = Array.isArray(dashboard.records) ? dashboard.records : [];
+      const videos = records.filter((row) => row && row.video_url).length;
+      const expectedVideos = Number(dashboard.task_count || models.length) * Number(dashboard.case_count || 0);
+      const metrics = Number(dashboard.metric_completed_records || 0);
+      const expectedMetrics = Number(dashboard.expected_metric_records || 0);
+      const complete = models.filter((row) => row.status === "complete").length;
+      status.innerHTML = "<span>GPU 0/1/3 · " + escapeHtml(dashboard.phase || "pending") + "</span>" +
+        "<strong>" + videos + "/" + expectedVideos + " videos · " + metrics + "/" + expectedMetrics + " metrics</strong>" +
+        "<small>checkpoint 完成 " + complete + "/" + models.length + " · 更新于 " + escapeHtml(dashboard.updated_at || "") + "</small>";
+    } catch (error) {
+      status.innerHTML = "<span>生成 GPU3 · 指标 GPU0/1</span><strong>实时进度读取失败</strong><small>" + escapeHtml(error) + "</small>";
+    }
+  }
+  if (refreshButton) refreshButton.addEventListener("click", refreshPhysV);
+  refreshPhysV();
+})();
+</script>
+"""
+    page = page.replace("</body>", live_physv_script + "</body>")
     (hub_root / "index.html").write_text(page, encoding="utf-8")
 
 

@@ -15,6 +15,7 @@ DEFAULT_DATASET_ROOT = Path("/data/gaoya/AAA_test_video/physv_v2v_0819")
 DEFAULT_VIEWER_ROOT = Path(__file__).with_name("physv_dataset_viewer")
 MEDIA_FILES = {
     "full": ("videos/rgb.mp4", "video/mp4"),
+    "cycles": ("videos/rgb_cycles.mp4", "video/mp4"),
     "context8": ("context/context8.mp4", "video/mp4"),
     "context16": ("context/context16.mp4", "video/mp4"),
     "masks": ("videos/masks.mp4", "video/mp4"),
@@ -74,6 +75,7 @@ def load_cases(dataset_root: Path) -> list[dict]:
                 "trajectory_similarity": similarity_cases.get(sample_dir.name, {}),
                 "dynamic_actors": manifest.get("dynamic_actors", []),
                 "video": wrapper.get("video", {}),
+                "cycles_preview_available": (sample_dir / "videos/rgb_cycles.mp4").is_file(),
             }
         )
     return cases
