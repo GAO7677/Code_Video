@@ -3,123 +3,222 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PhysV 控制变量实验组</title>
+  <title>PhysV 控制变量视频总览</title>
   <style>
-    :root { --bg:#e9efec; --paper:#fff; --ink:#18251f; --muted:#65736c; --line:#c9d4ce; --deep:#183a30; --green:#087c6d; --green-soft:#e0f0eb; --red:#b65339; --red-soft:#f7e8e2; --yellow:#d4e475; }
-    * { box-sizing:border-box; }
-    html { background:var(--bg); }
-    body { min-width:320px; margin:0; color:var(--ink); background:var(--bg); font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    button { color:inherit; font:inherit; }
-    button:focus-visible { outline:3px solid #5aafa1; outline-offset:2px; }
-    .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-    .topbar { padding:14px 28px; color:#f4faf7; background:var(--deep); border-bottom:4px solid var(--red); }
-    .topbar-inner { max-width:1800px; margin:auto; display:flex; align-items:center; justify-content:space-between; gap:18px; }
-    .brand { display:flex; align-items:center; gap:12px; }
-    .brand-mark { display:grid; place-items:center; width:40px; height:40px; color:var(--deep); background:var(--yellow); border-radius:4px; font:900 11px/1 ui-monospace,monospace; }
-    .brand h1 { margin:0; font-size:18px; line-height:1.2; }
-    .brand p { margin:3px 0 0; color:#bdd0c7; font:10px/1.3 ui-monospace,monospace; }
-    .refresh { min-height:36px; padding:7px 12px; color:#fff; background:transparent; border:1px solid #6d8a7e; border-radius:4px; cursor:pointer; font-weight:750; }
-    .refresh:hover { color:var(--deep); background:var(--yellow); border-color:var(--yellow); }
-    .refresh:disabled { opacity:.55; cursor:wait; }
-    main { max-width:1800px; margin:auto; padding:22px 28px 48px; }
-    .directory { display:grid; grid-template-columns:repeat(5,minmax(130px,1fr)); border:1px solid var(--line); background:var(--paper); }
-    .group-tab { min-height:78px; padding:10px 11px; text-align:left; background:transparent; border:0; border-right:1px solid var(--line); cursor:pointer; }
-    .group-tab:nth-child(5n) { border-right:0; }
-    .group-tab:nth-child(-n+5) { border-bottom:1px solid var(--line); }
-    .group-tab:hover { background:var(--green-soft); }
-    .group-tab.active { color:#fff; background:var(--green); }
-    .group-code { display:block; font:800 10px/1.2 ui-monospace,monospace; }
-    .group-name { display:block; margin-top:5px; font-size:13px; font-weight:800; }
-    .group-stat { display:block; margin-top:3px; color:var(--muted); font:10px/1.2 ui-monospace,monospace; }
-    .group-tab.active .group-stat { color:#d4eee7; }
-    .group-head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:20px; align-items:end; margin-top:24px; padding-bottom:14px; border-bottom:2px solid var(--ink); }
-    .eyebrow { color:var(--green); font:800 10px/1.2 ui-monospace,monospace; text-transform:uppercase; }
-    .group-head h2 { margin:5px 0 0; font-size:27px; line-height:1.15; letter-spacing:0; }
-    .group-summary { display:flex; gap:20px; }
-    .summary-item { min-width:105px; padding-left:12px; border-left:1px solid var(--line); }
-    .summary-item strong { display:block; font:850 20px/1 ui-monospace,monospace; }
-    .summary-item span { display:block; margin-top:5px; color:var(--muted); font-size:10px; }
-    .matrix-wrap { margin-top:14px; overflow-x:auto; background:var(--paper); border:1px solid var(--line); }
-    .matrix-title { display:flex; justify-content:space-between; gap:16px; padding:10px 12px; border-bottom:1px solid var(--line); }
-    .matrix-title h3 { margin:0; font-size:13px; }
-    .matrix-title span { color:var(--muted); font-size:10px; }
-    .matrix { width:100%; min-width:660px; border-collapse:collapse; font-size:11px; }
-    .matrix th,.matrix td { padding:7px 9px; text-align:center; border-right:1px solid #e1e8e4; border-bottom:1px solid #e1e8e4; }
-    .matrix th:first-child { width:190px; text-align:left; }
-    .matrix tbody th { color:var(--muted); font:10px/1.25 ui-monospace,monospace; }
-    .matrix td { font:750 11px/1 ui-monospace,monospace; }
-    .matrix td.self { color:var(--muted); background:#f2f5f3; }
-    .matrix td.high { color:#086758; background:var(--green-soft); }
-    .matrix td.low { color:#963f2b; background:var(--red-soft); }
-    .pair-filter { margin-top:12px; overflow-x:auto; background:var(--paper); border:1px solid var(--line); border-left:4px solid var(--red); }
-    .pair-filter h3 { margin:0; padding:10px 12px; font-size:13px; border-bottom:1px solid var(--line); }
-    .pair-table { width:100%; min-width:760px; border-collapse:collapse; }
-    .pair-table th,.pair-table td { padding:7px 10px; text-align:left; border-bottom:1px solid #e1e8e4; font-size:10px; }
-    .pair-table th { color:var(--muted); font-weight:700; }
-    .pair-table td.num { text-align:right; font-family:ui-monospace,monospace; }
-    .pair-empty { padding:12px; color:var(--muted); font-size:11px; }
-    .case-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:18px; }
-    .case-card { min-width:0; overflow:hidden; background:var(--paper); border:1px solid var(--line); border-radius:6px; }
-    .case-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; min-height:70px; padding:12px 14px; border-bottom:1px solid var(--line); }
-    .case-head h3 { margin:3px 0 0; font-size:15px; line-height:1.25; overflow-wrap:anywhere; }
-    .case-id { color:var(--muted); font:9px/1.3 ui-monospace,monospace; overflow-wrap:anywhere; }
-    .control { flex:0 0 auto; min-width:90px; padding-left:11px; border-left:3px solid var(--red); }
-    .control strong { display:block; font:850 17px/1.1 ui-monospace,monospace; }
-    .control span { display:block; margin-top:4px; color:var(--muted); font-size:9px; overflow-wrap:anywhere; }
-    .case-card video { display:block; width:100%; aspect-ratio:16/9; object-fit:contain; background:#11201a; }
-    .video-compare { display:grid; grid-template-columns:1fr 1fr; border-bottom:1px solid var(--line); }
-    .video-panel { min-width:0; }
-    .video-panel + .video-panel { border-left:1px solid var(--line); }
-    .video-label { display:flex; align-items:center; justify-content:space-between; min-height:30px; padding:6px 10px; color:var(--muted); background:#f5f8f6; border-bottom:1px solid var(--line); font:750 9px/1.2 ui-monospace,monospace; }
-    .video-label strong { color:var(--ink); font-size:10px; }
-    .case-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
-    .case-metric { min-width:0; padding:10px 11px; border-right:1px solid var(--line); }
-    .case-metric:last-child { border-right:0; }
-    .case-metric span { display:block; color:var(--muted); font-size:9px; }
-    .case-metric strong { display:block; margin-top:4px; font:850 16px/1.1 ui-monospace,monospace; overflow-wrap:anywhere; }
-    .case-metric small { display:block; margin-top:4px; color:var(--muted); font-size:9px; overflow-wrap:anywhere; }
-    .vbench { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); border-bottom:1px solid var(--line); }
-    .vbench div { min-width:0; padding:8px 5px; text-align:center; border-right:1px solid #e2e8e5; }
-    .vbench div:last-child { border-right:0; }
-    .vbench span { display:block; color:var(--muted); font-size:8px; overflow-wrap:anywhere; }
-    .vbench strong { display:block; margin-top:4px; font:750 10px/1 ui-monospace,monospace; }
-    .prompts { display:grid; grid-template-columns:1fr 1fr; }
-    .prompt { min-width:0; padding:11px 13px; border-right:1px solid var(--line); }
-    .prompt:last-child { border-right:0; }
-    .prompt h4 { margin:0; color:var(--green); font-size:10px; }
-    .prompt:last-child h4 { color:var(--red); }
-    .prompt p { margin:6px 0 0; color:#35473f; font-size:12px; line-height:1.55; overflow-wrap:anywhere; }
-    .empty { margin-top:18px; padding:30px; text-align:center; color:var(--muted); background:var(--paper); border:1px solid var(--line); }
-    @media (max-width:1250px) { .directory { grid-template-columns:repeat(4,1fr); } .group-tab:nth-child(5n) { border-right:1px solid var(--line); } .group-tab:nth-child(4n) { border-right:0; } .group-tab:nth-child(-n+5) { border-bottom:0; } .group-tab:nth-child(-n+4), .group-tab:nth-child(n+5):nth-child(-n+8) { border-bottom:1px solid var(--line); } }
-    @media (max-width:900px) { .case-grid { grid-template-columns:1fr; } .group-head { grid-template-columns:1fr; } .group-summary { flex-wrap:wrap; } }
-    @media (max-width:620px) { .topbar,main { padding-left:14px; padding-right:14px; } .brand p { display:none; } .directory { grid-template-columns:repeat(2,1fr); } .group-tab { border-bottom:1px solid var(--line); } .group-tab:nth-child(2n) { border-right:0; } .video-compare { grid-template-columns:1fr; } .video-panel + .video-panel { border-left:0; border-top:1px solid var(--line); } .case-metrics { grid-template-columns:1fr; } .case-metric { border-right:0; border-bottom:1px solid var(--line); } .case-metric:last-child { border-bottom:0; } .vbench { grid-template-columns:repeat(4,1fr); } .prompts { grid-template-columns:1fr; } .prompt { border-right:0; border-bottom:1px solid var(--line); } }
+    :root {
+      --ink: #17252b;
+      --paper: #edf2f0;
+      --panel: #fbfcfa;
+      --line: #cbd6d1;
+      --muted: #687a76;
+      --green: #087c6d;
+      --green-soft: #e0f0eb;
+      --red: #d9674b;
+      --red-soft: #f9e6df;
+      --blue: #315bd8;
+      --blue-soft: #e5eaff;
+      --yellow: #b7d76c;
+      --violet: #7659a8;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper); scroll-behavior: smooth; }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button { color: inherit; font: inherit; }
+    button:focus-visible { outline: 3px solid rgba(49, 91, 216, .45); outline-offset: 3px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      padding: 13px 28px;
+      color: #f4faf7;
+      background: var(--ink);
+      border-bottom: 4px solid var(--red);
+    }
+    .topbar-inner { max-width: 1880px; margin: auto; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand-mark { display: grid; place-items: center; width: 40px; height: 40px; color: var(--ink); background: var(--yellow); border-radius: 4px; font: 900 11px/1 ui-monospace, monospace; }
+    .brand h1 { margin: 0; font-size: 18px; line-height: 1.2; }
+    .brand p { margin: 3px 0 0; color: #bdd0c7; font: 10px/1.3 ui-monospace, monospace; }
+    .run-info { color: #c8d7d1; text-align: right; font: 10px/1.35 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .refresh { min-height: 36px; padding: 7px 12px; color: #fff; background: transparent; border: 1px solid #6d8a7e; border-radius: 4px; cursor: pointer; font-weight: 750; }
+    .refresh:hover { color: var(--ink); background: var(--yellow); border-color: var(--yellow); }
+    .refresh:disabled { opacity: .55; cursor: wait; }
+    main { max-width: 1880px; margin: auto; padding: 25px 28px 52px; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 25px; align-items: end; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+    .label, .eyebrow { color: var(--green); font: 800 10px/1.2 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .hero h2 { max-width: 860px; margin: 7px 0 0; font-size: 32px; line-height: 1.12; }
+    .hero p { max-width: 950px; margin: 11px 0 0; color: var(--muted); }
+    .path { margin-top: 10px !important; font: 10px/1.4 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .overview { display: grid; grid-template-columns: repeat(4, auto); border-left: 1px solid var(--line); }
+    .overview-item { min-width: 100px; padding: 0 14px; border-right: 1px solid var(--line); }
+    .overview-item strong { display: block; font: 850 23px/1 ui-monospace, monospace; }
+    .overview-item span { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; }
+    .directory { display: flex; margin: 22px 0 30px; overflow-x: auto; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
+    .directory button { min-width: 160px; padding: 11px 13px; color: var(--ink); background: transparent; border: 0; border-right: 1px solid var(--line); text-align: left; cursor: pointer; }
+    .directory button:hover { background: var(--green-soft); }
+    .directory strong { display: block; font-size: 12px; }
+    .directory span { display: block; margin-top: 3px; color: var(--muted); font: 10px/1.2 ui-monospace, monospace; }
+    .group-row { scroll-margin-top: 100px; margin-top: 34px; }
+    .group-row:first-child { margin-top: 0; }
+    .group-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: end; padding-bottom: 12px; border-bottom: 2px solid var(--ink); }
+    .group-title { display: flex; align-items: baseline; gap: 11px; flex-wrap: wrap; }
+    .group-title h3 { margin: 4px 0 0; font-size: 22px; line-height: 1.2; }
+    .group-code { color: var(--red); font: 850 11px/1 ui-monospace, monospace; }
+    .group-actions { display: flex; align-items: center; gap: 16px; }
+    .group-summary { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font: 10px/1.2 ui-monospace, monospace; }
+    .group-summary strong { color: var(--ink); font-size: 12px; }
+    .replay-row { padding: 8px 11px; color: #fff; background: var(--blue); border: 1px solid var(--blue); border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 800; white-space: nowrap; }
+    .replay-row:hover { background: #244bc0; }
+    .replay-row span { margin-right: 4px; font-size: 15px; line-height: 0; vertical-align: -1px; }
+    .group-track { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(350px, 410px); gap: 14px; margin-top: 14px; padding: 2px 2px 16px; overflow-x: auto; overscroll-behavior-inline: contain; scroll-snap-type: x proximity; }
+    .group-track::-webkit-scrollbar { height: 10px; }
+    .group-track::-webkit-scrollbar-track { background: #dfe8e3; }
+    .group-track::-webkit-scrollbar-thumb { background: #94aaa1; border-radius: 5px; }
+    .case-card { min-width: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; scroll-snap-align: start; }
+    .case-head { min-height: 72px; padding: 11px 13px; border-bottom: 1px solid var(--line); }
+    .case-head-top { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+    .case-number { color: var(--red); font: 850 10px/1 ui-monospace, monospace; }
+    .case-head h4 { margin: 5px 0 0; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
+    .case-id { margin-top: 4px; color: var(--muted); font: 9px/1.3 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .control { margin-top: 8px; padding-left: 9px; border-left: 3px solid var(--red); }
+    .control strong { font: 850 15px/1.1 ui-monospace, monospace; }
+    .control span { margin-left: 7px; color: var(--muted); font-size: 10px; }
+    .media-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; padding: 6px 10px; color: var(--muted); background: #f5f8f6; border-bottom: 1px solid var(--line); font: 750 9px/1.2 ui-monospace, monospace; }
+    .media-label strong { color: var(--ink); font-size: 10px; }
+    video { display: block; width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #11201a; }
+    .context-strip { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); }
+    .context-panel { min-width: 0; }
+    .context-panel + .context-panel { border-left: 1px solid var(--line); }
+    .context-panel video { aspect-ratio: 16/9; background: #1b282a; }
+    .case-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .case-metric { min-width: 0; padding: 9px 8px; border-right: 1px solid var(--line); }
+    .case-metric:nth-child(3n) { border-right: 0; }
+    .case-metric span { display: block; color: var(--muted); font-size: 9px; }
+    .case-metric strong { display: block; margin-top: 4px; font: 850 15px/1.05 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .case-metric small { display: block; min-height: 13px; margin-top: 4px; color: var(--muted); font: 9px/1.15 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .vbench { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
+    .vbench div { min-width: 0; padding: 8px 5px; text-align: center; border-right: 1px solid #e2e8e5; }
+    .vbench div:last-child { border-right: 0; }
+    .vbench span { display: block; color: var(--muted); font-size: 8px; overflow-wrap: anywhere; }
+    .vbench strong { display: block; margin-top: 4px; font: 750 10px/1 ui-monospace, monospace; }
+    .prompts { display: grid; grid-template-columns: 1fr 1fr; }
+    .prompt { min-width: 0; padding: 11px 13px; border-right: 1px solid var(--line); }
+    .prompt:last-child { border-right: 0; }
+    .prompt h5 { margin: 0; color: var(--green); font-size: 10px; }
+    .prompt:last-child h5 { color: var(--red); }
+    .prompt p { margin: 6px 0 0; color: #35473f; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+    .case-footer { display: flex; justify-content: space-between; gap: 10px; padding: 9px 13px; color: var(--muted); font: 9px/1.3 ui-monospace, monospace; }
+    .case-footer a { color: var(--blue); text-decoration: none; }
+    .case-footer a:hover { text-decoration: underline; }
+    .empty, .error { margin-top: 18px; padding: 30px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); }
+    .error { color: #8e3928; background: var(--red-soft); border-color: #e7b19f; }
+    @media (max-width: 1100px) {
+      .hero { grid-template-columns: 1fr; align-items: start; }
+      .overview { width: fit-content; border-left: 0; }
+      .group-head { grid-template-columns: 1fr; align-items: start; }
+      .group-actions { justify-content: space-between; flex-wrap: wrap; }
+    }
+    @media (max-width: 620px) {
+      .topbar, main { padding-left: 14px; padding-right: 14px; }
+      .run-info { display: none; }
+      .hero h2 { font-size: 27px; }
+      .overview { width: 100%; grid-template-columns: repeat(2, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+      .overview-item { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+      .group-actions { width: 100%; }
+      .group-summary { width: 100%; gap: 8px 14px; }
+      .replay-row { width: 100%; }
+      .group-track { grid-auto-columns: minmax(82vw, 350px); }
+      .prompts { grid-template-columns: 1fr; }
+      .prompt { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
   </style>
 </head>
 <body>
-  <header class="topbar"><div class="topbar-inner"><div class="brand"><div class="brand-mark">PHYSV</div><div><h1>控制变量物理视频组</h1><p>V2V · F11 TABLE HEIGHT · F12 INCLINE</p></div></div><button id="refresh" class="refresh" type="button" title="重新读取数据">↻ 刷新数据</button></div></header>
-  <main><nav id="directory" class="directory" aria-label="实验组"></nav><section id="content" aria-live="polite"><div class="empty">读取中...</div></section></main>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><div class="brand-mark">PHYSV</div><div><h1>控制变量物理视频总览</h1><p>V2V · F11 TABLE HEIGHT · F12 INCLINE</p></div></div>
+      <div id="run-info" class="run-info">读取数据...</div>
+      <button id="refresh" class="refresh" type="button" title="重新读取数据">&#8635; 刷新数据</button>
+    </div>
+  </header>
+  <main>
+    <section class="hero">
+      <div>
+        <p class="label">grouped physics evidence</p>
+        <h2 id="hero-title">PhysV 控制变量视频</h2>
+        <p>所有实验组同时展示；每行是一个物理场景组，视频卡片包含完整视频、ctx=8/16 上下文、控制变量、轨迹运动指标、VBench 指标和两个版本的 prompt。</p>
+        <p id="path" class="path"></p>
+      </div>
+      <div id="overview" class="overview"></div>
+    </section>
+    <nav id="directory" class="directory" aria-label="实验组快速定位"></nav>
+    <section id="content" aria-live="polite"><div class="empty">读取中...</div></section>
+  </main>
   <script>
-    const GROUP_ORDER=["V2V_GAP","V2V_OBSTACLE","V2V_OBSTACLE_SIZE","V2V_BOWL","V2V_PENDULUM","V2V_SEESAW","V2V_DOMINO","F11","F12","F12_RAMP_LENGTH"];
-    const GROUP_NAMES={V2V_GAP:"平台间隙",V2V_OBSTACLE:"障碍碰撞：起始位置",V2V_OBSTACLE_SIZE:"障碍碰撞：球体积",V2V_BOWL:"碗内运动",V2V_PENDULUM:"摆锤",V2V_SEESAW:"跷跷板",V2V_DOMINO:"多米诺",F11:"F11 桌高",F12:"F12 斜面倾角",F12_RAMP_LENGTH:"F12 斜面长度"};
-    const GROUP_PREFIX={V2V_GAP:"V2V",V2V_OBSTACLE:"V2V",V2V_OBSTACLE_SIZE:"V2V",V2V_BOWL:"V2V",V2V_PENDULUM:"V2V",V2V_SEESAW:"V2V",V2V_DOMINO:"V2V",F11:"CONTROL",F12:"CONTROL",F12_RAMP_LENGTH:"CONTROL"};
-    const VBENCH={subject_consistency:"主体",background_consistency:"背景",temporal_flickering:"闪烁",motion_smoothness:"平滑",dynamic_degree:"动态",aesthetic_quality:"美学",imaging_quality:"画质"};
-    const state={groups:[],selected:GROUP_ORDER[0],loading:false,amplitudeThreshold:.3}; const $=id=>document.getElementById(id);
-    function node(tag,className,text){const el=document.createElement(tag);if(className)el.className=className;if(text!==undefined&&text!==null)el.textContent=String(text);return el;}
-    function number(value,digits=3){const n=Number(value);return Number.isFinite(n)?n.toFixed(digits):"-";}
-    function activeGroup(){return state.groups.find(group=>group.family_key===state.selected)||state.groups[0];}
-    function controlLabel(item){const c=item.control||{};return c.value_label||`${c.value??"-"} ${c.units||""}`.trim();}
-    function shortId(id){return id.length>25?`${id.slice(0,22)}...`:id;}
-    function renderDirectory(){const host=$("directory");host.replaceChildren();GROUP_ORDER.forEach(key=>{const group=state.groups.find(item=>item.family_key===key);if(!group)return;const summary=group.trajectory_similarity||{};const button=node("button",`group-tab${key===state.selected?" active":""}`);button.type="button";button.append(node("span","group-code",GROUP_PREFIX[key]),node("span","group-name",GROUP_NAMES[key]||key),node("span","group-stat",`${group.cases.length} cases · sim ${number(summary.mean_pairwise_similarity,3)}`));button.onclick=()=>{state.selected=key;render();window.scrollTo({top:0,behavior:"smooth"});};host.append(button);});}
-    function renderMatrix(group){const summary=group.trajectory_similarity||{},ids=summary.case_ids||[],values=summary.similarity_matrix||[];const wrap=node("section","matrix-wrap"),title=node("div","matrix-title");title.append(node("h3","","组内刚体轨迹相似度矩阵"),node("span","","1.000 表示轨迹一致；平移与旋转均按初始状态对齐"));wrap.append(title);if(!ids.length){wrap.append(node("div","empty","暂无轨迹相似度"));return wrap;}const table=node("table","matrix"),head=document.createElement("thead"),hr=document.createElement("tr");hr.append(node("th","","case"));ids.forEach(id=>hr.append(node("th","mono",shortId(id))));head.append(hr);table.append(head);const body=document.createElement("tbody");ids.forEach((id,r)=>{const row=document.createElement("tr");row.append(node("th","",id));ids.forEach((_,c)=>{const value=values[r]?.[c],cls=r===c?"self":value>=.8?"high":value<.6?"low":"";row.append(node("td",cls,number(value,3)));});body.append(row);});table.append(body);wrap.append(table);return wrap;}
-    function filterControlLabel(control){return control?.value_label||`${control?.value??"-"} ${control?.units||""}`.trim();}
-    function renderAmplitudePairs(group){const report=group.amplitude_pair_filter||{},pairs=report.selected_pairs||[],wrap=node("section","pair-filter");wrap.append(node("h3","",`低幅度差组合 · 对称相对差 ≤ ${number(state.amplitudeThreshold*100,1)}% · ${pairs.length}/${report.pair_count||0} 对`));if(!pairs.length){wrap.append(node("div","pair-empty","本组没有低于当前阈值的 case 组合。"));return wrap;}const table=node("table","pair-table"),head=document.createElement("thead"),hr=document.createElement("tr");["case A","变量 A","case B","变量 B","幅度差","轨迹相似度"].forEach(label=>hr.append(node("th","",label)));head.append(hr);table.append(head);const body=document.createElement("tbody");pairs.forEach(pair=>{const row=document.createElement("tr");row.append(node("td","mono",pair.case_a),node("td","",filterControlLabel(pair.control_a)),node("td","mono",pair.case_b),node("td","",filterControlLabel(pair.control_b)),node("td","num",`${number(pair.difference_percent,2)}%`),node("td","num",number(pair.trajectory_similarity,4)));body.append(row);});table.append(body);wrap.append(table);return wrap;}
-    function metric(label,value,note){const box=node("div","case-metric");box.append(node("span","",label),node("strong","",value),node("small","",note||""));return box;}
-    function videoElement(item,kind){const video=document.createElement("video");video.controls=true;video.playsInline=true;video.preload="metadata";video.src=`/media/${encodeURIComponent(item.case_id)}/${kind}`;return video;}
-    function caseCard(item){const card=node("article","case-card"),head=node("header","case-head"),left=document.createElement("div");left.append(node("div","case-id",item.case_id),node("h3","",item.title));const control=node("div","control");control.append(node("strong","",controlLabel(item)),node("span","",item.control?.variable||"控制变量"));head.append(left,control);card.append(head);if(item.cycles_preview_available){const compare=node("section","video-compare"),original=node("div","video-panel"),cycles=node("div","video-panel");const originalLabel=node("div","video-label"),cyclesLabel=node("div","video-label");originalLabel.append(node("strong","","原 PyRender"),node("span","","轨迹真值"));cyclesLabel.append(node("strong","","Cycles PBR"),node("span","","同轨迹重渲"));original.append(originalLabel,videoElement(item,"full"));cycles.append(cyclesLabel,videoElement(item,"cycles"));compare.append(original,cycles);card.append(compare);}else{card.append(videoElement(item,"full"));}const amplitude=item.motion_amplitude||{},similarity=item.trajectory_similarity||{},closest=similarity.most_similar_case;const metrics=node("section","case-metrics");metrics.append(metric("总刚体运动长度",`${number(amplitude.motion_amplitude_m,4)} m`,`${amplitude.dynamic_object_count||0} 个动态物体`),metric("组内平均轨迹相似度",number(similarity.mean_peer_similarity,4),"motion-weighted"),metric("最相似 case",closest?number(closest.similarity,4):"-",closest?.case_id||"-"));card.append(metrics);const vbench=node("section","vbench");Object.entries(VBENCH).forEach(([key,label])=>{const box=document.createElement("div");box.append(node("span","",label),node("strong","",number(item.vbench?.[key]?.score,3)));vbench.append(box);});card.append(vbench);const prompts=node("section","prompts"),specific=node("div","prompt"),abstract=node("div","prompt");specific.append(node("h4","","具体变量 Prompt"),node("p","",item.captions?.specific||"-"));abstract.append(node("h4","","模糊变量 Prompt"),node("p","",item.captions?.abstract||"-"));prompts.append(specific,abstract);card.append(prompts);return card;}
-    function renderContent(){const host=$("content");host.replaceChildren();const group=activeGroup();if(!group){host.append(node("div","empty","没有可显示的实验组"));return;}const summary=group.trajectory_similarity||{},head=node("header","group-head"),title=document.createElement("div");title.append(node("div","eyebrow",`${GROUP_PREFIX[group.family_key]} / ${group.family_key}`),node("h2","",GROUP_NAMES[group.family_key]||group.family_key));const stats=node("div","group-summary");[[group.cases.length,"cases"],[number(summary.mean_pairwise_similarity,4),"平均相似度"],[`${number(summary.min_pairwise_similarity,3)}–${number(summary.max_pairwise_similarity,3)}`,"相似度范围"]].forEach(([value,label])=>{const item=node("div","summary-item");item.append(node("strong","",value),node("span","",label));stats.append(item);});head.append(title,stats);host.append(head,renderMatrix(group),renderAmplitudePairs(group));const grid=node("section","case-grid");group.cases.forEach(item=>grid.append(caseCard(item)));host.append(grid);}
-    function render(){renderDirectory();renderContent();}
-    async function loadData(){if(state.loading)return;state.loading=true;const button=$("refresh");button.disabled=true;button.textContent="刷新中...";try{const response=await fetch("/api/dataset",{cache:"no-store"});if(!response.ok)throw new Error(`HTTP ${response.status}`);const payload=await response.json();state.groups=(payload.groups||[]).sort((a,b)=>GROUP_ORDER.indexOf(a.family_key)-GROUP_ORDER.indexOf(b.family_key));state.amplitudeThreshold=Number.isFinite(Number(payload.amplitude_pair_threshold))?Number(payload.amplitude_pair_threshold):.3;if(!state.groups.some(group=>group.family_key===state.selected))state.selected=state.groups[0]?.family_key||"";render();button.textContent="↻ 刷新数据";}catch(error){$("content").replaceChildren(node("div","empty",`读取失败：${error.message}`));button.textContent="↻ 重试";}finally{state.loading=false;button.disabled=false;}}
-    $("refresh").onclick=loadData;loadData();
+    const GROUP_ORDER = ["V2V_GAP", "V2V_OBSTACLE", "V2V_OBSTACLE_SIZE", "V2V_BOWL", "V2V_PENDULUM", "V2V_SEESAW", "V2V_DOMINO", "F11", "F12", "F12_RAMP_LENGTH"];
+    const GROUP_NAMES = { V2V_GAP: "平台间隙", V2V_OBSTACLE: "障碍碰撞：起始位置", V2V_OBSTACLE_SIZE: "障碍碰撞：球体积", V2V_BOWL: "碗内运动", V2V_PENDULUM: "摆锤", V2V_SEESAW: "跷跷板", V2V_DOMINO: "多米诺", F11: "F11 桌高", F12: "F12 斜面倾角", F12_RAMP_LENGTH: "F12 斜面长度" };
+    const GROUP_PREFIX = { V2V_GAP: "V2V", V2V_OBSTACLE: "V2V", V2V_OBSTACLE_SIZE: "V2V", V2V_BOWL: "V2V", V2V_PENDULUM: "V2V", V2V_SEESAW: "V2V", V2V_DOMINO: "V2V", F11: "CONTROL", F12: "CONTROL", F12_RAMP_LENGTH: "CONTROL" };
+    const VBENCH = { dynamic_degree: "动态", motion_smoothness: "平滑", subject_consistency: "主体", background_consistency: "背景", imaging_quality: "画质" };
+    const state = { groups: [], threshold: null, loading: false };
+    const $ = id => document.getElementById(id);
+    const node = (tag, className, text) => { const element = document.createElement(tag); if (className) element.className = className; if (text !== undefined && text !== null) element.textContent = String(text); return element; };
+    const number = (value, digits = 3) => { const n = Number(value); return Number.isFinite(n) ? n.toFixed(digits) : "-"; };
+    const percent = value => { const n = Number(value); return Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : "-"; };
+    const controlLabel = item => { const control = item.control || {}; return control.value_label || `${control.value ?? "-"} ${control.units || ""}`.trim(); };
+    const vbenchScore = (item, key) => item.vbench?.[key]?.score;
+    function metric(label, value, note = "") { const box = node("div", "case-metric"); box.append(node("span", "", label), node("strong", "", value), node("small", "", note)); return box; }
+    function mediaLabel(left, right) { const label = node("div", "media-label"); label.append(node("strong", "", left), node("span", "", right)); return label; }
+    function videoElement(item, kind, preload = "none") { const video = document.createElement("video"); video.controls = true; video.playsInline = true; video.preload = preload; video.src = `/media/${encodeURIComponent(item.case_id)}/${kind}`; return video; }
+    function renderOverview(data) {
+      const first = data.cases?.[0] || {};
+      const simulation = first.simulation || {};
+      $("hero-title").textContent = `${data.cases.length} 个控制变量物理视频`;
+      $("path").textContent = "/data/gaoya/AAA_test_video/physv_v2v_0819";
+      $("run-info").textContent = `${data.cases.length} cases · ${data.groups.length} groups · ${simulation.fps || 30} FPS · manual refresh`;
+      const area = $("overview"); area.replaceChildren();
+      [[data.cases.length, "videos"], [data.groups.length, "groups"], ["8 / 16", "context frames"], [data.amplitude_pair_threshold ? `${(data.amplitude_pair_threshold * 100).toFixed(0)}%` : "-", "pair threshold"]].forEach(([value, label]) => { const item = node("div", "overview-item"); item.append(node("strong", "", value), node("span", "", label)); area.append(item); });
+    }
+    function renderDirectory() {
+      const area = $("directory"); area.replaceChildren();
+      state.groups.forEach((group, index) => { const button = node("button", ""); button.type = "button"; button.append(node("strong", "", `${String(index + 1).padStart(2, "0")}  ${GROUP_NAMES[group.family_key] || group.family_key}`), node("span", "", `${group.cases.length} cases · ${GROUP_PREFIX[group.family_key] || "GROUP"}`)); button.onclick = () => { const row = [...document.querySelectorAll(".group-row")].find(item => item.dataset.group === group.family_key); row?.scrollIntoView({ behavior: "smooth", block: "start" }); }; area.append(button); });
+    }
+    function caseCard(item, index) {
+      const card = node("article", "case-card");
+      const head = node("header", "case-head");
+      const headTop = node("div", "case-head-top");
+      headTop.append(node("span", "case-number", `CASE ${String(index + 1).padStart(2, "0")}`));
+      const metadata = node("a", "case-id", item.case_id); metadata.href = "/download/manifest.json"; metadata.title = "下载数据集 manifest";
+      headTop.append(metadata); head.append(headTop, node("h4", "", item.title));
+      const control = node("div", "control"); control.append(node("strong", "", controlLabel(item)), node("span", "", item.control?.variable || "控制变量")); head.append(control); card.append(head);
+      const output = node("section", "output"); output.append(mediaLabel("完整视频", `${item.simulation?.frame_count || 90} frames / ${item.simulation?.fps || 30} FPS`), videoElement(item, "full", "metadata")); card.append(output);
+      const context = node("section", "context-strip");
+      [["ctx=8", "context8"], ["ctx=16", "context16"]].forEach(([label, kind], contextIndex) => { const panel = node("div", "context-panel"); panel.append(mediaLabel(label, contextIndex === 0 ? "短上下文" : "长上下文"), videoElement(item, kind)); context.append(panel); });
+      card.append(context);
+      const amplitude = item.motion_amplitude || {}; const similarity = item.trajectory_similarity || {}; const closest = similarity.most_similar_case;
+      const metrics = node("section", "case-metrics"); metrics.append(metric("运动幅度", `${number(amplitude.motion_amplitude_m, 3)} m`, `${amplitude.dynamic_object_count || 0} 个动态物体`), metric("组内相似度", number(similarity.mean_peer_similarity, 3), "motion-weighted"), metric("最近 case", closest ? number(closest.similarity, 3) : "-", closest?.case_id || "-")); card.append(metrics);
+      const vbench = node("section", "vbench"); Object.entries(VBENCH).forEach(([key, label]) => { const cell = document.createElement("div"); cell.append(node("span", "", label), node("strong", "", number(vbenchScore(item, key), 3))); vbench.append(cell); }); card.append(vbench);
+      const prompts = node("section", "prompts"); const specific = node("div", "prompt"); const abstract = node("div", "prompt"); specific.append(node("h5", "", "具体变量 Prompt"), node("p", "", item.captions?.specific || "-")); abstract.append(node("h5", "", "模糊变量 Prompt"), node("p", "", item.captions?.abstract || "-")); prompts.append(specific, abstract); card.append(prompts);
+      const footer = node("footer", "case-footer"); footer.append(node("span", "", `${item.task_type || "physics task"} · ${item.dynamic_actors?.length || 0} dynamic`)); const link = node("a", "", "manifest"); link.href = "/download/manifest.json"; footer.append(link); card.append(footer);
+      return card;
+    }
+    function groupRow(group, index) {
+      const section = node("section", "group-row"); section.dataset.group = group.family_key;
+      const head = node("header", "group-head"); const title = node("div", ""); const titleLine = node("div", "group-title"); titleLine.append(node("span", "group-code", `${GROUP_PREFIX[group.family_key] || "GROUP"} ${String(index + 1).padStart(2, "0")}`), node("h3", "", GROUP_NAMES[group.family_key] || group.family_key)); title.append(titleLine);
+      const actions = node("div", "group-actions"); const summary = group.trajectory_similarity || {}; const pairs = group.amplitude_pair_filter || {}; const summaryLine = node("div", "group-summary"); [[group.cases.length, "cases"], [number(summary.mean_pairwise_similarity, 3), "trajectory sim"], [`${pairs.selected_pair_count || 0}/${pairs.pair_count || 0}`, "matched pairs"], [pairs.threshold_percent ? `${number(pairs.threshold_percent, 0)}%` : (state.threshold ? `${number(state.threshold * 100, 0)}%` : "-"), "threshold"]].forEach(([value, label]) => { const item = node("span", ""); item.append(node("strong", "", value), ` ${label}`); summaryLine.append(item); });
+      const replay = node("button", "replay-row"); replay.type = "button"; replay.title = "从头播放本行所有视频"; replay.innerHTML = "<span aria-hidden=\"true\">&#8635;</span> 全部重新播放"; replay.onclick = () => replayGroup(group.family_key); actions.append(summaryLine, replay); head.append(title, actions); section.append(head);
+      const track = node("div", "group-track"); group.cases.forEach((item, caseIndex) => track.append(caseCard(item, caseIndex))); section.append(track); return section;
+    }
+    function replayGroup(key) { const row = [...document.querySelectorAll(".group-row")].find(item => item.dataset.group === key); if (!row) return; row.querySelectorAll(".output video").forEach(video => { video.currentTime = 0; const promise = video.play(); if (promise?.catch) promise.catch(() => {}); }); }
+    function render(data) { state.groups = [...(data.groups || [])].sort((a, b) => GROUP_ORDER.indexOf(a.family_key) - GROUP_ORDER.indexOf(b.family_key)); state.threshold = Number(data.amplitude_pair_threshold); renderOverview({ ...data, groups: state.groups }); renderDirectory(); const content = $("content"); content.replaceChildren(); state.groups.forEach((group, index) => content.append(groupRow(group, index))); }
+    async function loadData() { if (state.loading) return; state.loading = true; const button = $("refresh"); button.disabled = true; button.textContent = "刷新中..."; try { const response = await fetch("/api/dataset", { cache: "no-store" }); if (!response.ok) throw new Error(`HTTP ${response.status}`); render(await response.json()); button.innerHTML = "&#8635; 刷新数据"; } catch (error) { $("content").replaceChildren(node("div", "error", `读取失败：${error.message}`)); button.textContent = "重试"; } finally { state.loading = false; button.disabled = false; } }
+    $("refresh").onclick = loadData; loadData();
   </script>
 </body>
 </html>

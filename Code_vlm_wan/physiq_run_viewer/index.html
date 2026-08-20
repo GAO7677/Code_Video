@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Physics-IQ / grouped video audit</title>
+  <style>
+    :root {
+      --ink: #17252b;
+      --paper: #edf2f0;
+      --panel: #fbfcfa;
+      --line: #cbd6d1;
+      --muted: #687a76;
+      --cobalt: #315bd8;
+      --cobalt-soft: #e4e9ff;
+      --coral: #df684c;
+      --coral-soft: #f9e6df;
+      --lime: #b4d46e;
+      --cyan: #3c9eae;
+      --violet: #7659a8;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper); scroll-behavior: smooth; }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+    button, input { font: inherit; }
+    button { border: 0; }
+    :focus-visible { outline: 3px solid rgba(49, 91, 216, .45); outline-offset: 3px; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      color: #f5faf7;
+      background: var(--ink);
+      border-bottom: 4px solid var(--coral);
+    }
+    .topbar-inner {
+      max-width: 1840px;
+      min-height: 72px;
+      margin: auto;
+      padding: 13px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      width: 42px;
+      height: 42px;
+      color: var(--ink);
+      background: var(--lime);
+      border-radius: 5px;
+      font: 850 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .eyebrow, .label {
+      margin: 0;
+      color: var(--cobalt);
+      font: 800 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .topbar .eyebrow { color: var(--lime); }
+    .brand h1 { margin: 3px 0 0; font-size: 18px; line-height: 1.1; }
+    .run-info {
+      min-width: 0;
+      color: #c8d7d1;
+      text-align: right;
+      font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      overflow-wrap: anywhere;
+    }
+    .refresh {
+      flex: 0 0 auto;
+      padding: 8px 11px;
+      color: var(--ink);
+      background: var(--lime);
+      border: 1px solid var(--lime);
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+    .refresh:hover { background: #c9e78c; }
+    .refresh:disabled { cursor: wait; opacity: .7; }
+    main { max-width: 1840px; margin: auto; padding: 28px 28px 58px; }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: end;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .hero h2 { max-width: 880px; margin: 7px 0 0; font-size: 32px; line-height: 1.12; }
+    .hero p { max-width: 920px; margin: 11px 0 0; color: var(--muted); }
+    .run-path {
+      margin-top: 12px;
+      color: var(--muted);
+      font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      overflow-wrap: anywhere;
+    }
+    .overview-stats { display: grid; grid-template-columns: repeat(4, auto); border-left: 1px solid var(--line); }
+    .overview-stat { min-width: 105px; padding: 0 14px; border-right: 1px solid var(--line); }
+    .overview-stat strong { display: block; font: 850 23px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .overview-stat span { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; }
+    .group-nav {
+      display: flex;
+      gap: 0;
+      margin: 22px 0 30px;
+      overflow-x: auto;
+      border-top: 2px solid var(--ink);
+      border-bottom: 1px solid var(--line);
+    }
+    .nav-button {
+      min-width: 170px;
+      padding: 11px 13px;
+      color: var(--ink);
+      background: transparent;
+      border-right: 1px solid var(--line);
+      text-align: left;
+      cursor: pointer;
+    }
+    .nav-button:hover { background: var(--cobalt-soft); }
+    .nav-button strong { display: block; font-size: 12px; }
+    .nav-button span { display: block; margin-top: 3px; color: var(--muted); font: 10px/1.2 ui-monospace, monospace; }
+    .group-row { scroll-margin-top: 100px; margin-top: 34px; }
+    .group-row:first-child { margin-top: 0; }
+    .group-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: end;
+      padding-bottom: 12px;
+      border-bottom: 2px solid var(--ink);
+    }
+    .group-title { display: flex; align-items: baseline; gap: 11px; flex-wrap: wrap; }
+    .group-title h3 { margin: 4px 0 0; font-size: 22px; line-height: 1.2; }
+    .group-code { color: var(--coral); font: 850 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .group-actions { display: flex; align-items: center; gap: 14px; }
+    .group-summary { display: flex; gap: 17px; color: var(--muted); font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .group-summary strong { color: var(--ink); font-size: 12px; }
+    .replay-row {
+      padding: 8px 11px;
+      color: #fff;
+      background: var(--cobalt);
+      border: 1px solid var(--cobalt);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .replay-row:hover { background: #244bc0; }
+    .replay-row span { margin-right: 4px; font-size: 15px; line-height: 0; vertical-align: -1px; }
+    .group-track {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(318px, 360px);
+      gap: 14px;
+      margin-top: 14px;
+      padding: 2px 2px 16px;
+      overflow-x: auto;
+      overscroll-behavior-inline: contain;
+      scroll-snap-type: x proximity;
+    }
+    .group-track::-webkit-scrollbar { height: 10px; }
+    .group-track::-webkit-scrollbar-track { background: #dfe8e3; }
+    .group-track::-webkit-scrollbar-thumb { background: #94aaa1; border-radius: 5px; }
+    .case-card {
+      min-width: 0;
+      overflow: hidden;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      scroll-snap-align: start;
+    }
+    .case-head { min-height: 72px; padding: 11px 13px; border-bottom: 1px solid var(--line); }
+    .case-head-top { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+    .case-number { color: var(--coral); font: 850 10px/1 ui-monospace, monospace; }
+    .case-head h4 { margin: 5px 0 0; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
+    .case-id { margin-top: 4px; color: var(--muted); font: 9px/1.3 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .case-json { color: var(--cobalt); font: 10px/1 ui-monospace, monospace; text-decoration: none; }
+    .case-json:hover { text-decoration: underline; }
+    .media-label { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; color: var(--muted); background: #f1f5f3; border-bottom: 1px solid var(--line); font: 9px/1.2 ui-monospace, monospace; }
+    .media-label strong { color: var(--ink); font-size: 10px; }
+    .output video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #111d22; }
+    .context { border-top: 1px solid var(--line); }
+    .context img, .context-missing { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #253136; }
+    .context-missing { display: grid; place-items: center; color: #b8c6c2; font-size: 11px; }
+    .metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .metric { min-width: 0; padding: 9px 8px; border-right: 1px solid var(--line); }
+    .metric:nth-child(3n) { border-right: 0; }
+    .metric-label { display: block; color: var(--muted); font-size: 9px; line-height: 1.15; }
+    .metric-value { display: block; margin-top: 4px; color: var(--ink); font: 850 15px/1.05 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .metric-note { display: block; min-height: 13px; margin-top: 4px; color: var(--muted); font: 9px/1.15 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .caption-block { padding: 11px 13px; border-bottom: 1px solid var(--line); }
+    .caption-block p { margin: 6px 0 0; color: #354740; font-size: 12px; line-height: 1.5; }
+    details { border-bottom: 1px solid var(--line); }
+    summary { padding: 9px 13px; color: var(--cobalt); cursor: pointer; font-size: 11px; font-weight: 800; }
+    .params { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 0 13px 11px; }
+    .param { min-width: 0; }
+    .param span { display: block; color: var(--muted); font: 9px/1.2 ui-monospace, monospace; }
+    .param strong { display: block; margin-top: 2px; font: 10px/1.25 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .card-footer { display: flex; justify-content: space-between; gap: 10px; padding: 9px 13px; color: var(--muted); font: 9px/1.3 ui-monospace, monospace; }
+    .card-footer a { color: var(--cobalt); text-decoration: none; }
+    .card-footer a:hover { text-decoration: underline; }
+    .empty, .error { padding: 30px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); }
+    .error { color: #8e3928; background: var(--coral-soft); border-color: #e7b19f; }
+    @media (max-width: 1050px) {
+      .hero { grid-template-columns: 1fr; align-items: start; }
+      .overview-stats { width: fit-content; border-left: 0; }
+      .group-head { grid-template-columns: 1fr; align-items: start; }
+      .group-actions { justify-content: space-between; flex-wrap: wrap; }
+    }
+    @media (max-width: 620px) {
+      .topbar-inner, main { padding-left: 14px; padding-right: 14px; }
+      .run-info { display: none; }
+      .hero h2 { font-size: 27px; }
+      .overview-stats { width: 100%; grid-template-columns: repeat(2, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+      .overview-stat { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+      .group-summary { width: 100%; flex-wrap: wrap; gap: 8px 14px; }
+      .replay-row { width: 100%; }
+      .group-track { grid-auto-columns: minmax(80vw, 340px); }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark">PIQ</div>
+        <div><p class="eyebrow">Physics-IQ / V2V audit</p><h1>生成视频分组审查</h1></div>
+      </div>
+      <div id="run-info" class="run-info">读取 run 信息...</div>
+      <button id="refresh" class="refresh" type="button" title="重新读取 run 数据">&#8635; 刷新数据</button>
+    </div>
+  </header>
+  <main>
+    <section class="hero">
+      <div>
+        <p class="label">grouped video evidence</p>
+        <h2 id="hero-title">Physics-IQ 生成结果</h2>
+        <p>每一行对应一个物理场景类别。视频卡片保留 ctx=8 输入帧、输入情景描述和已计算的物理/视觉指标；行级按钮只从头播放当前行。</p>
+        <p id="run-path" class="run-path"></p>
+      </div>
+      <div id="overview-stats" class="overview-stats"></div>
+    </section>
+    <nav id="group-nav" class="group-nav" aria-label="物理场景分组"></nav>
+    <section id="groups" aria-live="polite"><div class="empty">读取中...</div></section>
+  </main>
+  <script>
+    const state = { data: null, loading: false };
+    const $ = id => document.getElementById(id);
+    const node = (tag, className, text) => {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined && text !== null) element.textContent = String(text);
+      return element;
+    };
+    const finite = value => typeof value === "number" && Number.isFinite(value);
+    const num = (value, digits = 2) => finite(value) ? value.toFixed(digits) : "-";
+    const percent = value => finite(value) ? `${(value * 100).toFixed(1)}%` : "-";
+    const metric = (label, value, note = "") => {
+      const box = node("div", "metric");
+      box.append(node("span", "metric-label", label), node("strong", "metric-value", value), node("span", "metric-note", note));
+      return box;
+    };
+    const parameterText = value => Array.isArray(value) ? value.join(", ") : (value === null || value === undefined || value === "" ? "-" : String(value));
+    function renderOverview() {
+      const data = state.data;
+      $("hero-title").textContent = `${data.case_count} 个生成视频的物理审查`; 
+      $("run-path").textContent = data.dataset_root;
+      const params = data.run_parameters || {};
+      $("run-info").textContent = `${data.run_name} · ctx=${params.context_frames ?? "-"} · step=${params.step ?? "-"} · ${data.case_count} clips`;
+      const stats = $("overview-stats");
+      stats.replaceChildren();
+      [[data.case_count, "videos"], [data.group_count, "groups"], [params.context_frames ?? "-", "context frames"], [params.num_frames ?? "-", "output frames"]].forEach(([value, label]) => {
+        const item = node("div", "overview-stat");
+        item.append(node("strong", "", value), node("span", "", label));
+        stats.append(item);
+      });
+    }
+    function renderNav() {
+      const nav = $("group-nav");
+      nav.replaceChildren();
+      state.data.groups.forEach((group, index) => {
+        const button = node("button", "nav-button");
+        button.type = "button";
+        button.append(node("strong", "", `${String(index + 1).padStart(2, "0")}  ${group.label}`), node("span", "", `${group.count} videos · PIQ ${num(group.summary.physics_iq_context_mean, 1)}`));
+        button.onclick = () => document.querySelector(`[data-group-key="${CSS.escape(group.key)}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        nav.append(button);
+      });
+    }
+    function mediaLabel(left, right) {
+      const label = node("div", "media-label");
+      label.append(node("strong", "", left), node("span", "", right));
+      return label;
+    }
+    function videoCard(caseItem, groupKey, caseIndex) {
+      const card = node("article", "case-card");
+      const head = node("header", "case-head");
+      const headTop = node("div", "case-head-top");
+      headTop.append(node("span", "case-number", `CASE ${String(caseIndex + 1).padStart(2, "0")}`));
+      const metadata = node("a", "case-json", "JSON");
+      metadata.href = `/media/metadata/${encodeURIComponent(caseItem.case_id)}`;
+      metadata.target = "_blank";
+      metadata.rel = "noreferrer";
+      headTop.append(metadata);
+      head.append(headTop, node("h4", "", caseItem.title), node("div", "case-id", caseItem.case_id));
+      card.append(head);
+
+      const output = node("section", "output");
+      output.append(mediaLabel("生成结果", "MP4 / 49f"));
+      const video = document.createElement("video");
+      video.controls = true;
+      video.playsInline = true;
+      video.preload = "metadata";
+      video.src = `/media/video/${encodeURIComponent(caseItem.case_id)}`;
+      output.append(video);
+      card.append(output);
+
+      const context = node("section", "context");
+      context.append(mediaLabel("ctx=8 输入帧", caseItem.context_available ? "input context" : "not available"));
+      if (caseItem.context_available) {
+        const image = document.createElement("img");
+        image.src = `/media/context/${encodeURIComponent(caseItem.case_id)}`;
+        image.alt = `${caseItem.case_id} context frames`;
+        context.append(image);
+      } else {
+        context.append(node("div", "context-missing", "输入帧不可用"));
+      }
+      card.append(context);
+
+      const m = caseItem.metrics || {};
+      const metrics = node("section", "metric-grid");
+      metrics.append(
+        metric("Physics-IQ ctx", num(m.physics_iq_with_context, 1), `no ctx ${num(m.physics_iq_without_context, 1)}`),
+        metric("PMF ctx", num(m.pmf_with_context, 3), `no ctx ${num(m.pmf_without_context, 3)}`),
+        metric("VBench dynamic", num(m.vbench_dynamic_degree, 3), "0–1"),
+        metric("VBench motion", num(m.vbench_motion_smoothness, 3), "0–1"),
+        metric("VideoPhy2 joint", m.videophy2_joint_pass === 1 ? "PASS" : (m.videophy2_joint_pass === 0 ? "FAIL" : "-"), "generated only"),
+        metric("Cosmos Reason1", num(m.cosmos_reason1, 1), "0–5")
+      );
+      card.append(metrics);
+
+      const caption = node("section", "caption-block");
+      caption.append(node("p", "label", "输入情景描述"), node("p", "", caseItem.caption || "-") );
+      card.append(caption);
+
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "运行参数";
+      details.append(summary);
+      const params = caseItem.parameters || {};
+      const parameterGrid = node("div", "params");
+      [["context", params.context_frames], ["frame indices", params.frame_indices], ["seed", params.seed], ["step", params.step], ["guidance", params.guidance], ["sampling", params.sampling_mode], ["resolution", params.width && params.height ? `${params.width} × ${params.height}` : "-"], ["checkpoint", params.checkpoint]].forEach(([label, value]) => {
+        const item = node("div", "param");
+        item.append(node("span", "", label), node("strong", "", parameterText(value)));
+        parameterGrid.append(item);
+      });
+      details.append(parameterGrid);
+      card.append(details);
+      const footer = node("footer", "card-footer");
+      footer.append(node("span", "", groupKey.replaceAll("_", " ")), node("a", "", "打开 metadata.json"));
+      footer.lastChild.href = `/media/metadata/${encodeURIComponent(caseItem.case_id)}`;
+      footer.lastChild.target = "_blank";
+      footer.lastChild.rel = "noreferrer";
+      card.append(footer);
+      return card;
+    }
+    function groupRow(group, index) {
+      const section = node("section", "group-row");
+      section.dataset.groupKey = group.key;
+      const head = node("header", "group-head");
+      const title = node("div", "");
+      const titleLine = node("div", "group-title");
+      titleLine.append(node("span", "group-code", `GROUP ${String(index + 1).padStart(2, "0")}`), node("h3", "", group.label));
+      title.append(titleLine);
+      const actions = node("div", "group-actions");
+      const summary = node("div", "group-summary");
+      [[group.count, "videos"], [num(group.summary.physics_iq_context_mean, 1), "PIQ ctx mean"], [num(group.summary.pmf_context_mean, 3), "PMF ctx mean"], [percent(group.summary.vbench_dynamic_mean), "dynamic mean"]].forEach(([value, label]) => {
+        const item = node("span", "");
+        item.append(node("strong", "", value), ` ${label}`);
+        summary.append(item);
+      });
+      const replay = node("button", "replay-row");
+      replay.type = "button";
+      replay.title = "从头播放本行所有视频";
+      replay.innerHTML = "<span aria-hidden=\"true\">&#8635;</span> 全部重新播放";
+      replay.onclick = () => replayGroup(group.key);
+      actions.append(summary, replay);
+      head.append(title, actions);
+      section.append(head);
+      const track = node("div", "group-track");
+      group.cases.forEach((item, caseIndex) => track.append(videoCard(item, group.key, caseIndex)));
+      section.append(track);
+      return section;
+    }
+    function replayGroup(key) {
+      const row = document.querySelector(`[data-group-key="${CSS.escape(key)}"]`);
+      if (!row) return;
+      row.querySelectorAll("video").forEach(video => {
+        video.currentTime = 0;
+        const promise = video.play();
+        if (promise && promise.catch) promise.catch(() => {});
+      });
+    }
+    function render() {
+      renderOverview();
+      renderNav();
+      const groups = $("groups");
+      groups.replaceChildren();
+      state.data.groups.forEach((group, index) => groups.append(groupRow(group, index)));
+    }
+    async function loadData() {
+      if (state.loading) return;
+      state.loading = true;
+      const button = $("refresh");
+      button.disabled = true;
+      button.textContent = "读取中...";
+      try {
+        const response = await fetch("/api/data", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        state.data = await response.json();
+        render();
+        button.innerHTML = "&#8635; 刷新数据";
+      } catch (error) {
+        $("groups").replaceChildren(node("div", "error", `读取失败：${error.message}`));
+        button.textContent = "重试";
+      } finally {
+        state.loading = false;
+        button.disabled = false;
+      }
+    }
+    $("refresh").onclick = loadData;
+    loadData();
+  </script>
+</body>
+</html>
