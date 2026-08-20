@@ -250,8 +250,18 @@ def material_library() -> dict[str, bpy.types.Material]:
         "roughness": "brown_leather_rough_2k.jpg",
         "ao": "brown_leather_ao_2k.jpg",
     }
+    leather_surface_names = {
+        "normal": "brown_leather_nor_gl_2k.jpg",
+        "roughness": "brown_leather_rough_2k.jpg",
+        "ao": "brown_leather_ao_2k.jpg",
+    }
     concrete_names = {
         "albedo": "painted_concrete_diff_2k.jpg",
+        "normal": "painted_concrete_nor_gl_2k.jpg",
+        "roughness": "painted_concrete_rough_2k.jpg",
+        "ao": "painted_concrete_ao_2k.jpg",
+    }
+    concrete_surface_names = {
         "normal": "painted_concrete_nor_gl_2k.jpg",
         "roughness": "painted_concrete_rough_2k.jpg",
         "ao": "painted_concrete_ao_2k.jpg",
@@ -263,16 +273,24 @@ def material_library() -> dict[str, bpy.types.Material]:
     }
     return {
         "floor": pbr_material("PBR_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, roughness=0.48, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
+        "floor_cool": pbr_material("PBR_Cool_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(0.62, 0.78, 0.92), tint_strength=0.76, roughness=0.52, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
+        "floor_slate": pbr_material("PBR_Slate_Floor", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.055, 0.075, 0.11), roughness=0.88, uv_scale=2.2, normal_strength=0.54, detail_bump_strength=0.016, detail_bump_scale=18.0),
         "wood": pbr_material("PBR_Wood", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, roughness=0.50, uv_scale=2.0, normal_strength=0.62, detail_bump_strength=0.015, detail_bump_scale=12.0),
         "red_wood": pbr_material("PBR_Red_Wood", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(1.15, 0.30, 0.23), tint_strength=0.72, roughness=0.52, uv_scale=2.4, normal_strength=0.62, detail_bump_strength=0.016, detail_bump_scale=12.0),
         "wall": pbr_material("PBR_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, roughness=0.82, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
-        "concrete": pbr_material("PBR_Concrete", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_names, roughness=0.78, uv_scale=2.0, normal_strength=0.52, detail_bump_strength=0.020, detail_bump_scale=18.0),
-        "red_rubber": pbr_material("PBR_Red_Rubber", texture_dir=TEXTURE_ROOT / "brown_leather", texture_names=leather_names, tint=(1.35, 0.24, 0.16), tint_strength=0.84, roughness=0.78, uv_scale=2.8, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
-        "blue_rubber": pbr_material("PBR_Blue_Rubber", texture_dir=TEXTURE_ROOT / "brown_leather", texture_names=leather_names, tint=(0.20, 0.52, 1.30), tint_strength=0.90, roughness=0.76, uv_scale=2.8, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
-        "teal_metal": pbr_material("PBR_Teal_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_names, tint=(0.12, 0.56, 0.60), tint_strength=0.82, roughness=0.38, metallic=0.28, uv_scale=2.2, normal_strength=0.50, detail_bump_strength=0.020, detail_bump_scale=16.0),
-        "yellow_metal": pbr_material("PBR_Yellow_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_names, tint=(1.08, 0.76, 0.16), tint_strength=0.84, roughness=0.40, metallic=0.22, uv_scale=2.1, normal_strength=0.50, detail_bump_strength=0.020, detail_bump_scale=16.0),
-        "dark_metal": pbr_material("PBR_Dark_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_names, tint=(0.10, 0.11, 0.10), tint_strength=0.72, roughness=0.32, metallic=0.55, uv_scale=1.8, normal_strength=0.48, detail_bump_strength=0.024, detail_bump_scale=16.0),
+        "wall_cool": pbr_material("PBR_Cool_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, tint=(0.66, 0.82, 1.02), tint_strength=0.68, roughness=0.84, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
+        "concrete": pbr_material("PBR_Concrete", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.12, 0.14, 0.17), roughness=0.78, uv_scale=2.0, normal_strength=0.52, detail_bump_strength=0.020, detail_bump_scale=18.0),
+        "picture_surface": pbr_material("PBR_Picture_Surface", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_names, tint=(0.22, 0.42, 0.48), tint_strength=0.72, roughness=0.84, uv_scale=1.8, normal_strength=0.44, detail_bump_strength=0.010, detail_bump_scale=18.0),
+        "red_rubber": pbr_material("PBR_Red_Rubber", texture_dir=TEXTURE_ROOT / "brown_leather", texture_names=leather_surface_names, tint=(0.35, 0.008, 0.003), roughness=0.78, uv_scale=2.8, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
+        "blue_rubber": pbr_material("PBR_Blue_Rubber", texture_dir=TEXTURE_ROOT / "brown_leather", texture_names=leather_surface_names, tint=(0.006, 0.028, 0.30), roughness=0.76, uv_scale=2.8, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
+        "yellow_rubber": pbr_material("PBR_Yellow_Rubber", texture_dir=TEXTURE_ROOT / "brown_leather", texture_names=leather_surface_names, tint=(0.48, 0.16, 0.004), roughness=0.78, uv_scale=2.8, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
+        "domino_wood": pbr_material("PBR_Domino_Wood", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(0.52, 0.20, 0.08), tint_strength=0.78, roughness=0.58, uv_scale=3.0, normal_strength=0.66, detail_bump_strength=0.018, detail_bump_scale=14.0),
+        "blue_painted": pbr_material("PBR_Blue_Painted", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.006, 0.045, 0.34), roughness=0.46, metallic=0.14, uv_scale=2.0, normal_strength=0.54, detail_bump_strength=0.020, detail_bump_scale=16.0),
+        "teal_metal": pbr_material("PBR_Teal_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.004, 0.11, 0.13), roughness=0.42, metallic=0.28, uv_scale=2.2, normal_strength=0.50, detail_bump_strength=0.020, detail_bump_scale=16.0),
+        "yellow_metal": pbr_material("PBR_Yellow_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.50, 0.20, 0.004), roughness=0.42, metallic=0.22, uv_scale=2.1, normal_strength=0.50, detail_bump_strength=0.020, detail_bump_scale=16.0),
+        "dark_metal": pbr_material("PBR_Dark_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.012, 0.016, 0.025), roughness=0.36, metallic=0.55, uv_scale=1.8, normal_strength=0.48, detail_bump_strength=0.024, detail_bump_scale=16.0),
         "fabric": pbr_material("PBR_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.17, 0.19, 0.19), roughness=0.96, metallic=0.0, uv_scale=5.0, normal_strength=0.56, detail_bump_strength=0.012, detail_bump_scale=28.0),
+        "rope_fabric": pbr_material("PBR_Rope_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.52, 0.25, 0.08), roughness=0.92, metallic=0.0, uv_scale=18.0, normal_strength=0.72, detail_bump_strength=0.022, detail_bump_scale=34.0),
     }
 
 
@@ -319,30 +337,87 @@ def add_actor(name: str, actor: dict, material) -> bpy.types.Object:
     return obj
 
 
-def actor_material(name: str, actor: dict, family: str, materials: dict[str, bpy.types.Material]):
+def actor_material_key(name: str, actor: dict, family: str) -> str:
     lower = name.lower()
+
+    # Dynamic actors use a family-level appearance contract. Every control
+    # case in one group therefore keeps identical color and texture mapping.
+    if family == "F11" and lower == "roller_0":
+        return "red_rubber"
+    if family == "F11" and lower == "table_top_0":
+        return "red_wood"
+    if family == "F11" and lower.startswith("table_leg"):
+        return "dark_metal"
+    if family == "F12" and lower == "block_0":
+        return "red_wood"
+    if family == "V2V_BOWL" and lower == "bowl_ball":
+        return "blue_rubber"
+    if family == "V2V_BOWL" and (lower == "bowl_base" or lower.startswith("bowl_segment")):
+        return "teal_metal"
+    if family == "V2V_DOMINO":
+        if lower == "domino_trigger_ball":
+            return "yellow_rubber"
+        if lower.startswith("domino_"):
+            return "domino_wood"
+    if family == "V2V_GAP" and lower == "gap_ball":
+        return "yellow_rubber"
+    if family == "V2V_OBSTACLE" and lower == "obstacle_ball":
+        return "red_rubber"
+    if family == "V2V_PENDULUM":
+        if lower == "pendulum_bob":
+            return "blue_rubber"
+        if lower == "pendulum_rope":
+            return "rope_fabric"
+        if lower == "pendulum_post":
+            return "yellow_metal"
+        if lower == "pendulum_base":
+            return "concrete"
+        if lower == "pendulum_crossbar":
+            return "dark_metal"
+    if family == "V2V_SEESAW" and lower == "seesaw_load":
+        return "yellow_rubber"
+    if family == "V2V_SEESAW" and lower == "seesaw_board":
+        return "blue_painted"
+    if family == "V2V_SEESAW" and lower == "seesaw_hinge_anchor":
+        return "dark_metal"
+
     if "barrier" in lower or ("post" in lower and "pendulum" in lower):
-        return materials["teal_metal"]
+        return "teal_metal"
     if family == "F12":
-        return materials["red_wood"] if lower == "block_0" else materials["yellow_metal"]
+        return "red_wood" if lower == "block_0" else "yellow_metal"
     if "bowl_ball" in lower or "seesaw_load" in lower:
-        return materials["blue_rubber"]
+        return "blue_rubber"
     if actor["shape"] == "sphere" or "ball" in lower or "bob" in lower:
-        return materials["red_rubber"]
+        return "red_rubber"
     if "rope" in lower:
-        return materials["yellow_metal"]
+        return "yellow_metal"
     if "pivot" in lower or "riser" in lower or "support" in lower:
-        return materials["concrete"]
+        return "concrete"
     if "domino" in lower and lower != "domino_0":
-        return materials["teal_metal"]
-    return materials["wood"]
+        return "teal_metal"
+    return "wood"
+
+
+def room_material_keys(family: str) -> tuple[str, str]:
+    palettes = {
+        "F11": ("floor", "wall"),
+        "F12": ("floor_cool", "wall_cool"),
+        "V2V_BOWL": ("floor_slate", "wall"),
+        "V2V_DOMINO": ("floor_cool", "wall_cool"),
+        "V2V_GAP": ("floor_slate", "wall"),
+        "V2V_OBSTACLE": ("floor_cool", "wall"),
+        "V2V_PENDULUM": ("floor", "wall_cool"),
+        "V2V_SEESAW": ("floor", "wall_cool"),
+    }
+    return palettes.get(family, ("floor", "wall"))
 
 
 def add_room(materials: dict[str, bpy.types.Material], family: str) -> None:
-    add_cube("Room floor", (0.0, 1.0, -0.055), (8.0, 7.0, 0.055), materials["floor"], bevel=0.0)
-    add_cube("Back wall", (0.0, 3.55, 3.0), (8.0, 0.06, 3.0), materials["wall"], bevel=0.0)
-    add_cube("Left wall", (-7.95, 0.8, 3.0), (0.06, 2.8, 3.0), materials["wall"], bevel=0.0)
-    add_cube("Right wall", (7.95, 0.8, 3.0), (0.06, 2.8, 3.0), materials["wall"], bevel=0.0)
+    floor_key, wall_key = room_material_keys(family)
+    add_cube("Room floor", (0.0, 1.0, -0.055), (8.0, 7.0, 0.055), materials[floor_key], bevel=0.0)
+    add_cube("Back wall", (0.0, 3.55, 3.0), (8.0, 0.06, 3.0), materials[wall_key], bevel=0.0)
+    add_cube("Left wall", (-7.95, 0.8, 3.0), (0.06, 2.8, 3.0), materials[wall_key], bevel=0.0)
+    add_cube("Right wall", (7.95, 0.8, 3.0), (0.06, 2.8, 3.0), materials[wall_key], bevel=0.0)
     add_cube("Back skirting", (0.0, 3.45, 0.085), (7.95, 0.05, 0.085), materials["wood"], bevel=0.012)
 
     # Background furniture is deliberately outside the motion corridor.
@@ -354,14 +429,31 @@ def add_room(materials: dict[str, bpy.types.Material], family: str) -> None:
 
     if family not in {"F11", "F12"}:
         add_cube("Picture frame", (1.65, 3.47, 1.95), (0.72, 0.025, 0.48), materials["dark_metal"], bevel=0.015)
-        add_cube("Picture inset", (1.65, 3.43, 1.95), (0.63, 0.012, 0.39), materials["concrete"], bevel=0.006)
+        add_cube("Picture inset", (1.65, 3.43, 1.95), (0.63, 0.012, 0.39), materials["picture_surface"], bevel=0.006)
 
 
 def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
-    if family in {"F11", "V2V_PENDULUM", "V2V_DOMINO"}:
-        path = HDRI_ROOT / "old_hall" / "old_hall_4k.hdr"
-    else:
-        path = HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr"
+    hdri_by_family = {
+        "F11": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
+        "F12": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
+        "V2V_BOWL": HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr",
+        "V2V_DOMINO": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
+        "V2V_GAP": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
+        "V2V_OBSTACLE": HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr",
+        "V2V_PENDULUM": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
+        "V2V_SEESAW": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
+    }
+    rotation_by_family = {
+        "F11": 22.0,
+        "F12": -18.0,
+        "V2V_BOWL": 22.0,
+        "V2V_DOMINO": 58.0,
+        "V2V_GAP": 35.0,
+        "V2V_OBSTACLE": -24.0,
+        "V2V_PENDULUM": 88.0,
+        "V2V_SEESAW": -42.0,
+    }
+    path = hdri_by_family.get(family, HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr")
     world = bpy.data.worlds.new("PBR World") if not bpy.data.worlds else bpy.data.worlds[0]
     scene.world = world
     world.use_nodes = True
@@ -374,7 +466,7 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
     environment = nodes.new("ShaderNodeTexEnvironment")
     environment.image = bpy.data.images.load(str(path), check_existing=True)
     mapping = nodes.new("ShaderNodeMapping")
-    mapping.inputs["Rotation"].default_value[2] = math.radians(22.0)
+    mapping.inputs["Rotation"].default_value[2] = math.radians(rotation_by_family.get(family, 22.0))
     texcoord = nodes.new("ShaderNodeTexCoord")
     links.new(texcoord.outputs["Generated"], mapping.inputs["Vector"])
     links.new(mapping.outputs["Vector"], environment.inputs["Vector"])
@@ -437,14 +529,17 @@ def camera_diagnostics(scene: bpy.types.Scene, camera: bpy.types.Object, object_
     return result
 
 
-def animate_objects(metadata: dict, trajectories, materials, frame_limit: int) -> tuple[list[str], int]:
+def animate_objects(metadata: dict, trajectories, materials, frame_limit: int) -> tuple[list[str], int, dict[str, str]]:
     family = metadata["family_key"]
     names = trajectories["object_names"]
     available_frames = len(trajectories["frame_times_s"])
     frame_count = min(frame_limit, available_frames) if frame_limit > 0 else available_frames
+    material_assignments = {}
     for name in names:
         actor = metadata["actors"][name]
-        material = actor_material(name, actor, family, materials)
+        material_key = actor_material_key(name, actor, family)
+        material_assignments[name] = material_key
+        material = materials[material_key]
         obj = add_actor(name, actor, material)
         obj.rotation_mode = "QUATERNION"
         positions = trajectories[f"{name}_positions"]
@@ -458,7 +553,7 @@ def animate_objects(metadata: dict, trajectories, materials, frame_limit: int) -
             for curve in obj.animation_data.action.fcurves:
                 for point in curve.keyframe_points:
                     point.interpolation = "LINEAR"
-    return names, frame_count
+    return names, frame_count, material_assignments
 
 
 def main() -> None:
@@ -479,7 +574,7 @@ def main() -> None:
     hdri_path = set_world_hdri(scene, metadata["family_key"])
     add_lighting()
     camera = add_camera(metadata)
-    object_names, frame_count = animate_objects(metadata, trajectories, materials, args.frame_limit)
+    object_names, frame_count, material_assignments = animate_objects(metadata, trajectories, materials, args.frame_limit)
     camera_report = camera_diagnostics(scene, camera, object_names)
 
     scene.frame_start = 1
@@ -503,6 +598,7 @@ def main() -> None:
         "enabled_devices": enabled_devices,
         "hdri": str(hdri_path),
         "object_names": object_names,
+        "material_assignments": material_assignments,
         "camera": camera_report,
         "render_seconds": elapsed,
         "seconds_per_frame": elapsed / max(frame_count, 1),
