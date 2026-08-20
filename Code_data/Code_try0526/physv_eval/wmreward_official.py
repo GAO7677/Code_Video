@@ -64,6 +64,7 @@ class WMRewardRunner:
         self._device = None
         self._wmreward_root = None
         self._vjepa2_root = None
+        self._checkpoint_cache: dict[str, Any] = {}
 
     def _resolve_roots(self) -> tuple[Path, Path]:
         if self._wmreward_root is not None and self._vjepa2_root is not None:
@@ -107,6 +108,22 @@ class WMRewardRunner:
             def _trusted_torch_load(*args, **kwargs):
                 if "weights_only" not in kwargs:
                     kwargs["weights_only"] = False
+                checkpoint_arg = args[0] if args else kwargs.get("f")
+                checkpoint_path = (
+                    str(checkpoint_arg)
+                    if isinstance(checkpoint_arg, (str, os.PathLike))
+                    else None
+                )
+                # WMReward's official source loader calls torch.load once for
+                # the encoder and once again for the predictor. Reuse that
+                # exact checkpoint object for the second call; the official
+                # state-dict cleaning and strict model loads remain unchanged.
+                if checkpoint_path is not None and checkpoint_path.endswith("vitg-384.pt"):
+                    if checkpoint_path not in self._checkpoint_cache:
+                        self._checkpoint_cache[checkpoint_path] = original_torch_load(
+                            *args, **kwargs
+                        )
+                    return self._checkpoint_cache[checkpoint_path]
                 return original_torch_load(*args, **kwargs)
 
             torch.load = _trusted_torch_load
@@ -148,6 +165,7 @@ class WMRewardRunner:
 
         self._lazy_imports()
         encoder, target_encoder, predictor, img_size = self._load_vjepa_models_local(self.model_name)
+        self._checkpoint_cache.clear()
         encoder = encoder.to(self._device).eval()
         target_encoder = target_encoder.to(self._device).eval()
         predictor = predictor.to(self._device).eval()
