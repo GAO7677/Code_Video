@@ -103,6 +103,19 @@ export BLIS_NUM_THREADS="${BLIS_NUM_THREADS:-1}"
 # No official evaluator component uses CUDA; keep all GPUs hidden by default.
 export CUDA_VISIBLE_DEVICES="${PHYSIQ_CUDA_VISIBLE_DEVICES:-}"
 
+# OpenCV's FFmpeg backend ignores the native pool limits above for video
+# decoding and auto-creates a large decoder pool per process.  Add a runtime-
+# only sitecustomize shim that opens captures with CAP_PROP_N_THREADS=1;
+# official metric source files remain unchanged.
+RUNTIME_SHIM_DIR="/data/gaoya/agent-data/cache/physics-iq-verified/runtime"
+[[ -f "$RUNTIME_SHIM_DIR/sitecustomize.py" ]] || \
+  die "official scorer runtime shim not found: $RUNTIME_SHIM_DIR/sitecustomize.py"
+if [[ -n "${PYTHONPATH:-}" ]]; then
+  export PYTHONPATH="$RUNTIME_SHIM_DIR:$PYTHONPATH"
+else
+  export PYTHONPATH="$RUNTIME_SHIM_DIR"
+fi
+
 mkdir -p "$OUTPUT_FOLDER" "$WORK_BASE"
 OUTPUT_FOLDER="$(cd "$OUTPUT_FOLDER" && pwd)"
 DESCRIPTIONS_FILE="$(readlink -f "$DESCRIPTIONS_FILE")"

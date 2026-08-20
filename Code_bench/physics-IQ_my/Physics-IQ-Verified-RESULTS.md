@@ -83,6 +83,7 @@
 | 已完成 | xSSC Full-SA no-object step-2000 | P0 | 198/198 | **33.8024** | 35.65 | 是 |
 | 已完成 | xSSC Full-SA no-object xSSC-loss DINOv3 MOVi-C step-500 | P0 | 198/198 | **33.2976** | 34.45 | 是 |
 | 已完成 | PhysRVG-72f-adapted | P0 | 198/198 | **39.9116** | 41.86 | 是 |
+| 已完成 | PhysRVG Full-SA VJEPA step-000500 | P0 | 198/198 | **38.8963** | 41.14 | 是 |
 | 已完成 | PhysRVG 旧版 BPP | P1 | 198/198 | 28.7738 | 26.92 | 否 |
 | 已完成 | PhysRVG 旧版 OP | P2 | 198/198 | 29.5964 | 27.73 | 否 |
 | 已完成 | Wan2.2-TI2V-5B OP last-frame baseline | P3 | 198/198 | 28.1540 | 26.43 | 否 |
@@ -223,11 +224,10 @@ SSH 118上的结果产物：
 
 ## 运行中与未完成方案
 
-本节中的方案在官方评分完成前没有可报告的 Physics-IQ-Verified 分数。
+本节记录仍在运行或未完成的方案；已完成方案见上方总表及对应详细章节。
 
 | 最近状态 | 模型与 Run | 协议 | 进度 | 分数 |
 |---|---|---:|---:|---|
-| 官方计分中 | PhysRVG Full-SA VJEPA step-000500 | P0 | 198/198 raw 与 submission 已完成并通过 P0 格式校验 | 暂无 |
 | 已中断，可续跑 | xSSC slot-dedup step-2000 | P0 | 73/198 raw | 暂无 |
 | 未完成 | stage1b step-2500 | 非P0 | 11/198 | 暂无 |
 | 未完成 | stage1b step-2500 with negative prompt | 非P0 | 1/198 | 暂无 |
@@ -235,7 +235,7 @@ SSH 118上的结果产物：
 
 ## PhysRVG Full-SA VJEPA step-000500 P0 运行
 
-状态：官方计分中。单 case smoke、198 个 raw 和 198 个 submission 均已完成；该方案使用用户指定的 Full-SA VJEPA LoRA checkpoint，并复用
+状态：已完成（2026-08-20 UTC）。单 case smoke、198 个 raw 和 198 个 submission 均已完成并通过官方 Verified 评测；该方案使用用户指定的 Full-SA VJEPA LoRA checkpoint，并复用
 `run_infer_full_sa_physrvg_vjepa.sh` 的 PhysRVG DiT 严格加载和 Full-SA LoRA 推理逻辑。
 
 Run ID：
@@ -266,6 +266,8 @@ P0 执行配置：
 - 推理 worker：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/run_physrvg_full_sa_vjepa_verified.sh`
 - GPU2-only 可恢复流水线：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/run_full_sa_vjepa_verified_gpu2_only.sh`
 - 输入适配：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/prepare_full_sa_vjepa_verified_inputs.py`
+- 官方评分 wrapper：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/run_verified_official.sh`
+- 官方 Verified 聚合 wrapper：`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/aggregate_verified_official.sh`
 
 Smoke 证据：GPU 7 上第一个 case 已生成并核验为 raw `189@24 FPS`；metadata 记录
 `context_frames=72`、`effective_context_latent_frames=18`、`context_mask_mode=dynamic_effective`、
@@ -275,26 +277,42 @@ Smoke 证据：GPU 7 上第一个 case 已生成并核验为 raw `189@24 FPS`；
 其已完成的两个 raw case 不进入最终 submission。GPU 2 先完成 1-based P0 奇数序号的99个 case，
 随后使用同一 checkpoint 和参数补齐偶数序号的99个 case；最终198个视频均由 GPU 2 生成。
 
-全量产物与当前进度：
+全量产物与评测结果：
 
 - Raw：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/raw/physrvg-full-sa-vjepa-step000500-bpp-run_01`
 - Submission：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/generated_videos_5s/physrvg-full-sa-vjepa-step000500-bpp-run_01`
 - 官方 Evaluation root：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation`
-- 官方计分日志：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/logs/physrvg-full-sa-vjepa-step000500-bpp-run_01_official_score_p24.log`
-- 当前持久会话：`physrvg_full_sa_vjepa_physiciq_score`
+- 官方计分日志：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/logs/physrvg-full-sa-vjepa-step000500-bpp-run_01_official_score_p24_capthreads.log`
+- 官方 CSV：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physics-IQ-benchmark-verified/results/physrvg-full-sa-vjepa-step000500-bpp-run_01.csv`
+- Metrics JSON：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physics-IQ-benchmark-verified/results/physrvg-full-sa-vjepa-step000500-bpp-run_01_metrics.json`
+- Verified 汇总 CSV：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-full-sa-vjepa-step000500-bpp-run_01_verified_summary.csv`
 
 已核验 submission 文件名集合 SHA256 为
 `8ee2101106b2acaaecac752ea5175cee89d30b3aab9c602623ff02360eacc071`，与 P0 登记值一致；
 全部 198 个最终 raw/submission 视频均来自 GPU 2，GPU 7 上先前中断 shard 的两个文件未纳入最终结果。
+
+官方计分结果（66 行场景、198 个视角输入）：
+
+| 指标 | 数值 x100 |
+|---|---:|
+| Physics-IQ Verified 主分数 | **38.8963** |
+| Spatial view | 35.9304 |
+| Spatiotemporal view | 56.4140 |
+| Weighted spatial view | 30.2041 |
+| MSE view | 33.0367 |
+| Original 附加分数 | 41.14 |
 
 官方评分使用与既有本地 P0 结果相同的 `uv` 项目环境
 `/data/gaoya/agent-data/cache/envs/physics-iq-verified`，执行官方
 `physiq/run_physics_iq.py`（Verified 默认模式、`--n_process 24` 官方 CPU worker），完成后再以官方
 `aggregate_runs_from_csvs.py --score-type verified` 写入单次汇总。
 
+官方 scorer 没有 CUDA 路径，本次将 `CUDA_VISIBLE_DEVICES` 置空；24 个 worker 均保持单线程。为避免 OpenCV 4.13 FFmpeg 解码器在每个 worker 内自动创建大量线程，使用了运行时 shim
+`/data/gaoya/agent-data/cache/physics-iq-verified/runtime/sitecustomize.py`，仅为 `VideoCapture` 传入 `CAP_PROP_N_THREADS=1`，未修改官方评测源码或评分公式。
+
 严格可比性说明：
 
-- 评测输入和输出协议与现有 P0 结果完全一致；完成全量格式校验和官方聚合后，才将主表标记为“严格可比：是”。
+- 评测输入和输出协议与现有 P0 结果完全一致；198/198 文件通过格式校验，官方 Verified aggregate 已完成，因此主表标记为“严格可比：是”。
 - 该 checkpoint 的训练配置是49帧、8帧 context、2个 clean latent；本次使用189帧/72帧 P0 推理属于统一评测所需的时序适配，训练分布差异会在最终记录中保留说明。
 
 ## PhysRVG-72f-adapted P0 运行
