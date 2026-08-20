@@ -40,6 +40,11 @@ def _specific_caption(metadata: Mapping[str, object]) -> str:
             f"A ball rolls across a table that is {value} high, leaves the right edge, "
             "and falls under gravity."
         )
+    if family_key == "F12_RAMP_LENGTH" or task_type == "incline_length_release":
+        return (
+            f"A red wooden block is released from rest on a 24 degree incline that is {value} long, "
+            "and slides along the incline."
+        )
     if family_key == "F12" or task_type == "incline_release":
         return (
             f"A red wooden block is released from rest on a ramp inclined at {value} "
@@ -90,6 +95,8 @@ def _abstract_caption(metadata: Mapping[str, object]) -> str:
     task_type = str(metadata.get("task_type", ""))
     if family_key == "F11" or task_type == "table_rolloff":
         return "A ball rolls across a raised table, leaves the right edge, and falls under gravity."
+    if family_key == "F12_RAMP_LENGTH" or task_type == "incline_length_release":
+        return "A red wooden block is released from rest on a fixed-angle incline whose length varies, then slides along the incline."
     if family_key == "F12" or task_type == "incline_release":
         return "A red wooden block is released from rest on an inclined surface and slides down the slope."
     if family_key == "V2V_GAP" or task_type == "gap_rolloff":

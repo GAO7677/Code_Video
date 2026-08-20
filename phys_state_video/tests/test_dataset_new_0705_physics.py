@@ -22,6 +22,7 @@ from scripts.dataset_new_0705.render_sim_0705 import build_object_phrase_bundle
 from scripts.dataset_new_0705.audit_physv_initialization import audit_suite
 from scripts.dataset_new_0705.generate_difficulty_pilot import (
     RAMP_INCLINE_CASES,
+    RAMP_LENGTH_CONTROL_CASES,
     TABLE_ROLLOFF_CASES,
 )
 
@@ -279,7 +280,7 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             include_difficulty=True,
             include_v2v=False,
         )
-        self.assertEqual(report["total_cases"], 27)
+        self.assertEqual(report["total_cases"], 32)
         self.assertEqual(report["failed_cases"], 0)
 
 

@@ -12,12 +12,15 @@ from typing import Any
 
 
 DEFAULT_ROOT = Path("/data/gaoya/AAA_test_video/physv_v2v_0819")
+DEFAULT_MIN_SELECTED_PAIRS = 4
+DEFAULT_THRESHOLD = 0.30
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument("--threshold", type=float, default=0.10, help="Maximum symmetric relative difference in [0, 2].")
+    parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="Maximum symmetric relative difference in [0, 2].")
+    parser.add_argument("--min-selected-pairs", type=int, default=DEFAULT_MIN_SELECTED_PAIRS, help="Required selected pairs in every group.")
     parser.add_argument("--output-json", type=Path, default=None)
     return parser.parse_args()
 
@@ -37,6 +40,8 @@ def main() -> None:
     args = parse_args()
     if not 0.0 <= args.threshold <= 2.0:
         raise ValueError("--threshold must be between 0 and 2")
+    if args.min_selected_pairs <= 0:
+        raise ValueError("--min-selected-pairs must be positive")
     root = args.dataset_root.resolve()
     amplitude = read_json(root / "reports/motion_amplitude.json")
     similarity_path = root / "reports/trajectory_similarity.json"
@@ -101,12 +106,24 @@ def main() -> None:
         },
         "threshold": args.threshold,
         "threshold_percent": args.threshold * 100.0,
+        "minimum_selected_pairs_per_group": args.min_selected_pairs,
         "selected_pair_count": total_selected,
         "groups": group_reports,
     }
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"report={output}")
     print(f"threshold={args.threshold:.4f} selected_pairs={total_selected}")
+    failed_groups = [
+        group
+        for group, summary in group_reports.items()
+        if summary["selected_pair_count"] < args.min_selected_pairs
+    ]
+    if failed_groups:
+        print(f"minimum_pair_requirement_failed={failed_groups}")
+        raise RuntimeError(
+            "groups below minimum selected-pair requirement: "
+            + ", ".join(failed_groups)
+        )
     for group, summary in group_reports.items():
         print(f"{group}: {summary['selected_pair_count']}/{summary['pair_count']}")
 

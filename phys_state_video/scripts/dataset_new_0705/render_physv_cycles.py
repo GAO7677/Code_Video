@@ -858,16 +858,19 @@ def main() -> None:
     metadata = json.loads((args.sample_dir / "metadata.json").read_text(encoding="utf-8"))
     trajectories = json.loads(args.trajectory_json.read_text(encoding="utf-8"))
     fps = int(metadata["simulation"]["fps"])
+    render_family = "F12" if metadata["family_key"] == "F12_RAMP_LENGTH" else metadata["family_key"]
+    render_metadata = dict(metadata)
+    render_metadata["family_key"] = render_family
 
     clear_scene()
     scene = bpy.context.scene
     enabled_devices = configure_cycles(scene, args, fps)
     materials = material_library()
-    room_scene = add_room(materials, metadata["family_key"])
-    hdri_path = set_world_hdri(scene, metadata["family_key"])
-    lighting_preset = add_lighting(metadata["family_key"])
-    camera = add_camera(metadata)
-    object_names, frame_count, material_assignments = animate_objects(metadata, trajectories, materials, args.frame_limit)
+    room_scene = add_room(materials, render_family)
+    hdri_path = set_world_hdri(scene, render_family)
+    lighting_preset = add_lighting(render_family)
+    camera = add_camera(render_metadata)
+    object_names, frame_count, material_assignments = animate_objects(render_metadata, trajectories, materials, args.frame_limit)
     camera_report = camera_diagnostics(scene, camera, object_names)
 
     scene.frame_start = 1

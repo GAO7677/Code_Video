@@ -15,6 +15,7 @@ from pathlib import Path
 from .generate_difficulty_pilot import (
     DIFFICULTY_LEVELS,
     RAMP_INCLINE_CASES,
+    RAMP_LENGTH_CONTROL_CASES,
     TABLE_ROLLOFF_CASES,
 )
 from .generate_v2v_context_demos import (
@@ -81,6 +82,20 @@ def _difficulty_cases(seed_base: int, per_level: int):
             size_scale=1.0,
             camera_distance_scale=DEFAULT_CAMERA_DISTANCE_SCALE,
             ramp_angle_deg=float(extra["ramp_angle_deg"]),
+        )
+
+    for extra in RAMP_LENGTH_CONTROL_CASES:
+        case_id = f"difficulty_l2_f12_length_{extra['length_label']}_a024"
+        seed = int(seed_base + 99100)
+        yield case_id, "F12_RAMP_LENGTH", seed, generate_scenario_blueprint(
+            family_key="F12",
+            sample_key=case_id,
+            seed=seed,
+            direction_mode="left_to_right",
+            size_scale=1.0,
+            camera_distance_scale=DEFAULT_CAMERA_DISTANCE_SCALE,
+            ramp_angle_deg=float(extra["ramp_angle_deg"]),
+            ramp_length_m=float(extra["ramp_length_m"]),
         )
 
 

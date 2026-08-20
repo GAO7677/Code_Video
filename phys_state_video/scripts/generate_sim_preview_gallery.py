@@ -147,6 +147,83 @@ def assert_initialization_contacts(
     return report
 
 
+def assert_initialization_contact_contract(
+    body_ids: Dict[str, int],
+    plane_id: int,
+    contract: dict | None,
+    *,
+    stage: str,
+) -> dict:
+    """Require declared connected parts to be tangent at an init stage.
+
+    ``assert_initialization_contacts`` catches overlaps for every pair.  This
+    companion check catches the opposite failure for the small set of pairs
+    that are declared as one connected support or assembly.
+    """
+    contract = contract or {}
+    gap_tolerance_m = float(contract.get("gap_tolerance_m", 0.001))
+    penetration_tolerance_m = float(
+        contract.get("penetration_tolerance_m", INITIALIZATION_PENETRATION_TOLERANCE_M)
+    )
+    checks: list[dict[str, object]] = []
+    failures: list[dict[str, object]] = []
+    query_distance_m = max(INITIALIZATION_NEAR_CONTACT_DISTANCE_M, gap_tolerance_m * 2.0)
+
+    def check_pair(left_name: str, left_id: int, right_name: str, right_id: int) -> None:
+        points = p.getClosestPoints(
+            int(left_id),
+            int(right_id),
+            distance=query_distance_m,
+        )
+        distance = min((float(point[8]) for point in points), default=float("inf"))
+        record = {
+            "body_a": left_name,
+            "body_b": right_name,
+            "distance_m": None if not math.isfinite(distance) else round(distance, 6),
+            "gap_tolerance_m": gap_tolerance_m,
+            "passed": bool(
+                math.isfinite(distance)
+                and distance <= gap_tolerance_m
+                and distance >= -penetration_tolerance_m
+            ),
+        }
+        checks.append(record)
+        if not record["passed"]:
+            failures.append(record)
+
+    def require_body(name: str) -> int:
+        if name not in body_ids:
+            raise InitializationPenetrationError(
+                f"initialization contact contract references missing body {name!r} at {stage}"
+            )
+        return int(body_ids[name])
+
+    for pair in contract.get("touching_pairs", []):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise InitializationPenetrationError(f"invalid touching pair {pair!r} at {stage}")
+        left_name, right_name = str(pair[0]), str(pair[1])
+        check_pair(left_name, require_body(left_name), right_name, require_body(right_name))
+    for name_value in contract.get("touching_ground", []):
+        name = str(name_value)
+        check_pair(name, require_body(name), "ground", int(plane_id))
+
+    if failures:
+        details = "; ".join(
+            f"{item['body_a']} vs {item['body_b']}={item['distance_m']}m"
+            for item in failures
+        )
+        raise InitializationPenetrationError(
+            f"initialization contact gap/penetration at {stage}: {details}"
+        )
+    return {
+        "stage": stage,
+        "passed": True,
+        "contract_checks": checks,
+        "gap_tolerance_m": gap_tolerance_m,
+        "penetration_tolerance_m": penetration_tolerance_m,
+    }
+
+
 def collect_frame_contacts(
     body_ids: Dict[str, int],
     plane_id: int,

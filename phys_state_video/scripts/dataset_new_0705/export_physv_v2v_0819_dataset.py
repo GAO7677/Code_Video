@@ -13,7 +13,7 @@ import json
 import math
 import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
@@ -25,6 +25,7 @@ from .caption_templates_0819 import CAPTION_FILES, attach_caption_metadata
 from .generate_difficulty_pilot import (
     ANALYSIS_QUESTION,
     RAMP_INCLINE_CASES,
+    RAMP_LENGTH_CONTROL_CASES,
     TABLE_HEIGHT_CONTROL_CASES,
 )
 from .generate_v2v_context_demos import (
@@ -35,6 +36,7 @@ from .generate_v2v_context_demos import (
     _render_case as render_v2v_case,
     build_demo_cases,
 )
+from .group_invariants_0819 import audit_group_invariants
 from .render_sim_0705 import render_blueprint_case
 from .scene_generators_0705 import (
     DEFAULT_CAMERA_DISTANCE_SCALE,
@@ -178,6 +180,57 @@ def _make_f12_cases(seed_base: int) -> list[ExportCase]:
     return cases
 
 
+def _make_f12_length_cases(seed_base: int) -> list[ExportCase]:
+    cases: list[ExportCase] = []
+    seed = int(seed_base + 99100)
+    for extra in RAMP_LENGTH_CONTROL_CASES:
+        ramp_length_m = float(extra["ramp_length_m"])
+        ramp_angle_deg = float(extra["ramp_angle_deg"])
+        case_id = f"difficulty_l2_f12_length_{extra['length_label']}_a024"
+        base_blueprint = generate_scenario_blueprint(
+            family_key="F12",
+            sample_key=case_id,
+            seed=seed,
+            direction_mode="left_to_right",
+            size_scale=1.0,
+            camera_distance_scale=DEFAULT_CAMERA_DISTANCE_SCALE,
+            ramp_angle_deg=ramp_angle_deg,
+            ramp_length_m=ramp_length_m,
+        )
+        blueprint = replace(
+            base_blueprint,
+            title=f"Red wooden block release on a {ramp_length_m:.2f} m, 24 degree incline",
+            description="A red wooden block is released from rest on a 24 degree ramp; only the ramp length changes.",
+            metadata={
+                **base_blueprint.metadata,
+                "ramp_angle_deg": ramp_angle_deg,
+                "ramp_length_m": ramp_length_m,
+                "controlled_variable": "ramp_length_m",
+                "ramp_length_control_group": "fixed_angle_24_deg",
+            },
+        )
+        cases.append(
+            ExportCase(
+                case_id=case_id,
+                source_group="f12_ramp_length",
+                family_key="F12_RAMP_LENGTH",
+                task_type="incline_length_release",
+                title=blueprint.title,
+                description=blueprint.description,
+                analysis_question=ANALYSIS_QUESTION,
+                controlled_variable="ramp_length_m",
+                controlled_value=ramp_length_m,
+                controlled_value_label=f"{ramp_length_m:.2f} m",
+                units="m",
+                event_rule="block_exits_ramp_lower_edge",
+                blueprint=blueprint,
+                seed=seed,
+                scene_style="indoor_realistic",
+            )
+        )
+    return cases
+
+
 def _v2v_task_type(family_key: str) -> str:
     return {
         "V2V_GAP": "gap_rolloff",
@@ -237,10 +290,12 @@ def build_export_cases(
         _make_v2v_cases(v2v_seed_base)
         + _make_f11_cases(difficulty_seed_base)
         + _make_f12_cases(difficulty_seed_base)
+        + _make_f12_length_cases(difficulty_seed_base)
     )
     ids = [case.case_id for case in cases]
-    if len(cases) != 45 or len(set(ids)) != len(ids):
-        raise RuntimeError(f"expected 45 unique V2V/F11/F12 cases, got {len(cases)}")
+    if len(cases) != 50 or len(set(ids)) != len(ids):
+        raise RuntimeError(f"expected 50 unique V2V/F11/F12 cases, got {len(cases)}")
+    audit_group_invariants(cases)
     return cases
 
 
@@ -669,7 +724,7 @@ def _derive_event_frame(case: ExportCase, positions: np.ndarray, quats: np.ndarr
     if case.family_key == "F11":
         threshold = float(case.blueprint.metadata["table_top_half_width_m"])
         frames = np.flatnonzero(positions[:, index["roller_0"], 0] > threshold)
-    elif case.family_key == "F12":
+    elif case.family_key in {"F12", "F12_RAMP_LENGTH"}:
         theta = math.radians(float(case.blueprint.metadata["ramp_angle_deg"]))
         ramp_edge = 0.5 * float(case.blueprint.metadata["ramp_length_m"]) * math.cos(theta)
         frames = np.flatnonzero(positions[:, index["block_0"], 0] > ramp_edge - 0.02)
@@ -1066,6 +1121,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
             "v2v_obstacle_ball_size",
             "f11_table_height",
             "f12_incline",
+            "f12_ramp_length",
         )
     }
     _write_json(
@@ -1090,7 +1146,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
             "mask_policy": "masks.npz contains dynamic actors; instance_ids.npz contains all rendered simulator objects.",
             "depth": "raw/depth.npz contains PyRender Z-depth in scene meters; zero denotes background.",
             "contacts": "contacts.json records motion-relevant PyBullet contacts sampled at video frames.",
-            "source_selection": "35 V2V cases (including 5 obstacle ball-radius controls), 5 F11 table-height cases, and 5 F12 incline cases; F11 direction variants excluded.",
+            "source_selection": "35 V2V cases (including 5 obstacle ball-radius controls), 5 F11 table-height cases, 5 F12 incline-angle cases, and 5 F12 fixed-angle ramp-length cases; F11 direction variants excluded.",
             "captions": {
                 "specific": "captions/caption_specific.txt exposes the controlled variable and value.",
                 "abstract": "captions/caption_abstract.txt hides the controlled variable and value.",
@@ -1100,8 +1156,8 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
     )
     readme = """# PhysV V2V 0819
 
-This dataset contains 45 deterministic rigid-body video-continuation controls:
-35 V2V cases, including five obstacle ball-radius controls, five F11 table-height controls, and five F12 incline controls.
+This dataset contains 50 deterministic rigid-body video-continuation controls:
+35 V2V cases, including five obstacle ball-radius controls, five F11 table-height controls, five F12 incline-angle controls, and five F12 fixed-angle ramp-length controls.
 F11 direction variants are intentionally excluded.
 
 Each `samples/<case_id>/` directory follows a RigidBench-inspired layout:
@@ -1142,6 +1198,8 @@ def export_dataset(
         v2v_seed_base=v2v_seed_base,
         difficulty_seed_base=difficulty_seed_base,
     )
+    invariant_report = audit_group_invariants(cases)
+    _write_json(output_root / "reports" / "group_invariant_audit.json", invariant_report)
     if selected_case_ids is not None:
         known = {case.case_id for case in cases}
         unknown = sorted(selected_case_ids - known)

@@ -557,23 +557,41 @@ def audit_blueprint_initialization(
                 body_ids,
                 plane_id,
                 stage="post_creation",
-            )
+            ),
+            legacy.assert_initialization_contact_contract(
+                body_ids,
+                plane_id,
+                blueprint.metadata.get("initialization_contract"),
+                stage="post_creation_contract",
+            ),
         ]
         for _ in range(int(scenario.pre_roll_s * legacy.SIM_HZ)):
             legacy.p.stepSimulation()
-        stages.append(
-            legacy.assert_initialization_contacts(
-                body_ids,
-                plane_id,
-                stage="post_pre_roll",
-            )
-        )
-        stages.append(
-            legacy.assert_initialization_contacts(
-                body_ids,
-                plane_id,
-                stage="video_frame_0",
-            )
+        stages.extend(
+            [
+                legacy.assert_initialization_contacts(
+                    body_ids,
+                    plane_id,
+                    stage="post_pre_roll",
+                ),
+                legacy.assert_initialization_contact_contract(
+                    body_ids,
+                    plane_id,
+                    blueprint.metadata.get("initialization_contract"),
+                    stage="post_pre_roll_contract",
+                ),
+                legacy.assert_initialization_contacts(
+                    body_ids,
+                    plane_id,
+                    stage="video_frame_0",
+                ),
+                legacy.assert_initialization_contact_contract(
+                    body_ids,
+                    plane_id,
+                    blueprint.metadata.get("initialization_contract"),
+                    stage="video_frame_0_contract",
+                ),
+            ]
         )
         return {
             "passed": True,
@@ -1349,6 +1367,13 @@ def render_blueprint_case(
     materials = build_material_catalog()
     register_material_assets(materials)
     scenario = blueprint_to_legacy_scenario(blueprint, seed=seed)
+    # Run the stricter contract in a separate DIRECT client before spending
+    # time on RGB/depth rendering.  The legacy renderer keeps the broad
+    # no-penetration QA, while this preflight also rejects declared gaps.
+    contract_initialization_qa = audit_blueprint_initialization(
+        blueprint=blueprint,
+        seed=seed,
+    )
 
     with override_legacy_runtime(output_root=output_root, camera=blueprint.camera, width=width, height=height):
         legacy.p.connect(legacy.p.DIRECT)
@@ -1413,6 +1438,7 @@ def render_blueprint_case(
     payload["tags"] = list(blueprint.tags)
     payload["size_scale"] = float(blueprint.metadata.get("size_scale", 1.0))
     payload["camera_distance_scale"] = float(blueprint.metadata.get("camera_distance_scale", 1.0))
+    payload["initialization_qa"] = contract_initialization_qa
     if not preserve_states:
         payload.pop("states", None)
     payload["blueprint"] = {

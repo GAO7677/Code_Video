@@ -946,7 +946,7 @@ def write_baseline_stats_csv(
                     "metric": stat.metric.key,
                     "direction": stat.metric.direction,
                     "score_count": stat.count,
-                    "expected_count": expected_cases,
+                    "expected_count": stat.expected_cases,
                     "complete_67": stat.complete,
                     "mean": "" if stat.mean is None else f"{stat.mean:.8f}",
                     "result_dir": str(stat.result_dir),
@@ -1379,12 +1379,23 @@ def write_plot_index(
                 "count": stat.count,
                 "complete": stat.complete,
             }
+        baseline_expected_cases = next(
+            (
+                stat.expected_cases
+                for stat in baseline_stats
+                if stat.key == key
+            ),
+            expected_cases,
+        )
         baselines.append(
             {
                 "key": key,
                 "label": str(spec["label"]),
                 "color": str(spec["color"]),
                 "result_dir": str(spec["result_dir"].resolve()),
+                "expected_cases": baseline_expected_cases,
+                "scope_label": str(spec.get("scope_label", "")),
+                "source_page": str(spec.get("source_page", "")),
                 "metrics": baseline_metrics,
             }
         )
@@ -1449,11 +1460,11 @@ def write_plot_index(
   </style>
 </head>
 <body>
-<header><div><h1>PhysicIQ · Checkpoint 指标曲线</h1><p>选择一个或多个训练方案；每条实线连接该方案全部 67/67 完整 checkpoint。四组对照结果作为虚线基线横贯训练 step。</p><div class="header-links"><a href="../">返回 8844 总览</a><a href="../physiciq-average-metrics/">67-case 平均指标表</a><a href="../phyrvg-full-sa-train-validation-30cases/">PHYRVG-Full-SA · 30-case 验证</a></div></div></header>
+<header><div><h1>PhysicIQ · Checkpoint 指标曲线</h1><p>选择一个或多个训练方案；每条实线连接该方案全部 67/67 完整 checkpoint。六组对照结果作为虚线基线横贯训练 step；两条 reference baseline 保留各自 test5 20-case 评测范围。</p><div class="header-links"><a href="../">返回 8844 总览</a><a href="../physiciq-average-metrics/">67-case 平均指标表</a><a href="../phyrvg-full-sa-train-validation-30cases/">PHYRVG-Full-SA · 30-case 验证</a><a href="../physrvg-test5-lora-ablation/">LoRA OFF/ON reference 明细</a></div></div></header>
 <main>
   <section class="controls">
     <div><h2>训练方案（可多选）</h2><div id="methodChecks" class="checks"></div><div class="commands"><button id="selectFullSA">全部 Full-SA</button><button id="selectObject">全部 +Object</button><button id="selectNoObject">全部 No-Object</button><button id="selectDedup">全部 +Slot-Dedup</button><button id="selectOther">其余方案</button><button id="selectAll">全选</button><button id="clearAll">清空</button><span id="status"></span></div></div>
-    <div><h2>Baseline 横线</h2><div id="baselineChecks" class="checks"></div></div>
+    <div><h2>Baseline 横线</h2><div id="baselineChecks" class="checks"></div><p class="baseline-note">两条 reference 横线来自独立的 test5 20-case 评测，图例会标注评测范围。</p></div>
   </section>
   <section id="charts" class="charts"></section>
   <section id="phyrvgValidation" class="validation" hidden><h2>PHYRVG-Full-SA · 30-case 验证曲线</h2><p>来自 30-case 子页面的 deterministic flow MSE；只在同一验证集内比较，越低越好。该指标与上方 67-case PhysicIQ 指标保持分栏，避免混用不同评测协议。</p><div id="validationChart" class="validation-chart"></div></section>
@@ -1479,15 +1490,15 @@ document.getElementById("selectOther").onclick=()=>selectGroup(method=>!method.k
 function svgEl(tag,attrs={},text=""){const node=document.createElementNS(NS,tag);Object.entries(attrs).forEach(([key,value])=>node.setAttribute(key,String(value)));if(text)node.textContent=text;return node}
 function fmt(value){if(Math.abs(value)>=10)return value.toFixed(2);if(Math.abs(value)>=1)return value.toFixed(3);return value.toFixed(4)}
 function selected(inputs){return new Set(inputs.filter(input=>input.checked).map(input=>input.value))}
-function chart(metric,methods,baselines){const records=[];methods.forEach(method=>method.points.forEach(point=>{const stat=point.metrics[metric.key];if(stat&&stat.complete&&Number.isFinite(stat.mean))records.push({method,step:point.step,value:stat.mean,count:stat.count})}));const baseRecords=baselines.map(base=>({base,stat:base.metrics[metric.key]})).filter(row=>row.stat&&row.stat.complete&&Number.isFinite(row.stat.mean));if(!records.length&&!baseRecords.length)return null;
+function chart(metric,methods,baselines){const records=[];methods.forEach(method=>method.points.forEach(point=>{const stat=point.metrics[metric.key];if(stat&&stat.complete&&Number.isFinite(stat.mean))records.push({method,step:point.step,value:stat.mean,count:stat.count})}));const baseRecords=baselines.map(base=>({base,stat:base.metrics[metric.key]})).filter(row=>row.stat&&row.stat.count>0&&Number.isFinite(row.stat.mean));if(!records.length&&!baseRecords.length)return null;
   const article=document.createElement("article");article.className="chart";const heading=document.createElement("h3");heading.textContent=metric.title;const direction=document.createElement("div");direction.className="direction";direction.textContent=metric.direction==="higher"?"越高越好 ↑":"越低越好 ↓";article.append(heading,direction);
   const W=760,H=330,M={l:62,r:18,t:18,b:48},iw=W-M.l-M.r,ih=H-M.t-M.b;const steps=records.map(row=>row.step);let xmin=steps.length?Math.min(...steps):0,xmax=steps.length?Math.max(...steps):1;if(xmin===xmax){const pad=Math.max(1,Math.round(Math.abs(xmin)*.05));xmin-=pad;xmax+=pad}const values=records.map(row=>row.value).concat(baseRecords.map(row=>row.stat.mean));let ymin=Math.min(...values),ymax=Math.max(...values);let ypad=(ymax-ymin)*.1;if(!ypad)ypad=Math.max(Math.abs(ymin)*.05,.01);ymin-=ypad;ymax+=ypad;
   const x=value=>M.l+(value-xmin)/(xmax-xmin)*iw,y=value=>M.t+(ymax-value)/(ymax-ymin)*ih;const svg=svgEl("svg",{viewBox:`0 0 ${W} ${H}`,role:"img","aria-label":metric.title});
   for(let i=0;i<5;i++){const value=ymin+(ymax-ymin)*i/4,py=y(value);svg.append(svgEl("line",{x1:M.l,y1:py,x2:W-M.r,y2:py,stroke:"#e1e4e6","stroke-width":1}),svgEl("text",{x:M.l-9,y:py+4,"text-anchor":"end",fill:"#697176","font-size":10},fmt(value)))}
   const unique=[...new Set(steps)].sort((a,b)=>a-b);const tickSteps=unique.length<=8?unique:unique.filter((_,i)=>i===0||i===unique.length-1||i%Math.ceil(unique.length/7)===0);tickSteps.forEach(step=>{const px=x(step);svg.append(svgEl("line",{x1:px,y1:M.t,x2:px,y2:H-M.b,stroke:"#eef0f1","stroke-width":1}),svgEl("text",{x:px,y:H-M.b+18,"text-anchor":"middle",fill:"#697176","font-size":10},String(step)))});svg.append(svgEl("line",{x1:M.l,y1:H-M.b,x2:W-M.r,y2:H-M.b,stroke:"#788086"}),svgEl("line",{x1:M.l,y1:M.t,x2:M.l,y2:H-M.b,stroke:"#788086"}),svgEl("text",{x:M.l+iw/2,y:H-9,"text-anchor":"middle",fill:"#697176","font-size":10},"Training step"));
-  baseRecords.forEach(({base,stat})=>{const line=svgEl("line",{x1:M.l,y1:y(stat.mean),x2:W-M.r,y2:y(stat.mean),stroke:base.color,"stroke-width":2,"stroke-dasharray":"8 5",opacity:.9});line.append(svgEl("title",{},`${base.label}: ${fmt(stat.mean)} (${stat.count}/${DATA.expected_cases})`));svg.append(line)});
+  baseRecords.forEach(({base,stat})=>{const line=svgEl("line",{x1:M.l,y1:y(stat.mean),x2:W-M.r,y2:y(stat.mean),stroke:base.color,"stroke-width":2,"stroke-dasharray":"8 5",opacity:.9});line.append(svgEl("title",{},`${base.label}: ${fmt(stat.mean)} (${stat.count}/${base.expected_cases||DATA.expected_cases}${base.scope_label?` · ${base.scope_label}`:""})`));svg.append(line)});
   methods.forEach(method=>{const rows=records.filter(row=>row.method.key===method.key).sort((a,b)=>a.step-b.step);if(!rows.length)return;svg.append(svgEl("polyline",{points:rows.map(row=>`${x(row.step)},${y(row.value)}`).join(" "),fill:"none",stroke:method.color,"stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"}));rows.forEach(row=>{const circle=svgEl("circle",{cx:x(row.step),cy:y(row.value),r:4,fill:method.color,stroke:"#fff","stroke-width":1.2});circle.append(svgEl("title",{},`${method.label} · step ${row.step}: ${fmt(row.value)} (${row.count}/${DATA.expected_cases})`));svg.append(circle)})});article.append(svg);
-  const legend=document.createElement("div");legend.className="legend";methods.filter(method=>records.some(row=>row.method.key===method.key)).forEach(method=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch" style="--c:${method.color}"></i>${method.label}`;legend.append(item)});baseRecords.forEach(({base})=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch base" style="--c:${base.color}"></i>${base.label}`;legend.append(item)});article.append(legend);return article}
+  const legend=document.createElement("div");legend.className="legend";methods.filter(method=>records.some(row=>row.method.key===method.key)).forEach(method=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch" style="--c:${method.color}"></i>${method.label}`;legend.append(item)});baseRecords.forEach(({base})=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch base" style="--c:${base.color}"></i>${base.label}${base.scope_label?` · ${base.scope_label}`:""}`;legend.append(item)});article.append(legend);return article}
 function validationChart(data){if(!data||!data.series||!data.series.length)return null;const rows=data.series.flatMap(series=>(series.points||[]).filter(point=>point.complete&&Number.isFinite(point.mean)).map(point=>({series,step:point.step,value:point.mean,count:point.count})));if(!rows.length)return null;const W=1060,H=380,M={l:72,r:22,t:18,b:52},iw=W-M.l-M.r,ih=H-M.t-M.b;let xmin=Math.min(...rows.map(row=>row.step)),xmax=Math.max(...rows.map(row=>row.step));if(xmin===xmax){xmin-=1;xmax+=1}const values=rows.map(row=>row.value);let ymin=Math.min(...values),ymax=Math.max(...values),ypad=(ymax-ymin)*.12;if(!ypad)ypad=Math.max(Math.abs(ymin)*.05,.001);ymin-=ypad;ymax+=ypad;const x=value=>M.l+(value-xmin)/(xmax-xmin)*iw,y=value=>M.t+(ymax-value)/(ymax-ymin)*ih;const svg=svgEl("svg",{viewBox:`0 0 ${W} ${H}`,role:"img","aria-label":data.metric_title});for(let i=0;i<5;i++){const value=ymin+(ymax-ymin)*i/4,py=y(value);svg.append(svgEl("line",{x1:M.l,y1:py,x2:W-M.r,y2:py,stroke:"#e1e4e6","stroke-width":1}),svgEl("text",{x:M.l-9,y:py+4,"text-anchor":"end",fill:"#697176","font-size":10},fmt(value)))}const steps=[...new Set(rows.map(row=>row.step))].sort((a,b)=>a-b);const tickSteps=steps.length<=10?steps:steps.filter((_,i)=>i===0||i===steps.length-1||i%Math.ceil(steps.length/9)===0);tickSteps.forEach(step=>{const px=x(step);svg.append(svgEl("line",{x1:px,y1:M.t,x2:px,y2:H-M.b,stroke:"#eef0f1","stroke-width":1}),svgEl("text",{x:px,y:H-M.b+18,"text-anchor":"middle",fill:"#697176","font-size":10},String(step)))});svg.append(svgEl("line",{x1:M.l,y1:H-M.b,x2:W-M.r,y2:H-M.b,stroke:"#788086"}),svgEl("line",{x1:M.l,y1:M.t,x2:M.l,y2:H-M.b,stroke:"#788086"}),svgEl("text",{x:M.l+iw/2,y:H-10,"text-anchor":"middle",fill:"#697176","font-size":10},"Training step"));data.series.forEach(series=>{const points=rows.filter(row=>row.series.key===series.key).sort((a,b)=>a.step-b.step);if(!points.length)return;svg.append(svgEl("polyline",{points:points.map(row=>`${x(row.step)},${y(row.value)}`).join(" "),fill:"none",stroke:series.color,"stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"}));points.forEach(row=>{const circle=svgEl("circle",{cx:x(row.step),cy:y(row.value),r:4,fill:series.color,stroke:"#fff","stroke-width":1.2});circle.append(svgEl("title",{},`${series.label} · step ${row.step}: ${fmt(row.value)} (${row.count}/${data.expected_cases})`));svg.append(circle)})});const legend=document.createElement("div");legend.className="legend";data.series.filter(series=>rows.some(row=>row.series.key===series.key)).forEach(series=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch" style="--c:${series.color}"></i>${series.label}`;legend.append(item)});const article=document.createElement("article");article.append(svg,legend);return article}
 function render(){const methodKeys=selected(methodInputs),baselineKeys=selected(baselineInputs),methods=DATA.methods.filter(item=>methodKeys.has(item.key)),baselines=DATA.baselines.filter(item=>baselineKeys.has(item.key));try{localStorage.setItem("physiciq-selected-methods",JSON.stringify([...methodKeys]))}catch(e){}statusEl.textContent=`已选 ${methods.length}/${DATA.methods.length} 个方案`;charts.replaceChildren();let count=0;DATA.metrics.forEach(metric=>{const node=chart(metric,methods,baselines);if(node){charts.append(node);count++}});if(!count){const empty=document.createElement("div");empty.className="empty";empty.textContent="当前选择没有完整指标。";charts.append(empty)}}
 const validationPanel=document.getElementById("phyrvgValidation");const validationNode=validationChart(DATA.phyrvg_validation);if(validationNode){document.getElementById("validationChart").append(validationNode);validationPanel.hidden=false}
@@ -1773,6 +1784,9 @@ def main() -> None:
                 "key": spec["key"],
                 "label": spec["label"],
                 "result_dir": str(spec["result_dir"].resolve()),
+                "expected_cases": int(spec.get("expected_cases", args.expected_cases)),
+                "scope_label": spec.get("scope_label", ""),
+                "source_page": spec.get("source_page", ""),
             }
             for spec in BASELINE_SPECS
         ],

@@ -15,6 +15,10 @@ from .common_specs import (
     ScenarioFamilySpec,
 )
 from .material_catalog_0705 import build_material_catalog
+from .initialization_contracts_0819 import (
+    build_contact_contract,
+    validate_color_separation,
+)
 from .object_catalog_0705 import build_object_family_catalog
 
 
@@ -1721,6 +1725,7 @@ def _make_f12(
     size_scale: float = 1.0,
     *,
     ramp_angle_deg: float | None = None,
+    ramp_length_m: float | None = None,
 ) -> ScenarioBlueprint:
     """Build a gravity-only inclined-ramp control scene.
 
@@ -1735,11 +1740,13 @@ def _make_f12(
 
     ramp_angle = float(ramp_angle_deg if ramp_angle_deg is not None else 20.0)
     ramp_angle = float(np.clip(ramp_angle, 8.0, 42.0))
+    ramp_length = float(ramp_length_m if ramp_length_m is not None else 1.80)
+    ramp_length = float(np.clip(ramp_length, 0.60, 2.40))
     theta = math.radians(ramp_angle)
     cos_theta = math.cos(theta)
     sin_theta = math.sin(theta)
 
-    board_half_length = 0.90 * size_scale
+    board_half_length = 0.50 * ramp_length * size_scale
     board_half_width = 0.34 * size_scale
     board_half_thickness = 0.035 * size_scale
     block_half_x = 0.20 * size_scale
@@ -1770,10 +1777,10 @@ def _make_f12(
         angular_velocity=(0.0, 0.0, 0.0),
     )
 
-    support_local_x = -0.63 * size_scale
-    support_half_x = 0.10 * size_scale
+    support_local_x = -(0.63 / 0.90) * board_half_length
+    support_half_x = 0.015 * size_scale
     support_half_y = 0.10 * size_scale
-    support_clearance = 0.004 * size_scale
+    support_clearance = 0.0
     # The board underside falls across the horizontal footprint of a riser.
     # Clear the lowest point of that footprint, not only its center, so the
     # dynamic riser starts below the board rather than cutting through it.
@@ -1811,8 +1818,8 @@ def _make_f12(
         for index, side in enumerate((-1.0, 1.0))
     )
 
-    block_local_x = -0.50 * size_scale
-    block_local_z = board_half_thickness + block_half_z + 0.004 * size_scale
+    block_local_x = -(0.50 / 0.90) * board_half_length
+    block_local_z = board_half_thickness + block_half_z
     block = ObjectInstanceSpec(
         name="block_0",
         family_key="wood_block",
@@ -1894,6 +1901,7 @@ def generate_scenario_blueprint(
     initial_speed_mps: float | None = None,
     travel_angle_deg: float | None = None,
     ramp_angle_deg: float | None = None,
+    ramp_length_m: float | None = None,
 ) -> ScenarioBlueprint:
     if family_key not in FAMILY_GENERATORS:
         raise KeyError(f"unsupported family_key={family_key}")
@@ -1919,6 +1927,7 @@ def generate_scenario_blueprint(
             sample_key,
             size_scale,
             ramp_angle_deg=ramp_angle_deg,
+            ramp_length_m=ramp_length_m,
         )
     else:
         blueprint = FAMILY_GENERATORS[family_key](rng, sample_key, size_scale)
@@ -1942,6 +1951,16 @@ def generate_scenario_blueprint(
         blueprint = replace(blueprint, camera=adjusted_camera)
     blueprint = _set_blueprint_direction(blueprint, direction_mode)
     blueprint = _fit_generic_camera_to_motion_envelope(blueprint)
+    if family_key in {"F11", "F12"}:
+        color_qa = validate_color_separation(blueprint)
+        blueprint = replace(
+            blueprint,
+            metadata={
+                **blueprint.metadata,
+                "initialization_contract": build_contact_contract(blueprint),
+                "color_separation_qa": color_qa,
+            },
+        )
     validate_blueprint_physics(blueprint)
     return blueprint
 

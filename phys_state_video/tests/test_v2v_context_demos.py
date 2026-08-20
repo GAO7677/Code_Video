@@ -16,14 +16,15 @@ class V2VContextDemoTests(unittest.TestCase):
     def setUpClass(cls):
         cls.cases = build_demo_cases()
 
-    def test_six_families_have_five_control_values(self):
+    def test_control_families_have_five_control_values(self):
         families = {}
         for case in self.cases:
             families.setdefault(case.family_key, []).append(case)
-        self.assertEqual(len(self.cases), 30)
+        self.assertEqual(len(self.cases), 35)
         self.assertEqual(set(families), {
             "V2V_GAP",
             "V2V_OBSTACLE",
+            "V2V_OBSTACLE_SIZE",
             "V2V_BOWL",
             "V2V_PENDULUM",
             "V2V_SEESAW",
@@ -106,7 +107,14 @@ class V2VContextDemoTests(unittest.TestCase):
             self.assertTrue(report["passed"], case.case_id)
             self.assertEqual(
                 [stage["stage"] for stage in report["stages"]],
-                ["post_creation", "post_pre_roll", "video_frame_0"],
+                [
+                    "post_creation",
+                    "post_creation_contract",
+                    "post_pre_roll",
+                    "post_pre_roll_contract",
+                    "video_frame_0",
+                    "video_frame_0_contract",
+                ],
             )
 
 

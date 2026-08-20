@@ -2323,7 +2323,7 @@ def build_watch_index(
         <span>每个指标独立子图，比较不同训练方法</span></a>
       <a class="link" href="physiciq-videos/"><strong>PhysicIQ case</strong>
         <span>67 个 case 的 checkpoint 视频对比</span></a>
-      <a class="link" href="../physiciq-metrics/"><strong>PhysicIQ 指标曲线</strong>
+      <a class="link" href="../physiciq-checkpoint-curves/"><strong>PhysicIQ 指标曲线</strong>
         <span>每个新 checkpoint 的完整 Physics-IQ 评测</span></a>
     </div>
     <section class="panel"><div class="panel-head"><h2>自动任务状态</h2>
@@ -2701,11 +2701,11 @@ def build_master_hub(
             annotate_metrics_index(
                 preferred_plot_root / "index.html", phys_live_messages
             )
-            link_directory(preferred_plot_root, hub_root / "physiciq-metrics")
+            link_directory(preferred_plot_root, hub_root / "physiciq-checkpoint-curves")
             action = (
                 '<a href="checkpoint-watch/#physiciq">监控入口</a>'
                 '<a href="physiciq/">Case 合并对比</a>'
-                '<a href="physiciq-metrics/">指标曲线</a>'
+                '<a href="physiciq-checkpoint-curves/">指标曲线</a>'
                 '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
                 '<a href="physrvg-physiciq-lora-ablation/">PHYRVG-PhysRVG LoRA ON/OFF</a>'
             )
@@ -2716,12 +2716,12 @@ def build_master_hub(
         ):
             link_directory(
                 Path(legacy_physiciq_metrics_root),
-                hub_root / "physiciq-metrics",
+                hub_root / "physiciq-checkpoint-curves",
             )
             action = (
                 '<a href="checkpoint-watch/#physiciq">监控入口</a>'
                 '<a href="physiciq/">Case 合并对比</a>'
-                '<a href="physiciq-metrics/">指标曲线</a>'
+                '<a href="physiciq-checkpoint-curves/">指标曲线</a>'
                 '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
                 '<a href="physrvg-physiciq-lora-ablation/">PHYRVG-PhysRVG LoRA ON/OFF</a>'
             )
@@ -2735,11 +2735,11 @@ def build_master_hub(
                 ),
                 encoding="utf-8",
             )
-            link_directory(pending_metrics, hub_root / "physiciq-metrics")
+            link_directory(pending_metrics, hub_root / "physiciq-checkpoint-curves")
             action = (
                 '<a href="checkpoint-watch/#physiciq">监控入口</a>'
                 '<a href="physiciq/">Case 合并对比</a>'
-                '<a href="physiciq-metrics/">指标曲线</a>'
+                '<a href="physiciq-checkpoint-curves/">指标曲线</a>'
                 '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
                 '<a href="physrvg-physiciq-lora-ablation/">PHYRVG-PhysRVG LoRA ON/OFF</a>'
             )

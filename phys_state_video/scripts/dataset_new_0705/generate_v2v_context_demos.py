@@ -12,7 +12,7 @@ import argparse
 import json
 import math
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -26,6 +26,10 @@ except ImportError as exc:  # pragma: no cover - environment guard
     raise RuntimeError("PyBullet is required for V2V context demos") from exc
 
 from .common_specs import CameraSpec, ObjectInstanceSpec, ScenarioBlueprint
+from .initialization_contracts_0819 import (
+    build_contact_contract,
+    validate_color_separation,
+)
 from .material_catalog_0705 import build_material_catalog, build_surface_catalog
 from .render_sim_0705 import (
     RealismPreviewRenderer,
@@ -51,7 +55,7 @@ DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 SCENE_STYLE = "indoor_natural"
 BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M = 0.42
-BOWL_BALL_CLEARANCE_M = 0.012
+BOWL_BALL_CLEARANCE_M = 0.0
 OBSTACLE_BALL_REFERENCE_RADIUS_M = 0.11
 OBSTACLE_BALL_REFERENCE_MASS_KG = 1.0
 OBSTACLE_BALL_DENSITY_KG_M3 = OBSTACLE_BALL_REFERENCE_MASS_KG / (
@@ -188,6 +192,15 @@ def _blueprint(
             "context_duration_s": CONTEXT_FRAMES / FPS,
             "context_frame_options": list(CONTEXT_FRAME_OPTIONS),
             "scene_style": SCENE_STYLE,
+        },
+    )
+    color_qa = validate_color_separation(blueprint)
+    blueprint = replace(
+        blueprint,
+        metadata={
+            **blueprint.metadata,
+            "initialization_contract": build_contact_contract(blueprint),
+            "color_separation_qa": color_qa,
         },
     )
     _validate_blueprint(blueprint)
@@ -347,7 +360,7 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
             material_key="rubber_red",
             # The barrier is fixed; the control variable is the ball's initial
             # distance so all cases share the same visible obstacle and ball.
-            position=(ball_start_x, 0.0, ball_radius + 0.004),
+            position=(ball_start_x, 0.0, ball_radius),
             dynamic=True,
             mass=1.0,
             friction=0.22,
@@ -446,7 +459,7 @@ def _make_obstacle_size_case(sample_key: str, ball_radius: float) -> DemoCase:
             shape="sphere",
             size={"radius": ball_radius},
             material_key="rubber_red",
-            position=(ball_start_x, 0.0, ball_radius + 0.004),
+            position=(ball_start_x, 0.0, ball_radius),
             dynamic=True,
             mass=ball_mass,
             friction=0.22,
@@ -566,7 +579,7 @@ def _bowl_segment(
         shape="box",
         # Leave a physical gap between adjacent tangent slabs.  The previous
         # 0.56 multiplier made neighbouring collision boxes overlap.
-        size={"hx": segment_dx * 0.40, "hy": 0.48, "hz": thickness * 0.5},
+        size={"hx": segment_dx * 0.30, "hy": 0.48, "hz": thickness * 0.5},
         material_key="wood_plywood",
         position=center,
         dynamic=False,
@@ -615,7 +628,16 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
     base_xs = np.linspace(-span, span, 21)
     # Insert the analytically solved contact coordinate so the release height
     # is independent of the discretization of the visible bowl wall.
-    xs = np.sort(np.unique(np.concatenate([base_xs, [ball_surface_x]])))
+    raw_xs = np.sort(np.concatenate([base_xs, [ball_surface_x]]))
+    # The analytic contact coordinate can coincide with a linspace sample up
+    # to floating-point noise.  Collapse near-duplicates before sizing slabs;
+    # otherwise two zero-width slabs are emitted at the same location.
+    deduped_xs: list[float] = []
+    for value in raw_xs:
+        value = float(value)
+        if not deduped_xs or abs(value - deduped_xs[-1]) > 1e-6:
+            deduped_xs.append(value)
+    xs = np.asarray(deduped_xs, dtype=np.float64)
     segment_dx = float(np.diff(xs).min())
     root = math.sqrt(radius * radius - ball_surface_x * ball_surface_x)
     surface_slope = ball_surface_x / root
@@ -660,6 +682,8 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
             metadata={"appearance_group": "v2v_bowl_blue_rubber_ball_v1"},
         ),
     ]
+    contact_segment_index = int(np.argmin(np.abs(xs - ball_surface_x)))
+    contact_segment_name = f"bowl_segment_{contact_segment_index:02d}"
     objects.extend(
         _bowl_segment(index, radius, float(x), span, bottom_z, segment_dx)
         for index, x in enumerate(xs)
@@ -686,6 +710,7 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
             "bowl_bottom_z_m": bottom_z,
             "ball_center_height_above_bottom_m": BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M,
             "ball_initial_surface_x_m": ball_surface_x,
+            "ball_contact_segment_name": contact_segment_name,
             "initial_speed_mps": 0.0,
         },
     )
@@ -714,7 +739,8 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
     bob_radius = 0.13
     bob_x = anchor_x + length * math.sin(angle)
     bob_z = anchor_z - length * math.cos(angle)
-    rope_clearance = 0.022
+    rope_clearance = 0.0
+    rope_radius = 0.001
     rope_length = max(0.04, length - bob_radius - rope_clearance)
     rope_end_x = anchor_x + rope_length * math.sin(angle)
     rope_end_z = anchor_z - rope_length * math.cos(angle)
@@ -753,7 +779,7 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
             shape="box",
             size={"hx": 0.14, "hy": 0.15, "hz": 0.03},
             material_key="painted_metal_teal",
-            position=(anchor_x, 0.11, anchor_z + 0.07),
+            position=(anchor_x, 0.11, anchor_z + 0.03),
             dynamic=False,
             mass=0.0,
             friction=0.80,
@@ -763,7 +789,7 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
             name="pendulum_rope",
             family_key="table_leg",
             shape="cylinder",
-            size={"radius": 0.018, "height": rope_length},
+            size={"radius": rope_radius, "height": rope_length},
             material_key="painted_metal_yellow",
             position=rope_center,
             dynamic=False,
@@ -850,24 +876,20 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
 
 def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
     # A horizontal cylindrical fulcrum replaces the old rectangular block.
-    # It is just below the board, so the initial state has no penetration; the
-    # paired hinge anchors define the board's rotation axis.
+    # The board is tangent to its top and uses two point constraints on the
+    # shaft itself, so there is no suspended hinge anchor or visible gap.
     pivot_radius = 0.10
     pivot_height = pivot_radius
     pivot_center_z = pivot_radius
-    # Keep the small physical hinge anchor just above the visible shaft so
-    # neither fixture intersects the cylinder or the board at initialization.
-    pivot_axis_z = 2.0 * pivot_radius + 0.03
-    board_center_z = 0.335
+    pivot_axis_z = pivot_center_z + pivot_radius
+    board_center_z = pivot_axis_z + 0.045
     board_hx = 1.02
     board_hy = 0.26
     board_hz = 0.045
     board_angle = 0.0
     theta = math.radians(board_angle)
     load_hx, load_hy, load_hz = 0.14, 0.14, 0.12
-    # Keep a small but robust clearance after the pre-roll settles the board
-    # and load under gravity.
-    local_z = board_hz + load_hz + 0.025
+    local_z = board_hz + load_hz
     load_position = (
         load_x * math.cos(theta) + local_z * math.sin(theta),
         0.0,
@@ -886,19 +908,6 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
             friction=0.90,
             restitution=0.02,
             orientation=(90.0, 0.0, 0.0),
-        ),
-        _object(
-            name="seesaw_hinge_anchor",
-            family_key="hinge_anchor",
-            shape="sphere",
-            size={"radius": 0.018},
-            material_key="concrete_painted",
-            position=(0.0, 0.0, pivot_axis_z),
-            dynamic=False,
-            mass=0.0,
-            friction=0.0,
-            restitution=0.0,
-            role="anchored_fixture",
         ),
         _object(
             name="seesaw_board",
@@ -954,26 +963,23 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
             "pivot_axis_z_m": pivot_axis_z,
             "pivot_shape": "horizontal_cylinder",
             "pivot_radius_m": pivot_radius,
-            # The shaft is a visual support; the paired anchors define the
-            # hinge response and prevent shaft-board impact from ejecting the
-            # load during initialization or rotation.
+            # Disable direct shaft-board collision.  Their meshes remain
+            # tangent, while the two shaft constraints define the hinge axis
+            # without generating an impulse that ejects the load.
             "disable_collision_pairs": [("seesaw_pivot", "seesaw_board")],
             "initial_board_angle_deg": board_angle,
             "constraints": [
                 {
                     "type": "point2point",
                     "body": "seesaw_board",
-                    "parent_body": "seesaw_hinge_anchor",
-                    "parent_frame": (0.0, -0.20, 0.0),
-                    "child_frame": (0.0, -0.20, pivot_axis_z - board_center_z),
-                },
-                {
-                    "type": "point2point",
-                    "body": "seesaw_board",
-                    "parent_body": "seesaw_hinge_anchor",
-                    "parent_frame": (0.0, 0.20, 0.0),
-                    "child_frame": (0.0, 0.20, pivot_axis_z - board_center_z),
-                },
+                    "parent_body": "seesaw_pivot",
+                    "axis": (0.0, 0.0, 1.0),
+                    # The pivot is rotated 90 degrees around X, so its local
+                    # Y offset reaches the visible shaft top and its local Z
+                    # axis is the world Y hinge axis.
+                    "parent_frame": (0.0, pivot_radius, 0.0),
+                    "child_frame": (0.0, 0.0, pivot_axis_z - board_center_z),
+                }
             ],
         },
     )
@@ -1024,7 +1030,7 @@ def _make_domino_case(sample_key: str, spacing: float) -> DemoCase:
             family_key="tall_box",
             shape="box",
             size={"hx": hx, "hy": hy, "hz": hz},
-            material_key="rubber_red",
+            material_key="painted_metal_yellow",
             position=(start_x, 0.0, hz),
             dynamic=True,
             mass=0.42,
@@ -1286,8 +1292,10 @@ def _make_constraint(descriptor: dict[str, object], body_ids: dict[str, int]) ->
         joint_type = p.JOINT_POINT2POINT
         axis = [0.0, 0.0, 0.0]
     elif constraint_type == "revolute":
-        # The generic PyBullet constraint API is portable here as a
-        # point-to-point anchor; the board can rotate around the shared axis.
+        # PyBullet's generic constraint API does not expose a reliable
+        # revolute constraint between two independent bodies in this setup.
+        # A centered point anchor leaves the intended gravity-driven rotation
+        # free while the shaft provides the visible hinge geometry.
         joint_type = p.JOINT_POINT2POINT
         axis = [float(value) for value in descriptor["axis"]]
     else:
@@ -1437,7 +1445,13 @@ def audit_v2v_case_initialization(
                 audit_body_ids,
                 plane_id,
                 stage="post_creation",
-            )
+            ),
+            legacy.assert_initialization_contact_contract(
+                audit_body_ids,
+                plane_id,
+                blueprint.metadata.get("initialization_contract"),
+                stage="post_creation_contract",
+            ),
         ]
         for _ in range(int(round(blueprint.pre_roll_s * SIM_HZ))):
             p.stepSimulation()
@@ -1447,19 +1461,31 @@ def audit_v2v_case_initialization(
             visual_audit_body_ids,
             positions,
         )
-        stages.append(
-            legacy.assert_initialization_contacts(
-                audit_body_ids,
-                plane_id,
-                stage="post_pre_roll",
-            )
-        )
-        stages.append(
-            legacy.assert_initialization_contacts(
-                audit_body_ids,
-                plane_id,
-                stage="video_frame_0",
-            )
+        stages.extend(
+            [
+                legacy.assert_initialization_contacts(
+                    audit_body_ids,
+                    plane_id,
+                    stage="post_pre_roll",
+                ),
+                legacy.assert_initialization_contact_contract(
+                    audit_body_ids,
+                    plane_id,
+                    blueprint.metadata.get("initialization_contract"),
+                    stage="post_pre_roll_contract",
+                ),
+                legacy.assert_initialization_contacts(
+                    audit_body_ids,
+                    plane_id,
+                    stage="video_frame_0",
+                ),
+                legacy.assert_initialization_contact_contract(
+                    audit_body_ids,
+                    plane_id,
+                    blueprint.metadata.get("initialization_contract"),
+                    stage="video_frame_0_contract",
+                ),
+            ]
         )
         return {
             "case_id": case.case_id,
@@ -1616,7 +1642,13 @@ def _render_case(
                     audit_body_ids,
                     plane_id,
                     stage="post_creation",
-                )
+                ),
+                legacy.assert_initialization_contact_contract(
+                    audit_body_ids,
+                    plane_id,
+                    blueprint.metadata.get("initialization_contract"),
+                    stage="post_creation_contract",
+                ),
             ]
 
             pre_roll_steps = int(round(blueprint.pre_roll_s * SIM_HZ))
@@ -1628,12 +1660,20 @@ def _render_case(
                 visual_audit_body_ids,
                 pre_roll_positions,
             )
-            initialization_qa.append(
-                legacy.assert_initialization_contacts(
-                    audit_body_ids,
-                    plane_id,
-                    stage="post_pre_roll",
-                )
+            initialization_qa.extend(
+                [
+                    legacy.assert_initialization_contacts(
+                        audit_body_ids,
+                        plane_id,
+                        stage="post_pre_roll",
+                    ),
+                    legacy.assert_initialization_contact_contract(
+                        audit_body_ids,
+                        plane_id,
+                        blueprint.metadata.get("initialization_contract"),
+                        stage="post_pre_roll_contract",
+                    ),
+                ]
             )
 
             object_names = [obj.name for obj in all_objects]
@@ -1671,12 +1711,20 @@ def _render_case(
                         visual_audit_body_ids,
                         current_positions,
                     )
-                    initialization_qa.append(
-                        legacy.assert_initialization_contacts(
-                            audit_body_ids,
-                            plane_id,
-                            stage="video_frame_0",
-                        )
+                    initialization_qa.extend(
+                        [
+                            legacy.assert_initialization_contacts(
+                                audit_body_ids,
+                                plane_id,
+                                stage="video_frame_0",
+                            ),
+                            legacy.assert_initialization_contact_contract(
+                                audit_body_ids,
+                                plane_id,
+                                blueprint.metadata.get("initialization_contract"),
+                                stage="video_frame_0_contract",
+                            ),
+                        ]
                     )
                 for obj in all_objects:
                     if obj.name not in visual_only_names:

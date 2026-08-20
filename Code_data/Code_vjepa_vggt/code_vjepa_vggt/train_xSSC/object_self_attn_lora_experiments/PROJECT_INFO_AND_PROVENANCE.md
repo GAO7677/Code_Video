@@ -67,7 +67,7 @@ xSSC 使用 bbox 初始化 frame-0 slots，然后通过 transition 和 SlotAtten
 http://10.176.42.45:8844/physiciq-average-metrics/ 
 
 
-http://10.176.42.45:8844/physiciq-metrics/
+http://10.176.42.45:8844/physiciq-checkpoint-curves/
 
 http://10.176.42.45:8844/test5/
 
@@ -208,7 +208,6 @@ b. 现有工作多数都是对于PCK head进行推理干预，降低成本。
 - 可以考虑训练。loss加在PCK head 的attention上？VLM做reward？
 c. object branch 对物理合理性的影响不大，仿真数据集作用更大
 - 还没验证是信息本身没用还是条件注入的方式有问题，先从loss上去验证这个信息到底对指标有用不
-
 
 
 
