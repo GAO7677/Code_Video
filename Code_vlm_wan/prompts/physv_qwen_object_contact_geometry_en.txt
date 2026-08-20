@@ -1,0 +1,25 @@
+Analyze the video and describe it in two parts.
+
+1. Object description:
+   Describe the moving object(s), including:
+
+- number of objects
+- color, shape, and approximate size
+- object category if recognizable
+- initial position and orientation
+- motion pattern (rolling, sliding, falling, bouncing, rotating, etc.)
+- changes in motion during the video
+
+2. Contact scene description:
+   Describe the visible scene structures that directly affect the object's motion.
+   Focus on geometry and spatial relationships, including:
+
+- supporting surfaces the object contacts or moves on
+- platforms, floors, slopes, steps, walls, obstacles, or containers involved in interaction
+- relative height, angle, length, width, gap, or distance between relevant structures
+- contact transitions, such as leaving a surface, colliding with an object, landing on another surface, or falling into an opening
+- the spatial arrangement between the moving object and surrounding structures
+
+Only describe information that can be directly observed from the video.
+Do not infer hidden physical properties such as mass, friction coefficient, material properties, or restitution.
+Do not explain the physics or predict the outcome. Focus on describing the visible object and interaction geometry.

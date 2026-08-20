@@ -361,7 +361,7 @@ def bowl_curve_geometry(size: dict) -> tuple[list[tuple[float, float, float]], l
         x = -span + 2.0 * span * index / segments
         root = math.sqrt(max(radius * radius - x * x, 1e-10))
         surface_z = bottom_z + radius - root
-        nx, nz = x / radius, root / radius
+        nx, nz = -x / radius, root / radius
         ox, oz = x - nx * thickness, surface_z - nz * thickness
         vertices.extend(
             [

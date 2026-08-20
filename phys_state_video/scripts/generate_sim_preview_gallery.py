@@ -589,7 +589,7 @@ def _bowl_curve_geometry(size: dict[str, float]) -> tuple[np.ndarray, np.ndarray
     for x in xs:
         root = math.sqrt(max(radius * radius - x * x, 1e-10))
         surface_z = bottom_z + radius - root
-        normal = np.asarray([x / radius, 0.0, root / radius], dtype=np.float64)
+        normal = np.asarray([-x / radius, 0.0, root / radius], dtype=np.float64)
         inner = np.asarray([x, 0.0, surface_z], dtype=np.float64)
         outer = inner - normal * thickness
         vertices.extend(

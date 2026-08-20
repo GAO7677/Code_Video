@@ -267,8 +267,8 @@ def _make_v2v_cases(seed_base: int) -> list[ExportCase]:
                 event_rule=demo.event_rule,
                 blueprint=demo.blueprint,
                 # Keep the seed fixed within a control group.  The obstacle
-                # group must differ only by the ball start position; other
-                # families retain their existing per-case seed convention.
+                # group must differ only by the initial speed; other families
+                # retain their existing per-case seed convention.
                 seed=(
                     int(seed_base + 5000)
                     if demo.family_key in {"V2V_OBSTACLE", "V2V_OBSTACLE_SIZE"}
@@ -1146,7 +1146,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
             "mask_policy": "masks.npz contains dynamic actors; instance_ids.npz contains all rendered simulator objects.",
             "depth": "raw/depth.npz contains PyRender Z-depth in scene meters; zero denotes background.",
             "contacts": "contacts.json records motion-relevant PyBullet contacts sampled at video frames.",
-            "source_selection": "35 V2V cases (including 5 obstacle ball-radius controls), 5 F11 table-height cases, 5 F12 incline-angle cases, and 5 F12 fixed-angle ramp-length cases; F11 direction variants excluded.",
+            "source_selection": "35 V2V cases (including 5 obstacle initial-speed controls and 5 obstacle ball-radius controls), 5 F11 table-height cases, 5 F12 incline-angle cases, and 5 F12 fixed-angle ramp-length cases; F11 direction variants excluded.",
             "captions": {
                 "specific": "captions/caption_specific.txt exposes the controlled variable and value.",
                 "abstract": "captions/caption_abstract.txt hides the controlled variable and value.",
@@ -1157,7 +1157,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
     readme = """# PhysV V2V 0819
 
 This dataset contains 50 deterministic rigid-body video-continuation controls:
-35 V2V cases, including five obstacle ball-radius controls, five F11 table-height controls, five F12 incline-angle controls, and five F12 fixed-angle ramp-length controls.
+35 V2V cases, including five obstacle initial-speed controls and five obstacle ball-radius controls, five F11 table-height controls, five F12 incline-angle controls, and five F12 fixed-angle ramp-length controls.
 F11 direction variants are intentionally excluded.
 
 Each `samples/<case_id>/` directory follows a RigidBench-inspired layout:
@@ -1186,6 +1186,7 @@ def export_dataset(
     output_root: Path,
     selected_case_ids: set[str] | None = None,
     overwrite: bool = False,
+    overwrite_selected: bool = False,
     width: int = DEFAULT_WIDTH,
     height: int = DEFAULT_HEIGHT,
     v2v_seed_base: int = DEFAULT_V2V_SEED_BASE,
@@ -1194,12 +1195,13 @@ def export_dataset(
     if overwrite and output_root.exists():
         shutil.rmtree(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
-    cases = build_export_cases(
+    all_cases = build_export_cases(
         v2v_seed_base=v2v_seed_base,
         difficulty_seed_base=difficulty_seed_base,
     )
-    invariant_report = audit_group_invariants(cases)
+    invariant_report = audit_group_invariants(all_cases)
     _write_json(output_root / "reports" / "group_invariant_audit.json", invariant_report)
+    cases = all_cases
     if selected_case_ids is not None:
         known = {case.case_id for case in cases}
         unknown = sorted(selected_case_ids - known)
@@ -1211,7 +1213,10 @@ def export_dataset(
     for case in cases:
         sample_dir = output_root / "samples" / case.case_id
         try:
-            if _remove_or_skip_sample(sample_dir, overwrite=False):
+            if _remove_or_skip_sample(
+                sample_dir,
+                overwrite=bool(overwrite_selected and selected_case_ids is not None),
+            ):
                 _validate_sample(sample_dir)
                 existing_meta = json.loads((sample_dir / "meta.json").read_text(encoding="utf-8"))
                 existing_manifest = json.loads(
@@ -1259,6 +1264,23 @@ def export_dataset(
         except Exception as exc:  # pragma: no cover - batch guard
             failures.append({"sample_id": case.case_id, "error": repr(exc)})
             print(f"failed {case.case_id}: {exc!r}", flush=True)
+    # Selected regeneration must preserve the other valid samples in the
+    # root manifest, while dropping rows for obsolete case IDs.
+    if selected_case_ids is not None:
+        known_ids = {case.case_id for case in all_cases}
+        manifest_path = output_root / "manifest.json"
+        existing_rows: list[dict[str, object]] = []
+        if manifest_path.exists():
+            existing_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(existing_payload, dict) and isinstance(existing_payload.get("samples"), list):
+                existing_rows = [
+                    row
+                    for row in existing_payload["samples"]
+                    if isinstance(row, dict) and str(row.get("sample_id")) in known_ids
+                ]
+        by_id = {str(row["sample_id"]): row for row in existing_rows}
+        by_id.update({str(row["sample_id"]): row for row in rows})
+        rows = list(by_id.values())
     _write_json(output_root / "reports" / "failure_report.json", failures)
     _write_dataset_files(output_root, rows)
     _write_json(
@@ -1280,6 +1302,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--case-id", action="append", dest="case_ids")
     parser.add_argument("--overwrite", action="store_true", help="Remove the complete output root first.")
+    parser.add_argument("--overwrite-selected", action="store_true", help="Regenerate selected sample directories while preserving the rest of the dataset.")
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument("--v2v-seed-base", type=int, default=DEFAULT_V2V_SEED_BASE)
@@ -1295,6 +1318,7 @@ def main() -> None:
         output_root=args.output_root,
         selected_case_ids=set(args.case_ids) if args.case_ids else None,
         overwrite=args.overwrite,
+        overwrite_selected=args.overwrite_selected,
         width=args.width,
         height=args.height,
         v2v_seed_base=args.v2v_seed_base,

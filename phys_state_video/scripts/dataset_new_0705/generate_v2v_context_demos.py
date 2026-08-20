@@ -709,11 +709,16 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
     bob_z = anchor_z - length * math.cos(angle)
     rope_clearance = 0.0
     rope_radius = 0.018
-    rope_length = max(0.04, length - bob_radius - rope_clearance)
-    rope_end_x = anchor_x + rope_length * math.sin(angle)
-    rope_end_z = anchor_z - rope_length * math.cos(angle)
-    rope_center = ((anchor_x + rope_end_x) * 0.5, 0.0, (anchor_z + rope_end_z) * 0.5)
-    rope_vec = (rope_end_x - anchor_x, 0.0, rope_end_z - anchor_z)
+    rope_anchor = (anchor_x, 0.0, anchor_z - rope_radius * math.sin(angle))
+    rope_end_x = bob_x - bob_radius * math.sin(angle)
+    rope_end_z = bob_z + bob_radius * math.cos(angle)
+    rope_vec = (rope_end_x - rope_anchor[0], 0.0, rope_end_z - rope_anchor[2])
+    rope_length = max(0.04, math.sqrt(sum(value * value for value in rope_vec)) - rope_clearance)
+    rope_center = (
+        (rope_anchor[0] + rope_end_x) * 0.5,
+        0.0,
+        (rope_anchor[2] + rope_end_z) * 0.5,
+    )
     post_half_height = (anchor_z - 0.18) * 0.5
     post_center_z = 0.18 + post_half_height
     objects = [
@@ -768,7 +773,7 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
             orientation=_quat_vector_as_euler(rope_vec),
             metadata={
                 "visual_only": True,
-                "visual_anchor": (anchor_x, 0.0, anchor_z),
+                "visual_anchor": rope_anchor,
                 "visual_target": "pendulum_bob",
                 "visual_target_surface_offset_m": bob_radius + rope_clearance,
             },
@@ -1078,7 +1083,7 @@ def build_demo_cases(seed_base: int = 20260819) -> list[DemoCase]:
     cases: list[DemoCase] = []
     for value in (0.06, 0.22, 0.38, 0.54, 0.70):
         cases.append(_make_gap_case(f"v2v_gap_{int(value * 100):03d}", value))
-    for value in (1.2, 2.0, 3.0, 4.2, 5.2):
+    for value in (1.2, 1.4, 1.6, 1.8, 5.2):
         cases.append(_make_obstacle_case(f"v2v_obstacle_v{int(round(value * 100)):03d}", value))
     for value in (0.08, 0.11, 0.14, 0.17, 0.20):
         cases.append(_make_obstacle_size_case(f"v2v_obstacle_size_r{int(value * 1000):03d}", value))
