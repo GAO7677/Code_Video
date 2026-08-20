@@ -22,6 +22,7 @@ from mathutils import Vector
 
 ASSET_ROOT = Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1")
 TEXTURE_ROOT = ASSET_ROOT / "textures"
+EXTRA_TEXTURE_ROOT = Path("/data/gaoya/agent-data/assets/polyhaven_textures_20260820")
 HDRI_ROOT = ASSET_ROOT / "hdris"
 
 
@@ -271,6 +272,30 @@ def material_library() -> dict[str, bpy.types.Material]:
         "roughness": "fabric_pattern_07_rough_2k.jpg",
         "ao": "fabric_pattern_07_ao_2k.jpg",
     }
+    rubber_tile_names = {
+        "albedo": "rubber_tiles_diff_2k.jpg",
+        "normal": "rubber_tiles_nor_gl_2k.jpg",
+        "roughness": "rubber_tiles_rough_2k.jpg",
+        "ao": "rubber_tiles_ao_2k.jpg",
+    }
+    metal_plate_names = {
+        "albedo": "metal_plate_diff_2k.jpg",
+        "normal": "metal_plate_nor_gl_2k.jpg",
+        "roughness": "metal_plate_rough_2k.jpg",
+        "ao": "metal_plate_ao_2k.jpg",
+    }
+    worn_concrete_names = {
+        "albedo": "concrete_floor_worn_001_diff_2k.jpg",
+        "normal": "concrete_floor_worn_001_nor_gl_2k.jpg",
+        "roughness": "concrete_floor_worn_001_rough_2k.jpg",
+        "ao": "concrete_floor_worn_001_ao_2k.jpg",
+    }
+    denim_names = {
+        "albedo": "denim_fabric_04_diff_2k.jpg",
+        "normal": "denim_fabric_04_nor_gl_2k.jpg",
+        "roughness": "denim_fabric_04_rough_2k.jpg",
+        "ao": "denim_fabric_04_ao_2k.jpg",
+    }
     return {
         "floor": pbr_material("PBR_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, roughness=0.48, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
         "floor_cool": pbr_material("PBR_Cool_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(0.62, 0.78, 0.92), tint_strength=0.76, roughness=0.52, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
@@ -286,23 +311,24 @@ def material_library() -> dict[str, bpy.types.Material]:
         "wall_gray": pbr_material("PBR_Gray_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, tint=(0.58, 0.64, 0.72), tint_strength=0.76, roughness=0.86, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
         "wall_rose": pbr_material("PBR_Dusty_Rose_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, tint=(0.72, 0.40, 0.34), tint_strength=0.68, roughness=0.86, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
         "wall_charcoal": pbr_material("PBR_Charcoal_Wall", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.085, 0.105, 0.14), roughness=0.90, uv_scale=2.4, normal_strength=0.56, detail_bump_strength=0.014, detail_bump_scale=20.0),
-        "concrete": pbr_material("PBR_Concrete", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.12, 0.14, 0.17), roughness=0.78, uv_scale=2.0, normal_strength=0.52, detail_bump_strength=0.020, detail_bump_scale=18.0),
+        "concrete": pbr_material("PBR_Concrete", texture_dir=EXTRA_TEXTURE_ROOT / "concrete_floor_worn_001", texture_names=worn_concrete_names, tint=(0.34, 0.39, 0.46), tint_strength=0.62, roughness=0.80, uv_scale=2.0, normal_strength=0.52, detail_bump_strength=0.020, detail_bump_scale=18.0),
         "picture_surface": pbr_material("PBR_Picture_Surface", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_names, tint=(0.22, 0.42, 0.48), tint_strength=0.72, roughness=0.84, uv_scale=1.8, normal_strength=0.44, detail_bump_strength=0.010, detail_bump_scale=18.0),
-        "red_rubber": pbr_material("PBR_Red_Rubber", texture_dir=TEXTURE_ROOT / "brown_leather", texture_names=leather_surface_names, tint=(0.35, 0.008, 0.003), roughness=0.78, uv_scale=2.8, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
-        "blue_rubber": pbr_material("PBR_Blue_Rubber", texture_dir=TEXTURE_ROOT / "brown_leather", texture_names=leather_surface_names, tint=(0.006, 0.028, 0.30), roughness=0.76, uv_scale=2.8, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
-        "yellow_rubber": pbr_material("PBR_Yellow_Rubber", texture_dir=TEXTURE_ROOT / "brown_leather", texture_names=leather_surface_names, tint=(0.48, 0.16, 0.004), roughness=0.78, uv_scale=2.8, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
+        "red_rubber": pbr_material("PBR_Red_Rubber", texture_dir=EXTRA_TEXTURE_ROOT / "rubber_tiles", texture_names=rubber_tile_names, tint=(4.0, 0.08, 0.03), tint_strength=0.92, roughness=0.82, uv_scale=2.5, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
+        "blue_rubber": pbr_material("PBR_Blue_Rubber", texture_dir=EXTRA_TEXTURE_ROOT / "rubber_tiles", texture_names=rubber_tile_names, tint=(0.08, 0.30, 4.0), tint_strength=0.92, roughness=0.80, uv_scale=2.5, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
+        "yellow_rubber": pbr_material("PBR_Yellow_Rubber", texture_dir=EXTRA_TEXTURE_ROOT / "rubber_tiles", texture_names=rubber_tile_names, tint=(4.0, 2.4, 0.05), tint_strength=0.92, roughness=0.82, uv_scale=2.5, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
         "domino_wood": pbr_material("PBR_Domino_Wood", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(0.52, 0.20, 0.08), tint_strength=0.78, roughness=0.58, uv_scale=3.0, normal_strength=0.66, detail_bump_strength=0.018, detail_bump_scale=14.0),
-        "blue_painted": pbr_material("PBR_Blue_Painted", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.006, 0.045, 0.34), roughness=0.46, metallic=0.14, uv_scale=2.0, normal_strength=0.54, detail_bump_strength=0.020, detail_bump_scale=16.0),
-        "teal_metal": pbr_material("PBR_Teal_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.004, 0.11, 0.13), roughness=0.42, metallic=0.28, uv_scale=2.2, normal_strength=0.50, detail_bump_strength=0.020, detail_bump_scale=16.0),
-        "yellow_metal": pbr_material("PBR_Yellow_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.50, 0.20, 0.004), roughness=0.42, metallic=0.22, uv_scale=2.1, normal_strength=0.50, detail_bump_strength=0.020, detail_bump_scale=16.0),
-        "dark_metal": pbr_material("PBR_Dark_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.012, 0.016, 0.025), roughness=0.36, metallic=0.55, uv_scale=1.8, normal_strength=0.48, detail_bump_strength=0.024, detail_bump_scale=16.0),
-        "white_painted": pbr_material("PBR_White_Painted", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.68, 0.72, 0.76), roughness=0.52, metallic=0.04, uv_scale=2.0, normal_strength=0.45, detail_bump_strength=0.012, detail_bump_scale=16.0),
-        "green_painted": pbr_material("PBR_Green_Painted", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.055, 0.25, 0.15), roughness=0.52, metallic=0.08, uv_scale=2.0, normal_strength=0.46, detail_bump_strength=0.014, detail_bump_scale=16.0),
-        "coral_painted": pbr_material("PBR_Coral_Painted", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.48, 0.10, 0.055), roughness=0.54, metallic=0.05, uv_scale=2.0, normal_strength=0.46, detail_bump_strength=0.014, detail_bump_scale=16.0),
+        "blue_painted": pbr_material("PBR_Blue_Painted", texture_dir=EXTRA_TEXTURE_ROOT / "concrete_floor_worn_001", texture_names=worn_concrete_names, tint=(0.05, 0.28, 1.55), tint_strength=0.86, roughness=0.52, metallic=0.14, uv_scale=2.0, normal_strength=0.54, detail_bump_strength=0.020, detail_bump_scale=16.0),
+        "teal_metal": pbr_material("PBR_Teal_Metal", texture_dir=EXTRA_TEXTURE_ROOT / "concrete_floor_worn_001", texture_names=worn_concrete_names, tint=(0.04, 0.72, 0.78), tint_strength=0.78, roughness=0.50, metallic=0.20, uv_scale=2.2, normal_strength=0.50, detail_bump_strength=0.020, detail_bump_scale=16.0),
+        "barrier_metal": pbr_material("PBR_Barrier_Metal_Plate", texture_dir=EXTRA_TEXTURE_ROOT / "metal_plate", texture_names=metal_plate_names, tint=(0.08, 0.52, 0.58), tint_strength=0.74, roughness=0.48, metallic=0.34, uv_scale=1.35, normal_strength=0.62, detail_bump_strength=0.012, detail_bump_scale=16.0),
+        "yellow_metal": pbr_material("PBR_Yellow_Metal", texture_dir=EXTRA_TEXTURE_ROOT / "metal_plate", texture_names=metal_plate_names, tint=(1.85, 0.72, 0.05), tint_strength=0.84, roughness=0.50, metallic=0.25, uv_scale=1.4, normal_strength=0.58, detail_bump_strength=0.012, detail_bump_scale=16.0),
+        "dark_metal": pbr_material("PBR_Dark_Metal", texture_dir=EXTRA_TEXTURE_ROOT / "metal_plate", texture_names=metal_plate_names, tint=(0.08, 0.10, 0.13), tint_strength=0.86, roughness=0.42, metallic=0.64, uv_scale=1.25, normal_strength=0.58, detail_bump_strength=0.014, detail_bump_scale=16.0),
+        "white_painted": pbr_material("PBR_White_Painted", texture_dir=EXTRA_TEXTURE_ROOT / "concrete_floor_worn_001", texture_names=worn_concrete_names, tint=(0.78, 0.84, 0.90), tint_strength=0.68, roughness=0.56, metallic=0.04, uv_scale=2.0, normal_strength=0.48, detail_bump_strength=0.012, detail_bump_scale=16.0),
+        "green_painted": pbr_material("PBR_Green_Painted", texture_dir=EXTRA_TEXTURE_ROOT / "concrete_floor_worn_001", texture_names=worn_concrete_names, tint=(0.12, 0.78, 0.34), tint_strength=0.80, roughness=0.56, metallic=0.08, uv_scale=2.0, normal_strength=0.50, detail_bump_strength=0.014, detail_bump_scale=16.0),
+        "coral_painted": pbr_material("PBR_Coral_Painted", texture_dir=EXTRA_TEXTURE_ROOT / "concrete_floor_worn_001", texture_names=worn_concrete_names, tint=(1.45, 0.30, 0.12), tint_strength=0.80, roughness=0.58, metallic=0.05, uv_scale=2.0, normal_strength=0.50, detail_bump_strength=0.014, detail_bump_scale=16.0),
         "window_glass": procedural_material("Window_Glass", (0.055, 0.13, 0.19), metallic=0.22, roughness=0.18, noise_scale=2.0),
-        "fabric": pbr_material("PBR_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.17, 0.19, 0.19), roughness=0.96, metallic=0.0, uv_scale=5.0, normal_strength=0.56, detail_bump_strength=0.012, detail_bump_scale=28.0),
-        "fabric_green": pbr_material("PBR_Green_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.12, 0.28, 0.18), roughness=0.96, metallic=0.0, uv_scale=5.0, normal_strength=0.56, detail_bump_strength=0.012, detail_bump_scale=28.0),
-        "fabric_coral": pbr_material("PBR_Coral_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.42, 0.10, 0.06), roughness=0.96, metallic=0.0, uv_scale=5.0, normal_strength=0.56, detail_bump_strength=0.012, detail_bump_scale=28.0),
+        "fabric": pbr_material("PBR_Fabric", texture_dir=EXTRA_TEXTURE_ROOT / "denim_fabric_04", texture_names=denim_names, tint=(0.52, 0.62, 0.70), tint_strength=0.48, roughness=0.94, metallic=0.0, uv_scale=5.0, normal_strength=0.60, detail_bump_strength=0.012, detail_bump_scale=28.0),
+        "fabric_green": pbr_material("PBR_Green_Fabric", texture_dir=EXTRA_TEXTURE_ROOT / "denim_fabric_04", texture_names=denim_names, tint=(0.16, 0.72, 0.30), tint_strength=0.78, roughness=0.94, metallic=0.0, uv_scale=5.0, normal_strength=0.60, detail_bump_strength=0.012, detail_bump_scale=28.0),
+        "fabric_coral": pbr_material("PBR_Coral_Fabric", texture_dir=EXTRA_TEXTURE_ROOT / "denim_fabric_04", texture_names=denim_names, tint=(1.38, 0.28, 0.12), tint_strength=0.78, roughness=0.94, metallic=0.0, uv_scale=5.0, normal_strength=0.60, detail_bump_strength=0.012, detail_bump_scale=28.0),
         "rope_fabric": pbr_material("PBR_Rope_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.52, 0.25, 0.08), roughness=0.92, metallic=0.0, uv_scale=18.0, normal_strength=0.72, detail_bump_strength=0.022, detail_bump_scale=34.0),
     }
 
@@ -376,6 +402,8 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
         return "yellow_rubber"
     if family in {"V2V_OBSTACLE", "V2V_OBSTACLE_SIZE"} and lower == "obstacle_ball":
         return "red_rubber"
+    if family in {"V2V_OBSTACLE", "V2V_OBSTACLE_SIZE"} and lower == "obstacle_barrier":
+        return "barrier_metal"
     if family == "V2V_PENDULUM":
         if lower == "pendulum_bob":
             return "blue_rubber"
@@ -834,6 +862,16 @@ def main() -> None:
         "exposure": args.exposure,
         "output_format": args.output_format,
         "enabled_devices": enabled_devices,
+        "texture_sources": {
+            "polyhaven_assets": [
+                "rubber_tiles",
+                "metal_plate",
+                "concrete_floor_worn_001",
+                "denim_fabric_04",
+            ],
+            "license": "CC0",
+            "local_root": str(EXTRA_TEXTURE_ROOT),
+        },
         "hdri": str(hdri_path),
         "room_scene": room_scene,
         "lighting_preset": lighting_preset,
