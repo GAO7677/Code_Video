@@ -62,7 +62,7 @@ def _specific_caption(metadata: Mapping[str, object]) -> str:
         )
     if family_key == "V2V_OBSTACLE" or task_type == "obstacle_collision":
         return (
-            f"A red ball starts at {value} and rolls rightward toward a fixed blue barrier, "
+            f"A red ball starts from the same position and rolls rightward at {value} toward a fixed blue barrier, "
             "collides with it, rebounds, and travels onward with a speed determined by its incoming motion."
         )
     if family_key == "V2V_BOWL" or task_type == "bowl_descent":
@@ -104,7 +104,7 @@ def _abstract_caption(metadata: Mapping[str, object]) -> str:
     if family_key == "V2V_OBSTACLE_SIZE":
         return "A red ball rolls rightward toward a fixed blue barrier, rebounds after contact, and continues moving."
     if family_key == "V2V_OBSTACLE" or task_type == "obstacle_collision":
-        return "A red ball rolls rightward from a different starting position toward a fixed blue barrier, rebounds after contact, and continues moving."
+        return "A red ball rolls rightward from the same starting position at a different initial speed toward a fixed blue barrier, rebounds after contact, and continues moving."
     if family_key == "V2V_BOWL" or task_type == "bowl_descent":
         return "A blue rubber ball starts on the inner wall of a curved bowl, rolls downward under gravity, reverses after passing through the low point, and continues along the wall."
     if family_key == "V2V_PENDULUM" or task_type == "pendulum_swing":

@@ -348,6 +348,58 @@ def add_cube(name: str, location, half_extents, material, *, bevel: float = 0.02
     return obj
 
 
+def bowl_curve_geometry(size: dict) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
+    """Build the same continuous bowl shell used by the PyBullet renderer."""
+    radius = float(size["radius"])
+    span = float(size["span"])
+    bottom_z = float(size["bottom_z"])
+    thickness = float(size["thickness"])
+    half_y = float(size["half_y"])
+    segments = max(8, int(round(float(size.get("segments", 96.0)))))
+    vertices: list[tuple[float, float, float]] = []
+    for index in range(segments + 1):
+        x = -span + 2.0 * span * index / segments
+        root = math.sqrt(max(radius * radius - x * x, 1e-10))
+        surface_z = bottom_z + radius - root
+        nx, nz = x / radius, root / radius
+        ox, oz = x - nx * thickness, surface_z - nz * thickness
+        vertices.extend(
+            [
+                (x, -half_y, surface_z),
+                (x, half_y, surface_z),
+                (ox, -half_y, oz),
+                (ox, half_y, oz),
+            ]
+        )
+    faces: list[tuple[int, int, int]] = []
+    for index in range(segments):
+        current = 4 * index
+        following = 4 * (index + 1)
+        faces.extend(
+            [
+                (current, following, following + 1),
+                (current, following + 1, current + 1),
+                (current + 2, following + 3, following + 2),
+                (current + 2, current + 3, following + 3),
+                (current, current + 2, following + 2),
+                (current, following + 2, following),
+                (current + 1, following + 1, following + 3),
+                (current + 1, following + 3, current + 3),
+            ]
+        )
+    left = 0
+    right = 4 * segments
+    faces.extend(
+        [
+            (left, left + 1, left + 3),
+            (left, left + 3, left + 2),
+            (right, right + 3, right + 1),
+            (right, right + 2, right + 3),
+        ]
+    )
+    return vertices, faces
+
+
 def add_actor(name: str, actor: dict, material) -> bpy.types.Object:
     shape = actor["shape"]
     size = actor["size_m"]
@@ -369,6 +421,16 @@ def add_actor(name: str, actor: dict, material) -> bpy.types.Object:
         bevel = obj.modifiers.new("Cylinder bevel", "BEVEL")
         bevel.width = min(float(size["radius"]) * 0.08, 0.018)
         bevel.segments = 3
+    elif shape == "bowl_curve":
+        vertices, faces = bowl_curve_geometry(size)
+        mesh = bpy.data.meshes.new(f"{name}_mesh")
+        mesh.from_pydata(vertices, [], faces)
+        mesh.update()
+        obj = bpy.data.objects.new(name, mesh)
+        bpy.context.collection.objects.link(obj)
+        obj.location = position
+        for polygon in mesh.polygons:
+            polygon.use_smooth = True
     else:
         raise ValueError(f"unsupported shape {shape!r} for {name}")
     obj.name = name
@@ -391,7 +453,7 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
         return "red_wood"
     if family == "V2V_BOWL" and lower == "bowl_ball":
         return "blue_rubber"
-    if family == "V2V_BOWL" and (lower == "bowl_base" or lower.startswith("bowl_segment")):
+    if family == "V2V_BOWL" and (lower == "bowl_base" or lower == "bowl_surface"):
         return "teal_metal"
     if family == "V2V_DOMINO":
         if lower == "domino_trigger_ball":
@@ -408,7 +470,7 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
         if lower == "pendulum_bob":
             return "blue_rubber"
         if lower == "pendulum_rope":
-            return "rope_fabric"
+            return "yellow_metal"
         if lower == "pendulum_post":
             return "yellow_metal"
         if lower == "pendulum_base":

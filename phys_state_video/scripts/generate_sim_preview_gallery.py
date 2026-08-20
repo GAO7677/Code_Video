@@ -576,6 +576,63 @@ def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
     mesh.visual.vertex_colors = np.clip(colors + noise, 0.0, 1.0)
 
 
+def _bowl_curve_geometry(size: dict[str, float]) -> tuple[np.ndarray, np.ndarray]:
+    """Build a closed, continuous thin shell for a cylindrical bowl section."""
+    radius = float(size["radius"])
+    span = float(size["span"])
+    bottom_z = float(size["bottom_z"])
+    thickness = float(size["thickness"])
+    half_y = float(size["half_y"])
+    segments = max(8, int(round(float(size.get("segments", 96.0)))))
+    xs = np.linspace(-span, span, segments + 1, dtype=np.float64)
+    vertices: list[list[float]] = []
+    for x in xs:
+        root = math.sqrt(max(radius * radius - x * x, 1e-10))
+        surface_z = bottom_z + radius - root
+        normal = np.asarray([x / radius, 0.0, root / radius], dtype=np.float64)
+        inner = np.asarray([x, 0.0, surface_z], dtype=np.float64)
+        outer = inner - normal * thickness
+        vertices.extend(
+            [
+                [float(inner[0]), -half_y, float(inner[2])],
+                [float(inner[0]), half_y, float(inner[2])],
+                [float(outer[0]), -half_y, float(outer[2])],
+                [float(outer[0]), half_y, float(outer[2])],
+            ]
+        )
+
+    faces: list[list[int]] = []
+    for index in range(segments):
+        current = 4 * index
+        following = 4 * (index + 1)
+        # Inner and outer curved faces.
+        faces.extend(
+            [
+                [current, following, following + 1],
+                [current, following + 1, current + 1],
+                [current + 2, following + 3, following + 2],
+                [current + 2, current + 3, following + 3],
+                # Front and back longitudinal side walls.
+                [current, current + 2, following + 2],
+                [current, following + 2, following],
+                [current + 1, following + 1, following + 3],
+                [current + 1, following + 3, current + 3],
+            ]
+        )
+    # Close the two end caps so the static collision mesh is watertight.
+    left = 0
+    right = 4 * segments
+    faces.extend(
+        [
+            [left, left + 1, left + 3],
+            [left, left + 3, left + 2],
+            [right, right + 3, right + 1],
+            [right, right + 2, right + 3],
+        ]
+    )
+    return np.asarray(vertices, dtype=np.float64), np.asarray(faces, dtype=np.int64)
+
+
 def _make_mesh(obj: ObjectSpec) -> trimesh.Trimesh:
     s = obj.size
     if obj.shape == "sphere":
@@ -664,6 +721,9 @@ def _make_mesh(obj: ObjectSpec) -> trimesh.Trimesh:
         left.apply_translation([0.0, 0.0, -0.5 * s["length"]])
         right.apply_translation([0.0, 0.0, 0.5 * s["length"]])
         mesh = trimesh.util.concatenate([bar, left, right])
+    elif obj.shape == "bowl_curve":
+        vertices, faces = _bowl_curve_geometry(s)
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
     else:
         raise ValueError(f"unsupported shape: {obj.shape}")
 
@@ -688,6 +748,13 @@ def _collision_shape(obj: ObjectSpec) -> int:
         return p.createCollisionShape(p.GEOM_CYLINDER, radius=float(max(s["r_top"], s["r_base"])), height=float(s["height"]))
     if obj.shape == "dumbbell":
         return p.createCollisionShape(p.GEOM_CAPSULE, radius=float(s["weight_radius"]), height=float(s["length"]))
+    if obj.shape == "bowl_curve":
+        vertices, faces = _bowl_curve_geometry(s)
+        return p.createCollisionShape(
+            p.GEOM_MESH,
+            vertices=vertices.tolist(),
+            indices=faces.reshape(-1).tolist(),
+        )
     raise ValueError(f"unsupported collision shape: {obj.shape}")
 
 

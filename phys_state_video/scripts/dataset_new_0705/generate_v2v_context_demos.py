@@ -346,11 +346,11 @@ def _make_gap_case(sample_key: str, gap_width: float) -> DemoCase:
     )
 
 
-def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
+def _make_obstacle_case(sample_key: str, initial_speed: float) -> DemoCase:
     ball_radius = 0.11
     barrier_hz = 0.24
     barrier_x = 0.80
-    initial_speed = 3.00
+    ball_start_x = -1.55
     objects = [
         _object(
             name="obstacle_ball",
@@ -358,8 +358,8 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
             shape="sphere",
             size={"radius": ball_radius},
             material_key="rubber_red",
-            # The barrier is fixed; the control variable is the ball's initial
-            # distance so all cases share the same visible obstacle and ball.
+            # The barrier and release point are fixed; only the initial speed
+            # changes across this control group.
             position=(ball_start_x, 0.0, ball_radius),
             dynamic=True,
             mass=1.0,
@@ -404,14 +404,14 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
     blueprint = _blueprint(
         family_key="V2V_OBSTACLE",
         sample_key=sample_key,
-        title=f"Ball starts at x={ball_start_x:.2f} m before a fixed obstacle",
-        description="A rolling ball starts at a controlled position and approaches the same blue barrier.",
+        title=f"Ball rolls at {initial_speed:.1f} m/s toward a fixed obstacle",
+        description="A red ball starts from the same position in every case and approaches the same blue barrier at a controlled initial speed.",
         objects=objects,
         camera=camera,
         surface_key="studio_wood_floor",
-        tags=("v2v", "ball_start_position", "collision", "left_to_right", "rebound"),
+        tags=("v2v", "initial_speed", "collision", "left_to_right", "rebound"),
         metadata={
-            "controlled_variable": "ball_start_x_m",
+            "controlled_variable": "initial_speed_mps",
             "ball_start_x_m": ball_start_x,
             "obstacle_x_m": barrier_x,
             "barrier_restitution": 0.90,
@@ -425,15 +425,15 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
     return DemoCase(
         case_id=sample_key,
         family_key="V2V_OBSTACLE",
-        family_title="小球起始位置与障碍反弹",
-        family_description="蓝色挡板固定，小球从不同位置以相同初速度出发，碰撞前速度和反弹后的运动距离因此不同。",
+        family_title="障碍碰撞：初速度",
+        family_description="蓝色挡板和小球起点固定，小球以不同初速度出发，碰撞时速度、反弹强度和后续运动距离因此不同。",
         level="L2",
         title=blueprint.title,
         description=blueprint.description,
-        controlled_variable="ball_start_x_m",
-        controlled_value=ball_start_x,
-        controlled_value_label=f"x={ball_start_x:.2f} m",
-        units="m",
+        controlled_variable="initial_speed_mps",
+        controlled_value=initial_speed,
+        controlled_value_label=f"v={initial_speed:.1f} m/s",
+        units="m/s",
         blueprint=blueprint,
         event_rule="ball_contacts_barrier",
     )
@@ -552,42 +552,16 @@ def _make_obstacle_size_case(sample_key: str, ball_radius: float) -> DemoCase:
     )
 
 
-def _bowl_segment(
-    index: int,
-    radius: float,
-    x: float,
-    span: float,
-    bottom_z: float,
-    segment_dx: float,
-) -> ObjectInstanceSpec:
-    root = max(radius * radius - x * x, 1e-8)
-    slope = x / math.sqrt(root)
-    theta = math.atan(slope)
-    surface_z = bottom_z + radius - math.sqrt(root)
-    thickness = 0.065
-    normal = (-math.sin(theta), 0.0, math.cos(theta))
-    center = (
-        # The curve describes the interior (upper) contact face.  Put the
-        # solid slab below that face rather than growing it into the bowl.
-        x - normal[0] * thickness * 0.5,
-        0.0,
-        surface_z - normal[2] * thickness * 0.5,
-    )
-    return _object(
-        name=f"bowl_segment_{index:02d}",
-        family_key="slab_box",
-        shape="box",
-        # Leave a physical gap between adjacent tangent slabs.  The previous
-        # 0.56 multiplier made neighbouring collision boxes overlap.
-        size={"hx": segment_dx * 0.30, "hy": 0.48, "hz": thickness * 0.5},
-        material_key="wood_plywood",
-        position=center,
-        dynamic=False,
-        mass=0.0,
-        friction=0.72,
-        restitution=0.03,
-        orientation=(0.0, -math.degrees(theta), 0.0),
-    )
+def _bowl_curve_size(radius: float, span: float, bottom_z: float) -> dict[str, float]:
+    """Parameters for the shared continuous physical/rendering bowl shell."""
+    return {
+        "radius": float(radius),
+        "span": float(span),
+        "bottom_z": float(bottom_z),
+        "thickness": 0.065,
+        "half_y": 0.48,
+        "segments": 96.0,
+    }
 
 
 def _bowl_inner_wall_x_for_ball_height(
@@ -621,24 +595,9 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
         ball_center_height_above_bottom=BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M,
         ball_surface_offset=ball_surface_offset,
     )
-    # Use the second leftmost segment as the contact patch.  This retains a
-    # small physical rim beyond the ball while keeping the exact contact point
-    # on a rendered and collidable segment for every curvature.
+    # Keep a small physical rim beyond the release point while using one
+    # continuous curved shell for both rendering and collision.
     span = abs(ball_surface_x) / 0.90
-    base_xs = np.linspace(-span, span, 21)
-    # Insert the analytically solved contact coordinate so the release height
-    # is independent of the discretization of the visible bowl wall.
-    raw_xs = np.sort(np.concatenate([base_xs, [ball_surface_x]]))
-    # The analytic contact coordinate can coincide with a linspace sample up
-    # to floating-point noise.  Collapse near-duplicates before sizing slabs;
-    # otherwise two zero-width slabs are emitted at the same location.
-    deduped_xs: list[float] = []
-    for value in raw_xs:
-        value = float(value)
-        if not deduped_xs or abs(value - deduped_xs[-1]) > 1e-6:
-            deduped_xs.append(value)
-    xs = np.asarray(deduped_xs, dtype=np.float64)
-    segment_dx = float(np.diff(xs).min())
     root = math.sqrt(radius * radius - ball_surface_x * ball_surface_x)
     surface_slope = ball_surface_x / root
     surface_theta = math.atan(surface_slope)
@@ -681,13 +640,20 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
             angular_damping=0.01,
             metadata={"appearance_group": "v2v_bowl_blue_rubber_ball_v1"},
         ),
+        _object(
+            name="bowl_surface",
+            family_key="curved_container",
+            shape="bowl_curve",
+            size=_bowl_curve_size(radius, span, bottom_z),
+            material_key="wood_plywood",
+            position=(0.0, 0.0, 0.0),
+            dynamic=False,
+            mass=0.0,
+            friction=0.72,
+            restitution=0.03,
+            role="anchored_static",
+        ),
     ]
-    contact_segment_index = int(np.argmin(np.abs(xs - ball_surface_x)))
-    contact_segment_name = f"bowl_segment_{contact_segment_index:02d}"
-    objects.extend(
-        _bowl_segment(index, radius, float(x), span, bottom_z, segment_dx)
-        for index, x in enumerate(xs)
-    )
     camera = _camera(
         eye=(0.10, -3.85, 1.35),
         target=(0.00, 0.0, 0.60),
@@ -710,7 +676,9 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
             "bowl_bottom_z_m": bottom_z,
             "ball_center_height_above_bottom_m": BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M,
             "ball_initial_surface_x_m": ball_surface_x,
-            "ball_contact_segment_name": contact_segment_name,
+            "ball_contact_segment_name": "bowl_surface",
+            "bowl_surface_segments": 96,
+            "bowl_surface_thickness_m": 0.065,
             "initial_speed_mps": 0.0,
         },
     )
@@ -733,14 +701,14 @@ def _make_bowl_case(sample_key: str, radius: float) -> DemoCase:
 
 def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
     anchor_x = -0.82
-    anchor_z = 2.25
+    anchor_z = 2.55
     angle_deg = 18.0
     angle = math.radians(angle_deg)
-    bob_radius = 0.13
+    bob_radius = 0.18
     bob_x = anchor_x + length * math.sin(angle)
     bob_z = anchor_z - length * math.cos(angle)
     rope_clearance = 0.0
-    rope_radius = 0.001
+    rope_radius = 0.018
     rope_length = max(0.04, length - bob_radius - rope_clearance)
     rope_end_x = anchor_x + rope_length * math.sin(angle)
     rope_end_z = anchor_z - rope_length * math.cos(angle)
@@ -832,7 +800,7 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
         family_key="V2V_PENDULUM",
         sample_key=sample_key,
         title=f"Pendulum with length {length:.2f} m",
-        description="A suspended bob begins at a visible angle; only the pendulum length changes.",
+        description="A larger red bob hangs from a thick, high-contrast rope and begins at a raised visible angle; only the pendulum length changes.",
         objects=objects,
         camera=camera,
         surface_key="painted_concrete_floor",
@@ -1110,8 +1078,8 @@ def build_demo_cases(seed_base: int = 20260819) -> list[DemoCase]:
     cases: list[DemoCase] = []
     for value in (0.06, 0.22, 0.38, 0.54, 0.70):
         cases.append(_make_gap_case(f"v2v_gap_{int(value * 100):03d}", value))
-    for value in (-1.60, -1.45, -1.30, -1.15, -1.00):
-        cases.append(_make_obstacle_case(f"v2v_obstacle_s{int(abs(value) * 100):03d}", value))
+    for value in (1.2, 2.0, 3.0, 4.2, 5.2):
+        cases.append(_make_obstacle_case(f"v2v_obstacle_v{int(round(value * 100)):03d}", value))
     for value in (0.08, 0.11, 0.14, 0.17, 0.20):
         cases.append(_make_obstacle_size_case(f"v2v_obstacle_size_r{int(value * 1000):03d}", value))
     for value in (0.80, 1.30, 1.80, 2.30, 2.80):

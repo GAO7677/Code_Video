@@ -11,7 +11,7 @@ _METADATA_VARIABLE_KEYS = {
     "F12": {"ramp_angle_deg"},
     "F12_RAMP_LENGTH": {"ramp_length_m", "ramp_angle_deg"},
     "V2V_GAP": {"gap_width_m", "left_platform_edge_x_m"},
-    "V2V_OBSTACLE": {"ball_start_x_m"},
+    "V2V_OBSTACLE": {"initial_speed_mps"},
     "V2V_OBSTACLE_SIZE": {
         "ball_radius_m",
         "ball_mass_kg",
@@ -74,7 +74,7 @@ def _varying_object_fields(family_key: str, name: str) -> set[str]:
     if family_key == "F12":
         fields.update({"position", "orientation_euler_deg", "size"})
     if family_key == "V2V_OBSTACLE" and name == "obstacle_ball":
-        fields.add("position")
+        fields.update({"linear_velocity", "angular_velocity"})
     if family_key == "V2V_OBSTACLE_SIZE" and name == "obstacle_ball":
         fields.update({"position", "size", "mass"})
     if family_key == "V2V_PENDULUM" and name == "pendulum_rope":
