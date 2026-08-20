@@ -46,6 +46,9 @@
     .brand-mark { display: grid; place-items: center; width: 40px; height: 40px; color: var(--ink); background: var(--yellow); border-radius: 4px; font: 900 11px/1 ui-monospace, monospace; }
     .brand h1 { margin: 0; font-size: 18px; line-height: 1.2; }
     .brand p { margin: 3px 0 0; color: #bdd0c7; font: 10px/1.3 ui-monospace, monospace; }
+    .version-nav { display: flex; gap: 5px; margin-left: auto; padding: 4px; background: #21382f; border: 1px solid #6d8a7e; border-radius: 5px; }
+    .version-nav a { padding: 7px 10px; color: #c8d7d1; border-radius: 3px; font: 750 10px/1 ui-monospace, monospace; text-decoration: none; }
+    .version-nav a:hover, .version-nav a.active { color: var(--ink); background: var(--yellow); }
     .run-info { color: #c8d7d1; text-align: right; font: 10px/1.35 ui-monospace, monospace; overflow-wrap: anywhere; }
     .refresh { min-height: 36px; padding: 7px 12px; color: #fff; background: transparent; border: 1px solid #6d8a7e; border-radius: 4px; cursor: pointer; font-weight: 750; }
     .refresh:hover { color: var(--ink); background: var(--yellow); border-color: var(--yellow); }
@@ -119,6 +122,7 @@
     .case-footer a:hover { text-decoration: underline; }
     .empty, .error { margin-top: 18px; padding: 30px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); }
     .error { color: #8e3928; background: var(--red-soft); border-color: #e7b19f; }
+    .media-unavailable { display: grid; place-items: center; aspect-ratio: 16/9; padding: 18px; color: #8c5a18; background: #fff4d7; text-align: center; font: 750 11px/1.4 ui-monospace, monospace; }
     @media (max-width: 1100px) {
       .hero { grid-template-columns: 1fr; align-items: start; }
       .overview { width: fit-content; border-left: 0; }
@@ -144,6 +148,7 @@
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand"><div class="brand-mark">PHYSV</div><div><h1>控制变量物理视频总览</h1><p>V2V · F11 TABLE HEIGHT · F12 INCLINE</p></div></div>
+      <nav class="version-nav" aria-label="渲染版本"><a href="/pyrender.html" data-version="pyrender">PyRender</a><a href="/cycles.html" data-version="cycles">Cycles</a></nav>
       <div id="run-info" class="run-info">读取数据...</div>
       <button id="refresh" class="refresh" type="button" title="重新读取数据">&#8635; 刷新数据</button>
     </div>
@@ -162,6 +167,8 @@
     <section id="content" aria-live="polite"><div class="empty">读取中...</div></section>
   </main>
   <script>
+    const RENDER_MODE = window.location.pathname.includes("cycles") ? "cycles" : "pyrender";
+    const RENDER_VERSION = RENDER_MODE === "cycles" ? { label: "Cycles", kind: "cycles", resolution: "896 x 512" } : { label: "PyRender", kind: "full", resolution: "1280 x 720" };
     const GROUP_ORDER = ["V2V_GAP", "V2V_OBSTACLE", "V2V_OBSTACLE_SIZE", "V2V_BOWL", "V2V_PENDULUM", "V2V_SEESAW", "V2V_DOMINO", "F11", "F12", "F12_RAMP_LENGTH"];
     const GROUP_NAMES = { V2V_GAP: "平台间隙", V2V_OBSTACLE: "障碍碰撞：起始位置", V2V_OBSTACLE_SIZE: "障碍碰撞：球体积", V2V_BOWL: "碗内运动", V2V_PENDULUM: "摆锤", V2V_SEESAW: "跷跷板", V2V_DOMINO: "多米诺", F11: "F11 桌高", F12: "F12 斜面倾角", F12_RAMP_LENGTH: "F12 斜面长度" };
     const GROUP_PREFIX = { V2V_GAP: "V2V", V2V_OBSTACLE: "V2V", V2V_OBSTACLE_SIZE: "V2V", V2V_BOWL: "V2V", V2V_PENDULUM: "V2V", V2V_SEESAW: "V2V", V2V_DOMINO: "V2V", F11: "CONTROL", F12: "CONTROL", F12_RAMP_LENGTH: "CONTROL" };
@@ -176,12 +183,14 @@
     function metric(label, value, note = "") { const box = node("div", "case-metric"); box.append(node("span", "", label), node("strong", "", value), node("small", "", note)); return box; }
     function mediaLabel(left, right) { const label = node("div", "media-label"); label.append(node("strong", "", left), node("span", "", right)); return label; }
     function videoElement(item, kind, preload = "none") { const video = document.createElement("video"); video.controls = true; video.playsInline = true; video.preload = preload; video.src = `/media/${encodeURIComponent(item.case_id)}/${kind}`; return video; }
+    function mediaElement(item, kind, preload = "none") { if (kind === "cycles" && !item.cycles_preview_available) return node("div", "media-unavailable", "Cycles 视频待生成"); return videoElement(item, kind, preload); }
+    function setupVersionNav() { document.querySelectorAll("[data-version]").forEach(link => { if (link.dataset.version === RENDER_MODE) link.classList.add("active"); }); }
     function renderOverview(data) {
       const first = data.cases?.[0] || {};
       const simulation = first.simulation || {};
-      $("hero-title").textContent = `${data.cases.length} 个控制变量物理视频`;
+      $("hero-title").textContent = `${data.cases.length} 个控制变量物理视频 · ${RENDER_VERSION.label}`;
       $("path").textContent = "/data/gaoya/AAA_test_video/physv_v2v_0819";
-      $("run-info").textContent = `${data.cases.length} cases · ${data.groups.length} groups · ${simulation.fps || 30} FPS · manual refresh`;
+      $("run-info").textContent = `${RENDER_VERSION.label} ${RENDER_VERSION.resolution} · ${data.cases.length} cases · ${data.groups.length} groups · manual refresh`;
       const area = $("overview"); area.replaceChildren();
       [[data.cases.length, "videos"], [data.groups.length, "groups"], ["8 / 16", "context frames"], [data.amplitude_pair_threshold ? `${(data.amplitude_pair_threshold * 100).toFixed(0)}%` : "-", "pair threshold"]].forEach(([value, label]) => { const item = node("div", "overview-item"); item.append(node("strong", "", value), node("span", "", label)); area.append(item); });
     }
@@ -197,7 +206,7 @@
       const metadata = node("a", "case-id", item.case_id); metadata.href = "/download/manifest.json"; metadata.title = "下载数据集 manifest";
       headTop.append(metadata); head.append(headTop, node("h4", "", item.title));
       const control = node("div", "control"); control.append(node("strong", "", controlLabel(item)), node("span", "", item.control?.variable || "控制变量")); head.append(control); card.append(head);
-      const output = node("section", "output"); output.append(mediaLabel("完整视频", `${item.simulation?.frame_count || 90} frames / ${item.simulation?.fps || 30} FPS`), videoElement(item, "full", "metadata")); card.append(output);
+      const output = node("section", "output"); output.append(mediaLabel(`${RENDER_VERSION.label} 完整视频`, `${RENDER_VERSION.resolution} · ${item.simulation?.frame_count || 90} frames / ${item.simulation?.fps || 30} FPS`), mediaElement(item, RENDER_VERSION.kind, "metadata")); card.append(output);
       const context = node("section", "context-strip");
       [["ctx=8", "context8"], ["ctx=16", "context16"]].forEach(([label, kind], contextIndex) => { const panel = node("div", "context-panel"); panel.append(mediaLabel(label, contextIndex === 0 ? "短上下文" : "长上下文"), videoElement(item, kind)); context.append(panel); });
       card.append(context);
@@ -218,7 +227,7 @@
     function replayGroup(key) { const row = [...document.querySelectorAll(".group-row")].find(item => item.dataset.group === key); if (!row) return; row.querySelectorAll(".output video").forEach(video => { video.currentTime = 0; const promise = video.play(); if (promise?.catch) promise.catch(() => {}); }); }
     function render(data) { state.groups = [...(data.groups || [])].sort((a, b) => GROUP_ORDER.indexOf(a.family_key) - GROUP_ORDER.indexOf(b.family_key)); state.threshold = Number(data.amplitude_pair_threshold); renderOverview({ ...data, groups: state.groups }); renderDirectory(); const content = $("content"); content.replaceChildren(); state.groups.forEach((group, index) => content.append(groupRow(group, index))); }
     async function loadData() { if (state.loading) return; state.loading = true; const button = $("refresh"); button.disabled = true; button.textContent = "刷新中..."; try { const response = await fetch("/api/dataset", { cache: "no-store" }); if (!response.ok) throw new Error(`HTTP ${response.status}`); render(await response.json()); button.innerHTML = "&#8635; 刷新数据"; } catch (error) { $("content").replaceChildren(node("div", "error", `读取失败：${error.message}`)); button.textContent = "重试"; } finally { state.loading = false; button.disabled = false; } }
-    $("refresh").onclick = loadData; loadData();
+    setupVersionNav(); $("refresh").onclick = loadData; loadData();
   </script>
 </body>
 </html>

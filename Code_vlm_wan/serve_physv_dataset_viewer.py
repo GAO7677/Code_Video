@@ -199,7 +199,7 @@ class DatasetViewerHandler(BaseHTTPRequestHandler):
         if path == "/download/manifest.json":
             self._send_file(self.server.dataset_root / "manifest.json", "application/json; charset=utf-8")
             return
-        if path in ("/", "/index.html"):
+        if path in ("/", "/index.html", "/pyrender.html", "/cycles.html"):
             self._send_file(self.server.viewer_root / "index.html", "text/html; charset=utf-8")
             return
         if path.startswith("/media/"):

@@ -212,6 +212,62 @@ def colorize_world_points(world_points_thwc: np.ndarray, output_hw: tuple[int, i
     return np.stack(rendered, axis=0)
 
 
+def render_sampled_world_points_overlay(
+    frames: np.ndarray,
+    world_points_thwc: np.ndarray,
+    *,
+    sample_count: int,
+    context_frames: int,
+    seed: int,
+) -> np.ndarray:
+    """Overlay a deterministic sample of dense VGGT points on the RGB frames.
+
+    ``world_points`` is dense on VGGT's image grid.  We sample image-grid
+    locations rather than inventing a projection from 3D back to the image;
+    each sampled world point therefore remains aligned with the pixel that
+    produced it.  RGB colors encode the robust-normalized XYZ coordinates.
+    """
+    raw = np.asarray(frames, dtype=np.uint8)
+    points = np.asarray(world_points_thwc, dtype=np.float32)
+    if points.ndim != 4 or points.shape[-1] < 3:
+        raise ValueError(f"expected dense world points [T,H,W,3], got {points.shape}")
+    if sample_count <= 0:
+        raise ValueError(f"sample_count must be positive, got {sample_count}")
+
+    frame_count = min(int(raw.shape[0]), int(points.shape[0]))
+    grid_h, grid_w = int(points.shape[1]), int(points.shape[2])
+    raw_h, raw_w = int(raw.shape[1]), int(raw.shape[2])
+    scale_x = raw_w / max(float(grid_w), 1.0)
+    scale_y = raw_h / max(float(grid_h), 1.0)
+    normalized = np.stack(
+        [robust_normalize(points[..., channel]) for channel in range(3)],
+        axis=-1,
+    )
+    rendered: list[np.ndarray] = []
+    for frame_id in range(frame_count):
+        image = raw[frame_id].copy()
+        frame_points = points[frame_id]
+        valid = np.isfinite(frame_points).all(axis=-1)
+        flat_valid = np.flatnonzero(valid.reshape(-1))
+        if flat_valid.size:
+            rng = np.random.default_rng(int(seed) + frame_id)
+            count = min(int(sample_count), int(flat_valid.size))
+            chosen = rng.choice(flat_valid, size=count, replace=False)
+            grid_y, grid_x = np.unravel_index(chosen, (grid_h, grid_w))
+            native_x = np.clip(np.rint((grid_x + 0.5) * scale_x), 0, raw_w - 1).astype(np.int32)
+            native_y = np.clip(np.rint((grid_y + 0.5) * scale_y), 0, raw_h - 1).astype(np.int32)
+            colors_rgb = np.clip(normalized[frame_id, grid_y, grid_x] * 255.0, 0, 255).astype(np.uint8)
+            for x, y, color_rgb in zip(native_x.tolist(), native_y.tolist(), colors_rgb.tolist()):
+                color_bgr = (int(color_rgb[2]), int(color_rgb[1]), int(color_rgb[0]))
+                cv2.circle(image, (int(x), int(y)), 1, color_bgr, -1, cv2.LINE_AA)
+        rendered.append(image)
+    return add_header(
+        np.stack(rendered, axis=0),
+        f"VGGT world points · {int(sample_count):,} samples/frame",
+        context_frames,
+    )
+
+
 def _as_numpy(value: torch.Tensor | None) -> np.ndarray | None:
     if value is None:
         return None
@@ -339,7 +395,10 @@ def run_one_case(
     output_root: Path,
     device: torch.device,
     autocast_bf16: bool,
+    num_world_points: int,
+    seed: int,
     overwrite: bool,
+    total_cases: int = 10,
 ) -> dict[str, Any]:
     case_id = str(row["case_id"])
     case_dir = output_root / mode / "cases" / f"{index:02d}_{safe_name(case_id)}"
@@ -347,8 +406,12 @@ def run_one_case(
     if result_path.is_file() and not overwrite:
         try:
             cached = json.loads(result_path.read_text(encoding="utf-8"))
-            if cached.get("status") == "ok":
-                print(f"[{mode}] skip {index + 1:02d}/10 {case_id} (already complete)", flush=True)
+            cached_videos = cached.get("videos", {})
+            if cached.get("status") == "ok" and cached_videos.get("world_points_8000_overlay"):
+                print(
+                    f"[{mode}] skip {index + 1:02d}/{int(total_cases)} {case_id} (already complete)",
+                    flush=True,
+                )
                 return cached
         except Exception:
             pass
@@ -389,12 +452,25 @@ def run_one_case(
         world_points = normalize_prediction_shape(_as_numpy(output.world_points), kind="world")
         depth_video_path: Path | None = None
         world_video_path: Path | None = None
+        sampled_world_video_path: Path | None = None
         if depth is not None:
             depth_video_path = case_dir / "vggt_depth.mp4"
             write_mp4(depth_video_path, colorize_depth(depth, frames.shape[1:3]), fps)
         if world_points is not None:
             world_video_path = case_dir / "vggt_world_points.mp4"
             write_mp4(world_video_path, colorize_world_points(world_points, frames.shape[1:3]), fps)
+            sampled_world_video_path = case_dir / f"vggt_world_points_overlay_{int(num_world_points)}.mp4"
+            write_mp4(
+                sampled_world_video_path,
+                render_sampled_world_points_overlay(
+                    frames,
+                    world_points,
+                    sample_count=int(num_world_points),
+                    context_frames=8,
+                    seed=int(seed),
+                ),
+                fps,
+            )
 
         payload: dict[str, Any] = {
             "status": "ok",
@@ -417,16 +493,24 @@ def run_one_case(
             "confidence_shape": None if confidence is None else [int(value) for value in confidence.shape],
             "depth_shape": None if depth is None else [int(value) for value in depth.shape],
             "world_points_shape": None if world_points is None else [int(value) for value in world_points.shape],
+            "world_points_sample_count_per_frame": (
+                None if world_points is None else min(int(num_world_points), int(world_points.shape[1] * world_points.shape[2]))
+            ),
             "videos": {
                 "input_window": str(input_video_path.relative_to(output_root)),
                 "vggt_tracks": str(tracks_video_path.relative_to(output_root)),
                 "vggt_depth": None if depth_video_path is None else str(depth_video_path.relative_to(output_root)),
                 "vggt_world_points": None if world_video_path is None else str(world_video_path.relative_to(output_root)),
+                "world_points_8000_overlay": (
+                    None
+                    if sampled_world_video_path is None
+                    else str(sampled_world_video_path.relative_to(output_root))
+                ),
             },
         }
         write_json(result_path, payload)
         print(
-            f"[{mode}] done {index + 1:02d}/10 {case_id} "
+            f"[{mode}] done {index + 1:02d}/{int(total_cases)} {case_id} "
             f"tracks={tuple(tracks.shape)} depth={None if depth is None else tuple(depth.shape)}",
             flush=True,
         )
@@ -446,7 +530,7 @@ def run_one_case(
             "traceback": traceback.format_exc(),
         }
         write_json(result_path, error_payload)
-        print(f"[{mode}] ERROR {index + 1:02d}/10 {case_id}: {exc}", flush=True)
+        print(f"[{mode}] ERROR {index + 1:02d}/{int(total_cases)} {case_id}: {exc}", flush=True)
         if device.type == "cuda":
             torch.cuda.empty_cache()
         return error_payload
@@ -474,6 +558,8 @@ def run_mode(args: argparse.Namespace) -> None:
             "model_path": str(Path(args.model_path).resolve()),
             "device": str(args.device),
             "vggt_input_hw": [int(args.input_h), int(args.input_w)],
+            "num_world_points": int(args.num_world_points),
+            "seed": int(args.seed),
             "autocast_bf16": bool(args.autocast_bf16),
         },
     )
@@ -507,6 +593,9 @@ def run_mode(args: argparse.Namespace) -> None:
             output_root=output_root,
             device=device,
             autocast_bf16=bool(args.autocast_bf16),
+            num_world_points=int(args.num_world_points),
+            seed=int(args.seed) + index,
+            total_cases=len(rows),
             overwrite=bool(args.overwrite),
         )
     print(f"[{args.mode}] finished; outputs under {mode_dir}", flush=True)
@@ -570,6 +659,7 @@ def build_gallery(output_root: Path) -> None:
                   {video_panel('VGGT tracks', 'query trajectories over the 8 frames', context_videos.get('vggt_tracks'))}
                   {video_panel('VGGT depth', 'depth visualization', context_videos.get('vggt_depth'))}
                   {video_panel('World points', 'RGB-normalized world coordinates', context_videos.get('vggt_world_points'))}
+                  {video_panel('8000 点覆盖', '8,000 sampled dense world points per frame', context_videos.get('world_points_8000_overlay'))}
                   <p class="error">{context_error if context.get('status') != 'ok' else ''}</p>
                 </section>
                 <section><h3>49 帧 prefix</h3>
@@ -577,6 +667,7 @@ def build_gallery(output_root: Path) -> None:
                   {video_panel('VGGT tracks', 'query trajectories over the 49 frames', prefix_videos.get('vggt_tracks'))}
                   {video_panel('VGGT depth', 'depth visualization', prefix_videos.get('vggt_depth'))}
                   {video_panel('World points', 'RGB-normalized world coordinates', prefix_videos.get('vggt_world_points'))}
+                  {video_panel('8000 点覆盖', '8,000 sampled dense world points per frame', prefix_videos.get('world_points_8000_overlay'))}
                   <p class="error">{prefix_error if prefix.get('status') != 'ok' else ''}</p>
                 </section>
               </div>
@@ -605,7 +696,7 @@ def build_gallery(output_root: Path) -> None:
 </style></head><body><main>
 <h1>0717 PyBullet train split · VGGT visualization</h1>
 <p class="meta">model: {html.escape(str(DEFAULT_MODEL))} · first {len(rows)} stable-hash train cases · status: {status}<br>
-Each case compares the first 8 consecutive context frames with the first 49 consecutive training frames. VGGT input is resized to 420×728; tracks, depth, and world-point previews are generated from the same model forward.</p>
+Each case compares the first 8 consecutive context frames with the first 49 consecutive training frames. VGGT input is resized to 420×728; tracks, depth, world-point previews, and 8,000 sampled dense world-point overlays are generated from the same model forward.</p>
 {''.join(cards)}
 </main></body></html>"""
     (output_root / "index.html").write_text(document, encoding="utf-8")
@@ -634,6 +725,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-h", type=int, default=DEFAULT_INPUT_HW[0])
     parser.add_argument("--input-w", type=int, default=DEFAULT_INPUT_HW[1])
     parser.add_argument("--num-queries", type=int, default=8)
+    parser.add_argument("--num-world-points", type=int, default=8000)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--autocast-bf16", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--build-gallery", action="store_true")
@@ -648,6 +741,8 @@ def main() -> None:
         return
     if int(args.frame_count) <= 0:
         raise SystemExit("--frame-count must be positive")
+    if int(args.num_world_points) <= 0:
+        raise SystemExit("--num-world-points must be positive")
     if args.mode == "context8" and int(args.frame_count) != 8:
         raise SystemExit("context8 mode must use --frame-count 8")
     if args.mode == "prefix49" and int(args.frame_count) != 49:

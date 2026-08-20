@@ -31,6 +31,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path(shutil.which("ffmpeg") or Path(sys.executable).with_name("ffmpeg")),
     )
+    parser.add_argument(
+        "--ffprobe",
+        type=Path,
+        default=None,
+        help="Optional ffprobe binary when it is not beside --ffmpeg.",
+    )
     parser.add_argument("--gpu", default="7", help="Physical GPU index exposed to Blender.")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=360)
@@ -78,7 +84,7 @@ def main() -> None:
     args = parse_args()
     dataset_root = args.dataset_root.resolve()
     cache_root = args.cache_root.resolve()
-    ffprobe = args.ffmpeg.with_name("ffprobe")
+    ffprobe = args.ffprobe or args.ffmpeg.with_name("ffprobe")
     if not args.ffmpeg.is_file() or not ffprobe.is_file():
         raise FileNotFoundError(f"ffmpeg/ffprobe not found beside {args.ffmpeg}")
     env = os.environ.copy()
