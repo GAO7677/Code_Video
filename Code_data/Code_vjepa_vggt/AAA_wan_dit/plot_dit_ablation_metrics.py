@@ -26,6 +26,12 @@ DEFAULT_ALLOWLIST = Path(
     "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt"
 )
 DEFAULT_OUTPUT_DIR = DEFAULT_ROOT / "_metric_plots"
+DEFAULT_PHYRVG_VALIDATION_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/physrvg_full_sa_train_validation_30cases"
+)
+DEFAULT_PHYRVG_TEST5_REFERENCE_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/physrvg_test5_lora_onoff_cfg40_20260808"
+)
 METHOD_PATTERN = re.compile(
     r"^(whole_block|self_attn_zero|object_cross_attn|"
     r"text_cross_attn_zero|ffn_zero|lora_off)_block(\d{2})$"
@@ -298,6 +304,28 @@ BASELINE_SPECS = (
             "physicIQ/physRVG_steps40_512x896_08_49f"
         ),
     },
+    {
+        "key": "physrvg_finetuned_dit_lora_off_reference",
+        "label": "PHYRVG-PhysRVG finetuned DiT · LoRA OFF · reference",
+        "color": "#536170",
+        "result_dir": DEFAULT_PHYRVG_TEST5_REFERENCE_ROOT
+        / "physRVG_test5_LoRA_OFF_steps40_512x896_08_49f",
+        "expected_cases": 20,
+        "allow_all_result_inputs": True,
+        "scope_label": "test5 · 20 cases",
+        "source_page": "../physrvg-test5-lora-ablation/",
+    },
+    {
+        "key": "physrvg_finetuned_dit_lora_on_reference",
+        "label": "PHYRVG-PhysRVG finetuned DiT + LoRA · reference",
+        "color": "#C26D5A",
+        "result_dir": DEFAULT_PHYRVG_TEST5_REFERENCE_ROOT
+        / "physRVG_test5_LoRA_ON_steps40_512x896_08_49f",
+        "expected_cases": 20,
+        "allow_all_result_inputs": True,
+        "scope_label": "test5 · 20 cases",
+        "source_page": "../physrvg-test5-lora-ablation/",
+    },
 )
 
 INTERACTIVE_METRIC_PRIORITY = (
@@ -500,6 +528,7 @@ class BaselineMetricStat:
     result_dir: Path
     metric: Metric
     count: int
+    expected_cases: int
     mean: float | None
     complete: bool
 
@@ -685,6 +714,15 @@ def resolve_input_json(payload: dict[str, Any]) -> Path | None:
 def load_allowed_payloads(
     result_dir: Path, allowed_input_jsons: set[Path]
 ) -> dict[Path, dict[str, Any]]:
+    return {
+        input_json: payload
+        for input_json, payload in load_result_payloads(result_dir).items()
+        if input_json in allowed_input_jsons
+    }
+
+
+def load_result_payloads(result_dir: Path) -> dict[Path, dict[str, Any]]:
+    """Load all case-result payloads from a result directory."""
     payloads: dict[Path, dict[str, Any]] = {}
     for path in sorted(result_dir.glob("*.json")):
         if path.name in {
@@ -698,7 +736,7 @@ def load_allowed_payloads(
         if payload is None:
             continue
         input_json = resolve_input_json(payload)
-        if input_json is not None and input_json in allowed_input_jsons:
+        if input_json is not None:
             payloads[input_json] = payload
     return payloads
 
@@ -763,7 +801,11 @@ def compute_baseline_stats(
     stats: list[BaselineMetricStat] = []
     for spec in BASELINE_SPECS:
         result_dir = spec["result_dir"].expanduser().resolve()
-        payloads = load_allowed_payloads(result_dir, allowed_input_jsons)
+        baseline_expected_cases = int(spec.get("expected_cases", expected_cases))
+        if bool(spec.get("allow_all_result_inputs", False)):
+            payloads = load_result_payloads(result_dir)
+        else:
+            payloads = load_allowed_payloads(result_dir, allowed_input_jsons)
         for metric in METRICS:
             values = [
                 value
@@ -779,8 +821,9 @@ def compute_baseline_stats(
                     result_dir=result_dir,
                     metric=metric,
                     count=count,
+                    expected_cases=baseline_expected_cases,
                     mean=float(np.mean(values)) if values else None,
-                    complete=count == expected_cases,
+                    complete=count == baseline_expected_cases,
                 )
             )
     return stats
@@ -1259,6 +1302,7 @@ def write_plot_index(
     baseline_stats: list[BaselineMetricStat],
     expected_cases: int,
     metrics: tuple[Metric, ...],
+    phyrvg_validation: dict[str, Any] | None = None,
 ) -> None:
     metric_priority = {
         key: index for index, key in enumerate(INTERACTIVE_METRIC_PRIORITY)
@@ -1358,6 +1402,7 @@ def write_plot_index(
         ],
         "methods": methods,
         "baselines": baselines,
+        "phyrvg_validation": phyrvg_validation,
     }
     payload_text = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     (path.parent / "interactive_training_metrics.json").write_text(
@@ -1381,11 +1426,12 @@ def write_plot_index(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>PhysicIQ checkpoint 指标曲线</title>
+    <title>PhysicIQ checkpoint 指标曲线</title>
   <style>
     :root{--ink:#202428;--muted:#626b70;--line:#d8dcdf;--surface:#fff;--bg:#f4f5f6;--accent:#0b6f73}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,"Noto Sans SC",sans-serif}
     header{background:#fff;border-bottom:1px solid var(--line);padding:20px 24px}header>div,main{max-width:1760px;margin:auto}
+    .header-links{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}.header-links a{margin:0;font-size:12px}
     h1{margin:0 0 7px;font-size:25px;letter-spacing:0}h2{font-size:16px;letter-spacing:0;margin:0 0 10px}
     p{margin:0;color:var(--muted);font-size:13px;line-height:1.55}main{padding:18px 24px 32px}
     .controls{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:18px;padding:16px 0 18px;border-bottom:1px solid var(--line)}
@@ -1396,19 +1442,21 @@ def write_plot_index(
     #status{margin-left:4px;color:var(--muted);font-size:12px}.charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:18px}
     .chart{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:13px;min-width:0}.chart h3{font-size:14px;margin:0 0 2px;letter-spacing:0}
     .chart .direction{font-size:11px;color:var(--muted)}svg{display:block;width:100%;height:auto;min-height:270px}.legend{display:flex;flex-wrap:wrap;gap:6px 13px;margin:2px 4px 0;font-size:10px;color:#4b5357}
+    .validation{margin-top:18px;padding:14px;background:#fff;border:1px solid var(--line);border-radius:6px}.validation h2{margin:0 0 4px}.validation p{margin-bottom:10px}.validation-chart{max-width:1100px}.validation-chart svg{min-height:300px}
     .legend span{display:inline-flex;align-items:center;gap:5px}.empty{padding:90px 16px;text-align:center;color:var(--muted);font-size:13px}
     details{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:var(--muted);font-size:12px}.downloads{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px}.downloads a{font-size:12px;color:#155ca2}
     @media(max-width:1200px){.charts{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:900px){.controls,.charts{grid-template-columns:1fr}main,header{padding-left:12px;padding-right:12px}}
   </style>
 </head>
 <body>
-<header><div><h1>PhysicIQ · Checkpoint 指标曲线</h1><p>选择一个或多个训练方案；每条实线连接该方案全部 67/67 完整 checkpoint。四组对照结果作为虚线基线横贯训练 step。</p></div></header>
+<header><div><h1>PhysicIQ · Checkpoint 指标曲线</h1><p>选择一个或多个训练方案；每条实线连接该方案全部 67/67 完整 checkpoint。四组对照结果作为虚线基线横贯训练 step。</p><div class="header-links"><a href="../">返回 8844 总览</a><a href="../physiciq-average-metrics/">67-case 平均指标表</a><a href="../phyrvg-full-sa-train-validation-30cases/">PHYRVG-Full-SA · 30-case 验证</a></div></div></header>
 <main>
   <section class="controls">
     <div><h2>训练方案（可多选）</h2><div id="methodChecks" class="checks"></div><div class="commands"><button id="selectFullSA">全部 Full-SA</button><button id="selectObject">全部 +Object</button><button id="selectNoObject">全部 No-Object</button><button id="selectDedup">全部 +Slot-Dedup</button><button id="selectOther">其余方案</button><button id="selectAll">全选</button><button id="clearAll">清空</button><span id="status"></span></div></div>
     <div><h2>Baseline 横线</h2><div id="baselineChecks" class="checks"></div></div>
   </section>
   <section id="charts" class="charts"></section>
+  <section id="phyrvgValidation" class="validation" hidden><h2>PHYRVG-Full-SA · 30-case 验证曲线</h2><p>来自 30-case 子页面的 deterministic flow MSE；只在同一验证集内比较，越低越好。该指标与上方 67-case PhysicIQ 指标保持分栏，避免混用不同评测协议。</p><div id="validationChart" class="validation-chart"></div></section>
   <details><summary>数据与历史静态图</summary><div class="downloads"><a href="interactive_training_metrics.json">交互数据 JSON</a><a href="xssc_lora_training_step_metric_stats.csv">checkpoint CSV</a><a href="physiciq_baseline_metric_stats.csv">baseline CSV</a>__STATIC_LINKS__</div></details>
 </main>
 <script>
@@ -1418,12 +1466,12 @@ const methodRoot=document.getElementById("methodChecks"), baselineRoot=document.
 function checkbox(root,item,type,checked){const label=document.createElement("label");label.className="check";const input=document.createElement("input");input.type="checkbox";input.dataset.type=type;input.value=item.key;input.checked=checked;const swatch=document.createElement("i");swatch.className="swatch"+(type==="baseline"?" base":"");swatch.style.setProperty("--c",item.color);label.append(input,swatch,document.createTextNode(item.label));root.append(label);input.addEventListener("change",render);return input}
 let saved=[];try{saved=JSON.parse(localStorage.getItem("physiciq-selected-methods")||"[]")}catch(e){}
 const validSaved=saved.filter(key=>DATA.methods.some(item=>item.key===key));
-const methodInputs=DATA.methods.map((item,index)=>checkbox(methodRoot,item,"method",validSaved.length?validSaved.includes(item.key):index===0));
+const methodInputs=DATA.methods.map((item,index)=>checkbox(methodRoot,item,"method",validSaved.length?validSaved.includes(item.key):index===0||/^(?:PHYRVG-)?Full-SA/.test(item.label)));
 const baselineInputs=DATA.baselines.map(item=>checkbox(baselineRoot,item,"baseline",true));
 document.getElementById("selectAll").onclick=()=>{methodInputs.forEach(input=>input.checked=true);render()};
 document.getElementById("clearAll").onclick=()=>{methodInputs.forEach(input=>input.checked=false);render()};
 function selectGroup(predicate){methodInputs.forEach(input=>{const method=DATA.methods.find(item=>item.key===input.value);input.checked=Boolean(method&&predicate(method))});render()}
-document.getElementById("selectFullSA").onclick=()=>selectGroup(method=>method.label.startsWith("Full-SA"));
+document.getElementById("selectFullSA").onclick=()=>selectGroup(method=>/^(?:PHYRVG-)?Full-SA/.test(method.label));
 document.getElementById("selectObject").onclick=()=>selectGroup(method=>method.label.includes("+ Object"));
 document.getElementById("selectNoObject").onclick=()=>selectGroup(method=>method.key.includes("no_object"));
 document.getElementById("selectDedup").onclick=()=>selectGroup(method=>method.key.includes("slot_dedup"));
@@ -1440,7 +1488,9 @@ function chart(metric,methods,baselines){const records=[];methods.forEach(method
   baseRecords.forEach(({base,stat})=>{const line=svgEl("line",{x1:M.l,y1:y(stat.mean),x2:W-M.r,y2:y(stat.mean),stroke:base.color,"stroke-width":2,"stroke-dasharray":"8 5",opacity:.9});line.append(svgEl("title",{},`${base.label}: ${fmt(stat.mean)} (${stat.count}/${DATA.expected_cases})`));svg.append(line)});
   methods.forEach(method=>{const rows=records.filter(row=>row.method.key===method.key).sort((a,b)=>a.step-b.step);if(!rows.length)return;svg.append(svgEl("polyline",{points:rows.map(row=>`${x(row.step)},${y(row.value)}`).join(" "),fill:"none",stroke:method.color,"stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"}));rows.forEach(row=>{const circle=svgEl("circle",{cx:x(row.step),cy:y(row.value),r:4,fill:method.color,stroke:"#fff","stroke-width":1.2});circle.append(svgEl("title",{},`${method.label} · step ${row.step}: ${fmt(row.value)} (${row.count}/${DATA.expected_cases})`));svg.append(circle)})});article.append(svg);
   const legend=document.createElement("div");legend.className="legend";methods.filter(method=>records.some(row=>row.method.key===method.key)).forEach(method=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch" style="--c:${method.color}"></i>${method.label}`;legend.append(item)});baseRecords.forEach(({base})=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch base" style="--c:${base.color}"></i>${base.label}`;legend.append(item)});article.append(legend);return article}
+function validationChart(data){if(!data||!data.series||!data.series.length)return null;const rows=data.series.flatMap(series=>(series.points||[]).filter(point=>point.complete&&Number.isFinite(point.mean)).map(point=>({series,step:point.step,value:point.mean,count:point.count})));if(!rows.length)return null;const W=1060,H=380,M={l:72,r:22,t:18,b:52},iw=W-M.l-M.r,ih=H-M.t-M.b;let xmin=Math.min(...rows.map(row=>row.step)),xmax=Math.max(...rows.map(row=>row.step));if(xmin===xmax){xmin-=1;xmax+=1}const values=rows.map(row=>row.value);let ymin=Math.min(...values),ymax=Math.max(...values),ypad=(ymax-ymin)*.12;if(!ypad)ypad=Math.max(Math.abs(ymin)*.05,.001);ymin-=ypad;ymax+=ypad;const x=value=>M.l+(value-xmin)/(xmax-xmin)*iw,y=value=>M.t+(ymax-value)/(ymax-ymin)*ih;const svg=svgEl("svg",{viewBox:`0 0 ${W} ${H}`,role:"img","aria-label":data.metric_title});for(let i=0;i<5;i++){const value=ymin+(ymax-ymin)*i/4,py=y(value);svg.append(svgEl("line",{x1:M.l,y1:py,x2:W-M.r,y2:py,stroke:"#e1e4e6","stroke-width":1}),svgEl("text",{x:M.l-9,y:py+4,"text-anchor":"end",fill:"#697176","font-size":10},fmt(value)))}const steps=[...new Set(rows.map(row=>row.step))].sort((a,b)=>a-b);const tickSteps=steps.length<=10?steps:steps.filter((_,i)=>i===0||i===steps.length-1||i%Math.ceil(steps.length/9)===0);tickSteps.forEach(step=>{const px=x(step);svg.append(svgEl("line",{x1:px,y1:M.t,x2:px,y2:H-M.b,stroke:"#eef0f1","stroke-width":1}),svgEl("text",{x:px,y:H-M.b+18,"text-anchor":"middle",fill:"#697176","font-size":10},String(step)))});svg.append(svgEl("line",{x1:M.l,y1:H-M.b,x2:W-M.r,y2:H-M.b,stroke:"#788086"}),svgEl("line",{x1:M.l,y1:M.t,x2:M.l,y2:H-M.b,stroke:"#788086"}),svgEl("text",{x:M.l+iw/2,y:H-10,"text-anchor":"middle",fill:"#697176","font-size":10},"Training step"));data.series.forEach(series=>{const points=rows.filter(row=>row.series.key===series.key).sort((a,b)=>a.step-b.step);if(!points.length)return;svg.append(svgEl("polyline",{points:points.map(row=>`${x(row.step)},${y(row.value)}`).join(" "),fill:"none",stroke:series.color,"stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"}));points.forEach(row=>{const circle=svgEl("circle",{cx:x(row.step),cy:y(row.value),r:4,fill:series.color,stroke:"#fff","stroke-width":1.2});circle.append(svgEl("title",{},`${series.label} · step ${row.step}: ${fmt(row.value)} (${row.count}/${data.expected_cases})`));svg.append(circle)})});const legend=document.createElement("div");legend.className="legend";data.series.filter(series=>rows.some(row=>row.series.key===series.key)).forEach(series=>{const item=document.createElement("span");item.innerHTML=`<i class="swatch" style="--c:${series.color}"></i>${series.label}`;legend.append(item)});const article=document.createElement("article");article.append(svg,legend);return article}
 function render(){const methodKeys=selected(methodInputs),baselineKeys=selected(baselineInputs),methods=DATA.methods.filter(item=>methodKeys.has(item.key)),baselines=DATA.baselines.filter(item=>baselineKeys.has(item.key));try{localStorage.setItem("physiciq-selected-methods",JSON.stringify([...methodKeys]))}catch(e){}statusEl.textContent=`已选 ${methods.length}/${DATA.methods.length} 个方案`;charts.replaceChildren();let count=0;DATA.metrics.forEach(metric=>{const node=chart(metric,methods,baselines);if(node){charts.append(node);count++}});if(!count){const empty=document.createElement("div");empty.className="empty";empty.textContent="当前选择没有完整指标。";charts.append(empty)}}
+const validationPanel=document.getElementById("phyrvgValidation");const validationNode=validationChart(DATA.phyrvg_validation);if(validationNode){document.getElementById("validationChart").append(validationNode);validationPanel.hidden=false}
 render();
 </script>
 </body></html>
@@ -1451,6 +1501,125 @@ render();
         ),
         encoding="utf-8",
     )
+
+
+def load_phyrvg_validation_series(
+    root: Path = DEFAULT_PHYRVG_VALIDATION_ROOT,
+) -> dict[str, Any] | None:
+    """Load the independent 30-case PHYRVG-Full-SA validation curves.
+
+    The 30-case page evaluates deterministic flow MSE, not the 67-case PhysicIQ
+    metrics above. Keeping this payload separate lets the restored page expose
+    every PHYRVG-Full-SA checkpoint (including smoke and 0613 runs) without
+    implying that the two evaluation protocols are interchangeable.
+    """
+    root = root.expanduser().resolve()
+    inventory_path = root / "inventory.json"
+    losses_root = root / "losses"
+    if not inventory_path.is_file() or not losses_root.is_dir():
+        return None
+    try:
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    entries = inventory.get("entries", [])
+    if not isinstance(entries, list):
+        return None
+
+    # Match the 30-case validation labels to the canonical 67-case method keys
+    # so the two sections use the same naming and color language.
+    key_by_validation_method = {
+        "full_sa": "full_sa_physrvg_dit",
+        "latent_mask": "full_sa_physrvg_latent_mask_loss",
+        "object_xssc": "full_sa_physrvg_object_xssc_loss",
+        "vjepa": "full_sa_physrvg_vjepa_loss",
+        "vjepa_0613": "full_sa_physrvg_vjepa_loss_0613_b2g2",
+    }
+    label_by_key = {
+        "full_sa_physrvg_dit": "PHYRVG-Full-SA",
+        "full_sa_physrvg_latent_mask_loss": "PHYRVG-Full-SA + Latent-Mask Loss",
+        "full_sa_physrvg_object_xssc_loss": "PHYRVG-Full-SA + Object + XSSC Loss",
+        "full_sa_physrvg_vjepa_loss": "PHYRVG-Full-SA + V-JEPA Loss",
+        "full_sa_physrvg_vjepa_loss_0613_b2g2": "PHYRVG-Full-SA + V-JEPA Loss · 0613 · b2-gacc2",
+    }
+    series_by_key: dict[str, dict[str, Any]] = {}
+    expected_cases = 30
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("method_label", ""))
+        if not label.upper().startswith("PHYRVG-FULL-SA"):
+            continue
+        validation_method = str(entry.get("method_key", ""))
+        key = key_by_validation_method.get(validation_method)
+        if key is None:
+            # Keep future PHYRVG-Full-SA variants visible even if their method
+            # key is new; the label remains a stable fallback identifier.
+            key = f"phyrvg_validation_{validation_method or entry.get('entry_id', 'unknown')}"
+        loss_path = losses_root / f"{entry.get('entry_id', '')}.json"
+        if not loss_path.is_file():
+            continue
+        try:
+            payload = json.loads(loss_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        cases = payload.get("cases", [])
+        values = [
+            float(case["loss_main"])
+            for case in cases
+            if isinstance(case, dict)
+            and isinstance(case.get("loss_main"), (int, float))
+            and math.isfinite(float(case["loss_main"]))
+        ]
+        if not values:
+            continue
+        series = series_by_key.setdefault(
+            key,
+            {
+                "key": key,
+                "label": label_by_key.get(key, label),
+                "color": str(entry.get("color", "#0b6f73")),
+                "points": [],
+            },
+        )
+        series["points"].append(
+            {
+                "step": int(entry.get("step", 0)),
+                "mean": float(np.mean(values)),
+                "count": len(values),
+                "complete": len(values) == expected_cases,
+                "entry_id": str(entry.get("entry_id", "")),
+            }
+        )
+    if not series_by_key:
+        return None
+    for series in series_by_key.values():
+        series["points"].sort(key=lambda point: (point["step"], point["entry_id"]))
+        for point in series["points"]:
+            point.pop("entry_id", None)
+    ordered_keys = (
+        "full_sa_physrvg_dit",
+        "full_sa_physrvg_vjepa_loss",
+        "full_sa_physrvg_vjepa_loss_0613_b2g2",
+        "full_sa_physrvg_latent_mask_loss",
+        "full_sa_physrvg_object_xssc_loss",
+    )
+    ordered_series = [
+        series_by_key[key] for key in ordered_keys if key in series_by_key
+    ]
+    ordered_series.extend(
+        series
+        for key, series in series_by_key.items()
+        if key not in ordered_keys
+    )
+    return {
+        "expected_cases": expected_cases,
+        "metric_key": "fixed_pybullet_train_30case_deterministic_flow_mse",
+        "metric_title": "Mean deterministic flow MSE",
+        "metric_direction": "lower",
+        "source_page": "../phyrvg-full-sa-train-validation-30cases-metrics/",
+        "series": ordered_series,
+    }
 
 
 def main() -> None:
@@ -1616,6 +1785,7 @@ def main() -> None:
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    phyrvg_validation = load_phyrvg_validation_series()
     write_plot_index(
         output_dir / "index.html",
         plots,
@@ -1624,6 +1794,7 @@ def main() -> None:
         baseline_stats,
         args.expected_cases,
         plotted_metrics,
+        phyrvg_validation,
     )
 
     print(f"Methods: {len(methods)}")

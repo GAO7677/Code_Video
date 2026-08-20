@@ -18,6 +18,7 @@ def main() -> None:
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--one-per-family", action="store_true")
+    parser.add_argument("--video-rel", default="raw/source_video.mp4")
     args = parser.parse_args()
 
     manifest = json.loads((args.dataset / "manifest.json").read_text(encoding="utf-8"))
@@ -37,7 +38,7 @@ def main() -> None:
     lines = []
     for sample in samples:
         sample_dir = Path(sample["sample_dir"])
-        video = sample_dir / "raw/source_video.mp4"
+        video = sample_dir / args.video_rel
         if not video.is_file():
             raise FileNotFoundError(video)
         case_json = args.output_dir / f"{sample['sample_id']}.json"
