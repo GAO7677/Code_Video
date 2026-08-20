@@ -524,7 +524,9 @@ def reserve_metric_gpu(
     while True:
         for gpu_id in sorted(gpu_ids):
             gpu_lock = (lock_root / f"gpu-{gpu_id}.lock").open("a+", encoding="utf-8")
-            slot_handles: list[Any] = []
+            slot_handle: Any | None = None
+            slot_index: int | None = None
+            another_slot_is_busy = False
             try:
                 lock_mode = fcntl.LOCK_SH if allow_parallel else fcntl.LOCK_EX
                 try:
@@ -541,31 +543,37 @@ def reserve_metric_gpu(
                     return
 
                 for slot in range(slot_count):
-                    slot_path = lock_root / f"gpu-{gpu_id}.metric-slot-{slot}.lock"
-                    slot_handle = slot_path.open("a+", encoding="utf-8")
+                    candidate_handle = (
+                        lock_root / f"gpu-{gpu_id}.metric-slot-{slot}.lock"
+                    ).open("a+", encoding="utf-8")
                     try:
                         fcntl.flock(
-                            slot_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+                            candidate_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
                         )
                     except BlockingIOError:
-                        slot_handle.close()
+                        another_slot_is_busy = True
+                        candidate_handle.close()
                         continue
-                    slot_handles.append(slot_handle)
+                    if slot_handle is None:
+                        slot_handle = candidate_handle
+                        slot_index = slot
+                    else:
+                        fcntl.flock(candidate_handle.fileno(), fcntl.LOCK_UN)
+                        candidate_handle.close()
 
-                if not slot_handles:
+                if slot_handle is None:
                     continue
                 current_used = gpu_memory_used(gpu_id)
-                all_slots_were_free = len(slot_handles) == slot_count
-                if current_used > threshold and all_slots_were_free:
+                if current_used > threshold and not another_slot_is_busy:
                     continue
                 log(
                     f"reserved shared metric GPU{gpu_id} "
-                    f"slot={len(slot_handles) - 1} used={current_used} MiB"
+                    f"slot={slot_index} used={current_used} MiB"
                 )
                 yield gpu_id
                 return
             finally:
-                for slot_handle in slot_handles:
+                if slot_handle is not None:
                     fcntl.flock(slot_handle.fileno(), fcntl.LOCK_UN)
                     slot_handle.close()
                 try:

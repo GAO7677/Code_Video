@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Physics-IQ Verified · P0 Strict Comparison</title>
+    <style>
+      :root {
+        --ink: #10283d;
+        --ink-2: #24445a;
+        --paper: #f4f0e6;
+        --paper-deep: #e7dfd0;
+        --line: #c8c0b0;
+        --muted: #687681;
+        --cyan: #168e98;
+        --violet: #664b9c;
+        --amber: #b46c27;
+        --rose: #b24758;
+        --green: #4b8258;
+        --slate: #627889;
+        --shadow: 0 16px 34px rgba(16, 40, 61, 0.13);
+        --display: Georgia, "Times New Roman", serif;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { scroll-behavior: smooth; }
+
+      body {
+        min-width: 320px;
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 10% 0%, rgba(22, 142, 152, 0.10), transparent 29rem),
+          linear-gradient(90deg, rgba(16, 40, 61, 0.028) 1px, transparent 1px),
+          linear-gradient(rgba(16, 40, 61, 0.025) 1px, transparent 1px),
+          var(--paper);
+        background-size: auto, 30px 30px, 30px 30px, auto;
+        font-family: var(--sans);
+      }
+
+      button, input, select { font: inherit; }
+
+      button {
+        cursor: pointer;
+        color: inherit;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 14px clamp(18px, 4vw, 58px);
+        color: #f4f0e6;
+        background: var(--ink);
+        border-bottom: 4px solid var(--cyan);
+      }
+
+      .eyebrow, .utility, .protocol-kicker, .metric-source, .card-kicker,
+      .view-eyebrow, .rank, .status-tag, .transport-status, .raw-label {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .brand { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px 14px; }
+      .brand strong { font-family: var(--display); font-size: 1.16rem; letter-spacing: 0.015em; }
+      .brand span { color: #b8d9dc; font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.07em; }
+      .topbar a { color: #d7edeb; font-family: var(--mono); font-size: 0.78rem; text-decoration-color: rgba(215, 237, 235, 0.45); text-underline-offset: 3px; }
+
+      main { width: min(1780px, calc(100% - 36px)); margin: 0 auto; padding: 38px 0 52px; }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+        gap: 24px;
+        align-items: stretch;
+        margin-bottom: 28px;
+      }
+
+      .hero-copy {
+        min-height: 272px;
+        padding: clamp(26px, 4vw, 48px);
+        color: #f4f0e6;
+        background:
+          linear-gradient(135deg, rgba(14, 29, 45, 0.96), rgba(24, 67, 80, 0.92)),
+          var(--ink);
+        box-shadow: var(--shadow);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .hero-copy::after {
+        content: "P0";
+        position: absolute;
+        right: -0.05em;
+        bottom: -0.35em;
+        color: rgba(244, 240, 230, 0.075);
+        font-family: var(--display);
+        font-size: clamp(8rem, 20vw, 19rem);
+        font-weight: 700;
+        line-height: 0.72;
+        pointer-events: none;
+      }
+
+      .hero h1 {
+        max-width: 930px;
+        margin: 8px 0 15px;
+        font-family: var(--display);
+        font-size: clamp(2.2rem, 5vw, 5.1rem);
+        font-weight: 600;
+        letter-spacing: -0.045em;
+        line-height: 0.94;
+      }
+
+      .hero p { position: relative; z-index: 1; max-width: 780px; margin: 0; color: #d4e7e7; font-size: clamp(0.95rem, 1.4vw, 1.1rem); line-height: 1.65; }
+      .hero .eyebrow { color: #7bd8d2; }
+
+      .hero-score {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-height: 272px;
+        padding: 28px;
+        background: #f9f6ef;
+        border: 1px solid var(--line);
+        border-top: 6px solid var(--amber);
+        box-shadow: var(--shadow);
+      }
+
+      .hero-score .metric-source { color: var(--muted); }
+      .hero-score .score-value { margin: 9px 0 1px; font-family: var(--display); font-size: clamp(4rem, 8vw, 6.9rem); letter-spacing: -0.07em; line-height: 0.85; }
+      .hero-score .score-label { color: var(--ink-2); font-family: var(--mono); font-size: 0.77rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+      .hero-score .hero-winner { display: flex; gap: 9px; align-items: center; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 0.9rem; line-height: 1.35; }
+      .winner-dot { width: 10px; height: 10px; flex: 0 0 10px; background: var(--amber); }
+
+      .protocol-ruler {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin-bottom: 36px;
+        border: 1px solid var(--line);
+        background: rgba(249, 246, 239, 0.72);
+      }
+
+      .protocol-item { min-height: 98px; padding: 17px 18px; border-right: 1px solid var(--line); }
+      .protocol-item:last-child { border-right: 0; }
+      .protocol-kicker { display: block; margin-bottom: 7px; color: var(--cyan); }
+      .protocol-item p { margin: 0; color: var(--ink-2); font-size: 0.84rem; line-height: 1.42; }
+
+      .section-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 18px; margin: 0 0 13px; }
+      .section-heading h2 { margin: 0; font-family: var(--display); font-size: clamp(1.75rem, 3vw, 2.6rem); font-weight: 600; letter-spacing: -0.035em; }
+      .section-heading p { max-width: 690px; margin: 0; color: var(--muted); font-size: 0.86rem; line-height: 1.55; }
+
+      .scoreboard { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; margin-bottom: 38px; }
+      .scorecard { --tone: var(--cyan); min-width: 0; padding: 18px; background: rgba(250, 248, 242, 0.92); border: 1px solid var(--line); border-top: 5px solid var(--tone); box-shadow: 0 7px 16px rgba(16, 40, 61, 0.075); }
+      .scorecard[data-tone="amber"] { --tone: var(--amber); }
+      .scorecard[data-tone="violet"] { --tone: var(--violet); }
+      .scorecard[data-tone="cyan"] { --tone: var(--cyan); }
+      .scorecard[data-tone="rose"] { --tone: var(--rose); }
+      .scorecard-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+      .rank { color: var(--tone); }
+      .status-tag { padding: 4px 5px; color: var(--ink-2); border: 1px solid var(--line); font-size: 0.6rem; letter-spacing: 0.045em; }
+      .scorecard h3 { min-height: 2.6em; margin: 9px 0 8px; font-family: var(--display); font-size: 1.22rem; font-weight: 600; line-height: 1.05; letter-spacing: -0.025em; }
+      .scoreline { display: flex; align-items: baseline; gap: 9px; margin-bottom: 15px; }
+      .scoreline strong { font-family: var(--display); font-size: 2.35rem; letter-spacing: -0.06em; }
+      .scoreline span { color: var(--muted); font-family: var(--mono); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .component-bars { display: grid; gap: 6px; }
+      .component-bar { display: grid; grid-template-columns: 26px minmax(0, 1fr) 42px; gap: 7px; align-items: center; color: var(--muted); font-family: var(--mono); font-size: 0.66rem; }
+      .component-bar b { color: var(--ink); font-weight: 700; text-align: right; }
+      .bar-track { height: 5px; overflow: hidden; background: #ded7ca; }
+      .bar-track i { display: block; height: 100%; background: var(--tone); }
+      .scorecard footer { min-height: 35px; margin-top: 15px; padding-top: 11px; border-top: 1px solid var(--line); color: var(--muted); font-family: var(--mono); font-size: 0.64rem; line-height: 1.45; }
+
+      .viewer-shell { border-top: 5px solid var(--ink); background: rgba(250, 248, 242, 0.7); box-shadow: var(--shadow); }
+      .viewer-toolbar { display: grid; grid-template-columns: minmax(220px, 1.1fr) minmax(170px, 0.6fr) auto; gap: 14px; align-items: end; padding: 19px; border: 1px solid var(--line); border-top: 0; }
+      .field { display: grid; gap: 6px; }
+      .field label { color: var(--ink-2); font-family: var(--mono); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+      select, input[type="search"] { width: 100%; min-height: 39px; padding: 8px 10px; color: var(--ink); background: #fffdf8; border: 1px solid #abb4b4; border-radius: 0; outline-color: var(--cyan); }
+      .case-control { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; }
+      .control-button, .icon-button { min-height: 39px; border: 1px solid var(--ink); border-radius: 0; background: var(--paper); font-family: var(--mono); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .control-button:hover, .icon-button:hover { color: #f7f4ec; background: var(--ink); }
+      .icon-button { width: 39px; font-size: 1rem; }
+      .toolbar-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+      .control-button.primary { color: #f7f4ec; background: var(--ink); }
+      .control-button.primary:hover { background: var(--cyan); border-color: var(--cyan); }
+
+      .search-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 0.38fr); gap: 12px; padding: 0 19px 18px; border: 1px solid var(--line); border-top: 0; }
+      .transport { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto; align-items: center; gap: 9px; padding: 10px 19px; color: #d6e6e8; background: var(--ink); }
+      .transport input[type="range"] { width: 100%; accent-color: #77d6d1; }
+      .transport-status { color: #bddee1; font-size: 0.67rem; letter-spacing: 0.04em; }
+
+      .case-intro { padding: 25px 21px 19px; border-right: 1px solid var(--line); border-left: 1px solid var(--line); background: rgba(239, 232, 219, 0.55); }
+      .case-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .case-id { padding: 4px 6px; color: #f5f1e8; background: var(--ink); font-family: var(--mono); font-size: 0.69rem; font-weight: 700; letter-spacing: 0.06em; }
+      .case-intro h3 { margin: 0; font-family: var(--display); font-size: clamp(1.55rem, 3vw, 2.25rem); font-weight: 600; letter-spacing: -0.035em; }
+      .case-intro p { max-width: 1020px; margin: 10px 0 0; color: var(--ink-2); font-size: 0.9rem; line-height: 1.6; }
+      .case-intro details { max-width: 1180px; margin-top: 12px; color: var(--muted); font-size: 0.84rem; line-height: 1.55; }
+      .case-intro summary { cursor: pointer; color: var(--cyan); font-family: var(--mono); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.045em; text-transform: uppercase; }
+      .case-intro details p { margin: 9px 0 0; }
+
+      .view-block { padding: 21px; border: 1px solid var(--line); border-top: 0; background: rgba(255, 253, 248, 0.6); }
+      .view-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+      .view-heading h4 { margin: 0; font-family: var(--display); font-size: 1.35rem; font-weight: 600; letter-spacing: -0.02em; }
+      .view-eyebrow { color: var(--cyan); }
+      .benchmark-name { max-width: 52%; overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: 0.65rem; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+
+      .media-grid { display: grid; grid-template-columns: repeat(6, minmax(205px, 1fr)); gap: 11px; align-items: start; }
+      .media-card { --tone: var(--slate); min-width: 0; overflow: hidden; background: #fffdf8; border: 1px solid #b9c0bc; border-top: 5px solid var(--tone); }
+      .media-card[data-tone="slate"] { --tone: var(--slate); }
+      .media-card[data-tone="green"] { --tone: var(--green); }
+      .media-card[data-tone="cyan"] { --tone: var(--cyan); }
+      .media-card[data-tone="amber"] { --tone: var(--amber); }
+      .media-card[data-tone="violet"] { --tone: var(--violet); }
+      .media-card[data-tone="rose"] { --tone: var(--rose); }
+      .card-header { min-height: 64px; padding: 11px 12px 9px; border-bottom: 1px solid #d9d2c5; }
+      .card-kicker { display: block; margin-bottom: 4px; color: var(--tone); font-size: 0.61rem; }
+      .card-header h5 { margin: 0; font-family: var(--display); font-size: 1.02rem; font-weight: 600; letter-spacing: -0.018em; line-height: 1.02; }
+      .video-wrap { position: relative; aspect-ratio: 16 / 9; background: #1b2e3d; }
+      video { display: block; width: 100%; height: 100%; background: #162b3a; object-fit: contain; }
+      .video-wrap::after { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); }
+      .video-status { position: absolute; z-index: 1; left: 8px; bottom: 8px; padding: 3px 5px; color: #f7f3ea; background: rgba(12, 30, 45, 0.78); font-family: var(--mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; pointer-events: none; }
+      .metric-panel { min-height: 153px; padding: 10px 12px 12px; }
+      .metric-topline { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; padding-bottom: 9px; border-bottom: 1px solid #ded8cd; }
+      .metric-topline span { color: var(--muted); font-family: var(--mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.035em; text-transform: uppercase; }
+      .metric-topline strong { color: var(--tone); font-family: var(--display); font-size: 1.3rem; letter-spacing: -0.04em; }
+      .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; margin-top: 10px; }
+      .metric-cell { display: grid; gap: 1px; }
+      .metric-cell span { color: var(--muted); font-family: var(--mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.04em; }
+      .metric-cell b { font-family: var(--mono); font-size: 0.78rem; }
+      .metric-footnote { margin: 10px 0 0; color: var(--muted); font-size: 0.67rem; line-height: 1.34; }
+      .reference-panel { display: grid; place-content: center start; min-height: 153px; padding: 12px; background: linear-gradient(135deg, rgba(16, 40, 61, 0.025), transparent); }
+      .reference-panel strong { font-family: var(--display); font-size: 1.08rem; font-weight: 600; }
+      .reference-panel p { margin: 5px 0 0; color: var(--muted); font-size: 0.74rem; line-height: 1.42; }
+      .unavailable-card { border-style: dashed; background: repeating-linear-gradient(-45deg, #faf7f0, #faf7f0 7px, #f0e9dd 7px, #f0e9dd 14px); }
+      .unavailable-stage { display: grid; place-content: center; aspect-ratio: 16 / 9; padding: 18px; color: var(--ink-2); background: rgba(255, 253, 248, 0.55); text-align: center; }
+      .unavailable-stage strong { display: block; font-family: var(--display); font-size: 1.22rem; }
+      .unavailable-stage span { margin-top: 7px; color: var(--muted); font-family: var(--mono); font-size: 0.64rem; line-height: 1.4; }
+
+      .raw-trace { margin-top: 14px; padding: 12px 13px 13px; background: #e9e2d5; border: 1px solid var(--line); }
+      .raw-trace summary { cursor: pointer; color: var(--ink); font-family: var(--mono); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .raw-grid { display: grid; grid-template-columns: repeat(2, minmax(250px, 1fr)); gap: 12px; margin-top: 12px; }
+      .raw-card { overflow: hidden; background: #fffdf8; border-top: 4px solid var(--tone); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); }
+      .raw-card header { display: flex; justify-content: space-between; gap: 10px; padding: 9px 10px; }
+      .raw-card h5 { margin: 0; font-family: var(--display); font-size: 1rem; font-weight: 600; }
+      .raw-card span { color: var(--muted); font-family: var(--mono); font-size: 0.63rem; }
+
+      .legend { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 0.58fr); gap: 15px; margin-top: 22px; padding: 18px 20px; border: 1px solid var(--line); background: #e9e2d5; }
+      .legend h3 { margin: 0 0 8px; font-family: var(--display); font-size: 1.25rem; font-weight: 600; }
+      .legend p { margin: 0; color: var(--ink-2); font-size: 0.78rem; line-height: 1.58; }
+      .legend dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 11px; margin: 0; font-size: 0.73rem; line-height: 1.42; }
+      .legend dt { color: var(--cyan); font-family: var(--mono); font-weight: 700; }
+      .legend dd { margin: 0; color: var(--ink-2); }
+
+      .page-footer { width: min(1780px, calc(100% - 36px)); margin: 0 auto 35px; color: var(--muted); font-family: var(--mono); font-size: 0.67rem; line-height: 1.55; }
+      .page-footer a { color: var(--ink-2); }
+
+      .loading, .failure { display: grid; min-height: 46vh; place-content: center; padding: 30px; color: var(--ink-2); text-align: center; }
+      .loading strong, .failure strong { margin-bottom: 8px; font-family: var(--display); font-size: 2rem; }
+      .failure { border: 1px solid var(--rose); background: #fff7f5; }
+
+      @media (max-width: 1380px) {
+        .scoreboard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .media-grid { grid-template-columns: repeat(3, minmax(210px, 1fr)); }
+      }
+
+      @media (max-width: 920px) {
+        main { width: min(100% - 24px, 760px); padding-top: 20px; }
+        .topbar { align-items: flex-start; flex-direction: column; }
+        .hero { grid-template-columns: 1fr; }
+        .hero-score { min-height: 200px; }
+        .protocol-ruler { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .protocol-item:nth-child(2) { border-right: 0; }
+        .protocol-item:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+        .viewer-toolbar { grid-template-columns: 1fr; }
+        .toolbar-actions { justify-content: flex-start; }
+        .search-row { grid-template-columns: 1fr; }
+        .media-grid { grid-template-columns: repeat(2, minmax(205px, 1fr)); }
+        .legend { grid-template-columns: 1fr; }
+      }
+
+      @media (max-width: 560px) {
+        .scoreboard, .protocol-ruler, .media-grid, .raw-grid { grid-template-columns: 1fr; }
+        .protocol-item { border-right: 0; border-bottom: 1px solid var(--line); }
+        .protocol-item:last-child { border-bottom: 0; }
+        .case-control { grid-template-columns: minmax(0, 1fr) auto auto; }
+        .view-heading { align-items: flex-start; flex-direction: column; }
+        .benchmark-name { max-width: 100%; text-align: left; }
+        .page-footer { width: min(100% - 24px, 760px); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <strong>Physics-IQ Verified</strong>
+        <span>P0 / STRICT COMPARISON INSTRUMENT</span>
+      </div>
+      <a href="#viewer">跳到逐 case 证据区 ↓</a>
+    </header>
+
+    <main id="app" aria-live="polite">
+      <section class="loading">
+        <strong>Loading P0 evidence…</strong>
+        <span>正在读取本机 manifest 和官方指标。</span>
+      </section>
+    </main>
+
+    <footer class="page-footer" id="page-footer"></footer>
+
+    <script>
+      (() => {
+        const app = document.getElementById("app");
+        const footer = document.getElementById("page-footer");
+        const metricOrder = ["spatial", "spatiotemporal", "weighted_spatial", "mse"];
+        const metricLabels = {
+          spatial: "SP",
+          spatiotemporal: "ST",
+          weighted_spatial: "WS",
+          mse: "MSE",
+        };
+        let data;
+        let selectedCase = 0;
+        let selectedView = "all";
+        let transportTimer;
+
+        function escapeHtml(value) {
+          return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+        }
+
+        function fmt(value, digits = 2) {
+          return Number(value).toFixed(digits);
+        }
+
+        function displayMetric(key, component) {
+          if (key === "mse") return fmt(component.raw, 4);
+          return fmt(component.raw * 100, 1);
+        }
+
+        function findScore(key) {
+          return data.scoreboard.find((entry) => entry.key === key);
+        }
+
+        function scoreBars(entry) {
+          return metricOrder.map((metric) => {
+            const value = entry.scores[metric];
+            return `
+              <div class="component-bar">
+                <span>${metricLabels[metric]}</span>
+                <div class="bar-track" aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, value))}%"></i></div>
+                <b>${fmt(value, 1)}</b>
+              </div>`;
+          }).join("");
+        }
+
+        function renderScoreboard() {
+          return data.scoreboard.map((entry) => `
+            <article class="scorecard" data-tone="${escapeHtml(entry.color)}">
+              <div class="scorecard-top">
+                <span class="rank">#${entry.rank} / P0</span>
+                <span class="status-tag">${entry.video_status.startsWith("198") ? "media ready" : "global only"}</span>
+              </div>
+              <h3>${escapeHtml(entry.label)}</h3>
+              <div class="scoreline"><strong>${fmt(entry.scores.verified, 2)}</strong><span>Verified</span></div>
+              <div class="component-bars">${scoreBars(entry)}</div>
+              <footer>${escapeHtml(entry.case_metric_status)}</footer>
+            </article>`).join("");
+        }
+
+        function renderProtocol() {
+          const protocol = data.protocol;
+          return `
+            <section class="protocol-ruler" aria-label="P0 protocol">
+              <div class="protocol-item"><span class="protocol-kicker">Input</span><p>${escapeHtml(protocol.condition)}</p></div>
+              <div class="protocol-item"><span class="protocol-kicker">Sampling</span><p>${escapeHtml(protocol.inference)}</p></div>
+              <div class="protocol-item"><span class="protocol-kicker">Submission</span><p>${escapeHtml(protocol.submission)}</p></div>
+              <div class="protocol-item"><span class="protocol-kicker">Official score</span><p>${escapeHtml(protocol.evaluator)}</p></div>
+            </section>`;
+        }
+
+        function globalMetricPanel(score) {
+          if (!score) return "";
+          return `
+            <div class="metric-panel">
+              <div class="metric-topline"><span>Global P0 only</span><strong>${fmt(score.scores.verified, 2)}</strong></div>
+              <div class="metric-grid">
+                ${metricOrder.map((metric) => `
+                  <div class="metric-cell"><span>${metricLabels[metric]}</span><b>${fmt(score.scores[metric], 1)}</b></div>`).join("")}
+              </div>
+              <p class="metric-footnote">本机无对应官方 CSV；此处为登记的全局子指标。</p>
+            </div>`;
+        }
+
+        function perViewMetricPanel(metrics) {
+          return `
+            <div class="metric-panel">
+              <div class="metric-topline"><span>Official CSV · case × view</span><strong>${fmt(metrics.view_verified, 1)}</strong></div>
+              <div class="metric-grid">
+                ${metricOrder.map((metric) => `
+                  <div class="metric-cell"><span>${metricLabels[metric]}${metric === "mse" ? " ↓" : " ↑"}</span><b>${displayMetric(metric, metrics.components[metric])}</b></div>`).join("")}
+              </div>
+              <p class="metric-footnote">SP/ST/WS 为 v1 原始 IoU ×100；MSE 为原始值。标题分数按官方 per-view 公式推导。</p>
+            </div>`;
+        }
+
+        function referencePanel(method) {
+          const text = method.key === "context"
+            ? "模型看到的 72 帧条件片段；它不是待评分的 5 秒预测。"
+            : "官方 testing 视频；用作待预测未来段的真实参考。";
+          return `<div class="reference-panel"><strong>Reference lane</strong><p>${text}</p></div>`;
+        }
+
+        function renderMediaCard(method, view) {
+          const video = view.videos[method.key];
+          const metrics = view.metrics[method.key];
+          const score = findScore(method.key);
+          const isReference = method.kind === "reference";
+          const sourceStatus = isReference ? "reference" : "P0 submission";
+          if (!video) {
+            const unavailableText = method.key === "xssc_dinov3"
+              ? "视频和逐 case CSV 尚未挂载到本机"
+              : "该视频文件在本机不可用";
+            return `
+              <article class="media-card unavailable-card" data-tone="${escapeHtml(method.color)}">
+                <header class="card-header"><span class="card-kicker">${sourceStatus}</span><h5>${escapeHtml(method.label)}</h5></header>
+                <div class="unavailable-stage"><div><strong>Media not mounted</strong><span>${escapeHtml(unavailableText)}</span></div></div>
+                ${globalMetricPanel(score)}
+              </article>`;
+          }
+          return `
+            <article class="media-card" data-tone="${escapeHtml(method.color)}">
+              <header class="card-header"><span class="card-kicker">${sourceStatus}</span><h5>${escapeHtml(method.label)}</h5></header>
+              <div class="video-wrap">
+                <video class="sync-video" data-timeline="${isReference ? "reference" : "prediction"}" controls muted playsinline preload="metadata" src="${escapeHtml(video)}"></video>
+                <span class="video-status">${isReference ? method.key === "context" ? "72f · 3s context" : "official test" : "120f · 5s output"}</span>
+              </div>
+              ${isReference ? referencePanel(method) : metrics ? perViewMetricPanel(metrics) : globalMetricPanel(score)}
+            </article>`;
+        }
+
+        function renderRawTrace(view) {
+          const rawCards = data.raw_methods
+            .filter((method) => view.videos[method.key])
+            .map((method) => `
+              <article class="raw-card" style="--tone:var(--${escapeHtml(method.color)})">
+                <header><h5>${escapeHtml(method.label)}</h5><span>${escapeHtml(method.detail)}</span></header>
+                <div class="video-wrap"><video controls muted playsinline preload="metadata" src="${escapeHtml(view.videos[method.key])}"></video></div>
+              </article>`)
+            .join("");
+          if (!rawCards) return "";
+          return `<details class="raw-trace"><summary>Raw output trace · 189 frames (condition + prediction)</summary><div class="raw-grid">${rawCards}</div></details>`;
+        }
+
+        function renderView(view) {
+          return `
+            <section class="view-block" aria-label="${escapeHtml(view.view)} perspective">
+              <div class="view-heading">
+                <div><span class="view-eyebrow">Perspective ${escapeHtml(view.view)}</span><h4>${escapeHtml(view.view)} camera</h4></div>
+                <span class="benchmark-name">${escapeHtml(view.benchmark_scenario)}</span>
+              </div>
+              <div class="media-grid">${data.methods.map((method) => renderMediaCard(method, view)).join("")}</div>
+              ${renderRawTrace(view)}
+            </section>`;
+        }
+
+        function renderViewer() {
+          const active = data.cases[selectedCase];
+          const views = selectedView === "all" ? active.views : active.views.filter((view) => view.view === selectedView);
+          const ids = active.views.map((view) => view.id).join(" / ");
+          const visibleOptions = data.cases.map((item, index) => `<option value="${index}" ${index === selectedCase ? "selected" : ""}>${String(item.first_id).padStart(4, "0")} · ${escapeHtml(item.title)}</option>`).join("");
+          return `
+            <section id="viewer" aria-label="Case evidence viewer">
+              <div class="section-heading">
+                <div><h2>逐 case 证据台</h2></div>
+                <p>卡片内视频均为 P0 submission；xSSC step-2000 和 Full-SA VJEPA 另显示本机官方 CSV 的逐视角指标。未挂载资产以缺口卡片保留，不以其他 run 替代。</p>
+              </div>
+              <div class="viewer-shell">
+                <div class="viewer-toolbar">
+                  <div class="field"><label for="case-select">Case / Event</label><div class="case-control"><select id="case-select" aria-label="选择 case">${visibleOptions}</select><button class="icon-button" id="prev-case" type="button" aria-label="上一个 case">←</button><button class="icon-button" id="next-case" type="button" aria-label="下一个 case">→</button></div></div>
+                  <div class="field"><label for="view-select">Perspective</label><select id="view-select"><option value="all" ${selectedView === "all" ? "selected" : ""}>all three cameras</option><option value="left" ${selectedView === "left" ? "selected" : ""}>left</option><option value="center" ${selectedView === "center" ? "selected" : ""}>center</option><option value="right" ${selectedView === "right" ? "selected" : ""}>right</option></select></div>
+                  <div class="toolbar-actions"><button class="control-button primary" id="play-all" type="button">Play visible</button><button class="control-button" id="pause-all" type="button">Pause</button><button class="control-button" id="restart-all" type="button">Restart</button></div>
+                </div>
+                <div class="search-row"><div class="field"><label for="case-search">Filter events</label><input id="case-search" type="search" placeholder="例如：ball, domino, mug…" autocomplete="off" /></div><div class="field"><label>Evidence coverage</label><div class="reference-panel"><strong>${data.availability.cases} cases · ${data.availability.views} views</strong><p>Media: xSSC / PhysRVG-72f / Full-SA VJEPA · per-view CSV: xSSC / Full-SA VJEPA</p></div></div></div>
+                <div class="transport"><span class="transport-status">SYNC TRANSPORT</span><input id="transport-range" type="range" min="0" max="1000" value="0" aria-label="同步播放进度" /><span class="transport-status" id="transport-readout">0.0s / —</span></div>
+                <div class="case-intro"><div class="case-line"><span class="case-id">IDs ${escapeHtml(ids)}</span><h3>${escapeHtml(active.title)}</h3></div><p>${escapeHtml(active.views[0].prompt)}</p><details><summary>Prompt / protocol note</summary><p>所有四组主分数均属于 P0：BPP prompt、72f/24 FPS V2V 条件、512×896、40 steps、guidance 5、seed 42、189f 原始输出，以及去掉 69 帧 clean prefix 后的 120f/5s official submission。</p></details></div>
+                ${views.map(renderView).join("")}
+              </div>
+            </section>`;
+        }
+
+        function renderLegend() {
+          return `
+            <aside class="legend" aria-label="Metrics explanation">
+              <div><h3>如何读这张页</h3><p>P0 总览的 <strong>Verified</strong> 是官方 aggregate 的主分数（×100）。视频卡片中的 SP、ST、WS 是对应 case × perspective 的官方 v1 原始 IoU（×100）；MSE 是原始误差，越低越好。卡片标题右侧的 case × view 分数严格复刻官方 stable evaluator 的逐视角组件归一化、截断及算术均值流程，但不是官方对单一 case 单独发布的排行榜分数。</p></div>
+              <dl>
+                <dt>SP</dt><dd>spatial IoU · higher is better</dd>
+                <dt>ST</dt><dd>mean per-frame spatiotemporal IoU · higher is better</dd>
+                <dt>WS</dt><dd>weighted spatial IoU · higher is better</dd>
+                <dt>MSE</dt><dd>mean per-frame error · lower is better</dd>
+                <dt>Gap card</dt><dd>产物不在本机，页面不会伪造媒体或逐 case 指标。</dd>
+              </dl>
+            </aside>`;
+        }
+
+        function render() {
+          if (transportTimer) window.clearInterval(transportTimer);
+          const leader = data.scoreboard[0];
+          app.innerHTML = `
+            <section class="hero">
+              <div class="hero-copy"><span class="eyebrow">${escapeHtml(data.protocol.comparison_scope)}</span><h1>Strictly comparable physics video evidence.</h1><p>同一套 Physics-IQ Verified P0 输入、采样与官方评分，使用可复查的总览、视频和逐视角指标，区分真正可逐 case 对照的结果与仅有远端产物记录的结果。</p></div>
+              <aside class="hero-score"><div><span class="metric-source">Current P0 leader · official aggregate</span><div class="score-value">${fmt(leader.scores.verified, 2)}</div><div class="score-label">Physics-IQ Verified ×100</div></div><div class="hero-winner"><span class="winner-dot"></span><span><strong>${escapeHtml(leader.label)}</strong><br />Original ${fmt(leader.scores.original, 2)} · ${escapeHtml(leader.video_status)}</span></div></aside>
+            </section>
+            ${renderProtocol()}
+            <section aria-label="P0 official score overview"><div class="section-heading"><div><h2>P0 score board</h2></div><p>按 Verified 主分数排序。四组均为 198/198、同一 BPP V2V P0 协议；底部文字明确指出各 run 的本机媒体与 CSV 可用性。</p></div><div class="scoreboard">${renderScoreboard()}</div></section>
+            ${renderViewer()}
+            ${renderLegend()}`;
+          bindControls();
+        }
+
+        function currentVideos() {
+          return Array.from(app.querySelectorAll("video.sync-video"));
+        }
+
+        function timelineVideo(videos = currentVideos()) {
+          return videos.find((video) => video.dataset.timeline === "prediction" && Number.isFinite(video.duration) && video.duration > 0)
+            || videos.find((video) => Number.isFinite(video.duration) && video.duration > 0);
+        }
+
+        function updateTransport() {
+          const range = document.getElementById("transport-range");
+          const readout = document.getElementById("transport-readout");
+          const leader = timelineVideo();
+          if (!range || !readout || !leader) return;
+          const ratio = leader.duration ? leader.currentTime / leader.duration : 0;
+          range.value = String(Math.max(0, Math.min(1000, Math.round(ratio * 1000))));
+          readout.textContent = `${leader.currentTime.toFixed(1)}s / ${leader.duration.toFixed(1)}s`;
+        }
+
+        function seekAll(ratio) {
+          const videos = currentVideos();
+          const driver = timelineVideo(videos);
+          const target = driver && Number.isFinite(driver.duration) ? driver.duration * ratio : 0;
+          videos.forEach((video) => {
+            if (Number.isFinite(video.duration) && video.duration > 0) {
+              video.currentTime = Math.min(target, Math.max(0, video.duration - 0.02));
+            }
+          });
+          updateTransport();
+        }
+
+        function playAll() {
+          const videos = currentVideos();
+          const driver = timelineVideo(videos);
+          const target = driver ? driver.currentTime : 0;
+          videos.forEach((video) => {
+            if (Number.isFinite(video.duration) && video.duration > 0 && Math.abs(video.currentTime - target) > 0.18) {
+              video.currentTime = Math.min(target, Math.max(0, video.duration - 0.02));
+            }
+          });
+          Promise.all(videos.map((video) => video.play().catch(() => undefined))).then(updateTransport);
+        }
+
+        function pauseAll() {
+          currentVideos().forEach((video) => video.pause());
+          updateTransport();
+        }
+
+        function populateCases(query) {
+          const select = document.getElementById("case-select");
+          const normalized = query.trim().toLowerCase();
+          const allowed = data.cases
+            .map((item, index) => ({ item, index }))
+            .filter(({ item }) => !normalized || `${item.title} ${item.event} ${item.first_id}`.toLowerCase().includes(normalized));
+          if (allowed.length && !allowed.some(({ index }) => index === selectedCase)) selectedCase = allowed[0].index;
+          select.innerHTML = allowed.map(({ item, index }) => `<option value="${index}" ${index === selectedCase ? "selected" : ""}>${String(item.first_id).padStart(4, "0")} · ${escapeHtml(item.title)}</option>`).join("");
+        }
+
+        function bindControls() {
+          const select = document.getElementById("case-select");
+          document.getElementById("prev-case").addEventListener("click", () => {
+            selectedCase = (selectedCase - 1 + data.cases.length) % data.cases.length;
+            render();
+          });
+          document.getElementById("next-case").addEventListener("click", () => {
+            selectedCase = (selectedCase + 1) % data.cases.length;
+            render();
+          });
+          select.addEventListener("change", (event) => { selectedCase = Number(event.target.value); render(); });
+          document.getElementById("view-select").addEventListener("change", (event) => { selectedView = event.target.value; render(); });
+          document.getElementById("case-search").addEventListener("input", (event) => populateCases(event.target.value));
+          document.getElementById("play-all").addEventListener("click", playAll);
+          document.getElementById("pause-all").addEventListener("click", pauseAll);
+          document.getElementById("restart-all").addEventListener("click", () => { seekAll(0); playAll(); });
+          document.getElementById("transport-range").addEventListener("input", (event) => seekAll(Number(event.target.value) / 1000));
+          const videos = currentVideos();
+          videos.forEach((video) => {
+            video.addEventListener("loadedmetadata", updateTransport);
+            video.addEventListener("timeupdate", updateTransport);
+            video.addEventListener("ended", updateTransport);
+          });
+          transportTimer = window.setInterval(updateTransport, 500);
+        }
+
+        fetch("manifest.json", { cache: "no-store" })
+          .then((response) => {
+            if (!response.ok) throw new Error(`manifest.json: HTTP ${response.status}`);
+            return response.json();
+          })
+          .then((payload) => {
+            data = payload;
+            render();
+            footer.innerHTML = `Generated ${escapeHtml(new Date(data.generated_at).toUTCString())} · ${escapeHtml(data.availability.note)} · Source registry: <code>Physics-IQ-Verified-RESULTS.md</code>`;
+          })
+          .catch((error) => {
+            app.innerHTML = `<section class="failure"><strong>Dashboard data could not load.</strong><span>${escapeHtml(error.message)}. 请通过 HTTP 服务访问该目录，而不是直接以 file:// 打开。</span></section>`;
+          });
+      })();
+    </script>
+  </body>
+</html>

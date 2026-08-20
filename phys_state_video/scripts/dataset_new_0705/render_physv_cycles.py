@@ -274,11 +274,18 @@ def material_library() -> dict[str, bpy.types.Material]:
     return {
         "floor": pbr_material("PBR_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, roughness=0.48, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
         "floor_cool": pbr_material("PBR_Cool_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(0.62, 0.78, 0.92), tint_strength=0.76, roughness=0.52, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
+        "floor_dark_wood": pbr_material("PBR_Dark_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(0.12, 0.16, 0.22), tint_strength=0.78, roughness=0.58, uv_scale=3.0, normal_strength=0.60, detail_bump_strength=0.018, detail_bump_scale=14.0),
+        "floor_concrete": pbr_material("PBR_Light_Concrete_Floor", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.16, 0.19, 0.23), roughness=0.86, uv_scale=2.4, normal_strength=0.54, detail_bump_strength=0.018, detail_bump_scale=18.0),
+        "floor_terracotta": pbr_material("PBR_Terracotta_Floor", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.24, 0.065, 0.035), roughness=0.84, uv_scale=2.8, normal_strength=0.56, detail_bump_strength=0.020, detail_bump_scale=18.0),
         "floor_slate": pbr_material("PBR_Slate_Floor", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.055, 0.075, 0.11), roughness=0.88, uv_scale=2.2, normal_strength=0.54, detail_bump_strength=0.016, detail_bump_scale=18.0),
         "wood": pbr_material("PBR_Wood", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, roughness=0.50, uv_scale=2.0, normal_strength=0.62, detail_bump_strength=0.015, detail_bump_scale=12.0),
         "red_wood": pbr_material("PBR_Red_Wood", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(1.15, 0.30, 0.23), tint_strength=0.72, roughness=0.52, uv_scale=2.4, normal_strength=0.62, detail_bump_strength=0.016, detail_bump_scale=12.0),
         "wall": pbr_material("PBR_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, roughness=0.82, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
         "wall_cool": pbr_material("PBR_Cool_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, tint=(0.66, 0.82, 1.02), tint_strength=0.68, roughness=0.84, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
+        "wall_green": pbr_material("PBR_Sage_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, tint=(0.42, 0.64, 0.48), tint_strength=0.72, roughness=0.85, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
+        "wall_gray": pbr_material("PBR_Gray_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, tint=(0.58, 0.64, 0.72), tint_strength=0.76, roughness=0.86, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
+        "wall_rose": pbr_material("PBR_Dusty_Rose_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, tint=(0.72, 0.40, 0.34), tint_strength=0.68, roughness=0.86, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
+        "wall_charcoal": pbr_material("PBR_Charcoal_Wall", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.085, 0.105, 0.14), roughness=0.90, uv_scale=2.4, normal_strength=0.56, detail_bump_strength=0.014, detail_bump_scale=20.0),
         "concrete": pbr_material("PBR_Concrete", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.12, 0.14, 0.17), roughness=0.78, uv_scale=2.0, normal_strength=0.52, detail_bump_strength=0.020, detail_bump_scale=18.0),
         "picture_surface": pbr_material("PBR_Picture_Surface", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_names, tint=(0.22, 0.42, 0.48), tint_strength=0.72, roughness=0.84, uv_scale=1.8, normal_strength=0.44, detail_bump_strength=0.010, detail_bump_scale=18.0),
         "red_rubber": pbr_material("PBR_Red_Rubber", texture_dir=TEXTURE_ROOT / "brown_leather", texture_names=leather_surface_names, tint=(0.35, 0.008, 0.003), roughness=0.78, uv_scale=2.8, normal_strength=0.65, detail_bump_strength=0.010, detail_bump_scale=22.0),
@@ -289,7 +296,13 @@ def material_library() -> dict[str, bpy.types.Material]:
         "teal_metal": pbr_material("PBR_Teal_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.004, 0.11, 0.13), roughness=0.42, metallic=0.28, uv_scale=2.2, normal_strength=0.50, detail_bump_strength=0.020, detail_bump_scale=16.0),
         "yellow_metal": pbr_material("PBR_Yellow_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.50, 0.20, 0.004), roughness=0.42, metallic=0.22, uv_scale=2.1, normal_strength=0.50, detail_bump_strength=0.020, detail_bump_scale=16.0),
         "dark_metal": pbr_material("PBR_Dark_Metal", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.012, 0.016, 0.025), roughness=0.36, metallic=0.55, uv_scale=1.8, normal_strength=0.48, detail_bump_strength=0.024, detail_bump_scale=16.0),
+        "white_painted": pbr_material("PBR_White_Painted", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.68, 0.72, 0.76), roughness=0.52, metallic=0.04, uv_scale=2.0, normal_strength=0.45, detail_bump_strength=0.012, detail_bump_scale=16.0),
+        "green_painted": pbr_material("PBR_Green_Painted", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.055, 0.25, 0.15), roughness=0.52, metallic=0.08, uv_scale=2.0, normal_strength=0.46, detail_bump_strength=0.014, detail_bump_scale=16.0),
+        "coral_painted": pbr_material("PBR_Coral_Painted", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.48, 0.10, 0.055), roughness=0.54, metallic=0.05, uv_scale=2.0, normal_strength=0.46, detail_bump_strength=0.014, detail_bump_scale=16.0),
+        "window_glass": procedural_material("Window_Glass", (0.055, 0.13, 0.19), metallic=0.22, roughness=0.18, noise_scale=2.0),
         "fabric": pbr_material("PBR_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.17, 0.19, 0.19), roughness=0.96, metallic=0.0, uv_scale=5.0, normal_strength=0.56, detail_bump_strength=0.012, detail_bump_scale=28.0),
+        "fabric_green": pbr_material("PBR_Green_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.12, 0.28, 0.18), roughness=0.96, metallic=0.0, uv_scale=5.0, normal_strength=0.56, detail_bump_strength=0.012, detail_bump_scale=28.0),
+        "fabric_coral": pbr_material("PBR_Coral_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.42, 0.10, 0.06), roughness=0.96, metallic=0.0, uv_scale=5.0, normal_strength=0.56, detail_bump_strength=0.012, detail_bump_scale=28.0),
         "rope_fabric": pbr_material("PBR_Rope_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.52, 0.25, 0.08), roughness=0.92, metallic=0.0, uv_scale=18.0, normal_strength=0.72, detail_bump_strength=0.022, detail_bump_scale=34.0),
     }
 
@@ -398,39 +411,236 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
     return "wood"
 
 
-def room_material_keys(family: str) -> tuple[str, str]:
-    palettes = {
-        "F11": ("floor", "wall"),
-        "F12": ("floor_cool", "wall_cool"),
-        "V2V_BOWL": ("floor_slate", "wall"),
-        "V2V_DOMINO": ("floor_cool", "wall_cool"),
-        "V2V_GAP": ("floor_slate", "wall"),
-        "V2V_OBSTACLE": ("floor_cool", "wall"),
-        "V2V_OBSTACLE_SIZE": ("floor_cool", "wall"),
-        "V2V_PENDULUM": ("floor", "wall_cool"),
-        "V2V_SEESAW": ("floor", "wall_cool"),
-    }
-    return palettes.get(family, ("floor", "wall"))
+ROOM_SCENES = {
+    "F11": {
+        "name": "sage_living_room",
+        "layout": "living",
+        "floor": "floor_concrete",
+        "wall": "wall_green",
+        "trim": "wood",
+    },
+    "F12": {
+        "name": "cool_workshop",
+        "layout": "workshop",
+        "floor": "floor_dark_wood",
+        "wall": "wall_gray",
+        "trim": "dark_metal",
+    },
+    "V2V_BOWL": {
+        "name": "warm_art_gallery",
+        "layout": "gallery",
+        "floor": "floor",
+        "wall": "wall_rose",
+        "trim": "white_painted",
+    },
+    "V2V_DOMINO": {
+        "name": "blue_library",
+        "layout": "library",
+        "floor": "floor_concrete",
+        "wall": "wall_cool",
+        "trim": "wood",
+    },
+    "V2V_GAP": {
+        "name": "industrial_loft",
+        "layout": "loft",
+        "floor": "floor_dark_wood",
+        "wall": "wall_charcoal",
+        "trim": "concrete",
+    },
+    "V2V_OBSTACLE": {
+        "name": "daylight_home_office",
+        "layout": "office",
+        "floor": "floor_cool",
+        "wall": "wall_green",
+        "trim": "dark_metal",
+    },
+    "V2V_OBSTACLE_SIZE": {
+        "name": "terracotta_gallery",
+        "layout": "modern_gallery",
+        "floor": "floor_concrete",
+        "wall": "wall_rose",
+        "trim": "white_painted",
+    },
+    "V2V_PENDULUM": {
+        "name": "quiet_motion_lab",
+        "layout": "lab",
+        "floor": "floor_dark_wood",
+        "wall": "wall_gray",
+        "trim": "dark_metal",
+    },
+    "V2V_SEESAW": {
+        "name": "coral_activity_room",
+        "layout": "activity",
+        "floor": "floor_terracotta",
+        "wall": "wall_cool",
+        "trim": "wood",
+    },
+}
 
 
-def add_room(materials: dict[str, bpy.types.Material], family: str) -> None:
-    floor_key, wall_key = room_material_keys(family)
+def add_prop_cylinder(name: str, location, radius: float, depth: float, material) -> bpy.types.Object:
+    bpy.ops.mesh.primitive_cylinder_add(vertices=48, radius=radius, depth=depth, location=location)
+    obj = bpy.context.object
+    obj.name = name
+    obj.data.materials.append(material)
+    bevel = obj.modifiers.new("Prop bevel", "BEVEL")
+    bevel.width = min(radius * 0.10, 0.018)
+    bevel.segments = 3
+    return obj
+
+
+def add_prop_sphere(name: str, location, radius: float, material, scale=(1.0, 1.0, 1.0)) -> bpy.types.Object:
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=radius, location=location)
+    obj = bpy.context.object
+    obj.name = name
+    obj.scale = scale
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    obj.data.materials.append(material)
+    bpy.ops.object.shade_smooth()
+    return obj
+
+
+def add_wall_art(materials, name: str, x: float, z: float, width: float, height: float, art_key: str) -> None:
+    add_cube(f"{name} frame", (x, 3.445, z), (width * 0.5, 0.030, height * 0.5), materials["dark_metal"], bevel=0.018)
+    add_cube(f"{name} inset", (x, 3.405, z), (width * 0.43, 0.012, height * 0.40), materials[art_key], bevel=0.008)
+
+
+def add_window(materials, name: str, x: float, z: float, width: float, height: float) -> None:
+    add_cube(f"{name} glass", (x, 3.455, z), (width * 0.5, 0.018, height * 0.5), materials["window_glass"], bevel=0.012)
+    frame = materials["white_painted"]
+    border = 0.055
+    add_cube(f"{name} top", (x, 3.415, z + height * 0.5), (width * 0.54, 0.028, border), frame, bevel=0.008)
+    add_cube(f"{name} bottom", (x, 3.415, z - height * 0.5), (width * 0.54, 0.028, border), frame, bevel=0.008)
+    for offset in (-width * 0.5, 0.0, width * 0.5):
+        add_cube(f"{name} mullion {offset}", (x + offset, 3.410, z), (border, 0.030, height * 0.54), frame, bevel=0.006)
+
+
+def add_cabinet(materials, name: str, x: float, width: float, body_key: str, door_key: str) -> None:
+    add_cube(name, (x, 3.05, 0.52), (width * 0.5, 0.34, 0.52), materials[body_key], bevel=0.035)
+    add_cube(f"{name} top", (x, 3.02, 1.07), (width * 0.54, 0.38, 0.035), materials["dark_metal"], bevel=0.012)
+    door_count = max(2, int(round(width / 0.55)))
+    spacing = width / door_count
+    for index in range(door_count):
+        door_x = x - width * 0.5 + spacing * (index + 0.5)
+        add_cube(f"{name} door {index}", (door_x, 2.69, 0.52), (spacing * 0.42, 0.018, 0.42), materials[door_key], bevel=0.010)
+
+
+def add_shelf(materials, name: str, x: float, width: float, height: float, shelf_key: str) -> None:
+    y = 3.17
+    add_cube(f"{name} left", (x - width * 0.5, y, height * 0.5), (0.045, 0.27, height * 0.5), materials[shelf_key], bevel=0.008)
+    add_cube(f"{name} right", (x + width * 0.5, y, height * 0.5), (0.045, 0.27, height * 0.5), materials[shelf_key], bevel=0.008)
+    shelf_zs = (0.08, height * 0.34, height * 0.66, height)
+    for index, shelf_z in enumerate(shelf_zs):
+        add_cube(f"{name} shelf {index}", (x, y, shelf_z), (width * 0.5, 0.29, 0.035), materials[shelf_key], bevel=0.008)
+    book_materials = ("coral_painted", "green_painted", "white_painted", "wood")
+    for index in range(8):
+        shelf_level = 0 if index < 4 else 1
+        book_x = x - width * 0.34 + (index % 4) * width * 0.21
+        book_z = shelf_zs[shelf_level + 1] + 0.16
+        add_cube(f"{name} book {index}", (book_x, y - 0.30, book_z), (0.045, 0.055, 0.13), materials[book_materials[index % len(book_materials)]], bevel=0.004)
+
+
+def add_bench(materials, name: str, x: float, width: float, fabric_key: str) -> None:
+    add_cube(f"{name} seat", (x, 2.92, 0.38), (width * 0.5, 0.38, 0.10), materials[fabric_key], bevel=0.045)
+    add_cube(f"{name} back", (x, 3.23, 0.75), (width * 0.5, 0.10, 0.30), materials[fabric_key], bevel=0.045)
+    for leg_x in (x - width * 0.38, x + width * 0.38):
+        add_cube(f"{name} leg {leg_x}", (leg_x, 2.92, 0.18), (0.045, 0.28, 0.18), materials["dark_metal"], bevel=0.008)
+
+
+def add_desk(materials, name: str, x: float, width: float) -> None:
+    add_cube(f"{name} top", (x, 3.00, 0.78), (width * 0.5, 0.38, 0.055), materials["wood"], bevel=0.018)
+    for leg_x in (x - width * 0.42, x + width * 0.42):
+        add_cube(f"{name} leg {leg_x}", (leg_x, 3.0, 0.38), (0.045, 0.30, 0.38), materials["dark_metal"], bevel=0.008)
+    add_cube(f"{name} monitor", (x, 3.19, 1.20), (0.36, 0.055, 0.24), materials["window_glass"], bevel=0.018)
+    add_cube(f"{name} monitor stand", (x, 3.18, 0.94), (0.045, 0.06, 0.14), materials["dark_metal"], bevel=0.006)
+
+
+def add_plant(materials, name: str, x: float) -> None:
+    add_prop_cylinder(f"{name} pot", (x, 3.00, 0.26), 0.22, 0.52, materials["coral_painted"])
+    add_prop_cylinder(f"{name} stem", (x, 3.00, 0.75), 0.035, 0.68, materials["green_painted"])
+    for index, offset in enumerate(((-0.17, 0.00, 0.91), (0.12, -0.03, 1.03), (0.02, 0.03, 1.22))):
+        add_prop_sphere(
+            f"{name} leaf {index}",
+            (x + offset[0], 3.00 + offset[1], offset[2]),
+            0.24,
+            materials["green_painted"],
+            scale=(1.10, 0.58, 1.35),
+        )
+
+
+def add_rug(materials, name: str, x: float, y: float, hx: float, hy: float, material_key: str) -> None:
+    add_cube(name, (x, y, 0.012), (hx, hy, 0.012), materials[material_key], bevel=0.015)
+
+
+def add_room_layout(materials: dict[str, bpy.types.Material], layout: str) -> None:
+    # All props stay behind the simulated motion corridor near y=0.
+    if layout == "living":
+        add_cabinet(materials, "Living credenza", -2.45, 1.65, "wood", "white_painted")
+        add_window(materials, "Living window", 2.30, 1.90, 1.55, 1.35)
+        add_plant(materials, "Living plant", 0.95)
+        add_rug(materials, "Living rug", 2.45, 1.78, 1.05, 0.72, "fabric_coral")
+    elif layout == "workshop":
+        add_desk(materials, "Workshop bench", 2.85, 1.70)
+        add_wall_art(materials, "Workshop board", 2.85, 1.90, 1.55, 0.82, "green_painted")
+        add_shelf(materials, "Workshop rack", -1.55, 1.25, 1.70, "dark_metal")
+        add_cube("Workshop wall rail", (0.45, 3.40, 1.75), (0.75, 0.035, 0.055), materials["coral_painted"], bevel=0.010)
+    elif layout == "gallery":
+        add_wall_art(materials, "Gallery left", -2.10, 1.95, 0.95, 1.18, "green_painted")
+        add_wall_art(materials, "Gallery center", 0.0, 2.05, 1.15, 0.82, "picture_surface")
+        add_wall_art(materials, "Gallery right", 2.15, 1.88, 0.82, 1.30, "coral_painted")
+        add_cube("Gallery left plinth", (-2.85, 3.03, 0.44), (0.33, 0.30, 0.44), materials["white_painted"], bevel=0.018)
+        add_cube("Gallery right plinth", (2.85, 3.03, 0.30), (0.42, 0.34, 0.30), materials["concrete"], bevel=0.018)
+    elif layout == "library":
+        add_shelf(materials, "Library shelves", -2.55, 1.70, 2.05, "wood")
+        add_bench(materials, "Reading bench", 2.35, 1.55, "fabric_green")
+        add_wall_art(materials, "Library print", 0.60, 2.02, 0.95, 0.72, "coral_painted")
+        add_rug(materials, "Library rug", 2.25, 1.78, 1.10, 0.68, "fabric_green")
+    elif layout == "loft":
+        for x in (-2.75, 2.75):
+            add_cube(f"Loft pillar {x}", (x, 3.33, 1.55), (0.22, 0.20, 1.55), materials["concrete"], bevel=0.012)
+        for index, z in enumerate((0.72, 1.32, 2.15)):
+            add_cube(f"Loft pipe {index}", (1.55, 3.39, z), (1.10, 0.055, 0.055), materials["white_painted"], bevel=0.030)
+        add_cube("Loft crate lower", (-2.05, 3.02, 0.34), (0.48, 0.38, 0.34), materials["wood"], bevel=0.025)
+        add_cube("Loft crate upper", (-2.18, 3.00, 0.91), (0.34, 0.31, 0.23), materials["wood"], bevel=0.025)
+    elif layout == "office":
+        add_desk(materials, "Office desk", -2.35, 1.70)
+        add_window(materials, "Office window", 2.30, 1.90, 1.60, 1.25)
+        add_plant(materials, "Office plant", 0.95)
+        add_rug(materials, "Office rug", 2.35, 1.78, 1.05, 0.70, "fabric")
+    elif layout == "modern_gallery":
+        add_wall_art(materials, "Modern art left", -2.20, 1.95, 0.78, 1.28, "green_painted")
+        add_wall_art(materials, "Modern art center", 0.0, 2.02, 1.05, 0.74, "picture_surface")
+        add_wall_art(materials, "Modern art right", 2.15, 1.88, 0.92, 1.12, "white_painted")
+        add_cube("Modern tall plinth", (-2.75, 3.02, 0.62), (0.28, 0.28, 0.62), materials["dark_metal"], bevel=0.014)
+        add_cube("Modern low plinth", (2.75, 3.02, 0.27), (0.48, 0.34, 0.27), materials["green_painted"], bevel=0.014)
+    elif layout == "lab":
+        add_cabinet(materials, "Lab cabinet", 2.45, 1.65, "white_painted", "dark_metal")
+        add_desk(materials, "Lab console", 0.85, 1.20)
+        add_wall_art(materials, "Lab status board", 2.45, 1.92, 1.40, 0.78, "green_painted")
+        for index, x in enumerate((-2.70, -2.25)):
+            add_cube(f"Lab acoustic panel {index}", (x, 3.42, 1.70), (0.16, 0.035, 0.72), materials["fabric_coral"], bevel=0.016)
+    elif layout == "activity":
+        add_shelf(materials, "Activity cubbies", -2.55, 1.65, 1.55, "wood")
+        add_bench(materials, "Activity bench", 2.40, 1.55, "fabric_green")
+        add_wall_art(materials, "Activity wall panel left", -0.75, 2.10, 0.82, 0.60, "coral_painted")
+        add_wall_art(materials, "Activity wall panel right", 0.75, 2.10, 0.82, 0.60, "green_painted")
+        add_rug(materials, "Activity rug", 2.35, 1.70, 1.10, 0.72, "fabric_coral")
+    else:
+        raise ValueError(f"unknown room layout {layout!r}")
+
+
+def add_room(materials: dict[str, bpy.types.Material], family: str) -> dict[str, str]:
+    config = ROOM_SCENES.get(family, ROOM_SCENES["F11"])
+    floor_key = config["floor"]
+    wall_key = config["wall"]
+    trim_key = config["trim"]
     add_cube("Room floor", (0.0, 1.0, -0.055), (8.0, 7.0, 0.055), materials[floor_key], bevel=0.0)
     add_cube("Back wall", (0.0, 3.55, 3.0), (8.0, 0.06, 3.0), materials[wall_key], bevel=0.0)
     add_cube("Left wall", (-7.95, 0.8, 3.0), (0.06, 2.8, 3.0), materials[wall_key], bevel=0.0)
     add_cube("Right wall", (7.95, 0.8, 3.0), (0.06, 2.8, 3.0), materials[wall_key], bevel=0.0)
-    add_cube("Back skirting", (0.0, 3.45, 0.085), (7.95, 0.05, 0.085), materials["wood"], bevel=0.012)
-
-    # Background furniture is deliberately outside the motion corridor.
-    add_cube("Sideboard", (-2.35, 3.12, 0.48), (1.05, 0.32, 0.48), materials["wood"], bevel=0.035)
-    add_cube("Sideboard top", (-2.35, 3.10, 0.985), (1.12, 0.37, 0.035), materials["dark_metal"], bevel=0.012)
-    for x in (-2.95, -2.35, -1.75):
-        add_cube(f"Sideboard panel {x}", (x, 2.77, 0.49), (0.27, 0.018, 0.39), materials["dark_metal"], bevel=0.01)
-    add_cube("Rug", (2.40, 1.95, 0.012), (1.15, 0.82, 0.012), materials["fabric"], bevel=0.015)
-
-    if family not in {"F11", "F12"}:
-        add_cube("Picture frame", (1.65, 3.47, 1.95), (0.72, 0.025, 0.48), materials["dark_metal"], bevel=0.015)
-        add_cube("Picture inset", (1.65, 3.43, 1.95), (0.63, 0.012, 0.39), materials["picture_surface"], bevel=0.006)
+    add_cube("Back skirting", (0.0, 3.45, 0.085), (7.95, 0.05, 0.085), materials[trim_key], bevel=0.012)
+    add_room_layout(materials, config["layout"])
+    return dict(config)
 
 
 def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
@@ -440,10 +650,10 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
         "V2V_BOWL": HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr",
         "V2V_DOMINO": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
         "V2V_GAP": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
-        "V2V_OBSTACLE": HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr",
+        "V2V_OBSTACLE": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
         "V2V_OBSTACLE_SIZE": HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr",
-        "V2V_PENDULUM": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
-        "V2V_SEESAW": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
+        "V2V_PENDULUM": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
+        "V2V_SEESAW": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
     }
     rotation_by_family = {
         "F11": 22.0,
@@ -465,7 +675,18 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
     nodes.clear()
     output = nodes.new("ShaderNodeOutputWorld")
     background = nodes.new("ShaderNodeBackground")
-    background.inputs["Strength"].default_value = 0.30
+    strength_by_family = {
+        "F11": 0.26,
+        "F12": 0.24,
+        "V2V_BOWL": 0.30,
+        "V2V_DOMINO": 0.28,
+        "V2V_GAP": 0.21,
+        "V2V_OBSTACLE": 0.27,
+        "V2V_OBSTACLE_SIZE": 0.31,
+        "V2V_PENDULUM": 0.24,
+        "V2V_SEESAW": 0.28,
+    }
+    background.inputs["Strength"].default_value = strength_by_family.get(family, 0.28)
     environment = nodes.new("ShaderNodeTexEnvironment")
     environment.image = bpy.data.images.load(str(path), check_existing=True)
     mapping = nodes.new("ShaderNodeMapping")
@@ -493,10 +714,24 @@ def add_area_light(name: str, location, target, energy: float, size: float, colo
     point_at(obj, target)
 
 
-def add_lighting() -> None:
-    add_area_light("Key softbox", (-2.2, -2.4, 3.6), (0.0, 0.4, 0.5), 680.0, 3.0, (1.0, 0.88, 0.76))
-    add_area_light("Fill softbox", (3.2, -1.1, 2.7), (0.2, 0.5, 0.45), 400.0, 2.6, (0.78, 0.88, 1.0))
-    add_area_light("Top bounce", (0.0, 1.8, 4.4), (0.0, 0.6, 0.0), 300.0, 3.4, (1.0, 0.97, 0.90))
+def add_lighting(family: str) -> str:
+    presets = {
+        "F11": ("warm_window", (-2.6, -2.2, 3.5), 650.0, (1.0, 0.84, 0.70), (3.0, -1.0, 2.8), 350.0, (0.76, 0.88, 1.0), 250.0),
+        "F12": ("cool_workshop", (3.0, -2.4, 3.7), 610.0, (0.86, 0.93, 1.0), (-2.8, -1.2, 2.8), 390.0, (1.0, 0.82, 0.68), 290.0),
+        "V2V_BOWL": ("gallery_soft", (-1.8, -2.3, 3.8), 700.0, (1.0, 0.91, 0.82), (3.1, -1.0, 2.9), 340.0, (0.80, 0.90, 1.0), 320.0),
+        "V2V_DOMINO": ("library_warm", (-3.0, -2.0, 3.4), 620.0, (1.0, 0.80, 0.64), (2.8, -1.2, 2.7), 410.0, (0.76, 0.88, 1.0), 270.0),
+        "V2V_GAP": ("loft_directional", (3.2, -2.1, 3.7), 720.0, (0.78, 0.88, 1.0), (-2.6, -0.8, 2.5), 300.0, (1.0, 0.76, 0.60), 210.0),
+        "V2V_OBSTACLE": ("office_daylight", (2.9, -2.4, 3.5), 680.0, (0.82, 0.92, 1.0), (-2.8, -1.1, 2.8), 360.0, (1.0, 0.86, 0.72), 260.0),
+        "V2V_OBSTACLE_SIZE": ("gallery_warm", (-2.8, -2.2, 3.6), 690.0, (1.0, 0.82, 0.68), (3.0, -1.0, 2.8), 370.0, (0.78, 0.90, 1.0), 300.0),
+        "V2V_PENDULUM": ("lab_neutral", (3.0, -2.0, 3.9), 650.0, (0.86, 0.94, 1.0), (-3.0, -1.0, 3.0), 390.0, (1.0, 0.84, 0.70), 310.0),
+        "V2V_SEESAW": ("activity_warm", (-2.7, -2.3, 3.5), 680.0, (1.0, 0.86, 0.72), (3.0, -1.0, 2.8), 380.0, (0.78, 0.90, 1.0), 280.0),
+    }
+    preset = presets.get(family, presets["F11"])
+    name, key_location, key_energy, key_color, fill_location, fill_energy, fill_color, top_energy = preset
+    add_area_light("Key softbox", key_location, (0.0, 0.4, 0.5), key_energy, 3.0, key_color)
+    add_area_light("Fill softbox", fill_location, (0.2, 0.5, 0.45), fill_energy, 2.6, fill_color)
+    add_area_light("Top bounce", (0.0, 1.8, 4.4), (0.0, 0.6, 0.0), top_energy, 3.4, (1.0, 0.97, 0.90))
+    return name
 
 
 def add_camera(metadata: dict) -> bpy.types.Object:
@@ -573,9 +808,9 @@ def main() -> None:
     scene = bpy.context.scene
     enabled_devices = configure_cycles(scene, args, fps)
     materials = material_library()
-    add_room(materials, metadata["family_key"])
+    room_scene = add_room(materials, metadata["family_key"])
     hdri_path = set_world_hdri(scene, metadata["family_key"])
-    add_lighting()
+    lighting_preset = add_lighting(metadata["family_key"])
     camera = add_camera(metadata)
     object_names, frame_count, material_assignments = animate_objects(metadata, trajectories, materials, args.frame_limit)
     camera_report = camera_diagnostics(scene, camera, object_names)
@@ -587,7 +822,7 @@ def main() -> None:
     bpy.ops.render.render(animation=True)
     elapsed = time.monotonic() - start
     report = {
-        "schema_version": "physv_cycles_pbr_preview_v1",
+        "schema_version": "physv_cycles_pbr_preview_v2",
         "sample_id": metadata["sample_id"],
         "source_sample_dir": str(args.sample_dir),
         "trajectory_source": "raw/trajectories.npz",
@@ -600,6 +835,8 @@ def main() -> None:
         "output_format": args.output_format,
         "enabled_devices": enabled_devices,
         "hdri": str(hdri_path),
+        "room_scene": room_scene,
+        "lighting_preset": lighting_preset,
         "object_names": object_names,
         "material_assignments": material_assignments,
         "camera": camera_report,
