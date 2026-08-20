@@ -41,9 +41,13 @@ def _specific_caption(metadata: Mapping[str, object]) -> str:
             "and falls under gravity."
         )
     if family_key == "F12_RAMP_LENGTH" or task_type == "incline_length_release":
+        scenario = metadata.get("scenario_spec", {})
+        scenario = scenario if isinstance(scenario, Mapping) else {}
+        angle = scenario.get("ramp_angle_deg")
+        angle_text = f"{float(angle):.1f} degrees" if isinstance(angle, (int, float)) else "a derived slope"
         return (
-            f"A red wooden block is released from rest on a 24 degree incline that is {value} long, "
-            "and slides along the incline."
+            f"A red wooden block is released from rest on an incline that is {value} long "
+            f"with a {angle_text} slope; the high-end support height is fixed, and the block moves along the incline."
         )
     if family_key == "F12" or task_type == "incline_release":
         return (
@@ -96,7 +100,7 @@ def _abstract_caption(metadata: Mapping[str, object]) -> str:
     if family_key == "F11" or task_type == "table_rolloff":
         return "A ball rolls across a raised table, leaves the right edge, and falls under gravity."
     if family_key == "F12_RAMP_LENGTH" or task_type == "incline_length_release":
-        return "A red wooden block is released from rest on a fixed-angle incline whose length varies, then slides along the incline."
+        return "A red wooden block is released from rest on an incline with a fixed high-end support height; its length changes the slope, and the block moves along the incline."
     if family_key == "F12" or task_type == "incline_release":
         return "A red wooden block is released from rest on an inclined surface and slides down the slope."
     if family_key == "V2V_GAP" or task_type == "gap_rolloff":

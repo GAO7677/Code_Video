@@ -87,6 +87,10 @@ DEFAULT_PLOT_STYLE = {"marker": "o", "linestyle": "-"}
 PHYRVG_DISPLAY_ORDER = (
     "physrvg_test5_lora_off",
     "physrvg_test5_lora_on",
+    "phaselock_physrvg_lora_off",
+    "phaselock_physrvg_lora_on",
+    "wmreward_bon3_physrvg_lora_off",
+    "wmreward_bon3_physrvg_lora_on",
     "physrvg_context_ctx04",
     "physrvg_context_ctx08",
     "physrvg_context_ctx12",
@@ -1560,6 +1564,26 @@ MERGED_METHODS = [
         "key": "physrvg_test5_lora_off",
         "label": "PHYRVG-PhysRVG finetuned DiT · LoRA OFF · reference",
         "color": "#315C87",
+    },
+    {
+        "key": "phaselock_physrvg_lora_off",
+        "label": "PhaseLock · PhysRVG strict DiT · LoRA OFF",
+        "color": "#C76D3B",
+    },
+    {
+        "key": "phaselock_physrvg_lora_on",
+        "label": "PhaseLock · PhysRVG strict DiT · LoRA ON",
+        "color": "#E07A5F",
+    },
+    {
+        "key": "wmreward_bon3_physrvg_lora_off",
+        "label": "WMReward rejection Best-of-3 · PhysRVG strict DiT · LoRA OFF",
+        "color": "#6A4C93",
+    },
+    {
+        "key": "wmreward_bon3_physrvg_lora_on",
+        "label": "WMReward rejection Best-of-3 · PhysRVG strict DiT · LoRA ON",
+        "color": "#8A5FBF",
     },
     {
         "key": "physrvg_context_ctx04",

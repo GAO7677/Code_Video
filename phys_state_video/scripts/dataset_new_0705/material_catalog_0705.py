@@ -62,6 +62,18 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             notes="Works for cans, cylinders and support props.",
         ),
         MaterialSpec(
+            key="painted_metal_blue",
+            category="painted_metal",
+            texture_style="painted",
+            base_color=(0.12, 0.32, 0.78),
+            accent_color=(0.78, 0.88, 0.98),
+            roughness=0.42,
+            metallic=0.28,
+            tone_jitter_range=(0.02, 0.05),
+            mix_variation_range=(0.06, 0.15),
+            notes="High-contrast blue barrier material for obstacle controls.",
+        ),
+        MaterialSpec(
             key="painted_metal_yellow",
             category="painted_metal",
             texture_style="painted",

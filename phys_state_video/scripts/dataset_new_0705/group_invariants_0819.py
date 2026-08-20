@@ -8,7 +8,7 @@ from typing import Any, Iterable
 
 _METADATA_VARIABLE_KEYS = {
     "F11": {"table_height_m"},
-    "F12": {"ramp_angle_deg"},
+    "F12": {"ramp_angle_deg", "ramp_support_height_m"},
     "F12_RAMP_LENGTH": {"ramp_length_m", "ramp_angle_deg"},
     "V2V_GAP": {"gap_width_m", "left_platform_edge_x_m"},
     "V2V_OBSTACLE": {"initial_speed_mps"},

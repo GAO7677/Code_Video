@@ -93,11 +93,11 @@ RAMP_INCLINE_CASES = (
 )
 
 RAMP_LENGTH_CONTROL_CASES = (
-    {"ramp_length_m": 0.80, "length_label": "l080", "ramp_angle_deg": 24.0},
-    {"ramp_length_m": 1.10, "length_label": "l110", "ramp_angle_deg": 24.0},
-    {"ramp_length_m": 1.40, "length_label": "l140", "ramp_angle_deg": 24.0},
-    {"ramp_length_m": 1.70, "length_label": "l170", "ramp_angle_deg": 24.0},
-    {"ramp_length_m": 2.00, "length_label": "l200", "ramp_angle_deg": 24.0},
+    {"ramp_length_m": 0.80, "length_label": "l080", "ramp_support_height_m": 0.44},
+    {"ramp_length_m": 1.10, "length_label": "l110", "ramp_support_height_m": 0.44},
+    {"ramp_length_m": 1.40, "length_label": "l140", "ramp_support_height_m": 0.44},
+    {"ramp_length_m": 1.70, "length_label": "l170", "ramp_support_height_m": 0.44},
+    {"ramp_length_m": 2.00, "length_label": "l200", "ramp_support_height_m": 0.44},
 )
 
 

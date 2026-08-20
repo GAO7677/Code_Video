@@ -464,7 +464,9 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
         return "yellow_rubber"
     if family in {"V2V_OBSTACLE", "V2V_OBSTACLE_SIZE"} and lower == "obstacle_ball":
         return "red_rubber"
-    if family in {"V2V_OBSTACLE", "V2V_OBSTACLE_SIZE"} and lower == "obstacle_barrier":
+    if family == "V2V_OBSTACLE" and lower == "obstacle_barrier":
+        return "blue_painted"
+    if family == "V2V_OBSTACLE_SIZE" and lower == "obstacle_barrier":
         return "barrier_metal"
     if family == "V2V_PENDULUM":
         if lower == "pendulum_bob":

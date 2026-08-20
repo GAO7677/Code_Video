@@ -1726,22 +1726,69 @@ def _make_f12(
     *,
     ramp_angle_deg: float | None = None,
     ramp_length_m: float | None = None,
+    ramp_support_height_m: float | None = None,
 ) -> ScenarioBlueprint:
     """Build a gravity-only inclined-ramp control scene.
 
     The block, board, and both risers are dynamic PyBullet bodies.  The board
     rests on the floor at its lower edge and on two grounded risers at the high
     end, so the visible ramp is supported by contact rather than a fixed or
-    suspended body.  Only the board angle is varied across the control set.
+    suspended body.  A fixed support height can be supplied for a length
+    control group; in that mode the slope angle is solved from the support
+    contact instead of being held fixed.
     """
     del rng  # The control geometry intentionally has no appearance randomness.
     family = build_scenario_family_catalog()["F12"]
     materials = build_material_catalog()
 
-    ramp_angle = float(ramp_angle_deg if ramp_angle_deg is not None else 20.0)
-    ramp_angle = float(np.clip(ramp_angle, 8.0, 42.0))
     ramp_length = float(ramp_length_m if ramp_length_m is not None else 1.80)
     ramp_length = float(np.clip(ramp_length, 0.60, 2.40))
+
+    support_half_x = 0.015 * size_scale
+    support_local_fraction = 0.63 / 0.90
+    fixed_support_height = (
+        None
+        if ramp_support_height_m is None
+        else float(ramp_support_height_m) * size_scale
+    )
+    if fixed_support_height is not None:
+        if fixed_support_height <= 0.10 * size_scale:
+            raise ValueError(
+                "ramp_support_height_m must be above the minimum riser height"
+            )
+
+        def support_top_z_for_angle(angle_deg: float) -> float:
+            theta = math.radians(angle_deg)
+            half_length = 0.50 * ramp_length * size_scale
+            board_thickness = 0.035 * size_scale
+            board_center = board_thickness * math.cos(theta) + half_length * math.sin(theta)
+            support_local_x = -support_local_fraction * half_length
+            support_footprint_drop = support_half_x * math.tan(theta)
+            return (
+                board_center
+                - support_local_x * math.sin(theta)
+                - board_thickness * math.cos(theta)
+                - support_footprint_drop
+            )
+
+        low_angle, high_angle = 8.0, 42.0
+        low_height = support_top_z_for_angle(low_angle)
+        high_height = support_top_z_for_angle(high_angle)
+        if not low_height <= fixed_support_height <= high_height:
+            raise ValueError(
+                "ramp_support_height_m is outside the supported angle range: "
+                f"{low_height:.4f}..{high_height:.4f} m"
+            )
+        for _ in range(64):
+            middle_angle = 0.5 * (low_angle + high_angle)
+            if support_top_z_for_angle(middle_angle) < fixed_support_height:
+                low_angle = middle_angle
+            else:
+                high_angle = middle_angle
+        ramp_angle = 0.5 * (low_angle + high_angle)
+    else:
+        ramp_angle = float(ramp_angle_deg if ramp_angle_deg is not None else 20.0)
+        ramp_angle = float(np.clip(ramp_angle, 8.0, 42.0))
     theta = math.radians(ramp_angle)
     cos_theta = math.cos(theta)
     sin_theta = math.sin(theta)
@@ -1777,8 +1824,7 @@ def _make_f12(
         angular_velocity=(0.0, 0.0, 0.0),
     )
 
-    support_local_x = -(0.63 / 0.90) * board_half_length
-    support_half_x = 0.015 * size_scale
+    support_local_x = -support_local_fraction * board_half_length
     support_half_y = 0.10 * size_scale
     support_clearance = 0.0
     # The board underside falls across the horizontal footprint of a riser.
@@ -1792,7 +1838,11 @@ def _make_f12(
         - support_footprint_drop
         - support_clearance
     )
-    support_height = max(0.10 * size_scale, support_top_z)
+    support_height = (
+        fixed_support_height
+        if fixed_support_height is not None
+        else max(0.10 * size_scale, support_top_z)
+    )
     support_x = support_local_x * cos_theta - board_half_thickness * sin_theta
     risers = tuple(
         ObjectInstanceSpec(
@@ -1869,6 +1919,7 @@ def _make_f12(
             "initial_speed_mps": 0.0,
             "floor_restitution": 0.02,
             "support_mode": "dynamic_floor_supported_risers",
+            "ramp_support_height_m": round(float(support_height), 5),
             "controlled_variable": "ramp_angle_deg",
         },
     )
@@ -1902,6 +1953,7 @@ def generate_scenario_blueprint(
     travel_angle_deg: float | None = None,
     ramp_angle_deg: float | None = None,
     ramp_length_m: float | None = None,
+    ramp_support_height_m: float | None = None,
 ) -> ScenarioBlueprint:
     if family_key not in FAMILY_GENERATORS:
         raise KeyError(f"unsupported family_key={family_key}")
@@ -1928,6 +1980,7 @@ def generate_scenario_blueprint(
             size_scale,
             ramp_angle_deg=ramp_angle_deg,
             ramp_length_m=ramp_length_m,
+            ramp_support_height_m=ramp_support_height_m,
         )
     else:
         blueprint = FAMILY_GENERATORS[family_key](rng, sample_key, size_scale)

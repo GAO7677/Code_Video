@@ -385,7 +385,7 @@ def _make_obstacle_case(sample_key: str, initial_speed: float) -> DemoCase:
             # Slightly thicken the fixed barrier so the high-speed ball cannot
             # tunnel through its collision shape between simulation steps.
             size={"hx": 0.12, "hy": 0.32, "hz": barrier_hz},
-            material_key="painted_metal_teal",
+            material_key="painted_metal_blue",
             position=(barrier_x, 0.0, barrier_hz),
             dynamic=False,
             mass=0.0,
@@ -856,7 +856,7 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
     pivot_center_z = pivot_radius
     pivot_axis_z = pivot_center_z + pivot_radius
     board_center_z = pivot_axis_z + 0.045
-    board_hx = 1.02
+    board_hx = 1.35
     board_hy = 0.26
     board_hz = 0.045
     board_angle = 0.0
@@ -915,7 +915,9 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
         ),
     ]
     camera = _camera(
-        eye=(0.0, -3.95, 1.30),
+        # The longer board needs a wider physical framing so both endpoints
+        # remain visible throughout the rotation.
+        eye=(0.0, -5.25, 1.40),
         target=(0.0, 0.0, 0.46),
         yfov_deg=48.0,
         hdri_key="studio_warm",
@@ -923,8 +925,11 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
     blueprint = _blueprint(
         family_key="V2V_SEESAW",
         sample_key=sample_key,
-        title=f"Seesaw load at x={load_x:.2f} m",
-        description="A block rests on a hinged board; only its distance from the pivot changes.",
+        title=f"Seesaw load at x={load_x:.2f} m on a 2.70 m board",
+        description=(
+            "A block rests on a longer hinged board; its position is sampled uniformly "
+            "from the center to the safe edge, and only that position changes."
+        ),
         objects=objects,
         camera=camera,
         surface_key="residential_wood_floor",
@@ -936,6 +941,7 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
             "pivot_axis_z_m": pivot_axis_z,
             "pivot_shape": "horizontal_cylinder",
             "pivot_radius_m": pivot_radius,
+            "board_length_m": 2.0 * board_hx,
             # Disable direct shaft-board collision.  Their meshes remain
             # tangent, while the two shaft constraints define the hinge axis
             # without generating an impulse that ejects the load.
@@ -1091,8 +1097,12 @@ def build_demo_cases(seed_base: int = 20260819) -> list[DemoCase]:
         cases.append(_make_bowl_case(f"v2v_bowl_r{int(value * 100):03d}", value))
     for value in (0.55, 0.83, 1.10, 1.38, 1.65):
         cases.append(_make_pendulum_case(f"v2v_pendulum_l{int(value * 100):03d}", value))
-    for value in (0.69, 0.73, 0.77, 0.81, 0.85):
-        cases.append(_make_seesaw_case(f"v2v_seesaw_x{int(value * 100):03d}", value))
+    # The load travels uniformly from the board center to a small safety
+    # margin before the edge, so no case starts with the block overhanging.
+    seesaw_edge_x = 1.35 - 0.14 - 0.04
+    for value in np.linspace(0.0, seesaw_edge_x, 5):
+        value = float(value)
+        cases.append(_make_seesaw_case(f"v2v_seesaw_x{int(round(value * 100)):03d}", value))
     for value in (0.00, 0.045, 0.09, 0.135, 0.18):
         cases.append(_make_domino_case(f"v2v_domino_g{int(round(value * 1000)):03d}", value))
     return cases

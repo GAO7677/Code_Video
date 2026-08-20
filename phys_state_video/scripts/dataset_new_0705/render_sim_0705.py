@@ -41,6 +41,7 @@ MATERIAL_PROMPT_NAMES = {
     "rubber_red": "red rubber",
     "rubber_blue": "blue rubber",
     "painted_metal_teal": "teal painted metal",
+    "painted_metal_blue": "blue painted metal",
     "painted_metal_yellow": "yellow painted metal",
     "plastic_orange": "orange plastic",
     "plastic_white": "white plastic",

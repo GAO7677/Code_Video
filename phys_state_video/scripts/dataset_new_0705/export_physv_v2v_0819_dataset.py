@@ -185,8 +185,8 @@ def _make_f12_length_cases(seed_base: int) -> list[ExportCase]:
     seed = int(seed_base + 99100)
     for extra in RAMP_LENGTH_CONTROL_CASES:
         ramp_length_m = float(extra["ramp_length_m"])
-        ramp_angle_deg = float(extra["ramp_angle_deg"])
-        case_id = f"difficulty_l2_f12_length_{extra['length_label']}_a024"
+        support_height_m = float(extra["ramp_support_height_m"])
+        case_id = f"difficulty_l2_f12_length_{extra['length_label']}"
         base_blueprint = generate_scenario_blueprint(
             family_key="F12",
             sample_key=case_id,
@@ -194,19 +194,27 @@ def _make_f12_length_cases(seed_base: int) -> list[ExportCase]:
             direction_mode="left_to_right",
             size_scale=1.0,
             camera_distance_scale=DEFAULT_CAMERA_DISTANCE_SCALE,
-            ramp_angle_deg=ramp_angle_deg,
             ramp_length_m=ramp_length_m,
+            ramp_support_height_m=support_height_m,
         )
+        ramp_angle_deg = float(base_blueprint.metadata["ramp_angle_deg"])
         blueprint = replace(
             base_blueprint,
-            title=f"Red wooden block release on a {ramp_length_m:.2f} m, 24 degree incline",
-            description="A red wooden block is released from rest on a 24 degree ramp; only the ramp length changes.",
+            title=(
+                f"Red wooden block release on a {ramp_length_m:.2f} m incline "
+                f"({ramp_angle_deg:.1f} degrees)"
+            ),
+            description=(
+                "A red wooden block is released from rest on an incline whose high-end "
+                "support height is fixed; changing the ramp length changes its slope."
+            ),
             metadata={
                 **base_blueprint.metadata,
                 "ramp_angle_deg": ramp_angle_deg,
                 "ramp_length_m": ramp_length_m,
                 "controlled_variable": "ramp_length_m",
-                "ramp_length_control_group": "fixed_angle_24_deg",
+                "ramp_support_height_m": support_height_m,
+                "ramp_length_control_group": "fixed_high_support_height",
             },
         )
         cases.append(
@@ -1146,7 +1154,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
             "mask_policy": "masks.npz contains dynamic actors; instance_ids.npz contains all rendered simulator objects.",
             "depth": "raw/depth.npz contains PyRender Z-depth in scene meters; zero denotes background.",
             "contacts": "contacts.json records motion-relevant PyBullet contacts sampled at video frames.",
-            "source_selection": "35 V2V cases (including 5 obstacle initial-speed controls and 5 obstacle ball-radius controls), 5 F11 table-height cases, 5 F12 incline-angle cases, and 5 F12 fixed-angle ramp-length cases; F11 direction variants excluded.",
+            "source_selection": "35 V2V cases (including 5 obstacle initial-speed controls and 5 obstacle ball-radius controls), 5 F11 table-height cases, 5 F12 incline-angle cases, and 5 F12 fixed-high-support-height ramp-length cases; F11 direction variants excluded.",
             "captions": {
                 "specific": "captions/caption_specific.txt exposes the controlled variable and value.",
                 "abstract": "captions/caption_abstract.txt hides the controlled variable and value.",
@@ -1157,7 +1165,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
     readme = """# PhysV V2V 0819
 
 This dataset contains 50 deterministic rigid-body video-continuation controls:
-35 V2V cases, including five obstacle initial-speed controls and five obstacle ball-radius controls, five F11 table-height controls, five F12 incline-angle controls, and five F12 fixed-angle ramp-length controls.
+35 V2V cases, including five obstacle initial-speed controls and five obstacle ball-radius controls, five F11 table-height controls, five F12 incline-angle controls, and five F12 fixed-high-support-height ramp-length controls.
 F11 direction variants are intentionally excluded.
 
 Each `samples/<case_id>/` directory follows a RigidBench-inspired layout:
