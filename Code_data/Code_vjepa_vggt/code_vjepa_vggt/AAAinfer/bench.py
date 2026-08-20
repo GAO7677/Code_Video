@@ -297,6 +297,12 @@ def resolve_context_frames_override(record: CaseRecord) -> int | None:
         resolved = parse_nonnegative_int(record.result_payload.get(key))
         if resolved is not None:
             return resolved
+    inference = record.result_payload.get("inference")
+    if isinstance(inference, dict):
+        for key in ("effective_context_frames", "requested_context_frames"):
+            resolved = parse_nonnegative_int(inference.get(key))
+            if resolved is not None:
+                return resolved
     return None
 
 
@@ -676,11 +682,13 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
             case = build_case_payload(record)
             caption = case.get("input_caption") or case.get("caption") or args.videophy2_caption
             rule = case.get("rule") or case.get("physical_law") or case.get("law")
+            context_frames = resolve_context_frames_override(record)
             return score_videophy2_case(
                 case,
                 task=args.videophy2_task,
                 caption=caption,
                 rule=rule,
+                context_frames=context_frames,
                 runner=runner,
             )
 

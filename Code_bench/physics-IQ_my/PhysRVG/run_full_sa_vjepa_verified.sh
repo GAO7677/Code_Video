@@ -10,8 +10,15 @@ VALIDATOR="${SCRIPT_DIR}/../common/validate_verified_run.py"
 OFFICIAL_RUNNER="${SCRIPT_DIR}/../run_verified_official.sh"
 AGGREGATOR="${SCRIPT_DIR}/../aggregate_verified_official.sh"
 PYTHON="/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python"
+OFFICIAL_ENV_BIN="${OFFICIAL_ENV_BIN:-/home/gaoya/miniconda3/envs/wan-cu128/bin}"
 FFPROBE="/home/gaoya/miniconda3/envs/wan-cu128/bin/ffprobe"
 FFMPEG="/home/gaoya/miniconda3/envs/wan-cu128/bin/ffmpeg"
+
+# The PhysRVG inference venv deliberately stays separate from the official
+# Physics-IQ uv environment used for the shared P0 score.
+export PATH="${OFFICIAL_ENV_BIN}:$PATH"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/data/gaoya/agent-data/cache/uv}"
+export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-/data/gaoya/agent-data/cache/envs/physics-iq-verified}"
 
 WORKSPACE="${PHYSIQ_WORKSPACE:-/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified}"
 INPUT_LIST="${PHYSIQ_P0_INPUT_LIST:-${WORKSPACE}/inputs/bpp/verified_v2v_bpp_198.txt}"
@@ -20,6 +27,7 @@ PHYSRVG_DIT_CHECKPOINT="${PHYSRVG_DIT_CHECKPOINT:-/data/gaoya/agent-data/weights
 RUN_NAME="${RUN_NAME:-physrvg-full-sa-vjepa-step000500-bpp-run_01}"
 CHECKPOINT_DEFAULT="/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa/full-sa-pybullet-physrvg-vjepa-b2-gacc2-ddp-sync-20260817T190000Z/checkpoints/step-000500"
 CACHE_ROOT="${PHYSIQ_CACHE_ROOT:-/data/gaoya/agent-data/cache/physics-iq-verified/physrvg_full_sa_vjepa/${RUN_NAME}}"
+OFFICIAL_N_PROCESS="${OFFICIAL_N_PROCESS:-0}"
 
 usage() {
   cat <<'EOF'
@@ -161,6 +169,7 @@ score() {
   [[ -d "$submission" ]] || die "submission folder not found: $submission"
   mkdir -p "$evaluation"
   bash "$OFFICIAL_RUNNER" \
+    --n-process "$OFFICIAL_N_PROCESS" \
     --output-folder "$evaluation" \
     --descriptions-file "$descriptions" \
     "$submission"

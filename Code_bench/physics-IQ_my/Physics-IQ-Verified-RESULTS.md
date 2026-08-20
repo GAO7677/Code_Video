@@ -1,6 +1,6 @@
 # Physics-IQ-Verified 评测结果登记
 
-最后更新：2026-08-19 UTC
+最后更新：2026-08-20 UTC
 
 本文档是本项目 Physics-IQ-Verified 评测结果的唯一登记入口。新增评测方案时必须先在本文档登记，生成和官方评分完成后必须补充最终进度、分数与产物路径。不得覆盖、删除或静默修改历史结果的含义。
 
@@ -227,7 +227,7 @@ SSH 118上的结果产物：
 
 | 最近状态 | 模型与 Run | 协议 | 进度 | 分数 |
 |---|---|---:|---:|---|
-| 运行中 | PhysRVG Full-SA VJEPA step-000500 | P0 | smoke 1/1 已通过；全量 0/198 | 暂无 |
+| 官方计分中 | PhysRVG Full-SA VJEPA step-000500 | P0 | 198/198 raw 与 submission 已完成并通过 P0 格式校验 | 暂无 |
 | 已中断，可续跑 | xSSC slot-dedup step-2000 | P0 | 73/198 raw | 暂无 |
 | 未完成 | stage1b step-2500 | 非P0 | 11/198 | 暂无 |
 | 未完成 | stage1b step-2500 with negative prompt | 非P0 | 1/198 | 暂无 |
@@ -235,7 +235,7 @@ SSH 118上的结果产物：
 
 ## PhysRVG Full-SA VJEPA step-000500 P0 运行
 
-状态：运行中。单 case smoke 已通过；该方案使用用户指定的 Full-SA VJEPA LoRA checkpoint，并复用
+状态：官方计分中。单 case smoke、198 个 raw 和 198 个 submission 均已完成；该方案使用用户指定的 Full-SA VJEPA LoRA checkpoint，并复用
 `run_infer_full_sa_physrvg_vjepa.sh` 的 PhysRVG DiT 严格加载和 Full-SA LoRA 推理逻辑。
 
 Run ID：
@@ -275,12 +275,22 @@ Smoke 证据：GPU 7 上第一个 case 已生成并核验为 raw `189@24 FPS`；
 其已完成的两个 raw case 不进入最终 submission。GPU 2 先完成 1-based P0 奇数序号的99个 case，
 随后使用同一 checkpoint 和参数补齐偶数序号的99个 case；最终198个视频均由 GPU 2 生成。
 
-全量产物规划：
+全量产物与当前进度：
 
 - Raw：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/raw/physrvg-full-sa-vjepa-step000500-bpp-run_01`
 - Submission：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/generated_videos_5s/physrvg-full-sa-vjepa-step000500-bpp-run_01`
-- Evaluation：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-full-sa-vjepa-step000500-bpp-run_01`
-- 当前持久会话：`physrvg_full_sa_vjepa_physiciq_gpu2_only`
+- 官方 Evaluation root：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation`
+- 官方计分日志：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/logs/physrvg-full-sa-vjepa-step000500-bpp-run_01_official_score_p24.log`
+- 当前持久会话：`physrvg_full_sa_vjepa_physiciq_score`
+
+已核验 submission 文件名集合 SHA256 为
+`8ee2101106b2acaaecac752ea5175cee89d30b3aab9c602623ff02360eacc071`，与 P0 登记值一致；
+全部 198 个最终 raw/submission 视频均来自 GPU 2，GPU 7 上先前中断 shard 的两个文件未纳入最终结果。
+
+官方评分使用与既有本地 P0 结果相同的 `uv` 项目环境
+`/data/gaoya/agent-data/cache/envs/physics-iq-verified`，执行官方
+`physiq/run_physics_iq.py`（Verified 默认模式、`--n_process 24` 官方 CPU worker），完成后再以官方
+`aggregate_runs_from_csvs.py --score-type verified` 写入单次汇总。
 
 严格可比性说明：
 

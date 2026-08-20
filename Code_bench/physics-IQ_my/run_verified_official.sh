@@ -91,6 +91,18 @@ done
 command -v uv >/dev/null 2>&1 || die "uv is not installed or not on PATH"
 command -v ffprobe >/dev/null 2>&1 || die "ffprobe is not installed or not on PATH (install ffmpeg)"
 
+# The official metric code is CPU-only.  Limit native thread pools when using
+# its ProcessPoolExecutor so N workers do not each create a full-CPU pool.
+export OPENCV_FOR_THREADS_NUM="${OPENCV_FOR_THREADS_NUM:-1}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
+export VECLIB_MAXIMUM_THREADS="${VECLIB_MAXIMUM_THREADS:-1}"
+export BLIS_NUM_THREADS="${BLIS_NUM_THREADS:-1}"
+# No official evaluator component uses CUDA; keep all GPUs hidden by default.
+export CUDA_VISIBLE_DEVICES="${PHYSIQ_CUDA_VISIBLE_DEVICES:-}"
+
 mkdir -p "$OUTPUT_FOLDER" "$WORK_BASE"
 OUTPUT_FOLDER="$(cd "$OUTPUT_FOLDER" && pwd)"
 DESCRIPTIONS_FILE="$(readlink -f "$DESCRIPTIONS_FILE")"

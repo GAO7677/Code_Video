@@ -9,6 +9,7 @@ CHECKPOINT="${CHECKPOINT:-/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vje
 INPUT_LIST="${INPUT_LIST:-${WORKSPACE}/inputs/bpp/verified_v2v_bpp_198.txt}"
 CACHE_ROOT="${CACHE_ROOT:-/data/gaoya/agent-data/cache/physics-iq-verified/physrvg_full_sa_vjepa/${RUN_NAME}}"
 PYTHON="/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python"
+OFFICIAL_ENV_BIN="${OFFICIAL_ENV_BIN:-/home/gaoya/miniconda3/envs/wan-cu128/bin}"
 WORKER="${SCRIPT_DIR}/run_physrvg_full_sa_vjepa_verified.sh"
 PREPARE="${SCRIPT_DIR}/prepare_full_sa_vjepa_verified_inputs.py"
 PREPARE_OUTPUTS="${SCRIPT_DIR}/../xSSC/prepare_verified_outputs.py"
@@ -17,6 +18,13 @@ OFFICIAL_RUNNER="${SCRIPT_DIR}/../run_verified_official.sh"
 AGGREGATOR="${SCRIPT_DIR}/../aggregate_verified_official.sh"
 DESCRIPTIONS="/home/gaoya/Code_Video/Code_bench/physics-IQ-benchmark-main/descriptions/best_practice/descriptions_base.csv"
 GPU_ID=2
+OFFICIAL_N_PROCESS="${OFFICIAL_N_PROCESS:-24}"
+
+# Keep official scoring in the same reusable uv environment as the other P0
+# runs.  The inference environment intentionally does not provide uv on PATH.
+export PATH="${OFFICIAL_ENV_BIN}:$PATH"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/data/gaoya/agent-data/cache/uv}"
+export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-/data/gaoya/agent-data/cache/envs/physics-iq-verified}"
 
 RAW_SHARD_ODD="${WORKSPACE}/raw_shards/${RUN_NAME}_shard00-of-02"
 RAW_SHARD_EVEN="${WORKSPACE}/raw_shards/${RUN_NAME}_shard01-of-02_gpu2"
@@ -104,6 +112,7 @@ mkdir -p "$(dirname "$SUBMISSION")"
 "$PYTHON" "$VALIDATOR" --descriptions-file "$DESCRIPTIONS" "$SUBMISSION"
 mkdir -p "$EVALUATION"
 bash "$OFFICIAL_RUNNER" \
+  --n-process "$OFFICIAL_N_PROCESS" \
   --output-folder "$EVALUATION" \
   --descriptions-file "$DESCRIPTIONS" \
   "$SUBMISSION"
