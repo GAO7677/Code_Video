@@ -762,18 +762,41 @@ def add_lighting(family: str) -> str:
     return name
 
 
+CAMERA_FRAMING_PRESETS = {
+    # Each family uses one fixed camera fitted against all five full-length
+    # trajectories, so framing cannot leak the controlled variable.
+    "F11": {"target": (1.088, 0.0, 0.604), "yfov_deg": 42.0},
+    "F12": {"target": (1.930, 0.0, 0.620), "yfov_deg": 38.5},
+    "V2V_BOWL": {"target": (0.005, 0.0, 0.600), "yfov_deg": 34.5},
+    "V2V_DOMINO": {"target": (-0.147, 0.0, 0.480), "yfov_deg": 25.0},
+    "V2V_GAP": {"target": (0.288, 0.0, 0.620), "yfov_deg": 35.0},
+    "V2V_OBSTACLE": {"target": (-0.260, 0.0, 0.480), "yfov_deg": 24.5},
+    "V2V_OBSTACLE_SIZE": {"target": (-0.635, 0.0, 0.480), "yfov_deg": 31.5},
+    "V2V_PENDULUM": {"target": (-0.450, 0.0, 1.128), "yfov_deg": 41.5},
+    "V2V_SEESAW": {"target": (0.002, 0.0, 0.460), "yfov_deg": 21.5},
+}
+
+
 def add_camera(metadata: dict) -> bpy.types.Object:
     camera_spec = metadata["camera"]
     intrinsics = camera_spec["intrinsics"]
     extrinsics = camera_spec["extrinsics"]
+    framing = CAMERA_FRAMING_PRESETS.get(metadata["family_key"], {})
+    source_yfov_deg = float(intrinsics["yfov_deg"])
+    effective_yfov_deg = float(framing.get("yfov_deg", source_yfov_deg))
+    target = framing.get("target", extrinsics["target"])
     data = bpy.data.cameras.new("PhysV Camera")
     data.type = "PERSP"
     data.sensor_fit = "VERTICAL"
-    data.angle_y = math.radians(float(intrinsics["yfov_deg"]))
+    data.angle_y = math.radians(effective_yfov_deg)
     obj = bpy.data.objects.new("PhysV Camera", data)
     bpy.context.collection.objects.link(obj)
     obj.location = extrinsics["eye"]
-    point_at(obj, extrinsics["target"])
+    point_at(obj, target)
+    obj["framing_profile"] = "family_full_trajectory_fit_v1"
+    obj["source_yfov_deg"] = source_yfov_deg
+    obj["effective_yfov_deg"] = effective_yfov_deg
+    obj["target"] = tuple(float(value) for value in target)
     bpy.context.scene.camera = obj
     return obj
 
@@ -789,6 +812,10 @@ def camera_diagnostics(scene: bpy.types.Scene, camera: bpy.types.Object, object_
     result = {
         "location": [float(value) for value in camera.location],
         "forward": [float(value) for value in forward],
+        "framing_profile": camera["framing_profile"],
+        "source_yfov_deg": float(camera["source_yfov_deg"]),
+        "effective_yfov_deg": float(camera["effective_yfov_deg"]),
+        "target": [float(value) for value in camera["target"]],
         "object_projections_xy_depth": projections,
     }
     print("CAMERA_DIAGNOSTICS", json.dumps(result, ensure_ascii=False), flush=True)
@@ -850,7 +877,7 @@ def main() -> None:
     bpy.ops.render.render(animation=True)
     elapsed = time.monotonic() - start
     report = {
-        "schema_version": "physv_cycles_pbr_preview_v2",
+        "schema_version": "physv_cycles_pbr_preview_v3",
         "sample_id": metadata["sample_id"],
         "source_sample_dir": str(args.sample_dir),
         "trajectory_source": "raw/trajectories.npz",
