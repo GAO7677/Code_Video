@@ -361,7 +361,7 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
             return "domino_wood"
     if family == "V2V_GAP" and lower == "gap_ball":
         return "yellow_rubber"
-    if family == "V2V_OBSTACLE" and lower == "obstacle_ball":
+    if family in {"V2V_OBSTACLE", "V2V_OBSTACLE_SIZE"} and lower == "obstacle_ball":
         return "red_rubber"
     if family == "V2V_PENDULUM":
         if lower == "pendulum_bob":
@@ -406,6 +406,7 @@ def room_material_keys(family: str) -> tuple[str, str]:
         "V2V_DOMINO": ("floor_cool", "wall_cool"),
         "V2V_GAP": ("floor_slate", "wall"),
         "V2V_OBSTACLE": ("floor_cool", "wall"),
+        "V2V_OBSTACLE_SIZE": ("floor_cool", "wall"),
         "V2V_PENDULUM": ("floor", "wall_cool"),
         "V2V_SEESAW": ("floor", "wall_cool"),
     }
@@ -440,6 +441,7 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
         "V2V_DOMINO": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
         "V2V_GAP": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
         "V2V_OBSTACLE": HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr",
+        "V2V_OBSTACLE_SIZE": HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr",
         "V2V_PENDULUM": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
         "V2V_SEESAW": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
     }
@@ -450,6 +452,7 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
         "V2V_DOMINO": 58.0,
         "V2V_GAP": 35.0,
         "V2V_OBSTACLE": -24.0,
+        "V2V_OBSTACLE_SIZE": -24.0,
         "V2V_PENDULUM": 88.0,
         "V2V_SEESAW": -42.0,
     }

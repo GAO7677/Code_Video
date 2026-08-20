@@ -98,9 +98,9 @@
   <header class="topbar"><div class="topbar-inner"><div class="brand"><div class="brand-mark">PHYSV</div><div><h1>控制变量物理视频组</h1><p>V2V · F11 TABLE HEIGHT · F12 INCLINE</p></div></div><button id="refresh" class="refresh" type="button" title="重新读取数据">↻ 刷新数据</button></div></header>
   <main><nav id="directory" class="directory" aria-label="实验组"></nav><section id="content" aria-live="polite"><div class="empty">读取中...</div></section></main>
   <script>
-    const GROUP_ORDER=["V2V_GAP","V2V_OBSTACLE","V2V_BOWL","V2V_PENDULUM","V2V_SEESAW","V2V_DOMINO","F11","F12"];
-    const GROUP_NAMES={V2V_GAP:"平台间隙",V2V_OBSTACLE:"障碍碰撞",V2V_BOWL:"碗内运动",V2V_PENDULUM:"摆锤",V2V_SEESAW:"跷跷板",V2V_DOMINO:"多米诺",F11:"F11 桌高",F12:"F12 斜面"};
-    const GROUP_PREFIX={V2V_GAP:"V2V",V2V_OBSTACLE:"V2V",V2V_BOWL:"V2V",V2V_PENDULUM:"V2V",V2V_SEESAW:"V2V",V2V_DOMINO:"V2V",F11:"CONTROL",F12:"CONTROL"};
+    const GROUP_ORDER=["V2V_GAP","V2V_OBSTACLE","V2V_OBSTACLE_SIZE","V2V_BOWL","V2V_PENDULUM","V2V_SEESAW","V2V_DOMINO","F11","F12"];
+    const GROUP_NAMES={V2V_GAP:"平台间隙",V2V_OBSTACLE:"障碍碰撞：起始位置",V2V_OBSTACLE_SIZE:"障碍碰撞：球体积",V2V_BOWL:"碗内运动",V2V_PENDULUM:"摆锤",V2V_SEESAW:"跷跷板",V2V_DOMINO:"多米诺",F11:"F11 桌高",F12:"F12 斜面"};
+    const GROUP_PREFIX={V2V_GAP:"V2V",V2V_OBSTACLE:"V2V",V2V_OBSTACLE_SIZE:"V2V",V2V_BOWL:"V2V",V2V_PENDULUM:"V2V",V2V_SEESAW:"V2V",V2V_DOMINO:"V2V",F11:"CONTROL",F12:"CONTROL"};
     const VBENCH={subject_consistency:"主体",background_consistency:"背景",temporal_flickering:"闪烁",motion_smoothness:"平滑",dynamic_degree:"动态",aesthetic_quality:"美学",imaging_quality:"画质"};
     const state={groups:[],selected:GROUP_ORDER[0],loading:false,amplitudeThreshold:.1}; const $=id=>document.getElementById(id);
     function node(tag,className,text){const el=document.createElement(tag);if(className)el.className=className;if(text!==undefined&&text!==null)el.textContent=String(text);return el;}

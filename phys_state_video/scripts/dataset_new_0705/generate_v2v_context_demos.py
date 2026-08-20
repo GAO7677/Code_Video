@@ -52,6 +52,11 @@ DEFAULT_HEIGHT = 720
 SCENE_STYLE = "indoor_natural"
 BOWL_BALL_CENTER_HEIGHT_ABOVE_BOTTOM_M = 0.42
 BOWL_BALL_CLEARANCE_M = 0.012
+OBSTACLE_BALL_REFERENCE_RADIUS_M = 0.11
+OBSTACLE_BALL_REFERENCE_MASS_KG = 1.0
+OBSTACLE_BALL_DENSITY_KG_M3 = OBSTACLE_BALL_REFERENCE_MASS_KG / (
+    (4.0 / 3.0) * math.pi * OBSTACLE_BALL_REFERENCE_RADIUS_M**3
+)
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/physv_v2v_context_demos_20260819"
 )
@@ -415,6 +420,119 @@ def _make_obstacle_case(sample_key: str, ball_start_x: float) -> DemoCase:
         controlled_variable="ball_start_x_m",
         controlled_value=ball_start_x,
         controlled_value_label=f"x={ball_start_x:.2f} m",
+        units="m",
+        blueprint=blueprint,
+        event_rule="ball_contacts_barrier",
+    )
+
+
+def _make_obstacle_size_case(sample_key: str, ball_radius: float) -> DemoCase:
+    """Create a radius-control obstacle case with constant ball density.
+
+    The collision scene, start position, linear speed, angular speed, contact
+    parameters, barrier, camera, and material stay fixed.  Only the sphere
+    radius changes; its grounded z position and mass are derived from radius.
+    """
+    barrier_hz = 0.24
+    barrier_x = 0.80
+    ball_start_x = -1.30
+    initial_speed = 3.00
+    initial_angular_speed = initial_speed / OBSTACLE_BALL_REFERENCE_RADIUS_M
+    ball_mass = OBSTACLE_BALL_DENSITY_KG_M3 * (4.0 / 3.0) * math.pi * ball_radius**3
+    objects = [
+        _object(
+            name="obstacle_ball",
+            family_key="ball",
+            shape="sphere",
+            size={"radius": ball_radius},
+            material_key="rubber_red",
+            position=(ball_start_x, 0.0, ball_radius + 0.004),
+            dynamic=True,
+            mass=ball_mass,
+            friction=0.22,
+            restitution=0.85,
+            velocity=(initial_speed, 0.0, 0.0),
+            # Keep angular speed identical across the radius controls.  The
+            # resulting radius-dependent slip is part of the controlled scene.
+            angular_velocity=(0.0, initial_angular_speed, 0.0),
+            linear_damping=0.045,
+            angular_damping=0.03,
+            metadata={
+                "appearance_group": "v2v_obstacle_red_rubber_ball_v1",
+                "rolling_friction": 0.006,
+                "spinning_friction": 0.006,
+                "ccd_swept_sphere_radius_m": ball_radius * 0.95,
+                "density_kg_m3": OBSTACLE_BALL_DENSITY_KG_M3,
+                "mass_from_volume": True,
+                "reference_radius_m": OBSTACLE_BALL_REFERENCE_RADIUS_M,
+            },
+        ),
+        _object(
+            name="obstacle_barrier",
+            family_key="barrier_box",
+            shape="box",
+            size={"hx": 0.12, "hy": 0.32, "hz": barrier_hz},
+            material_key="painted_metal_teal",
+            position=(barrier_x, 0.0, barrier_hz),
+            dynamic=False,
+            mass=0.0,
+            friction=0.12,
+            restitution=0.90,
+        ),
+    ]
+    camera = _camera(
+        eye=(0.05, -4.00, 1.12),
+        target=(0.05, 0.0, 0.48),
+        yfov_deg=48.0,
+    )
+    blueprint = _blueprint(
+        family_key="V2V_OBSTACLE_SIZE",
+        sample_key=sample_key,
+        title=f"Obstacle collision with ball radius {ball_radius:.3f} m",
+        description="The same rolling ball scene is repeated with a different sphere radius; density and all other physical settings remain fixed.",
+        objects=objects,
+        camera=camera,
+        surface_key="studio_wood_floor",
+        tags=("v2v", "ball_radius", "constant_density", "collision", "left_to_right", "rebound"),
+        metadata={
+            "controlled_variable": "ball_radius_m",
+            "ball_radius_m": ball_radius,
+            "ball_density_kg_m3": OBSTACLE_BALL_DENSITY_KG_M3,
+            "ball_mass_kg": ball_mass,
+            "ball_volume_m3": (4.0 / 3.0) * math.pi * ball_radius**3,
+            "ball_start_x_m": ball_start_x,
+            "obstacle_x_m": barrier_x,
+            "barrier_restitution": 0.90,
+            "initial_speed_mps": initial_speed,
+            "initial_angular_speed_radps": initial_angular_speed,
+            "barrier_half_x_m": 0.12,
+            "contact_margin_m": 0.05,
+            "physics_sub_steps": 8,
+            "constant_parameters": [
+                "ball_start_x_m",
+                "initial_speed_mps",
+                "initial_angular_speed_radps",
+                "friction",
+                "restitution",
+                "linear_damping",
+                "angular_damping",
+                "barrier_geometry",
+                "barrier_material",
+                "camera",
+            ],
+        },
+    )
+    return DemoCase(
+        case_id=sample_key,
+        family_key="V2V_OBSTACLE_SIZE",
+        family_title="障碍碰撞：球体积与质量",
+        family_description="障碍物、初始位置、速度和接触参数固定，球密度相同，仅改变球半径，因此质量随体积变化。",
+        level="L2",
+        title=blueprint.title,
+        description=blueprint.description,
+        controlled_variable="ball_radius_m",
+        controlled_value=ball_radius,
+        controlled_value_label=f"r={ball_radius:.3f} m",
         units="m",
         blueprint=blueprint,
         event_rule="ball_contacts_barrier",
@@ -988,6 +1106,8 @@ def build_demo_cases(seed_base: int = 20260819) -> list[DemoCase]:
         cases.append(_make_gap_case(f"v2v_gap_{int(value * 100):03d}", value))
     for value in (-1.60, -1.45, -1.30, -1.15, -1.00):
         cases.append(_make_obstacle_case(f"v2v_obstacle_s{int(abs(value) * 100):03d}", value))
+    for value in (0.08, 0.11, 0.14, 0.17, 0.20):
+        cases.append(_make_obstacle_size_case(f"v2v_obstacle_size_r{int(value * 1000):03d}", value))
     for value in (0.80, 1.30, 1.80, 2.30, 2.80):
         cases.append(_make_bowl_case(f"v2v_bowl_r{int(value * 100):03d}", value))
     for value in (0.55, 0.83, 1.10, 1.38, 1.65):
@@ -1100,7 +1220,7 @@ def _first_event_frame(
     if case.family_key == "V2V_GAP":
         threshold = float(metadata["left_platform_edge_x_m"]) + 0.02
         frames = np.flatnonzero(positions[:, index["gap_ball"], 0] > threshold)
-    elif case.family_key == "V2V_OBSTACLE":
+    elif case.family_key in {"V2V_OBSTACLE", "V2V_OBSTACLE_SIZE"}:
         ball = positions[:, index["obstacle_ball"], 0]
         barrier = float(metadata["obstacle_x_m"])
         contact_distance = (

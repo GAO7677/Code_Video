@@ -50,6 +50,11 @@ def _specific_caption(metadata: Mapping[str, object]) -> str:
             f"A ball rolls toward a visible platform gap that is {value} wide, "
             "leaves the first platform, and moves through the gap under gravity."
         )
+    if family_key == "V2V_OBSTACLE_SIZE":
+        return (
+            f"A red ball with radius {value} rolls rightward toward a fixed blue barrier, "
+            "collides with it, rebounds, and travels onward with a speed determined by its incoming motion."
+        )
     if family_key == "V2V_OBSTACLE" or task_type == "obstacle_collision":
         return (
             f"A red ball starts at {value} and rolls rightward toward a fixed blue barrier, "
@@ -89,6 +94,8 @@ def _abstract_caption(metadata: Mapping[str, object]) -> str:
         return "A red wooden block is released from rest on an inclined surface and slides down the slope."
     if family_key == "V2V_GAP" or task_type == "gap_rolloff":
         return "A ball rolls across a platform toward a visible gap, leaves the edge, and moves through the opening under gravity."
+    if family_key == "V2V_OBSTACLE_SIZE":
+        return "A red ball rolls rightward toward a fixed blue barrier, rebounds after contact, and continues moving."
     if family_key == "V2V_OBSTACLE" or task_type == "obstacle_collision":
         return "A red ball rolls rightward from a different starting position toward a fixed blue barrier, rebounds after contact, and continues moving."
     if family_key == "V2V_BOWL" or task_type == "bowl_descent":

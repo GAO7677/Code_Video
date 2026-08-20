@@ -182,6 +182,7 @@ def _v2v_task_type(family_key: str) -> str:
     return {
         "V2V_GAP": "gap_rolloff",
         "V2V_OBSTACLE": "obstacle_collision",
+        "V2V_OBSTACLE_SIZE": "obstacle_collision",
         "V2V_BOWL": "bowl_descent",
         "V2V_PENDULUM": "pendulum_swing",
         "V2V_SEESAW": "seesaw_rotation",
@@ -192,10 +193,15 @@ def _v2v_task_type(family_key: str) -> str:
 def _make_v2v_cases(seed_base: int) -> list[ExportCase]:
     cases: list[ExportCase] = []
     for index, demo in enumerate(build_demo_cases(seed_base)):
+        source_group = (
+            "v2v_obstacle_ball_size"
+            if demo.family_key == "V2V_OBSTACLE_SIZE"
+            else "v2v_control"
+        )
         cases.append(
             ExportCase(
                 case_id=demo.case_id,
-                source_group="v2v_control",
+                source_group=source_group,
                 family_key=demo.family_key,
                 task_type=_v2v_task_type(demo.family_key),
                 title=demo.title,
@@ -212,7 +218,7 @@ def _make_v2v_cases(seed_base: int) -> list[ExportCase]:
                 # families retain their existing per-case seed convention.
                 seed=(
                     int(seed_base + 5000)
-                    if demo.family_key == "V2V_OBSTACLE"
+                    if demo.family_key in {"V2V_OBSTACLE", "V2V_OBSTACLE_SIZE"}
                     else int(seed_base + index * 1009)
                 ),
                 scene_style=V2V_SCENE_STYLE,
@@ -233,8 +239,8 @@ def build_export_cases(
         + _make_f12_cases(difficulty_seed_base)
     )
     ids = [case.case_id for case in cases]
-    if len(cases) != 40 or len(set(ids)) != len(ids):
-        raise RuntimeError(f"expected 40 unique V2V/F11/F12 cases, got {len(cases)}")
+    if len(cases) != 45 or len(set(ids)) != len(ids):
+        raise RuntimeError(f"expected 45 unique V2V/F11/F12 cases, got {len(cases)}")
     return cases
 
 
@@ -1055,7 +1061,12 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
     rows = sorted(rows, key=lambda row: str(row["sample_id"]))
     group_counts = {
         group: sum(1 for row in rows if row.get("source_group") == group)
-        for group in ("v2v_control", "f11_table_height", "f12_incline")
+        for group in (
+            "v2v_control",
+            "v2v_obstacle_ball_size",
+            "f11_table_height",
+            "f12_incline",
+        )
     }
     _write_json(
         output_root / "manifest.json",
@@ -1079,7 +1090,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
             "mask_policy": "masks.npz contains dynamic actors; instance_ids.npz contains all rendered simulator objects.",
             "depth": "raw/depth.npz contains PyRender Z-depth in scene meters; zero denotes background.",
             "contacts": "contacts.json records motion-relevant PyBullet contacts sampled at video frames.",
-            "source_selection": "30 V2V cases, 5 F11 table-height cases, 5 F12 incline cases; F11 direction variants excluded.",
+            "source_selection": "35 V2V cases (including 5 obstacle ball-radius controls), 5 F11 table-height cases, and 5 F12 incline cases; F11 direction variants excluded.",
             "captions": {
                 "specific": "captions/caption_specific.txt exposes the controlled variable and value.",
                 "abstract": "captions/caption_abstract.txt hides the controlled variable and value.",
@@ -1089,8 +1100,8 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
     )
     readme = """# PhysV V2V 0819
 
-This dataset contains 40 deterministic rigid-body video-continuation controls:
-30 V2V cases, five F11 table-height controls, and five F12 incline controls.
+This dataset contains 45 deterministic rigid-body video-continuation controls:
+35 V2V cases, including five obstacle ball-radius controls, five F11 table-height controls, and five F12 incline controls.
 F11 direction variants are intentionally excluded.
 
 Each `samples/<case_id>/` directory follows a RigidBench-inspired layout:
