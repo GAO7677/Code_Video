@@ -44,7 +44,18 @@ TRAINING_CHECKPOINT_PATTERN = re.compile(
     r"slot_dedup_merge_xssc_step050000|"
     r"full_sa_no_object|"
     r"full_sa_no_object_pybullet100|"
-    r"full_sa_no_object_kubric100"
+    r"full_sa_no_object_kubric100|"
+    r"full_sa_no_object_vjepa_loss|"
+    r"full_sa_no_object_xssc_loss_dinov3_movic_step50000|"
+    r"full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000|"
+    r"full_sa_no_object_cotracker_trajectory_loss|"
+    r"full_sa_no_object_gt_latent_mask_loss"
+    r"|full_sa_physrvg_dit"
+    r"|full_sa_physrvg_dit_gpu56"
+    r"|full_sa_physrvg_vjepa_loss"
+    r"|full_sa_physrvg_latent_mask_loss"
+    r"|full_sa_physrvg_vjepa_loss_0613_b2g2"
+    r"|full_sa_physrvg_object_xssc_loss"
     r")_step-(\d+)_steps\d+_\d+x\d+_ctx\d+_\d+f(?:_.+)?$"
 )
 TRAINING_VARIANT_ALIASES = {
@@ -113,6 +124,27 @@ TRAINING_VARIANT_LABELS = {
     "full_sa_no_object": "Full-SA + No-Object",
     "full_sa_no_object_pybullet100": "Full-SA + No-Object (PyBullet 100%)",
     "full_sa_no_object_kubric100": "Full-SA + No-Object (Kubric 100%)",
+    "full_sa_no_object_vjepa_loss": "Full-SA + No-Object + V-JEPA Loss",
+    "full_sa_no_object_xssc_loss_dinov3_movic_step50000": (
+        "Full-SA + No-Object + xSSC Loss (DINOv3 MOVi-C 50k)"
+    ),
+    "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000": (
+        "Full-SA + Object + Slot-Dedup (xSSC-50k) + xSSC Loss (DINOv3 MOVi-C 50k)"
+    ),
+    "full_sa_no_object_cotracker_trajectory_loss": (
+        "Full-SA + No-Object + CoTracker Trajectory Loss"
+    ),
+    "full_sa_no_object_gt_latent_mask_loss": (
+        "Full-SA + No-Object + GT Latent-Mask CE"
+    ),
+    "full_sa_physrvg_dit": "PHYRVG-Full-SA (PhysRVG DiT)",
+    "full_sa_physrvg_dit_gpu56": "PHYRVG-Full-SA · GPU5/6 batch",
+    "full_sa_physrvg_vjepa_loss": "PHYRVG-Full-SA + V-JEPA Loss",
+    "full_sa_physrvg_latent_mask_loss": "PHYRVG-Full-SA + Latent-Mask Loss",
+    "full_sa_physrvg_vjepa_loss_0613_b2g2": (
+        "PHYRVG-Full-SA + V-JEPA Loss · 0613 · b2-gacc2"
+    ),
+    "full_sa_physrvg_object_xssc_loss": "PHYRVG-Full-SA + Object + XSSC Loss",
 }
 TRAINING_VARIANT_COLORS = {
     "object_only": "#4D4D4D",
@@ -128,6 +160,17 @@ TRAINING_VARIANT_COLORS = {
     "full_sa_no_object": "#FF7F0E",
     "full_sa_no_object_pybullet100": "#00A6A6",
     "full_sa_no_object_kubric100": "#F28E2B",
+    "full_sa_no_object_vjepa_loss": "#E45756",
+    "full_sa_no_object_xssc_loss_dinov3_movic_step50000": "#4C78A8",
+    "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000": "#72B7B2",
+    "full_sa_no_object_cotracker_trajectory_loss": "#B279A2",
+    "full_sa_no_object_gt_latent_mask_loss": "#FF9DA6",
+    "full_sa_physrvg_dit": "#355C7D",
+    "full_sa_physrvg_dit_gpu56": "#6C5B7B",
+    "full_sa_physrvg_vjepa_loss": "#C06C84",
+    "full_sa_physrvg_latent_mask_loss": "#F67280",
+    "full_sa_physrvg_vjepa_loss_0613_b2g2": "#F8B195",
+    "full_sa_physrvg_object_xssc_loss": "#2A9D8F",
 }
 TRAINING_VARIANT_MARKERS = {
     "object_only": "P",
@@ -143,6 +186,17 @@ TRAINING_VARIANT_MARKERS = {
     "full_sa_no_object": "X",
     "full_sa_no_object_pybullet100": "p",
     "full_sa_no_object_kubric100": "*",
+    "full_sa_no_object_vjepa_loss": "H",
+    "full_sa_no_object_xssc_loss_dinov3_movic_step50000": "h",
+    "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000": "d",
+    "full_sa_no_object_cotracker_trajectory_loss": "8",
+    "full_sa_no_object_gt_latent_mask_loss": "P",
+    "full_sa_physrvg_dit": "o",
+    "full_sa_physrvg_dit_gpu56": "s",
+    "full_sa_physrvg_vjepa_loss": "^",
+    "full_sa_physrvg_latent_mask_loss": "D",
+    "full_sa_physrvg_vjepa_loss_0613_b2g2": "P",
+    "full_sa_physrvg_object_xssc_loss": "X",
 }
 TRAINING_VARIANT_LINESTYLES = {
     "object_only": "--",
@@ -158,6 +212,17 @@ TRAINING_VARIANT_LINESTYLES = {
     "full_sa_no_object": (0, (5, 1)),
     "full_sa_no_object_pybullet100": (0, (4, 1)),
     "full_sa_no_object_kubric100": (0, (2, 1)),
+    "full_sa_no_object_vjepa_loss": (0, (6, 1)),
+    "full_sa_no_object_xssc_loss_dinov3_movic_step50000": (0, (4, 2, 1, 2)),
+    "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000": (0, (2, 1)),
+    "full_sa_no_object_cotracker_trajectory_loss": (0, (1, 2)),
+    "full_sa_no_object_gt_latent_mask_loss": (0, (7, 1, 1, 1)),
+    "full_sa_physrvg_dit": "-",
+    "full_sa_physrvg_dit_gpu56": "--",
+    "full_sa_physrvg_vjepa_loss": "-.",
+    "full_sa_physrvg_latent_mask_loss": (0, (5, 1)),
+    "full_sa_physrvg_vjepa_loss_0613_b2g2": (0, (3, 1, 1, 1)),
+    "full_sa_physrvg_object_xssc_loss": (0, (1, 1)),
 }
 TRAINING_VARIANT_ORDER = {
     variant: index
@@ -176,6 +241,17 @@ TRAINING_VARIANT_ORDER = {
             "full_sa_no_object",
             "full_sa_no_object_pybullet100",
             "full_sa_no_object_kubric100",
+            "full_sa_no_object_vjepa_loss",
+            "full_sa_no_object_xssc_loss_dinov3_movic_step50000",
+            "full_sa_object_slot_dedup_xssc50k_xssc_loss_dinov3_movic_step50000",
+            "full_sa_no_object_cotracker_trajectory_loss",
+            "full_sa_no_object_gt_latent_mask_loss",
+            "full_sa_physrvg_dit",
+            "full_sa_physrvg_dit_gpu56",
+            "full_sa_physrvg_vjepa_loss",
+            "full_sa_physrvg_latent_mask_loss",
+            "full_sa_physrvg_vjepa_loss_0613_b2g2",
+            "full_sa_physrvg_object_xssc_loss",
         )
     )
 }
@@ -544,7 +620,15 @@ def discover_methods_from_txt(path: Path) -> list[Method]:
         if infer_training_checkpoint(result_dir) is not None:
             continue
         model = infer_model(result_dir)
-        mode, block_id, config_name = infer_config(result_dir)
+        try:
+            mode, block_id, config_name = infer_config(result_dir)
+        except ValueError:
+            # The shared watcher leaf list also contains reference runs and
+            # newer dashboard-only entries. They are represented by the
+            # explicit baseline/current dashboards, not this ablation curve.
+            if result_dir.name.startswith("xssc_lora_"):
+                continue
+            raise
         method_id = f"{model}/{config_name}"
         if method_id in method_ids:
             raise ValueError(f"Duplicate method inferred from {path}: {method_id}")
