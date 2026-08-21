@@ -1146,6 +1146,17 @@ def build_videos_page(
             }}
             missing.textContent="该 step 无此方法权重";matrix.append(missing);return;
           }}
+          const videoPath=record.videos?.[c.stem];
+          if(!videoPath){{
+            const missing=document.createElement("div");missing.className="missing";
+            if(method.displayGroup==="phyrvg"){{
+              missing.classList.add("phyrvg");
+              if(D.methods.indexOf(method)===0)missing.classList.add("phyrvg-start");
+              if(D.methods.indexOf(method)===D.methods.filter(item=>item.displayGroup==="phyrvg").length-1)
+                missing.classList.add("phyrvg-end");
+            }}
+            missing.textContent="待该方案生成视频";matrix.append(missing);return;
+          }}
           count+=1;
           const cell=document.createElement("div");cell.className="cell";
           if(method.displayGroup==="phyrvg"){{
@@ -1160,7 +1171,7 @@ def build_videos_page(
           label.style.color=method.color;
           const video=document.createElement("video");
           video.preload="metadata";video.playsInline=true;video.muted=true;
-          video.src=record.videos[c.stem];
+          video.src=videoPath;
           const checkpoint=document.createElement("div");checkpoint.className="checkpoint";
           checkpoint.textContent=record.checkpoint_dir;
           cell.append(label,video,checkpoint);matrix.append(cell);
