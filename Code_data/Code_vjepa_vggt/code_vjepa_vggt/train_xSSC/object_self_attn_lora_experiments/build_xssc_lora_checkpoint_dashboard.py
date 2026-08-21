@@ -100,6 +100,8 @@ PHYRVG_DISPLAY_ORDER = (
     "full_sa_physrvg_vjepa_loss_0613_b2g2",
     "full_sa_physrvg_latent_mask_loss",
     "full_sa_physrvg_object_xssc_loss",
+    "full_sa_physrvg_no_vjepa_0717_b2g2",
+    "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
 )
 PHYRVG_DISPLAY_INDEX = {
     key: index for index, key in enumerate(PHYRVG_DISPLAY_ORDER)
@@ -743,6 +745,9 @@ def build_video_media(
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         ffmpeg = str(Path(config["paths"]["python"]).with_name("ffmpeg"))
+    configured_methods = {
+        str(method["key"]): method for method in config.get("methods", [])
+    }
     for case in cases:
         source_root = media_root / "_source" / case["stem"]
         gt_path = source_root / "gt_49f_30fps.mp4"
@@ -758,7 +763,9 @@ def build_video_media(
         result_root = Path(manifest["result_root"])
         record = {
             "method_key": method_key,
-            "method_label": manifest["method_label"],
+            "method_label": configured_methods.get(method_key, {}).get(
+                "label", manifest["method_label"]
+            ),
             "step": step,
             "checkpoint_dir": manifest["checkpoint_dir"],
             "origin": manifest.get("origin", "watcher"),
@@ -1636,6 +1643,16 @@ MERGED_METHODS = [
         "key": "full_sa_physrvg_object_xssc_loss",
         "label": "PHYRVG-Full-SA + Object + XSSC Loss",
         "color": "#7B61A8",
+    },
+    {
+        "key": "full_sa_physrvg_no_vjepa_0717_b2g2",
+        "label": "PHYRVG-Full-SA · 0717 ·",
+        "color": "#F28E2B",
+    },
+    {
+        "key": "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
+        "label": "PHYRVG-Full-SA + V-JEPA Loss · Rect384×672 · 0717 · b2-gacc2",
+        "color": "#76B7B2",
     },
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
     {

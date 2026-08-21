@@ -452,7 +452,7 @@
     },
     {
       "key": "full_sa_physrvg_no_vjepa_0717_b2g2",
-      "label": "PHYRVG-Full-SA · No V-JEPA Loss · 0717 · b2-gacc2",
+      "label": "PHYRVG-Full-SA · 0717 ·",
       "color": "#F28E2B",
       "checkpoint_format": "peft_adapter",
       "min_step": 500,
