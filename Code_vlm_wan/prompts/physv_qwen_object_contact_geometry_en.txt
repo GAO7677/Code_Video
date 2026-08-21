@@ -1,25 +1,19 @@
-Analyze the video and describe it in two parts.
+Analyze the video for physics-relevant information.
 
-1. Object description:
-   Describe the moving object(s), including:
+Describe only information that affects object motion.
 
-- number of objects
-- color, shape, and approximate size
-- object category if recognizable
-- initial position and orientation
-- motion pattern (rolling, sliding, falling, bouncing, rotating, etc.)
-- changes in motion during the video
+1. Object motion:
 
-2. Contact scene description:
-   Describe the visible scene structures that directly affect the object's motion.
-   Focus on geometry and spatial relationships, including:
+- Identify the moving object.
+- Describe its initial state (position, orientation, contact state).
+- Describe its trajectory and motion changes over time.
+- Include important transitions: sliding, rolling, falling, bouncing, collision, stopping, or changing direction.
 
-- supporting surfaces the object contacts or moves on
-- platforms, floors, slopes, steps, walls, obstacles, or containers involved in interaction
-- relative height, angle, length, width, gap, or distance between relevant structures
-- contact transitions, such as leaving a surface, colliding with an object, landing on another surface, or falling into an opening
-- the spatial arrangement between the moving object and surrounding structures
+2. Scene interaction:
 
-Only describe information that can be directly observed from the video.
-Do not infer hidden physical properties such as mass, friction coefficient, material properties, or restitution.
-Do not explain the physics or predict the outcome. Focus on describing the visible object and interaction geometry.
+- Describe scene elements that may interact with the object.
+- Focus on motion-relevant geometry: supporting surfaces, slopes, obstacles, gaps, boundaries, and height differences.
+- Describe possible interactions and their effects on motion (e.g., blocking, guiding, causing direction change, enabling falling or bouncing).
+- Only infer physical effects supported by visible geometry.
+
+Avoid describing appearance, decoration, background, or perspective-based size.

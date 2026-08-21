@@ -62,6 +62,8 @@ TRAINING_CHECKPOINT_PATTERN = re.compile(
     r"|full_sa_physrvg_latent_mask_loss"
     r"|full_sa_physrvg_vjepa_loss_0613_b2g2"
     r"|full_sa_physrvg_object_xssc_loss"
+    r"|full_sa_physrvg_no_vjepa_0717_b2g2"
+    r"|full_sa_physrvg_vjepa_rect384x672_0717_b2g2"
     r")_step-(\d+)_steps\d+_\d+x\d+_ctx\d+_\d+f(?:_.+)?$"
 )
 TRAINING_VARIANT_ALIASES = {
@@ -151,6 +153,10 @@ TRAINING_VARIANT_LABELS = {
         "PHYRVG-Full-SA + V-JEPA Loss · 0613 · b2-gacc2"
     ),
     "full_sa_physrvg_object_xssc_loss": "PHYRVG-Full-SA + Object + XSSC Loss",
+    "full_sa_physrvg_no_vjepa_0717_b2g2": "PHYRVG-Full-SA · 0717 ·",
+    "full_sa_physrvg_vjepa_rect384x672_0717_b2g2": (
+        "PHYRVG-Full-SA + V-JEPA Loss · Rect384×672 · 0717 · b2-gacc2"
+    ),
 }
 TRAINING_VARIANT_COLORS = {
     "object_only": "#4D4D4D",
@@ -177,6 +183,8 @@ TRAINING_VARIANT_COLORS = {
     "full_sa_physrvg_latent_mask_loss": "#F67280",
     "full_sa_physrvg_vjepa_loss_0613_b2g2": "#F8B195",
     "full_sa_physrvg_object_xssc_loss": "#2A9D8F",
+    "full_sa_physrvg_no_vjepa_0717_b2g2": "#F28E2B",
+    "full_sa_physrvg_vjepa_rect384x672_0717_b2g2": "#76B7B2",
 }
 TRAINING_VARIANT_MARKERS = {
     "object_only": "P",
@@ -203,6 +211,8 @@ TRAINING_VARIANT_MARKERS = {
     "full_sa_physrvg_latent_mask_loss": "D",
     "full_sa_physrvg_vjepa_loss_0613_b2g2": "P",
     "full_sa_physrvg_object_xssc_loss": "X",
+    "full_sa_physrvg_no_vjepa_0717_b2g2": "o",
+    "full_sa_physrvg_vjepa_rect384x672_0717_b2g2": "v",
 }
 TRAINING_VARIANT_LINESTYLES = {
     "object_only": "--",
@@ -229,6 +239,8 @@ TRAINING_VARIANT_LINESTYLES = {
     "full_sa_physrvg_latent_mask_loss": (0, (5, 1)),
     "full_sa_physrvg_vjepa_loss_0613_b2g2": (0, (3, 1, 1, 1)),
     "full_sa_physrvg_object_xssc_loss": (0, (1, 1)),
+    "full_sa_physrvg_no_vjepa_0717_b2g2": "-",
+    "full_sa_physrvg_vjepa_rect384x672_0717_b2g2": (0, (7, 1, 1, 1)),
 }
 TRAINING_VARIANT_ORDER = {
     variant: index
@@ -254,10 +266,12 @@ TRAINING_VARIANT_ORDER = {
             "full_sa_no_object_gt_latent_mask_loss",
             "full_sa_physrvg_dit",
             "full_sa_physrvg_dit_gpu56",
+            "full_sa_physrvg_no_vjepa_0717_b2g2",
             "full_sa_physrvg_vjepa_loss",
             "full_sa_physrvg_latent_mask_loss",
             "full_sa_physrvg_vjepa_loss_0613_b2g2",
             "full_sa_physrvg_object_xssc_loss",
+            "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
         )
     )
 }
