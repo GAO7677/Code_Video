@@ -490,13 +490,15 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
             return "dark_metal"
         if lower == "puck_barrier":
             return "blue_painted"
-    if family == "SCENE_DOOR_FRAME":
+    if family in {"SCENE_DOOR_FRAME", "SCENE_DOOR_FRAME_BALL"}:
+        if lower == "door_ball":
+            return "blue_rubber"
         if lower == "door_crate":
             return "red_wood"
         if lower.startswith("door_wall"):
             return "wall_gray"
         if lower.startswith("door_frame"):
-            return "teal_metal"
+            return "wood"
 
     if "barrier" in lower or ("post" in lower and "pendulum" in lower):
         return "teal_metal"
@@ -959,6 +961,8 @@ def main() -> None:
     trajectories = json.loads(args.trajectory_json.read_text(encoding="utf-8"))
     fps = int(metadata["simulation"]["fps"])
     render_family = "F12" if metadata["family_key"] == "F12_RAMP_LENGTH" else metadata["family_key"]
+    if render_family == "SCENE_DOOR_FRAME_BALL":
+        render_family = "SCENE_DOOR_FRAME"
     render_metadata = dict(metadata)
     render_metadata["family_key"] = render_family
 

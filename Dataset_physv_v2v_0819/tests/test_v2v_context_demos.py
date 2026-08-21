@@ -20,7 +20,7 @@ class V2VContextDemoTests(unittest.TestCase):
         families = {}
         for case in self.cases:
             families.setdefault(case.family_key, []).append(case)
-        self.assertEqual(len(self.cases), 45)
+        self.assertEqual(len(self.cases), 50)
         self.assertEqual(set(families), {
             "V2V_GAP",
             "V2V_OBSTACLE",
@@ -31,6 +31,7 @@ class V2VContextDemoTests(unittest.TestCase):
             "V2V_DOMINO",
             "SCENE_PUCK_BARRIER",
             "SCENE_DOOR_FRAME",
+            "SCENE_DOOR_FRAME_BALL",
         })
         self.assertTrue(all(len(cases) == 5 for cases in families.values()))
         self.assertTrue(all(len({case.controlled_value for case in cases}) == 5 for cases in families.values()))
@@ -46,8 +47,14 @@ class V2VContextDemoTests(unittest.TestCase):
             for case in self.cases
             if case.family_key == "SCENE_DOOR_FRAME"
         }
+        door_ball_widths = {
+            case.controlled_value
+            for case in self.cases
+            if case.family_key == "SCENE_DOOR_FRAME_BALL"
+        }
         self.assertEqual(puck_angles, {30.0, 45.0, 60.0, 75.0, 90.0})
         self.assertEqual(door_widths, {0.38, 0.46, 0.54, 0.62, 0.74})
+        self.assertEqual(door_ball_widths, door_widths)
 
     def test_physics_and_context_contract(self):
         for case in self.cases:
@@ -105,6 +112,7 @@ class V2VContextDemoTests(unittest.TestCase):
             "V2V_BOWL",
             "V2V_PENDULUM",
             "V2V_DOMINO",
+            "SCENE_DOOR_FRAME_BALL",
         ):
             groups = {
                 next(

@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-frames", type=int, default=64)
     parser.add_argument("--max-pixels", type=int, default=6_500_000)
     parser.add_argument("--max-new-tokens", type=int, default=120)
+    parser.add_argument("--physical-gpu", type=int, default=7)
     return parser.parse_args()
 
 
@@ -74,7 +75,11 @@ def main() -> None:
     cases = read_cases(args.case_list, args.video_key)
     prompt = args.prompt_file.read_text(encoding="utf-8").strip()
 
-    print(f"cases={len(cases)} video_key={args.video_key} physical_gpu={torch.cuda.get_device_name(0)}", flush=True)
+    print(
+        f"cases={len(cases)} video_key={args.video_key} "
+        f"physical_gpu={args.physical_gpu} device={torch.cuda.get_device_name(0)}",
+        flush=True,
+    )
     print(f"output={args.output}", flush=True)
     print(f"qwen_fast_path={qwen35.is_fast_path_available}", flush=True)
     started = time.time()
@@ -103,7 +108,7 @@ def main() -> None:
             "source_video": case.get("source_video"),
             "input_caption": case.get("input_caption"),
             "model": args.model_path,
-            "physical_gpu": 7,
+            "physical_gpu": args.physical_gpu,
             "runtime": {
                 "torch": torch.__version__,
                 "transformers": transformers.__version__,

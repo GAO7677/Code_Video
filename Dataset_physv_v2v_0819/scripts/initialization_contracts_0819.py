@@ -114,7 +114,7 @@ def build_contact_contract(blueprint: ScenarioBlueprint) -> dict[str, object]:
         ]
     elif family == "SCENE_PUCK_BARRIER":
         touching_ground = [name for name in ("puck", "puck_barrier") if name in names]
-    elif family == "SCENE_DOOR_FRAME":
+    elif family in {"SCENE_DOOR_FRAME", "SCENE_DOOR_FRAME_BALL"}:
         touching_pairs = _pairs(
             names,
             [
@@ -124,12 +124,15 @@ def build_contact_contract(blueprint: ScenarioBlueprint) -> dict[str, object]:
                 ("door_frame_right", "door_wall_right"),
                 ("door_frame_lintel", "door_wall_left"),
                 ("door_frame_lintel", "door_wall_right"),
+                ("door_frame_lintel", "door_wall_header"),
+                ("door_wall_left", "door_wall_header"),
+                ("door_wall_right", "door_wall_header"),
             ],
         )
         touching_ground = [
             name
             for name in (
-                "door_crate",
+                "door_ball" if family == "SCENE_DOOR_FRAME_BALL" else "door_crate",
                 "door_frame_left",
                 "door_frame_right",
                 "door_wall_left",

@@ -96,6 +96,12 @@ def _specific_caption(metadata: Mapping[str, object]) -> str:
             f"An ice puck slides across a low-friction floor toward a fixed rigid barrier whose plane normal is oriented at {normal_value} "
             "relative to the transverse direction; the puck collides and changes its travel direction."
         )
+    if family_key == "SCENE_DOOR_FRAME_BALL" or task_type == "door_frame_clearance_ball":
+        opening_value = value.replace("opening=", "")
+        return (
+            f"A blue rubber ball of fixed size and speed moves toward a fixed door frame with an opening {opening_value} wide; "
+            "the changing clearance determines whether it passes through, contacts the frame, or rebounds."
+        )
     if family_key == "SCENE_DOOR_FRAME" or task_type == "door_frame_clearance":
         opening_value = value.replace("opening=", "")
         return (
@@ -131,6 +137,8 @@ def _abstract_caption(metadata: Mapping[str, object]) -> str:
         return "A red ball rolls into a row of upright dominoes, knocks the first one over, and starts contact transfer through the row."
     if family_key == "SCENE_PUCK_BARRIER" or task_type == "puck_barrier_collision":
         return "An ice puck slides across a low-friction floor toward a fixed barrier, and the barrier orientation changes the rebound direction."
+    if family_key == "SCENE_DOOR_FRAME_BALL" or task_type == "door_frame_clearance_ball":
+        return "A fixed-size blue rubber ball moves toward a fixed door frame; changing the opening width changes the available clearance and contact outcome."
     if family_key == "SCENE_DOOR_FRAME" or task_type == "door_frame_clearance":
         return "A fixed-size wooden crate moves toward a fixed door frame; changing the opening width changes the available clearance and contact outcome."
     return "Rigid objects move through a simulated physical scene."

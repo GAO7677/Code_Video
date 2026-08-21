@@ -23,6 +23,7 @@ FAMILY_TAXONOMY = {
     "V2V_SEESAW": "Relation",
     "SCENE_PUCK_BARRIER": "Scene",
     "SCENE_DOOR_FRAME": "Scene",
+    "SCENE_DOOR_FRAME_BALL": "Scene",
 }
 
 

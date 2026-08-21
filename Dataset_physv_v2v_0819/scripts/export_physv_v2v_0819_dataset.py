@@ -255,6 +255,7 @@ def _v2v_task_type(family_key: str) -> str:
         "V2V_DOMINO": "domino_chain",
         "SCENE_PUCK_BARRIER": "puck_barrier_collision",
         "SCENE_DOOR_FRAME": "door_frame_clearance",
+        "SCENE_DOOR_FRAME_BALL": "door_frame_clearance_ball",
     }[family_key]
 
 
@@ -265,6 +266,7 @@ def _make_v2v_cases(seed_base: int) -> list[ExportCase]:
             "V2V_OBSTACLE_SIZE": "v2v_obstacle_ball_size",
             "SCENE_PUCK_BARRIER": "scene_puck_barrier",
             "SCENE_DOOR_FRAME": "scene_door_frame",
+            "SCENE_DOOR_FRAME_BALL": "scene_door_frame_ball",
         }.get(demo.family_key, "v2v_control")
         cases.append(
             ExportCase(
@@ -309,8 +311,8 @@ def build_export_cases(
         + _make_f12_length_cases(difficulty_seed_base)
     )
     ids = [case.case_id for case in cases]
-    if len(cases) != 60 or len(set(ids)) != len(ids):
-        raise RuntimeError(f"expected 60 unique V2V/F11/F12 cases, got {len(cases)}")
+    if len(cases) != 65 or len(set(ids)) != len(ids):
+        raise RuntimeError(f"expected 65 unique V2V/F11/F12 cases, got {len(cases)}")
     audit_group_invariants(cases)
     return cases
 
@@ -1142,6 +1144,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
             "v2v_obstacle_ball_size",
             "scene_puck_barrier",
             "scene_door_frame",
+            "scene_door_frame_ball",
             "f11_table_height",
             "f12_incline",
             "f12_ramp_length",
@@ -1173,7 +1176,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
             "mask_policy": "masks.npz contains dynamic actors; instance_ids.npz contains all rendered simulator objects.",
             "depth": "raw/depth.npz contains PyRender Z-depth in scene meters; zero denotes background.",
             "contacts": "contacts.json records motion-relevant PyBullet contacts sampled at video frames.",
-            "source_selection": "45 V2V/scene cases (including obstacle, puck-barrier, and door-frame controls), 5 F11 table-height cases, 5 F12 incline-angle cases, and 5 F12 fixed-high-support-height ramp-length cases; F11 direction variants excluded.",
+            "source_selection": "50 V2V/scene cases (including obstacle, puck-barrier, wooden-crate door-frame, and ball door-frame controls), 5 F11 table-height cases, 5 F12 incline-angle cases, and 5 F12 fixed-high-support-height ramp-length cases; F11 direction variants excluded.",
             "taxonomy": TAXONOMY_DEFINITIONS,
             "captions": {
                 "specific": "captions/caption_specific.txt exposes the controlled variable and value.",
@@ -1184,10 +1187,10 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
     )
     readme = """# PhysV V2V 0819
 
-This dataset contains 60 deterministic rigid-body video-continuation controls:
-45 V2V/scene cases, including the original V2V controls, five ice-puck barrier-angle controls, and five door-frame opening-width controls; five F11 table-height controls; five F12 incline-angle controls; and five F12 fixed-high-support-height ramp-length controls.
+This dataset contains 65 deterministic rigid-body video-continuation controls:
+50 V2V/scene cases, including the original V2V controls, five ice-puck barrier-angle controls, five wooden-crate door-frame opening-width controls, and five ball door-frame opening-width controls; five F11 table-height controls; five F12 incline-angle controls; and five F12 fixed-high-support-height ramp-length controls.
 F11 direction variants are intentionally excluded.
-The puck-barrier and door-frame groups also include low-resolution Cycles previews at 640x360; the PyBullet source videos remain the full-resolution simulation reference.
+The puck-barrier and wooden-crate door-frame groups include low-resolution Cycles previews at 640x360; the ball door-frame group currently keeps the PyBullet source videos for motion review before Cycles rendering.
 
 The controls use three explicit taxonomy levels:
 

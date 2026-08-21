@@ -64,6 +64,9 @@ OBSTACLE_BALL_DENSITY_KG_M3 = OBSTACLE_BALL_REFERENCE_MASS_KG / (
 )
 PUCK_BARRIER_NORMAL_ANGLES_DEG = (30.0, 45.0, 60.0, 75.0, 90.0)
 DOOR_FRAME_OPENING_WIDTHS_M = (0.38, 0.46, 0.54, 0.62, 0.74)
+DOOR_BALL_RADIUS_M = 0.18
+DOOR_BALL_SPEED_MPS = 1.80
+DOOR_BALL_INITIAL_Y_M = 0.10
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/physv_v2v_context_demos_20260819"
 )
@@ -1096,15 +1099,25 @@ def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCas
     )
 
 
-def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
-    """Create a scene-control case with a fixed crate and variable doorway."""
+def _make_door_frame_case(
+    sample_key: str,
+    opening_width: float,
+    *,
+    moving_object: str = "crate",
+) -> DemoCase:
+    """Create a scene-control case with a fixed moving object and variable doorway."""
+    if moving_object not in {"crate", "ball"}:
+        raise ValueError(f"unsupported door-frame moving object {moving_object!r}")
+    is_ball = moving_object == "ball"
     crate_hx, crate_hy, crate_hz = 0.34, 0.24, 0.28
     crate_start_x = -1.55
-    crate_start_y = 0.10
-    crate_speed = 1.80
+    crate_start_y = DOOR_BALL_INITIAL_Y_M
+    crate_speed = DOOR_BALL_SPEED_MPS
     frame_x = 0.72
-    frame_hx = 0.08
-    frame_side_hy = 0.10
+    # The casing is flush with the wall thickness instead of floating in
+    # front of two separate wall blocks.
+    frame_hx = 0.14
+    frame_side_hy = 0.08
     frame_side_hz = 0.50
     frame_height = 2.0 * frame_side_hz
     lintel_hz = 0.10
@@ -1118,29 +1131,56 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
     # blocks; the height remains fixed while only the opening width varies.
     wall_height = 1.80
     wall_half_z = 0.5 * wall_height
+    door_top_z = frame_height + 2.0 * lintel_hz
+    header_half_z = 0.5 * (wall_height - door_top_z)
+    header_center_z = door_top_z + header_half_z
+    if is_ball:
+        moving_name = "door_ball"
+        moving_shape = "sphere"
+        moving_size = {"radius": DOOR_BALL_RADIUS_M}
+        moving_position = (crate_start_x, crate_start_y, DOOR_BALL_RADIUS_M)
+        moving_material = "rubber_blue"
+        moving_mass = 1.20
+        moving_friction = 0.08
+        moving_restitution = 0.28
+        moving_linear_damping = 0.012
+        moving_angular_damping = 0.02
+        appearance_group = "scene_door_frame_blue_rubber_ball_v1"
+    else:
+        moving_name = "door_crate"
+        moving_shape = "box"
+        moving_size = {"hx": crate_hx, "hy": crate_hy, "hz": crate_hz}
+        moving_position = (crate_start_x, crate_start_y, crate_hz)
+        moving_material = "wood_red"
+        moving_mass = 2.40
+        moving_friction = 0.10
+        moving_restitution = 0.08
+        moving_linear_damping = 0.025
+        moving_angular_damping = 0.07
+        appearance_group = "scene_door_frame_red_wood_crate_v1"
     objects = [
         _object(
-            name="door_crate",
-            family_key="wooden_crate",
-            shape="box",
-            size={"hx": crate_hx, "hy": crate_hy, "hz": crate_hz},
-            material_key="wood_red",
-            position=(crate_start_x, crate_start_y, crate_hz),
+            name=moving_name,
+            family_key="rubber_ball" if is_ball else "wooden_crate",
+            shape=moving_shape,
+            size=moving_size,
+            material_key=moving_material,
+            position=moving_position,
             dynamic=True,
-            mass=2.40,
-            friction=0.10,
-            restitution=0.08,
+            mass=moving_mass,
+            friction=moving_friction,
+            restitution=moving_restitution,
             velocity=(crate_speed, 0.0, 0.0),
-            linear_damping=0.025,
-            angular_damping=0.07,
-            metadata={"appearance_group": "scene_door_frame_red_wood_crate_v1"},
+            linear_damping=moving_linear_damping,
+            angular_damping=moving_angular_damping,
+            metadata={"appearance_group": appearance_group},
         ),
         _object(
             name="door_frame_left",
             family_key="door_frame",
             shape="box",
             size={"hx": frame_hx, "hy": frame_side_hy, "hz": frame_side_hz},
-            material_key="painted_metal_teal",
+            material_key="wood_dark",
             position=(frame_x, -outer_half_y, frame_side_hz),
             dynamic=False,
             mass=0.0,
@@ -1152,7 +1192,7 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
             family_key="door_frame",
             shape="box",
             size={"hx": frame_hx, "hy": frame_side_hy, "hz": frame_side_hz},
-            material_key="painted_metal_teal",
+            material_key="wood_dark",
             position=(frame_x, outer_half_y, frame_side_hz),
             dynamic=False,
             mass=0.0,
@@ -1164,12 +1204,27 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
             family_key="door_frame",
             shape="box",
             size={"hx": frame_hx, "hy": outer_half_y + frame_side_hy, "hz": lintel_hz},
-            material_key="painted_metal_teal",
+            material_key="wood_dark",
             position=(frame_x, 0.0, frame_height + lintel_hz),
             dynamic=False,
             mass=0.0,
             friction=0.46,
             restitution=0.05,
+            role="anchored_static",
+        ),
+        _object(
+            name="door_wall_header",
+            family_key="door_wall",
+            shape="box",
+            # This closes the wall above the opening and meets both side
+            # panels at their inner edges, forming one continuous wall.
+            size={"hx": wall_half_x, "hy": wall_inner_edge_y, "hz": header_half_z},
+            material_key="wall_beige",
+            position=(frame_x, 0.0, header_center_z),
+            dynamic=False,
+            mass=0.0,
+            friction=0.50,
+            restitution=0.02,
             role="anchored_static",
         ),
         _object(
@@ -1199,49 +1254,90 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
             role="anchored_static",
         ),
     ]
-    camera = _camera(
+    if is_ball:
+        # Keep the ball's post-contact path visible through the opening. A
+        # strong diagonal view would let the side wall occlude the ball after
+        # it passes the frame, so this variant uses a near-frontal view.
+        camera = _camera(
+            eye=(-4.30, 0.35, 1.35),
+            target=(0.25, 0.0, 0.82),
+            yfov_deg=46.0,
+            hdri_key="studio_warm",
+        )
+    else:
         # Look across the doorway plane from the crate's approach side so
         # both posts and the lintel remain legible in the same view.
-        eye=(-4.10, -2.35, 1.35),
-        target=(0.25, 0.0, 0.82),
-        yfov_deg=46.0,
-        hdri_key="studio_warm",
+        camera = _camera(
+            eye=(-4.10, -2.35, 1.35),
+            target=(0.25, 0.0, 0.82),
+            yfov_deg=46.0,
+            hdri_key="studio_warm",
+        )
+    family_key = "SCENE_DOOR_FRAME_BALL" if is_ball else "SCENE_DOOR_FRAME"
+    object_title = "Blue ball" if is_ball else "Wooden crate"
+    object_description = (
+        "A blue rubber ball of fixed radius, pose, speed, and lateral offset"
+        if is_ball
+        else "A rectangular wooden crate with fixed size, pose, speed, and lateral offset"
     )
+    blueprint_metadata = {
+        "controlled_variable": "door_opening_width_m",
+        "door_opening_width_m": opening_width,
+        "door_frame_center_x_m": frame_x,
+        "door_frame_half_x_m": frame_hx,
+        "door_frame_thickness_m": 2.0 * frame_hx,
+        "door_frame_height_m": frame_height + 2.0 * lintel_hz,
+        "door_wall_outer_half_y_m": wall_outer_half_y,
+        "door_wall_height_m": wall_height,
+        "door_wall_header_height_m": 2.0 * header_half_z,
+        "door_wall_thickness_m": 2.0 * wall_half_x,
+        "initial_lateral_offset_m": crate_start_y,
+        "initial_speed_mps": crate_speed,
+        "floor_friction": 0.18,
+        "physics_sub_steps": 8,
+    }
+    if is_ball:
+        blueprint_metadata.update(
+            {
+                "ball_radius_m": DOOR_BALL_RADIUS_M,
+                "ball_mass_kg": moving_mass,
+                "ball_restitution": moving_restitution,
+            }
+        )
+    else:
+        blueprint_metadata.update(
+            {
+                "crate_size_m": {
+                    "length_x": 2.0 * crate_hx,
+                    "width_y": 2.0 * crate_hy,
+                    "height_z": 2.0 * crate_hz,
+                },
+                "crate_half_x_m": crate_hx,
+            }
+        )
     blueprint = _blueprint(
-        family_key="SCENE_DOOR_FRAME",
+        family_key=family_key,
         sample_key=sample_key,
-        title=f"Wooden crate through a {opening_width:.2f} m doorway",
+        title=f"{object_title} through a {opening_width:.2f} m doorway",
         description=(
-            "A rectangular wooden crate moves forward with fixed size, pose, speed, and lateral offset toward a fixed-thickness door frame. "
+            f"{object_description} moves forward toward a fixed-thickness wall opening with a continuous header and fitted wooden casing. "
             "Only the doorway opening width changes, producing different passage and contact outcomes."
         ),
         objects=objects,
         camera=camera,
         surface_key="residential_wood_floor",
-        tags=("scene", "door_frame", "crate", "clearance", "contact", "left_to_right"),
-        metadata={
-            "controlled_variable": "door_opening_width_m",
-            "door_opening_width_m": opening_width,
-            "door_frame_center_x_m": frame_x,
-            "door_frame_half_x_m": frame_hx,
-            "door_frame_thickness_m": 2.0 * frame_hx,
-            "door_frame_height_m": frame_height + 2.0 * lintel_hz,
-            "door_wall_outer_half_y_m": wall_outer_half_y,
-            "door_wall_height_m": wall_height,
-            "door_wall_thickness_m": 2.0 * wall_half_x,
-            "crate_size_m": {"length_x": 2.0 * crate_hx, "width_y": 2.0 * crate_hy, "height_z": 2.0 * crate_hz},
-            "crate_half_x_m": crate_hx,
-            "crate_initial_y_m": crate_start_y,
-            "initial_speed_mps": crate_speed,
-            "floor_friction": 0.18,
-            "physics_sub_steps": 8,
-        },
+        tags=("scene", "door_frame", moving_object, "clearance", "contact", "left_to_right"),
+        metadata=blueprint_metadata,
     )
     return DemoCase(
         case_id=sample_key,
-        family_key="SCENE_DOOR_FRAME",
-        family_title="木箱穿过门框",
-        family_description="木箱的尺寸、姿态、初始位置和速度固定，只改变门框开口宽度，观察通过、擦碰、卡住和旋转。",
+        family_key=family_key,
+        family_title="小球穿过门框" if is_ball else "木箱穿过门框",
+        family_description=(
+            "小球的半径、材质、姿态、初始位置和速度固定，只改变门框开口宽度，观察通过、擦碰、卡住和反弹。"
+            if is_ball
+            else "木箱的尺寸、姿态、初始位置和速度固定，只改变门框开口宽度，观察通过、擦碰、卡住和旋转。"
+        ),
         level="L3",
         title=blueprint.title,
         description=blueprint.description,
@@ -1250,7 +1346,7 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
         controlled_value_label=f"opening={opening_width:.2f} m",
         units="m",
         blueprint=blueprint,
-        event_rule="crate_reaches_door_frame",
+        event_rule="ball_reaches_door_frame" if is_ball else "crate_reaches_door_frame",
     )
 
 
@@ -1384,6 +1480,14 @@ def build_demo_cases(seed_base: int = 20260819) -> list[DemoCase]:
         cases.append(_make_puck_barrier_case(f"scene_puck_barrier_n{int(value):03d}", value))
     for value in DOOR_FRAME_OPENING_WIDTHS_M:
         cases.append(_make_door_frame_case(f"scene_door_frame_w{int(round(value * 100)):03d}", value))
+    for value in DOOR_FRAME_OPENING_WIDTHS_M:
+        cases.append(
+            _make_door_frame_case(
+                f"scene_door_frame_ball_w{int(round(value * 100)):03d}",
+                value,
+                moving_object="ball",
+            )
+        )
     return cases
 
 
@@ -1506,15 +1610,21 @@ def _first_event_frame(
             + float(metadata.get("contact_margin_m", 0.04))
         )
         frames = np.flatnonzero(np.abs(puck - barrier) <= contact_distance)
-    elif case.family_key == "SCENE_DOOR_FRAME":
-        crate = positions[:, index["door_crate"], 0]
+    elif case.family_key in {"SCENE_DOOR_FRAME", "SCENE_DOOR_FRAME_BALL"}:
+        object_name = "door_ball" if case.family_key == "SCENE_DOOR_FRAME_BALL" else "door_crate"
+        moving_object = positions[:, index[object_name], 0]
         frame = float(metadata["door_frame_center_x_m"])
         contact_distance = (
             float(metadata.get("door_frame_half_x_m", 0.08))
-            + float(metadata.get("crate_half_x_m", 0.28))
+            + float(
+                metadata.get(
+                    "ball_radius_m" if case.family_key == "SCENE_DOOR_FRAME_BALL" else "crate_half_x_m",
+                    0.18 if case.family_key == "SCENE_DOOR_FRAME_BALL" else 0.28,
+                )
+            )
             + float(metadata.get("contact_margin_m", 0.05))
         )
-        frames = np.flatnonzero(np.abs(crate - frame) <= contact_distance)
+        frames = np.flatnonzero(np.abs(moving_object - frame) <= contact_distance)
     elif case.family_key == "V2V_BOWL":
         ball_x = positions[:, index["bowl_ball"], 0]
         frames = np.flatnonzero(ball_x >= -0.04)

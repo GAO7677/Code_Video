@@ -28,6 +28,7 @@ _METADATA_VARIABLE_KEYS = {
     "V2V_DOMINO": {"domino_gap_m", "domino_center_step_m"},
     "SCENE_PUCK_BARRIER": {"barrier_normal_angle_deg", "barrier_normal_xy"},
     "SCENE_DOOR_FRAME": {"door_opening_width_m"},
+    "SCENE_DOOR_FRAME_BALL": {"door_opening_width_m"},
 }
 
 _GEOMETRY_VARYING_FAMILIES = {
@@ -41,6 +42,7 @@ _GEOMETRY_VARYING_FAMILIES = {
     "V2V_DOMINO",
     "SCENE_PUCK_BARRIER",
     "SCENE_DOOR_FRAME",
+    "SCENE_DOOR_FRAME_BALL",
 }
 
 
@@ -85,9 +87,9 @@ def _varying_object_fields(family_key: str, name: str) -> set[str]:
         fields.add("size")
     if family_key == "SCENE_PUCK_BARRIER" and name == "puck_barrier":
         fields.add("orientation_euler_deg")
-    if family_key == "SCENE_DOOR_FRAME" and name.startswith("door_frame_"):
+    if family_key in {"SCENE_DOOR_FRAME", "SCENE_DOOR_FRAME_BALL"} and name.startswith("door_frame_"):
         fields.update({"position", "size"})
-    if family_key == "SCENE_DOOR_FRAME" and name.startswith("door_wall_"):
+    if family_key in {"SCENE_DOOR_FRAME", "SCENE_DOOR_FRAME_BALL"} and name.startswith("door_wall_"):
         fields.update({"position", "size"})
     return fields
 
