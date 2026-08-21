@@ -849,8 +849,8 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
 
 def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
     # A horizontal cylindrical fulcrum replaces the old rectangular block.
-    # The board is tangent to its top and uses two point constraints on the
-    # shaft itself, so there is no suspended hinge anchor or visible gap.
+    # The board is tangent to its top and uses two point constraints separated
+    # along the shaft, so only rotation around the shaft remains free.
     pivot_radius = 0.10
     pivot_height = pivot_radius
     pivot_center_z = pivot_radius
@@ -862,6 +862,7 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
     board_angle = 0.0
     theta = math.radians(board_angle)
     load_hx, load_hy, load_hz = 0.14, 0.14, 0.12
+    hinge_half_span = 0.20
     local_z = board_hz + load_hz
     load_position = (
         load_x * math.cos(theta) + local_z * math.sin(theta),
@@ -942,22 +943,30 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
             "pivot_shape": "horizontal_cylinder",
             "pivot_radius_m": pivot_radius,
             "board_length_m": 2.0 * board_hx,
-            # Disable direct shaft-board collision.  Their meshes remain
-            # tangent, while the two shaft constraints define the hinge axis
-            # without generating an impulse that ejects the load.
+            # Disable direct shaft-board collision. Their meshes remain
+            # tangent, while two separated shaft constraints define the hinge
+            # axis without allowing an unintended roll toward the camera.
             "disable_collision_pairs": [("seesaw_pivot", "seesaw_board")],
             "initial_board_angle_deg": board_angle,
+            "hinge_half_span_m": hinge_half_span,
             "constraints": [
                 {
                     "type": "point2point",
                     "body": "seesaw_board",
                     "parent_body": "seesaw_pivot",
                     "axis": (0.0, 0.0, 1.0),
-                    # The pivot is rotated 90 degrees around X, so its local
-                    # Y offset reaches the visible shaft top and its local Z
-                    # axis is the world Y hinge axis.
-                    "parent_frame": (0.0, pivot_radius, 0.0),
-                    "child_frame": (0.0, 0.0, pivot_axis_z - board_center_z),
+                    # The pivot is rotated 90 degrees around X: local Z maps
+                    # to the world-Y shaft direction with the opposite sign.
+                    "parent_frame": (0.0, pivot_radius, -hinge_half_span),
+                    "child_frame": (0.0, hinge_half_span, pivot_axis_z - board_center_z),
+                },
+                {
+                    "type": "point2point",
+                    "body": "seesaw_board",
+                    "parent_body": "seesaw_pivot",
+                    "axis": (0.0, 0.0, 1.0),
+                    "parent_frame": (0.0, pivot_radius, hinge_half_span),
+                    "child_frame": (0.0, -hinge_half_span, pivot_axis_z - board_center_z),
                 }
             ],
         },

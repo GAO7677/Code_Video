@@ -107,6 +107,8 @@
       "full_sa_physrvg_latent_mask_loss",
       "full_sa_physrvg_vjepa_loss_0613_b2g2",
       "full_sa_physrvg_object_xssc_loss",
+      "full_sa_physrvg_no_vjepa_0717_b2g2",
+      "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
       "physrvg_test5_lora_off",
       "physrvg_test5_lora_on"
     ],
@@ -446,6 +448,28 @@
       "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_object_xssc.sh",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_object_xssc/physrvg-full-sa-object-slot-dedup-xssc-loss-b2-gacc2-20260819T020000Z/checkpoints"
+      ]
+    },
+    {
+      "key": "full_sa_physrvg_no_vjepa_0717_b2g2",
+      "label": "PHYRVG-Full-SA · No V-JEPA Loss · 0717 · b2-gacc2",
+      "color": "#F28E2B",
+      "checkpoint_format": "peft_adapter",
+      "min_step": 500,
+      "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_no_vjepa/full-sa-pybullet-physrvg-no-vjepa-b2-gacc2-20260820T182628Z/checkpoints"
+      ]
+    },
+    {
+      "key": "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
+      "label": "PHYRVG-Full-SA + V-JEPA Loss · Rect384×672 · 0717 · b2-gacc2",
+      "color": "#76B7B2",
+      "checkpoint_format": "peft_adapter",
+      "min_step": 500,
+      "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_rect384x672/full-sa-pybullet-physrvg-vjepa-rect384x672-b2-gacc2-20260820T144059Z/checkpoints"
       ]
     },
     {
