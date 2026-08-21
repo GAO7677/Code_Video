@@ -1000,7 +1000,9 @@ def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCas
     barrier_x = 0.65
     barrier_hx = 0.045
     barrier_hy = 0.72
-    barrier_hz = 0.06
+    # Make the barrier clearly visible and physically block the puck while
+    # keeping its height fixed across the angle-controlled group.
+    barrier_hz = 0.10
     angle = math.radians(normal_angle_deg)
     barrier_orientation_z_deg = 90.0 - normal_angle_deg
     objects = [
@@ -1067,6 +1069,7 @@ def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCas
             "barrier_center_x_m": barrier_x,
             "barrier_half_x_m": barrier_hx,
             "barrier_half_y_m": barrier_hy,
+            "barrier_height_m": 2.0 * barrier_hz,
             "barrier_restitution": 0.95,
             "puck_radius_m": puck_radius,
             "puck_height_m": puck_height,
@@ -1111,7 +1114,10 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
     wall_half_y = 0.5 * (wall_outer_half_y - wall_inner_edge_y)
     wall_center_y = 0.5 * (wall_outer_half_y + wall_inner_edge_y)
     wall_half_x = 0.14
-    wall_half_z = 0.5 * (frame_height + 2.0 * lintel_hz)
+    # Treat the side panels as substantial wall sections rather than short
+    # blocks; the height remains fixed while only the opening width varies.
+    wall_height = 1.80
+    wall_half_z = 0.5 * wall_height
     objects = [
         _object(
             name="door_crate",
@@ -1221,13 +1227,13 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
             "door_frame_thickness_m": 2.0 * frame_hx,
             "door_frame_height_m": frame_height + 2.0 * lintel_hz,
             "door_wall_outer_half_y_m": wall_outer_half_y,
-            "door_wall_height_m": 2.0 * wall_half_z,
+            "door_wall_height_m": wall_height,
             "door_wall_thickness_m": 2.0 * wall_half_x,
             "crate_size_m": {"length_x": 2.0 * crate_hx, "width_y": 2.0 * crate_hy, "height_z": 2.0 * crate_hz},
             "crate_half_x_m": crate_hx,
             "crate_initial_y_m": crate_start_y,
             "initial_speed_mps": crate_speed,
-            "floor_friction": 0.10,
+            "floor_friction": 0.18,
             "physics_sub_steps": 8,
         },
     )

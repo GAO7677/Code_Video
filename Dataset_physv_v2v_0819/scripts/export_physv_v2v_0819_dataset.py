@@ -1187,6 +1187,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
 This dataset contains 60 deterministic rigid-body video-continuation controls:
 45 V2V/scene cases, including the original V2V controls, five ice-puck barrier-angle controls, and five door-frame opening-width controls; five F11 table-height controls; five F12 incline-angle controls; and five F12 fixed-high-support-height ramp-length controls.
 F11 direction variants are intentionally excluded.
+The puck-barrier and door-frame groups also include low-resolution Cycles previews at 640x360; the PyBullet source videos remain the full-resolution simulation reference.
 
 The controls use three explicit taxonomy levels:
 
