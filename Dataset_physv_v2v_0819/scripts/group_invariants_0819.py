@@ -87,6 +87,8 @@ def _varying_object_fields(family_key: str, name: str) -> set[str]:
         fields.add("orientation_euler_deg")
     if family_key == "SCENE_DOOR_FRAME" and name.startswith("door_frame_"):
         fields.update({"position", "size"})
+    if family_key == "SCENE_DOOR_FRAME" and name.startswith("door_wall_"):
+        fields.update({"position", "size"})
     return fields
 
 

@@ -493,6 +493,8 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
     if family == "SCENE_DOOR_FRAME":
         if lower == "door_crate":
             return "red_wood"
+        if lower.startswith("door_wall"):
+            return "wall_gray"
         if lower.startswith("door_frame"):
             return "teal_metal"
 
@@ -870,8 +872,8 @@ CAMERA_FRAMING_PRESETS = {
     "V2V_OBSTACLE_SIZE": {"target": (-0.635, 0.0, 0.480), "yfov_deg": 31.5},
     "V2V_PENDULUM": {"target": (-0.450, 0.0, 1.128), "yfov_deg": 41.5},
     "V2V_SEESAW": {"target": (0.002, 0.0, 0.460), "yfov_deg": 21.5},
-    "SCENE_PUCK_BARRIER": {"target": (0.15, -0.85, 0.32), "yfov_deg": 50.0},
-    "SCENE_DOOR_FRAME": {"target": (0.35, 0.0, 0.65), "yfov_deg": 50.0},
+    "SCENE_PUCK_BARRIER": {"target": (0.20, -0.40, 0.24), "yfov_deg": 45.0},
+    "SCENE_DOOR_FRAME": {"target": (0.25, 0.0, 0.82), "yfov_deg": 46.0},
 }
 
 

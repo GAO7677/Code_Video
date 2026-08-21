@@ -1,0 +1,1 @@
+/data/gaoya/agent-data/outputs/physv_qwen3_8/physv_v2v_0819_rgb_cycles_geometry_en_all/difficulty_l2_f11_h140_sr048.json

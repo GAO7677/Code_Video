@@ -994,8 +994,8 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
 
 def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCase:
     """Create a scene-control case with a fixed puck and rotated barrier."""
-    puck_radius = 0.12
-    puck_height = 0.05
+    puck_radius = 0.16
+    puck_height = 0.06
     puck_start_x = -1.55
     barrier_x = 0.65
     barrier_hx = 0.045
@@ -1015,8 +1015,8 @@ def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCas
             position=(puck_start_x, 0.0, puck_height * 0.5 + 0.001),
             dynamic=True,
             mass=0.30,
-            friction=0.03,
-            restitution=0.86,
+            friction=0.0,
+            restitution=0.90,
             velocity=(1.40, 0.0, 0.0),
             angular_velocity=(0.0, 0.0, 0.0),
             linear_damping=0.004,
@@ -1036,15 +1036,15 @@ def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCas
             position=(barrier_x, 0.0, barrier_hz),
             dynamic=False,
             mass=0.0,
-            friction=0.04,
-            restitution=0.90,
+            friction=0.0,
+            restitution=0.95,
             orientation=(0.0, 0.0, barrier_orientation_z_deg),
         ),
     ]
     camera = _camera(
-        eye=(0.15, -6.35, 1.55),
-        target=(0.15, -0.85, 0.24),
-        yfov_deg=52.0,
+        eye=(0.20, -4.25, 1.18),
+        target=(0.20, -0.40, 0.24),
+        yfov_deg=45.0,
         hdri_key="hall_bright",
     )
     blueprint = _blueprint(
@@ -1067,11 +1067,12 @@ def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCas
             "barrier_center_x_m": barrier_x,
             "barrier_half_x_m": barrier_hx,
             "barrier_half_y_m": barrier_hy,
-            "barrier_restitution": 0.75,
+            "barrier_restitution": 0.95,
             "puck_radius_m": puck_radius,
             "puck_height_m": puck_height,
             "initial_speed_mps": 1.40,
-            "floor_friction": 0.05,
+            "floor_friction": 0.04,
+            "rebound_solver": "normal_impulse_correction_for_thin_disk_floor_wall_contact",
             "physics_sub_steps": 8,
         },
     )
@@ -1094,7 +1095,7 @@ def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCas
 
 def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
     """Create a scene-control case with a fixed crate and variable doorway."""
-    crate_hx, crate_hy, crate_hz = 0.28, 0.20, 0.22
+    crate_hx, crate_hy, crate_hz = 0.34, 0.24, 0.28
     crate_start_x = -1.55
     crate_start_y = 0.10
     crate_speed = 1.20
@@ -1105,6 +1106,12 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
     frame_height = 2.0 * frame_side_hz
     lintel_hz = 0.10
     outer_half_y = opening_width * 0.5 + frame_side_hy
+    wall_outer_half_y = 1.55
+    wall_inner_edge_y = outer_half_y + frame_side_hy
+    wall_half_y = 0.5 * (wall_outer_half_y - wall_inner_edge_y)
+    wall_center_y = 0.5 * (wall_outer_half_y + wall_inner_edge_y)
+    wall_half_x = 0.14
+    wall_half_z = 0.5 * (frame_height + 2.0 * lintel_hz)
     objects = [
         _object(
             name="door_crate",
@@ -1159,13 +1166,39 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
             restitution=0.05,
             role="anchored_static",
         ),
+        _object(
+            name="door_wall_left",
+            family_key="door_wall",
+            shape="box",
+            size={"hx": wall_half_x, "hy": wall_half_y, "hz": wall_half_z},
+            material_key="wall_beige",
+            position=(frame_x, -wall_center_y, wall_half_z),
+            dynamic=False,
+            mass=0.0,
+            friction=0.50,
+            restitution=0.02,
+            role="anchored_static",
+        ),
+        _object(
+            name="door_wall_right",
+            family_key="door_wall",
+            shape="box",
+            size={"hx": wall_half_x, "hy": wall_half_y, "hz": wall_half_z},
+            material_key="wall_beige",
+            position=(frame_x, wall_center_y, wall_half_z),
+            dynamic=False,
+            mass=0.0,
+            friction=0.50,
+            restitution=0.02,
+            role="anchored_static",
+        ),
     ]
     camera = _camera(
         # Look across the doorway plane from the crate's approach side so
         # both posts and the lintel remain legible in the same view.
-        eye=(-4.80, -2.40, 1.55),
-        target=(0.35, 0.0, 0.65),
-        yfov_deg=50.0,
+        eye=(-4.10, -2.35, 1.35),
+        target=(0.25, 0.0, 0.82),
+        yfov_deg=46.0,
         hdri_key="studio_warm",
     )
     blueprint = _blueprint(
@@ -1187,6 +1220,9 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
             "door_frame_half_x_m": frame_hx,
             "door_frame_thickness_m": 2.0 * frame_hx,
             "door_frame_height_m": frame_height + 2.0 * lintel_hz,
+            "door_wall_outer_half_y_m": wall_outer_half_y,
+            "door_wall_height_m": 2.0 * wall_half_z,
+            "door_wall_thickness_m": 2.0 * wall_half_x,
             "crate_size_m": {"length_x": 2.0 * crate_hx, "width_y": 2.0 * crate_hy, "height_z": 2.0 * crate_hz},
             "crate_half_x_m": crate_hx,
             "crate_initial_y_m": crate_start_y,
@@ -1740,6 +1776,77 @@ def audit_v2v_case_initialization(
         p.disconnect(client)
 
 
+def _step_v2v_simulation(
+    body_ids: dict[str, int],
+    blueprint: ScenarioBlueprint,
+) -> dict[str, object] | None:
+    """Advance PyBullet and preserve a visible rebound for a thin puck.
+
+    A thin disk resting on the floor can remain in a persistent wall/floor
+    contact manifold.  In that configuration Bullet resolves the first
+    oblique impact as a zero-normal-speed sliding contact even when both
+    bodies have restitution.  Apply the missing normal impulse once, only
+    when the pre-step velocity is approaching the barrier; tangential motion,
+    gravity, and all other contacts remain solver-controlled.
+    """
+    if blueprint.family_key != "SCENE_PUCK_BARRIER":
+        p.stepSimulation()
+        return None
+
+    puck_id = body_ids.get("puck")
+    barrier_id = body_ids.get("puck_barrier")
+    if puck_id is None or barrier_id is None:
+        p.stepSimulation()
+        return None
+
+    previous_velocity = np.asarray(p.getBaseVelocity(puck_id)[0], dtype=np.float64)
+    p.stepSimulation()
+    contacts = p.getContactPoints(puck_id, barrier_id)
+    if not contacts:
+        return None
+
+    contact = max(
+        contacts,
+        key=lambda point: math.hypot(float(point[7][0]), float(point[7][1])),
+    )
+    normal = np.asarray(contact[7], dtype=np.float64)
+    normal[2] = 0.0
+    normal_length = float(np.linalg.norm(normal))
+    if normal_length <= 1e-8:
+        return None
+    normal /= normal_length
+    current_velocity = np.asarray(p.getBaseVelocity(puck_id)[0], dtype=np.float64)
+    incoming_normal_speed = float(np.dot(previous_velocity, normal))
+    solved_normal_speed = float(np.dot(current_velocity, normal))
+    objects = {obj.name: obj for obj in blueprint.objects}
+    effective_restitution = min(
+        float(objects["puck"].restitution),
+        float(objects["puck_barrier"].restitution),
+    )
+    if incoming_normal_speed >= -0.08 or solved_normal_speed >= 0.08:
+        return None
+
+    desired_normal_speed = -effective_restitution * incoming_normal_speed
+    correction = desired_normal_speed - solved_normal_speed
+    current_velocity += correction * normal
+    angular_velocity = p.getBaseVelocity(puck_id)[1]
+    p.resetBaseVelocity(
+        puck_id,
+        linearVelocity=current_velocity.tolist(),
+        angularVelocity=angular_velocity,
+    )
+    return {
+        "incoming_normal_speed_mps": round(incoming_normal_speed, 6),
+        "solver_normal_speed_mps": round(solved_normal_speed, 6),
+        "outgoing_normal_speed_mps": round(desired_normal_speed, 6),
+        "effective_restitution": round(effective_restitution, 6),
+        "normal_xy": [round(float(value), 6) for value in normal[:2]],
+        "corrected_velocity_xy_mps": [
+            round(float(value), 6) for value in current_velocity[:2]
+        ],
+    }
+
+
 def _appearance_seed(obj: ObjectInstanceSpec) -> int:
     appearance_group = str(obj.metadata.get("appearance_group", obj.name))
     return sum(
@@ -1784,6 +1891,7 @@ def _render_case(
         body_ids: dict[str, int] = {}
         visual_audit_body_ids: dict[str, int] = {}
         constraint_ids: list[int] = []
+        rebound_corrections: list[dict[str, object]] = []
         try:
             p.setAdditionalSearchPath(pybullet_data.getDataPath())
             p.resetSimulation()
@@ -1895,9 +2003,24 @@ def _render_case(
                 ),
             ]
 
+            physics_step_index = 0
+
+            def step_simulation() -> None:
+                nonlocal physics_step_index
+                correction = _step_v2v_simulation(body_ids, blueprint)
+                if correction is not None:
+                    rebound_corrections.append(
+                        {
+                            "substep_index": physics_step_index,
+                            "time_s": round(physics_step_index / SIM_HZ, 6),
+                            **correction,
+                        }
+                    )
+                physics_step_index += 1
+
             pre_roll_steps = int(round(blueprint.pre_roll_s * SIM_HZ))
             for _ in range(pre_roll_steps):
-                p.stepSimulation()
+                step_simulation()
             pre_roll_positions = _physical_positions(body_ids)
             _update_visual_audit_bodies(
                 visual_objects,
@@ -1932,7 +2055,7 @@ def _render_case(
             frames: list[np.ndarray] = []
             for step in range(total_steps):
                 if step % record_every != 0:
-                    p.stepSimulation()
+                    step_simulation()
                     continue
                 frame_index = step // record_every
                 current_positions: dict[str, np.ndarray] = {}
@@ -1993,7 +2116,7 @@ def _render_case(
                         )
                     )
                 frames.append(cv2.cvtColor(renderer.render(), cv2.COLOR_RGB2BGR))
-                p.stepSimulation()
+                step_simulation()
             positions = positions[: len(frames)]
             quats = quats[: len(frames)]
             linear_velocities = linear_velocities[: len(frames)]
@@ -2078,6 +2201,7 @@ def _render_case(
                     "penetration_tolerance_m": legacy.INITIALIZATION_PENETRATION_TOLERANCE_M,
                     "stages": initialization_qa,
                 },
+                "puck_rebound_corrections": rebound_corrections,
             }
             meta = {
                 "case_id": case.case_id,
@@ -2119,6 +2243,7 @@ def _render_case(
                 "state_summary": state_summary,
                 "initialization_qa": qa["initialization"],
                 "qa": qa,
+                "puck_rebound_corrections": rebound_corrections,
             }
             meta_path = output_root / "meta" / f"{case.case_id}.json"
             meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")

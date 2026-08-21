@@ -120,11 +120,21 @@ def build_contact_contract(blueprint: ScenarioBlueprint) -> dict[str, object]:
             [
                 ("door_frame_left", "door_frame_lintel"),
                 ("door_frame_right", "door_frame_lintel"),
+                ("door_frame_left", "door_wall_left"),
+                ("door_frame_right", "door_wall_right"),
+                ("door_frame_lintel", "door_wall_left"),
+                ("door_frame_lintel", "door_wall_right"),
             ],
         )
         touching_ground = [
             name
-            for name in ("door_crate", "door_frame_left", "door_frame_right")
+            for name in (
+                "door_crate",
+                "door_frame_left",
+                "door_frame_right",
+                "door_wall_left",
+                "door_wall_right",
+            )
             if name in names
         ]
 
