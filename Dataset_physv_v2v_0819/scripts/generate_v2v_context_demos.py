@@ -994,15 +994,15 @@ def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
 
 def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCase:
     """Create a scene-control case with a fixed puck and rotated barrier."""
-    puck_radius = 0.16
-    puck_height = 0.06
+    puck_radius = 0.25
+    puck_height = 0.10
     puck_start_x = -1.55
     barrier_x = 0.65
     barrier_hx = 0.045
     barrier_hy = 0.72
     # Make the barrier clearly visible and physically block the puck while
     # keeping its height fixed across the angle-controlled group.
-    barrier_hz = 0.10
+    barrier_hz = 0.25
     angle = math.radians(normal_angle_deg)
     barrier_orientation_z_deg = 90.0 - normal_angle_deg
     objects = [
@@ -1101,7 +1101,7 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
     crate_hx, crate_hy, crate_hz = 0.34, 0.24, 0.28
     crate_start_x = -1.55
     crate_start_y = 0.10
-    crate_speed = 1.20
+    crate_speed = 1.80
     frame_x = 0.72
     frame_hx = 0.08
     frame_side_hy = 0.10
