@@ -27,6 +27,7 @@ class CaptionTemplateTests(unittest.TestCase):
             ("V2V_OBSTACLE", "obstacle_collision"),
             ("V2V_BOWL", "bowl_descent"),
             ("V2V_PENDULUM", "pendulum_swing"),
+            ("V2V_PENDULUM_CABINET", "pendulum_cabinet_collision"),
             ("V2V_SEESAW", "seesaw_rotation"),
             ("V2V_DOMINO", "domino_chain"),
             ("F11", "table_rolloff"),

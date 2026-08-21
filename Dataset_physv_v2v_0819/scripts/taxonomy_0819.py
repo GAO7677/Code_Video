@@ -20,6 +20,7 @@ FAMILY_TAXONOMY = {
     "V2V_OBSTACLE": "Object",
     "V2V_OBSTACLE_SIZE": "Object",
     "V2V_PENDULUM": "Object",
+    "V2V_PENDULUM_CABINET": "Relation",
     "V2V_SEESAW": "Relation",
     "SCENE_PUCK_BARRIER": "Scene",
     "SCENE_DOOR_FRAME": "Scene",

@@ -5,6 +5,7 @@ from Dataset_physv_v2v_0819.scripts.generate_v2v_context_demos import (
     CONTEXT_FRAMES,
     CONTEXT_FRAME_OPTIONS,
     FPS,
+    PENDULUM_CABINET_ANCHOR_HEIGHTS_M,
     audit_v2v_case_initialization,
     build_demo_cases,
 )
@@ -20,13 +21,14 @@ class V2VContextDemoTests(unittest.TestCase):
         families = {}
         for case in self.cases:
             families.setdefault(case.family_key, []).append(case)
-        self.assertEqual(len(self.cases), 50)
+        self.assertEqual(len(self.cases), 55)
         self.assertEqual(set(families), {
             "V2V_GAP",
             "V2V_OBSTACLE",
             "V2V_OBSTACLE_SIZE",
             "V2V_BOWL",
             "V2V_PENDULUM",
+            "V2V_PENDULUM_CABINET",
             "V2V_SEESAW",
             "V2V_DOMINO",
             "SCENE_PUCK_BARRIER",
@@ -35,6 +37,26 @@ class V2VContextDemoTests(unittest.TestCase):
         })
         self.assertTrue(all(len(cases) == 5 for cases in families.values()))
         self.assertTrue(all(len({case.controlled_value for case in cases}) == 5 for cases in families.values()))
+
+    def test_pendulum_cabinet_keeps_relative_release_geometry_fixed(self):
+        cases = [case for case in self.cases if case.family_key == "V2V_PENDULUM_CABINET"]
+        self.assertEqual(
+            {case.controlled_value for case in cases},
+            set(PENDULUM_CABINET_ANCHOR_HEIGHTS_M),
+        )
+        bob_drops = []
+        for case in cases:
+            metadata = case.blueprint.metadata
+            bob = next(obj for obj in case.blueprint.objects if obj.name == "pendulum_bob")
+            bob_drops.append(float(metadata["anchor"][2]) - bob.position[2])
+            self.assertEqual(metadata["pendulum_length_m"], 1.10)
+            self.assertEqual(metadata["initial_angle_deg"], 18.0)
+            self.assertEqual(bob.mass, 1.2)
+            cabinet = next(
+                obj for obj in case.blueprint.objects if obj.name == "pendulum_cabinet_body"
+            )
+            self.assertEqual(cabinet.position, cases[0].blueprint.objects[-3].position)
+        self.assertAlmostEqual(max(bob_drops), min(bob_drops), places=6)
 
     def test_scene_control_values_are_explicit(self):
         puck_angles = {
@@ -111,6 +133,7 @@ class V2VContextDemoTests(unittest.TestCase):
             "V2V_OBSTACLE",
             "V2V_BOWL",
             "V2V_PENDULUM",
+            "V2V_PENDULUM_CABINET",
             "V2V_DOMINO",
             "SCENE_DOOR_FRAME_BALL",
         ):

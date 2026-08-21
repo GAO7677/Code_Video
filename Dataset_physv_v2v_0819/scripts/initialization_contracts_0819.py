@@ -86,7 +86,7 @@ def build_contact_contract(blueprint: ScenarioBlueprint) -> dict[str, object]:
         segment_name = str(blueprint.metadata.get("ball_contact_segment_name", ""))
         if segment_name:
             touching_pairs = _pairs(names, [("bowl_ball", segment_name)])
-    elif family == "V2V_PENDULUM":
+    elif family in {"V2V_PENDULUM", "V2V_PENDULUM_CABINET"}:
         touching_pairs = _pairs(
             names,
             [
@@ -96,7 +96,11 @@ def build_contact_contract(blueprint: ScenarioBlueprint) -> dict[str, object]:
                 ("pendulum_rope", "pendulum_bob"),
             ],
         )
-        touching_ground = [name for name in ("pendulum_base",) if name in names]
+        touching_ground = [
+            name
+            for name in ("pendulum_base", "pendulum_cabinet_body")
+            if name in names
+        ]
     elif family == "V2V_SEESAW":
         touching_pairs = _pairs(
             names,

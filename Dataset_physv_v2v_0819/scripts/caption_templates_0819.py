@@ -80,6 +80,12 @@ def _specific_caption(metadata: Mapping[str, object]) -> str:
             f"A bob suspended from a fixed support by a pendulum of length {value} "
             "starts at an angle, swings through the vertical, and continues oscillating."
         )
+    if family_key == "V2V_PENDULUM_CABINET" or task_type == "pendulum_cabinet_collision":
+        anchor_value = value.replace("anchor=", "")
+        return (
+            f"A fixed-length pendulum bob is released toward a tall cabinet from a suspension point {anchor_value} high; "
+            "the bob contacts the cabinet at a different height while the release angle, pendulum length, and impact speed remain matched."
+        )
     if family_key == "V2V_SEESAW" or task_type == "seesaw_rotation":
         return (
             f"A block rests on a hinged board at {value} from the pivot; the load shifts "
@@ -131,6 +137,8 @@ def _abstract_caption(metadata: Mapping[str, object]) -> str:
         return "A blue rubber ball starts on the inner wall of a curved bowl, rolls downward under gravity, reverses after passing through the low point, and continues along the wall."
     if family_key == "V2V_PENDULUM" or task_type == "pendulum_swing":
         return "A bob suspended from a fixed support starts at an angle, swings through the vertical, and continues oscillating."
+    if family_key == "V2V_PENDULUM_CABINET" or task_type == "pendulum_cabinet_collision":
+        return "A fixed-length pendulum bob swings toward a fixed tall cabinet; changing only the suspension height changes the contact height while the release geometry and impact speed stay matched."
     if family_key == "V2V_SEESAW" or task_type == "seesaw_rotation":
         return "A block rests on a hinged board, shifts the balance, and causes the board to rotate."
     if family_key == "V2V_DOMINO" or task_type == "domino_chain":

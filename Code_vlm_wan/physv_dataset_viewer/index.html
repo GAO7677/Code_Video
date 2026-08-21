@@ -169,9 +169,9 @@
   <script>
     const RENDER_MODE = window.location.pathname.includes("cycles") ? "cycles" : "pyrender";
     const RENDER_VERSION = RENDER_MODE === "cycles" ? { label: "Cycles", kind: "cycles", resolution: "896 x 512" } : { label: "PyRender", kind: "full", resolution: "1280 x 720" };
-    const GROUP_ORDER = ["V2V_GAP", "V2V_OBSTACLE", "V2V_OBSTACLE_SIZE", "V2V_BOWL", "V2V_PENDULUM", "V2V_SEESAW", "V2V_DOMINO", "F11", "F12", "F12_RAMP_LENGTH", "SCENE_PUCK_BARRIER", "SCENE_DOOR_FRAME", "SCENE_DOOR_FRAME_BALL"];
-    const GROUP_NAMES = { V2V_GAP: "平台间隙", V2V_OBSTACLE: "障碍碰撞：初速度", V2V_OBSTACLE_SIZE: "障碍碰撞：球体积", V2V_BOWL: "碗内运动", V2V_PENDULUM: "摆锤", V2V_SEESAW: "跷跷板", V2V_DOMINO: "多米诺", F11: "F11 桌高", F12: "F12 斜面倾角", F12_RAMP_LENGTH: "F12 斜面长度", SCENE_PUCK_BARRIER: "冰球撞固定挡板", SCENE_DOOR_FRAME: "木箱穿过门框", SCENE_DOOR_FRAME_BALL: "小球穿过门框" };
-    const GROUP_PREFIX = { V2V_GAP: "V2V", V2V_OBSTACLE: "V2V", V2V_OBSTACLE_SIZE: "V2V", V2V_BOWL: "V2V", V2V_PENDULUM: "V2V", V2V_SEESAW: "V2V", V2V_DOMINO: "V2V", F11: "CONTROL", F12: "CONTROL", F12_RAMP_LENGTH: "CONTROL", SCENE_PUCK_BARRIER: "SCENE", SCENE_DOOR_FRAME: "SCENE", SCENE_DOOR_FRAME_BALL: "SCENE" };
+    const GROUP_ORDER = ["V2V_GAP", "V2V_OBSTACLE", "V2V_OBSTACLE_SIZE", "V2V_BOWL", "V2V_PENDULUM", "V2V_PENDULUM_CABINET", "V2V_SEESAW", "V2V_DOMINO", "F11", "F12", "F12_RAMP_LENGTH", "SCENE_PUCK_BARRIER", "SCENE_DOOR_FRAME", "SCENE_DOOR_FRAME_BALL"];
+    const GROUP_NAMES = { V2V_GAP: "平台间隙", V2V_OBSTACLE: "障碍碰撞：初速度", V2V_OBSTACLE_SIZE: "障碍碰撞：球体积", V2V_BOWL: "碗内运动", V2V_PENDULUM: "摆锤", V2V_PENDULUM_CABINET: "摆锤撞立柜：悬点高度", V2V_SEESAW: "跷跷板", V2V_DOMINO: "多米诺", F11: "F11 桌高", F12: "F12 斜面倾角", F12_RAMP_LENGTH: "F12 斜面长度", SCENE_PUCK_BARRIER: "冰球撞固定挡板", SCENE_DOOR_FRAME: "木箱穿过门框", SCENE_DOOR_FRAME_BALL: "小球穿过门框" };
+    const GROUP_PREFIX = { V2V_GAP: "V2V", V2V_OBSTACLE: "V2V", V2V_OBSTACLE_SIZE: "V2V", V2V_BOWL: "V2V", V2V_PENDULUM: "V2V", V2V_PENDULUM_CABINET: "V2V", V2V_SEESAW: "V2V", V2V_DOMINO: "V2V", F11: "CONTROL", F12: "CONTROL", F12_RAMP_LENGTH: "CONTROL", SCENE_PUCK_BARRIER: "SCENE", SCENE_DOOR_FRAME: "SCENE", SCENE_DOOR_FRAME_BALL: "SCENE" };
     const VBENCH = { dynamic_degree: "动态", motion_smoothness: "平滑", subject_consistency: "主体", background_consistency: "背景", imaging_quality: "画质" };
     const state = { groups: [], threshold: null, loading: false };
     const $ = id => document.getElementById(id);

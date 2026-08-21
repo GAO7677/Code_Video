@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 
@@ -80,6 +81,32 @@ def export_trajectory_json(source: Path, target: Path) -> int:
     return len(payload["frame_times_s"])
 
 
+def write_intermediate_mp4(frame_paths: list[Path], target: Path, fps: int) -> None:
+    """Encode PNG frames with OpenCV before the minimal ffmpeg transcode."""
+    if not frame_paths:
+        raise RuntimeError(f"no rendered frames found for {target}")
+    first = cv2.imread(str(frame_paths[0]), cv2.IMREAD_COLOR)
+    if first is None:
+        raise RuntimeError(f"could not read rendered frame {frame_paths[0]}")
+    height, width = first.shape[:2]
+    writer = cv2.VideoWriter(
+        str(target),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (width, height),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"could not open intermediate video writer {target}")
+    try:
+        for frame_path in frame_paths:
+            frame = cv2.imread(str(frame_path), cv2.IMREAD_COLOR)
+            if frame is None or frame.shape[:2] != (height, width):
+                raise RuntimeError(f"invalid rendered frame {frame_path}")
+            writer.write(frame)
+    finally:
+        writer.release()
+
+
 def main() -> None:
     args = parse_args()
     dataset_root = args.dataset_root.resolve()
@@ -126,16 +153,18 @@ def main() -> None:
                 f"metadata={render_report.is_file()}, frames={len(rendered_frames)}/{expected_frames}"
             )
         target = sample_dir / "videos" / "rgb_cycles.mp4"
+        intermediate = frames_dir / "cycles_intermediate.mp4"
+        write_intermediate_mp4(rendered_frames, intermediate, fps)
         temporary = target.with_suffix(".tmp.mp4")
         run_checked(
             [
                 str(args.ffmpeg), "-y", "-loglevel", "warning",
-                "-framerate", str(fps), "-start_number", "1",
-                "-i", str(frames_dir / "frame_%04d.png"),
+                "-i", str(intermediate),
                 "-c:v", "libx264", "-preset", "slow", "-crf", "18",
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(temporary),
             ]
         )
+        intermediate.unlink()
         temporary.replace(target)
         render_metadata = json.loads(render_report.read_text(encoding="utf-8"))
         render_metadata["video"] = video_info(target, ffprobe)

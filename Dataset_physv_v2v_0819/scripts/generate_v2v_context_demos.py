@@ -67,6 +67,9 @@ DOOR_FRAME_OPENING_WIDTHS_M = (0.38, 0.46, 0.54, 0.62, 0.74)
 DOOR_BALL_RADIUS_M = 0.18
 DOOR_BALL_SPEED_MPS = 1.80
 DOOR_BALL_INITIAL_Y_M = 0.10
+PENDULUM_CABINET_ANCHOR_HEIGHTS_M = (2.00, 2.25, 2.50, 2.75, 3.00)
+PENDULUM_CABINET_LENGTH_M = 1.10
+PENDULUM_CABINET_RELEASE_ANGLE_DEG = 18.0
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/physv_v2v_context_demos_20260819"
 )
@@ -854,6 +857,223 @@ def _make_pendulum_case(sample_key: str, length: float) -> DemoCase:
     )
 
 
+def _make_pendulum_cabinet_case(sample_key: str, anchor_z: float) -> DemoCase:
+    """Build a fixed-length pendulum that strikes a fixed tall cabinet.
+
+    The pendulum geometry is translated through the support height while the
+    length and release angle stay fixed.  Therefore the bob has the same
+    relative gravitational drop and impact speed, but reaches the cabinet at
+    a different world-space height.
+    """
+    anchor_x = 0.20
+    length = PENDULUM_CABINET_LENGTH_M
+    angle_deg = PENDULUM_CABINET_RELEASE_ANGLE_DEG
+    angle = math.radians(angle_deg)
+    bob_radius = 0.18
+    bob_x = anchor_x + length * math.sin(angle)
+    bob_z = anchor_z - length * math.cos(angle)
+    rope_radius = 0.018
+    rope_anchor = (anchor_x, 0.0, anchor_z - rope_radius * math.sin(angle))
+    rope_end_x = bob_x - bob_radius * math.sin(angle)
+    rope_end_z = bob_z + bob_radius * math.cos(angle)
+    rope_vec = (rope_end_x - rope_anchor[0], 0.0, rope_end_z - rope_anchor[2])
+    rope_length = max(0.04, math.sqrt(sum(value * value for value in rope_vec)))
+    rope_center = (
+        (rope_anchor[0] + rope_end_x) * 0.5,
+        0.0,
+        (rope_anchor[2] + rope_end_z) * 0.5,
+    )
+    post_half_height = (anchor_z - 0.18) * 0.5
+    post_center_z = 0.18 + post_half_height
+
+    cabinet_x = -0.95
+    cabinet_hx = 0.42
+    cabinet_hy = 0.36
+    cabinet_hz = 1.275
+    cabinet_center_z = cabinet_hz
+    cabinet_door_y = -(cabinet_hy + 0.025)
+    cabinet_door_z = 1.34
+    objects = [
+        _object(
+            name="pendulum_base",
+            family_key="platform_block",
+            shape="box",
+            size={"hx": 0.55, "hy": 0.40, "hz": 0.09},
+            material_key="concrete_painted",
+            position=(anchor_x, 0.0, 0.09),
+            dynamic=False,
+            mass=0.0,
+            friction=0.82,
+            restitution=0.02,
+        ),
+        _object(
+            name="pendulum_post",
+            family_key="table_leg",
+            shape="box",
+            size={"hx": 0.065, "hy": 0.05, "hz": post_half_height},
+            material_key="painted_metal_yellow",
+            position=(anchor_x, 0.26, post_center_z),
+            dynamic=False,
+            mass=0.0,
+            friction=0.80,
+            restitution=0.02,
+        ),
+        _object(
+            name="pendulum_crossbar",
+            family_key="platform_block",
+            shape="box",
+            size={"hx": 0.14, "hy": 0.15, "hz": 0.03},
+            material_key="painted_metal_teal",
+            position=(anchor_x, 0.11, anchor_z + 0.03),
+            dynamic=False,
+            mass=0.0,
+            friction=0.80,
+            restitution=0.02,
+        ),
+        _object(
+            name="pendulum_rope",
+            family_key="table_leg",
+            shape="cylinder",
+            size={"radius": rope_radius, "height": rope_length},
+            material_key="painted_metal_yellow",
+            position=rope_center,
+            dynamic=False,
+            mass=0.0,
+            friction=0.40,
+            restitution=0.0,
+            role="anchored_visual",
+            orientation=_quat_vector_as_euler(rope_vec),
+            metadata={
+                "visual_only": True,
+                "visual_anchor": rope_anchor,
+                "visual_target": "pendulum_bob",
+                "visual_target_surface_offset_m": bob_radius,
+            },
+        ),
+        _object(
+            name="pendulum_bob",
+            family_key="ball",
+            shape="sphere",
+            size={"radius": bob_radius},
+            material_key="rubber_red",
+            position=(bob_x, 0.0, bob_z),
+            dynamic=True,
+            mass=1.2,
+            friction=0.42,
+            restitution=0.24,
+            orientation=(0.0, -angle_deg, 0.0),
+            linear_damping=0.015,
+            angular_damping=0.02,
+            metadata={"appearance_group": "v2v_pendulum_cabinet_red_bob_v1"},
+        ),
+        _object(
+            name="pendulum_cabinet_body",
+            family_key="cabinet",
+            shape="box",
+            size={"hx": cabinet_hx, "hy": cabinet_hy, "hz": cabinet_hz},
+            material_key="wood_dark",
+            position=(cabinet_x, 0.0, cabinet_center_z),
+            dynamic=False,
+            mass=0.0,
+            friction=0.76,
+            restitution=0.06,
+            role="anchored_static",
+        ),
+        _object(
+            name="pendulum_cabinet_door",
+            family_key="cabinet_door",
+            shape="box",
+            size={"hx": 0.33, "hy": 0.025, "hz": 1.02},
+            material_key="wood_plywood",
+            position=(cabinet_x, cabinet_door_y, cabinet_door_z),
+            dynamic=False,
+            mass=0.0,
+            friction=0.76,
+            restitution=0.06,
+            role="anchored_static",
+        ),
+        _object(
+            name="pendulum_cabinet_handle",
+            family_key="cabinet_hardware",
+            shape="cylinder",
+            size={"radius": 0.018, "height": 0.18},
+            material_key="painted_metal_teal",
+            position=(cabinet_x + 0.22, cabinet_door_y - 0.070, cabinet_door_z),
+            dynamic=False,
+            mass=0.0,
+            friction=0.40,
+            restitution=0.02,
+            role="anchored_static",
+            orientation=(0.0, 90.0, 0.0),
+        ),
+    ]
+    camera = _camera(
+        eye=(0.15, -4.50, 1.90),
+        target=(-0.28, 0.0, 1.48),
+        yfov_deg=50.0,
+        hdri_key="old_hall",
+    )
+    blueprint = _blueprint(
+        family_key="V2V_PENDULUM_CABINET",
+        sample_key=sample_key,
+        title=f"Pendulum strikes a cabinet at anchor height {anchor_z:.2f} m",
+        description=(
+            "A fixed-length red pendulum bob is released from the same angle toward a fixed tall cabinet; "
+            "only the suspension height changes, so the bob reaches the cabinet at different heights while its impact speed remains matched."
+        ),
+        objects=objects,
+        camera=camera,
+        surface_key="painted_concrete_floor",
+        tags=("v2v", "pendulum", "cabinet_collision", "height_control", "matched_impact_speed"),
+        metadata={
+            "controlled_variable": "pendulum_anchor_height_m",
+            "pendulum_anchor_height_m": anchor_z,
+            "pendulum_length_m": length,
+            "initial_angle_deg": angle_deg,
+            "anchor": (anchor_x, 0.0, anchor_z),
+            "cabinet_center_x_m": cabinet_x,
+            "cabinet_half_x_m": cabinet_hx,
+            "cabinet_height_m": 2.0 * cabinet_hz,
+            "cabinet_right_face_x_m": cabinet_x + cabinet_hx,
+            "bob_radius_m": bob_radius,
+            "impact_speed_control": "same_length_and_release_angle",
+            "constraints": [
+                {
+                    "type": "point2point",
+                    "body": "pendulum_bob",
+                    "parent_body": "pendulum_post",
+                    "parent_frame": (0.0, -0.26, anchor_z - post_center_z),
+                    "child_frame": (
+                        -length * math.sin(angle),
+                        0.0,
+                        length * math.cos(angle),
+                    ),
+                }
+            ],
+            "disable_collision_pairs": [
+                ["pendulum_cabinet_body", "pendulum_cabinet_door"],
+            ],
+        },
+    )
+    return DemoCase(
+        case_id=sample_key,
+        family_key="V2V_PENDULUM_CABINET",
+        family_title="摆锤撞立柜：悬点高度",
+        family_description=(
+            "摆长和释放角度固定，抬高悬点使摆球以相近速度撞击固定立柜的不同高度。"
+        ),
+        level="L3",
+        title=blueprint.title,
+        description=blueprint.description,
+        controlled_variable="pendulum_anchor_height_m",
+        controlled_value=anchor_z,
+        controlled_value_label=f"anchor={anchor_z:.2f} m",
+        units="m",
+        blueprint=blueprint,
+        event_rule="bob_contacts_fixed_cabinet",
+    )
+
+
 def _make_seesaw_case(sample_key: str, load_x: float) -> DemoCase:
     # A horizontal cylindrical fulcrum replaces the old rectangular block.
     # The board is tangent to its top and uses two point constraints separated
@@ -1468,6 +1688,13 @@ def build_demo_cases(seed_base: int = 20260819) -> list[DemoCase]:
         cases.append(_make_bowl_case(f"v2v_bowl_r{int(value * 100):03d}", value))
     for value in (0.55, 0.83, 1.10, 1.38, 1.65):
         cases.append(_make_pendulum_case(f"v2v_pendulum_l{int(value * 100):03d}", value))
+    for value in PENDULUM_CABINET_ANCHOR_HEIGHTS_M:
+        cases.append(
+            _make_pendulum_cabinet_case(
+                f"v2v_pendulum_cabinet_h{int(round(value * 100)):03d}",
+                value,
+            )
+        )
     # The load travels uniformly from the board center to a small safety
     # margin before the edge, so no case starts with the block overhanging.
     seesaw_edge_x = 1.35 - 0.14 - 0.04
@@ -1632,6 +1859,16 @@ def _first_event_frame(
         anchor_x = float(metadata["anchor"][0])
         bob_x = positions[:, index["pendulum_bob"], 0]
         frames = np.flatnonzero(bob_x <= anchor_x)
+    elif case.family_key == "V2V_PENDULUM_CABINET":
+        bob = positions[:, index["pendulum_bob"]]
+        cabinet_right = float(metadata["cabinet_right_face_x_m"])
+        bob_radius = float(metadata["bob_radius_m"])
+        cabinet_height = float(metadata["cabinet_height_m"])
+        horizontal_contact = bob[:, 0] <= cabinet_right + bob_radius + 0.04
+        vertical_overlap = (bob[:, 2] >= bob_radius - 0.04) & (
+            bob[:, 2] <= cabinet_height + bob_radius + 0.04
+        )
+        frames = np.flatnonzero(horizontal_contact & vertical_overlap)
     elif case.family_key == "V2V_SEESAW":
         board_idx = index["seesaw_board"]
         angles = np.asarray([_quat_to_y_angle(quat) for quat in quats[:, board_idx]])

@@ -24,6 +24,12 @@ _METADATA_VARIABLE_KEYS = {
         "ball_contact_segment_name",
     },
     "V2V_PENDULUM": {"pendulum_length_m", "constraints"},
+    "V2V_PENDULUM_CABINET": {
+        "pendulum_anchor_height_m",
+        "anchor",
+        "constraints",
+        "impact_speed_control",
+    },
     "V2V_SEESAW": {"load_position_x_m"},
     "V2V_DOMINO": {"domino_gap_m", "domino_center_step_m"},
     "SCENE_PUCK_BARRIER": {"barrier_normal_angle_deg", "barrier_normal_xy"},
@@ -38,6 +44,7 @@ _GEOMETRY_VARYING_FAMILIES = {
     "V2V_GAP",
     "V2V_BOWL",
     "V2V_PENDULUM",
+    "V2V_PENDULUM_CABINET",
     "V2V_SEESAW",
     "V2V_DOMINO",
     "SCENE_PUCK_BARRIER",
@@ -85,6 +92,13 @@ def _varying_object_fields(family_key: str, name: str) -> set[str]:
         fields.update({"position", "size", "mass"})
     if family_key == "V2V_PENDULUM" and name == "pendulum_rope":
         fields.add("size")
+    if family_key == "V2V_PENDULUM_CABINET":
+        if name == "pendulum_post":
+            fields.update({"position", "size"})
+        elif name in {"pendulum_crossbar", "pendulum_bob"}:
+            fields.update({"position", "orientation_euler_deg"})
+        elif name == "pendulum_rope":
+            fields.update({"position", "orientation_euler_deg", "size", "metadata"})
     if family_key == "SCENE_PUCK_BARRIER" and name == "puck_barrier":
         fields.add("orientation_euler_deg")
     if family_key in {"SCENE_DOOR_FRAME", "SCENE_DOOR_FRAME_BALL"} and name.startswith("door_frame_"):

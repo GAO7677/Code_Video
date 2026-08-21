@@ -1,8 +1,8 @@
 # PhysV V2V 0819
 
-面向视频物理动态理解和 V2V 短上下文续写的仿真数据集。共 65 个 case，13 组、每组 5 个控制变量取值。每组只改变表中变量，其余仿真参数、初始外观和相机设置保持一致；F11 不保留方向变体。
+面向视频物理动态理解和 V2V 短上下文续写的仿真数据集。共 70 个 case，14 组、每组 5 个控制变量取值。每组只改变表中变量，其余仿真参数、初始外观和相机设置保持一致；F11 不保留方向变体。
 
-冰球挡板和木箱门框组已完成 PyBullet 运动核查，并生成低分辨率 Cycles 预览（`640×360`）；小球门框组当前保留 PyBullet 视频，待运动确认后再渲染 Cycles。
+冰球挡板、木箱门框和小球门框组已完成 PyBullet 运动核查，并生成低分辨率 Cycles 预览；前两组为 `640×360`，小球门框组为 `896×512`。
 
 - 冰球挡板组：冰球半径 `0.25 m`、厚度 `0.10 m`，挡板总高 `0.50 m`，各 case 相同；地面摩擦系数 `0.04`。
 - 木箱门框组：木箱初速度 `1.80 m/s`、两侧墙总高 `1.80 m`，各 case 相同；地面摩擦系数 `0.18`，仅开口宽度变化。
@@ -88,7 +88,7 @@ viewer 前台启动命令：
 | --- | --- | --- |
 | `Scene` | 静态环境几何变化；运动物体几何和物理参数保持一致 | F11 桌高、F12 斜面角度、F12 斜面长度、V2V 碗、V2V 缺口、冰球挡板、木箱门框、小球门框 |
 | `Object` | 环境保持一致；只改变运动物体几何或初始状态 | V2V 障碍速度、V2V 障碍尺寸、V2V 摆锤 |
-| `Relation` | 物体和环境保持一致；只改变相对位置、方向或支撑关系 | V2V 多米诺、V2V 跷跷板 |
+| `Relation` | 物体和环境保持一致；只改变相对位置、方向或支撑关系 | V2V 多米诺、V2V 跷跷板、V2V 摆锤撞立柜 |
 
 每组 5 个 case，控制变量见下表。
 
@@ -139,6 +139,11 @@ viewer 前台启动命令：
 | V2V / 摆锤 | `v2v_pendulum_l110` | 摆锤摆动 | `pendulum_length_m` 绳长 | 1.10 m |
 | V2V / 摆锤 | `v2v_pendulum_l138` | 摆锤摆动 | `pendulum_length_m` 绳长 | 1.38 m |
 | V2V / 摆锤 | `v2v_pendulum_l165` | 摆锤摆动 | `pendulum_length_m` 绳长 | 1.65 m |
+| V2V / 摆锤撞立柜 | `v2v_pendulum_cabinet_h200` | 摆锤撞固定立柜 | `pendulum_anchor_height_m` 悬点高度 | 2.00 m |
+| V2V / 摆锤撞立柜 | `v2v_pendulum_cabinet_h225` | 摆锤撞固定立柜 | `pendulum_anchor_height_m` 悬点高度 | 2.25 m |
+| V2V / 摆锤撞立柜 | `v2v_pendulum_cabinet_h250` | 摆锤撞固定立柜 | `pendulum_anchor_height_m` 悬点高度 | 2.50 m |
+| V2V / 摆锤撞立柜 | `v2v_pendulum_cabinet_h275` | 摆锤撞固定立柜 | `pendulum_anchor_height_m` 悬点高度 | 2.75 m |
+| V2V / 摆锤撞立柜 | `v2v_pendulum_cabinet_h300` | 摆锤撞固定立柜 | `pendulum_anchor_height_m` 悬点高度 | 3.00 m |
 | V2V / 跷跷板 | `v2v_seesaw_x000` | 2.70 m 跷跷板载荷 | `load_position_x_m` 载荷位置 | 0.00 m |
 | V2V / 跷跷板 | `v2v_seesaw_x029` | 2.70 m 跷跷板载荷 | `load_position_x_m` 载荷位置 | 0.2925 m |
 | V2V / 跷跷板 | `v2v_seesaw_x058` | 2.70 m 跷跷板载荷 | `load_position_x_m` 载荷位置 | 0.5850 m |
@@ -160,4 +165,4 @@ viewer 前台启动命令：
 | Scene / 小球门框 | `scene_door_frame_ball_w062` | 小球穿过固定厚度门框 | `door_opening_width_m` 门框开口宽度 | 0.62 m |
 | Scene / 小球门框 | `scene_door_frame_ball_w074` | 小球穿过固定厚度门框 | `door_opening_width_m` 门框开口宽度 | 0.74 m |
 
-F12 斜面长度组保持斜面最高点/支撑高度不变，长度变化会使倾角随之变化；V2V 06 跷跷板保持 2.70 m 板长，载荷从中心向一侧均匀外移。
+F12 斜面长度组保持斜面最高点/支撑高度不变，长度变化会使倾角随之变化；V2V 06 跷跷板保持 2.70 m 板长，载荷从中心向一侧均匀外移。摆锤撞立柜组固定摆长 `1.10 m` 和释放角 `18°`，只改变悬点高度，因此相对摆动能量和撞击速度保持一致，撞击位置随高度变化。

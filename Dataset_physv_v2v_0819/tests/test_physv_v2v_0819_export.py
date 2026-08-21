@@ -12,13 +12,14 @@ class PhysvV2v0819ExportTests(unittest.TestCase):
     def test_control_groups_have_the_confirmed_composition(self) -> None:
         cases = build_export_cases()
 
-        self.assertEqual(len(cases), 65)
-        self.assertEqual(len({case.case_id for case in cases}), 65)
+        self.assertEqual(len(cases), 70)
+        self.assertEqual(len({case.case_id for case in cases}), 70)
         self.assertEqual(
             Counter(case.source_group for case in cases),
             {
                 "v2v_control": 30,
                 "v2v_obstacle_ball_size": 5,
+                "v2v_pendulum_cabinet_height": 5,
                 "scene_puck_barrier": 5,
                 "scene_door_frame": 5,
                 "scene_door_frame_ball": 5,
