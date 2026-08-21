@@ -131,25 +131,43 @@ def discover_checkpoints(config: dict[str, Any]) -> list[dict[str, Any]]:
                 "checkpoint_dir": str(path),
                 "source": "static",
             }
-        for root_value in method.get("watch_roots", []):
-            root = Path(root_value).resolve()
+        watch_roots: list[tuple[Path, int, str]] = [
+            (Path(root_value).resolve(), 0, "watch")
+            for root_value in method.get("watch_roots", [])
+        ]
+        for root_spec in method.get("watch_roots_with_step_offsets", []):
+            if isinstance(root_spec, str):
+                root_value = root_spec
+                step_offset = 0
+            else:
+                root_value = root_spec["path"]
+                step_offset = int(root_spec.get("step_offset", 0))
+            watch_roots.append(
+                (Path(root_value).resolve(), step_offset, "watch_offset")
+            )
+        for root, step_offset, source in watch_roots:
             if not root.is_dir():
                 continue
             for path in root.iterdir():
                 match = STEP_PATTERN.match(path.name)
                 if not match or not path.is_dir():
                     continue
-                step = int(match.group(1))
+                source_step = int(match.group(1))
+                step = source_step + step_offset
                 if step < min_step:
                     continue
-                tasks[(key, step)] = {
+                task = {
                     "method_key": key,
                     "method_label": method["label"],
                     "method_index": method_index,
                     "step": step,
                     "checkpoint_dir": str(path.resolve()),
-                    "source": "watch",
+                    "source": source,
                 }
+                if step_offset:
+                    task["source_step"] = source_step
+                    task["step_offset"] = step_offset
+                tasks[(key, step)] = task
     return sorted(tasks.values(), key=lambda row: (row["step"], row["method_index"]))
 
 

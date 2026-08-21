@@ -459,6 +459,12 @@
       "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_no_vjepa/full-sa-pybullet-physrvg-no-vjepa-b2-gacc2-20260820T182628Z/checkpoints"
+      ],
+      "watch_roots_with_step_offsets": [
+        {
+          "path": "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_no_vjepa/full-sa-pybullet-physrvg-no-vjepa-resume-step3000-gpu0-b4-gacc2-20260821T030555Z/checkpoints",
+          "step_offset": 3000
+        }
       ]
     },
     {
