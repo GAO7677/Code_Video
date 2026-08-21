@@ -414,7 +414,7 @@ def add_actor(name: str, actor: dict, material) -> bpy.types.Object:
     elif shape == "box":
         obj = add_cube(name, position, (float(size["hx"]), float(size["hy"]), float(size["hz"])), material, bevel=0.018)
         return obj
-    elif shape == "cylinder":
+    elif shape in {"cylinder", "puck"}:
         bpy.ops.mesh.primitive_cylinder_add(vertices=64, radius=float(size["radius"]), depth=float(size["height"]), location=position)
         obj = bpy.context.object
         bpy.ops.object.shade_smooth()
@@ -485,6 +485,16 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
         return "blue_painted"
     if family == "V2V_SEESAW" and lower == "seesaw_hinge_anchor":
         return "dark_metal"
+    if family == "SCENE_PUCK_BARRIER":
+        if lower == "puck":
+            return "dark_metal"
+        if lower == "puck_barrier":
+            return "blue_painted"
+    if family == "SCENE_DOOR_FRAME":
+        if lower == "door_crate":
+            return "red_wood"
+        if lower.startswith("door_frame"):
+            return "teal_metal"
 
     if "barrier" in lower or ("post" in lower and "pendulum" in lower):
         return "teal_metal"
@@ -566,6 +576,20 @@ ROOM_SCENES = {
         "floor": "floor_terracotta",
         "wall": "wall_cool",
         "trim": "wood",
+    },
+    "SCENE_PUCK_BARRIER": {
+        "name": "puck_workshop",
+        "layout": "workshop",
+        "floor": "floor_slate",
+        "wall": "wall_gray",
+        "trim": "white_painted",
+    },
+    "SCENE_DOOR_FRAME": {
+        "name": "doorway_loft",
+        "layout": "loft",
+        "floor": "floor_concrete",
+        "wall": "wall_rose",
+        "trim": "dark_metal",
     },
 }
 
@@ -746,6 +770,8 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
         "V2V_OBSTACLE_SIZE": HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr",
         "V2V_PENDULUM": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
         "V2V_SEESAW": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
+        "SCENE_PUCK_BARRIER": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
+        "SCENE_DOOR_FRAME": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
     }
     rotation_by_family = {
         "F11": 22.0,
@@ -757,6 +783,8 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
         "V2V_OBSTACLE_SIZE": -24.0,
         "V2V_PENDULUM": 88.0,
         "V2V_SEESAW": -42.0,
+        "SCENE_PUCK_BARRIER": -12.0,
+        "SCENE_DOOR_FRAME": 18.0,
     }
     path = hdri_by_family.get(family, HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr")
     world = bpy.data.worlds.new("PBR World") if not bpy.data.worlds else bpy.data.worlds[0]
@@ -777,6 +805,8 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
         "V2V_OBSTACLE_SIZE": 0.31,
         "V2V_PENDULUM": 0.24,
         "V2V_SEESAW": 0.28,
+        "SCENE_PUCK_BARRIER": 0.25,
+        "SCENE_DOOR_FRAME": 0.27,
     }
     background.inputs["Strength"].default_value = strength_by_family.get(family, 0.28)
     environment = nodes.new("ShaderNodeTexEnvironment")
@@ -817,6 +847,8 @@ def add_lighting(family: str) -> str:
         "V2V_OBSTACLE_SIZE": ("gallery_warm", (-2.8, -2.2, 3.6), 690.0, (1.0, 0.82, 0.68), (3.0, -1.0, 2.8), 370.0, (0.78, 0.90, 1.0), 300.0),
         "V2V_PENDULUM": ("lab_neutral", (3.0, -2.0, 3.9), 650.0, (0.86, 0.94, 1.0), (-3.0, -1.0, 3.0), 390.0, (1.0, 0.84, 0.70), 310.0),
         "V2V_SEESAW": ("activity_warm", (-2.7, -2.3, 3.5), 680.0, (1.0, 0.86, 0.72), (3.0, -1.0, 2.8), 380.0, (0.78, 0.90, 1.0), 280.0),
+        "SCENE_PUCK_BARRIER": ("puck_daylight", (-2.8, -2.4, 3.7), 720.0, (0.78, 0.88, 1.0), (3.0, -1.0, 2.9), 360.0, (1.0, 0.82, 0.68), 300.0),
+        "SCENE_DOOR_FRAME": ("doorway_soft", (-2.6, -2.5, 3.8), 700.0, (1.0, 0.84, 0.74), (3.1, -1.0, 2.9), 380.0, (0.76, 0.88, 1.0), 300.0),
     }
     preset = presets.get(family, presets["F11"])
     name, key_location, key_energy, key_color, fill_location, fill_energy, fill_color, top_energy = preset
@@ -838,6 +870,8 @@ CAMERA_FRAMING_PRESETS = {
     "V2V_OBSTACLE_SIZE": {"target": (-0.635, 0.0, 0.480), "yfov_deg": 31.5},
     "V2V_PENDULUM": {"target": (-0.450, 0.0, 1.128), "yfov_deg": 41.5},
     "V2V_SEESAW": {"target": (0.002, 0.0, 0.460), "yfov_deg": 21.5},
+    "SCENE_PUCK_BARRIER": {"target": (0.15, -0.85, 0.32), "yfov_deg": 50.0},
+    "SCENE_DOOR_FRAME": {"target": (0.35, 0.0, 0.65), "yfov_deg": 50.0},
 }
 
 

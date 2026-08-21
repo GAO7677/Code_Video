@@ -12,17 +12,29 @@ class PhysvV2v0819ExportTests(unittest.TestCase):
     def test_control_groups_have_the_confirmed_composition(self) -> None:
         cases = build_export_cases()
 
-        self.assertEqual(len(cases), 50)
-        self.assertEqual(len({case.case_id for case in cases}), 50)
+        self.assertEqual(len(cases), 60)
+        self.assertEqual(len({case.case_id for case in cases}), 60)
         self.assertEqual(
             Counter(case.source_group for case in cases),
             {
                 "v2v_control": 30,
                 "v2v_obstacle_ball_size": 5,
+                "scene_puck_barrier": 5,
+                "scene_door_frame": 5,
                 "f11_table_height": 5,
                 "f12_incline": 5,
                 "f12_ramp_length": 5,
             },
+        )
+
+        taxonomy_by_group = {
+            case.source_group: case.taxonomy
+            for case in cases
+            if case.source_group in {"scene_puck_barrier", "scene_door_frame"}
+        }
+        self.assertEqual(
+            taxonomy_by_group,
+            {"scene_puck_barrier": "Scene", "scene_door_frame": "Scene"},
         )
 
     def test_f11_direction_variants_are_excluded(self) -> None:

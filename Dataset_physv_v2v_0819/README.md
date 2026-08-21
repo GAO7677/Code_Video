@@ -1,6 +1,8 @@
 # PhysV V2V 0819
 
-面向视频物理动态理解和 V2V 短上下文续写的仿真数据集。共 50 个 case，10 组、每组 5 个控制变量取值。每组只改变表中变量，其余仿真参数、初始外观和相机设置保持一致；F11 不保留方向变体。
+面向视频物理动态理解和 V2V 短上下文续写的仿真数据集。共 60 个 case，12 组、每组 5 个控制变量取值。每组只改变表中变量，其余仿真参数、初始外观和相机设置保持一致；F11 不保留方向变体。
+
+当前新增的冰球挡板和木箱门框组先完成 PyBullet 渲染与运动核查，Cycles 版本待运动确认后再生成。
 
 ## 关键路径
 
@@ -36,12 +38,16 @@ cd /home/gaoya/Code_Video
 export PYTHONPATH=/home/gaoya/Code_Video
 PYTHON=/data/gaoya/miniconda3/envs/physxnet_mpm_env/bin/python
 
-# 重新导出全部 50 个 case
+# 重新导出全部 60 个 case
 $PYTHON -m Dataset_physv_v2v_0819.scripts.export_physv_v2v_0819_dataset \
   --output-root /data/gaoya/AAA_test_video/physv_v2v_0819
 
 # 重新生成 caption
 $PYTHON -m Dataset_physv_v2v_0819.scripts.refresh_physv_v2v_captions \
+  --output-root /data/gaoya/AAA_test_video/physv_v2v_0819
+
+# 补齐每个样本的 Scene/Object/Relation taxonomy 元数据
+$PYTHON -m Dataset_physv_v2v_0819.scripts.refresh_taxonomy_0819 \
   --output-root /data/gaoya/AAA_test_video/physv_v2v_0819
 
 # 轨迹指标
@@ -70,6 +76,16 @@ viewer 前台启动命令：
 ```
 
 ## Case 清单与控制变量
+
+## Taxonomy
+
+| Taxonomy | 定义 | 对应组 |
+| --- | --- | --- |
+| `Scene` | 静态环境几何变化；运动物体几何和物理参数保持一致 | F11 桌高、F12 斜面角度、F12 斜面长度、V2V 碗、V2V 缺口、冰球挡板、木箱门框 |
+| `Object` | 环境保持一致；只改变运动物体几何或初始状态 | V2V 障碍速度、V2V 障碍尺寸、V2V 摆锤 |
+| `Relation` | 物体和环境保持一致；只改变相对位置、方向或支撑关系 | V2V 多米诺、V2V 跷跷板 |
+
+每组 5 个 case，控制变量见下表。
 
 | 组 | Case | 场景 | 控制变量 | 取值 |
 | --- | --- | --- | --- | --- |
@@ -123,5 +139,15 @@ viewer 前台启动命令：
 | V2V / 跷跷板 | `v2v_seesaw_x058` | 2.70 m 跷跷板载荷 | `load_position_x_m` 载荷位置 | 0.5850 m |
 | V2V / 跷跷板 | `v2v_seesaw_x088` | 2.70 m 跷跷板载荷 | `load_position_x_m` 载荷位置 | 0.8775 m |
 | V2V / 跷跷板 | `v2v_seesaw_x117` | 2.70 m 跷跷板载荷 | `load_position_x_m` 载荷位置 | 1.17 m |
+| Scene / 冰球挡板 | `scene_puck_barrier_n030` | 低摩擦地面冰球撞固定挡板 | `barrier_normal_angle_deg` 挡板平面法线方向 | 30° |
+| Scene / 冰球挡板 | `scene_puck_barrier_n045` | 低摩擦地面冰球撞固定挡板 | `barrier_normal_angle_deg` 挡板平面法线方向 | 45° |
+| Scene / 冰球挡板 | `scene_puck_barrier_n060` | 低摩擦地面冰球撞固定挡板 | `barrier_normal_angle_deg` 挡板平面法线方向 | 60° |
+| Scene / 冰球挡板 | `scene_puck_barrier_n075` | 低摩擦地面冰球撞固定挡板 | `barrier_normal_angle_deg` 挡板平面法线方向 | 75° |
+| Scene / 冰球挡板 | `scene_puck_barrier_n090` | 低摩擦地面冰球撞固定挡板 | `barrier_normal_angle_deg` 挡板平面法线方向 | 90° |
+| Scene / 木箱门框 | `scene_door_frame_w038` | 木箱穿过固定厚度门框 | `door_opening_width_m` 门框开口宽度 | 0.38 m |
+| Scene / 木箱门框 | `scene_door_frame_w046` | 木箱穿过固定厚度门框 | `door_opening_width_m` 门框开口宽度 | 0.46 m |
+| Scene / 木箱门框 | `scene_door_frame_w054` | 木箱穿过固定厚度门框 | `door_opening_width_m` 门框开口宽度 | 0.54 m |
+| Scene / 木箱门框 | `scene_door_frame_w062` | 木箱穿过固定厚度门框 | `door_opening_width_m` 门框开口宽度 | 0.62 m |
+| Scene / 木箱门框 | `scene_door_frame_w074` | 木箱穿过固定厚度门框 | `door_opening_width_m` 门框开口宽度 | 0.74 m |
 
 F12 斜面长度组保持斜面最高点/支撑高度不变，长度变化会使倾角随之变化；V2V 06 跷跷板保持 2.70 m 板长，载荷从中心向一侧均匀外移。

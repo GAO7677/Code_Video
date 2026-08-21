@@ -22,7 +22,7 @@ def _value_label(metadata: Mapping[str, object]) -> str:
     control = _control(metadata)
     label = str(control.get("value_label", "")).strip()
     if label:
-        return label.replace(" deg", " degrees")
+        return label[:-4] + " degrees" if label.endswith(" deg") else label
     value = control.get("value")
     units = str(control.get("units", "")).strip()
     if isinstance(value, (int, float)):
@@ -91,13 +91,15 @@ def _specific_caption(metadata: Mapping[str, object]) -> str:
             "domino over, and begins a contact-transfer sequence through the row."
         )
     if family_key == "SCENE_PUCK_BARRIER" or task_type == "puck_barrier_collision":
+        normal_value = value.replace("normal=", "")
         return (
-            f"An ice puck slides across a low-friction floor toward a fixed rigid barrier whose plane normal is oriented at {value} "
+            f"An ice puck slides across a low-friction floor toward a fixed rigid barrier whose plane normal is oriented at {normal_value} "
             "relative to the transverse direction; the puck collides and changes its travel direction."
         )
     if family_key == "SCENE_DOOR_FRAME" or task_type == "door_frame_clearance":
+        opening_value = value.replace("opening=", "")
         return (
-            f"A wooden crate of fixed size and speed moves toward a fixed door frame with an opening {value} wide; "
+            f"A wooden crate of fixed size and speed moves toward a fixed door frame with an opening {opening_value} wide; "
             "its contact and passage depend on the available clearance."
         )
     description = str(metadata.get("scene_description_simulator_only", "")).strip()

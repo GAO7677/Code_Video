@@ -738,6 +738,40 @@ def _collision_shape(obj: ObjectSpec) -> int:
         return p.createCollisionShape(p.GEOM_SPHERE, radius=float(radius))
     if obj.shape in {"box", "rounded_box", "wedge"}:
         return p.createCollisionShape(p.GEOM_BOX, halfExtents=[float(s["hx"]), float(s["hy"]), float(s["hz"])])
+    if obj.shape == "puck":
+        # Bullet's primitive cylinder can lose the horizontal restitution
+        # impulse when a thin disk is simultaneously tangent to the floor and
+        # a vertical wall.  A convex polygonal disk preserves the same shape
+        # and dimensions while giving the contact solver a stable manifold.
+        radius = float(s["radius"])
+        height = float(s["height"])
+        sections = 40
+        vertices = []
+        for z in (-0.5 * height, 0.5 * height):
+            for index in range(sections):
+                angle = 2.0 * math.pi * index / sections
+                vertices.append((radius * math.cos(angle), radius * math.sin(angle), z))
+        indices = []
+        for index in range(sections):
+            following = (index + 1) % sections
+            indices.extend(
+                [
+                    index,
+                    following,
+                    sections + following,
+                    index,
+                    sections + following,
+                    sections + index,
+                ]
+            )
+        for index in range(1, sections - 1):
+            indices.extend([0, index + 1, index])
+            indices.extend([sections, sections + index, sections + index + 1])
+        return p.createCollisionShape(
+            p.GEOM_MESH,
+            vertices=vertices,
+            indices=indices,
+        )
     if obj.shape in {"cylinder", "puck", "wheel_thick", "spool"}:
         radius = s["radius"] if "radius" in s else s.get("flange_radius", s.get("core_radius"))
         height = s["height"] if "height" in s else s.get("width")

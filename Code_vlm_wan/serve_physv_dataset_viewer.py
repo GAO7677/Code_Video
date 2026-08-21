@@ -55,6 +55,10 @@ def load_cases(dataset_root: Path) -> list[dict]:
                 "case_id": sample_dir.name,
                 "source_group": metadata.get("source_group", manifest.get("source_group", "")),
                 "family_key": metadata.get("family_key", manifest.get("family_key", "")),
+                "taxonomy": metadata.get("taxonomy", manifest.get("taxonomy", "")),
+                "taxonomy_definition": metadata.get(
+                    "taxonomy_definition", manifest.get("taxonomy_definition", "")
+                ),
                 "task_type": metadata.get("task_type", manifest.get("task_type", "")),
                 "title": metadata.get("title", sample_dir.name),
                 "scene_description": metadata.get("scene_description_simulator_only", ""),

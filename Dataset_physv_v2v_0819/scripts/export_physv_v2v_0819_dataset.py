@@ -1184,9 +1184,15 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
     )
     readme = """# PhysV V2V 0819
 
-This dataset contains 50 deterministic rigid-body video-continuation controls:
-35 V2V cases, including five obstacle initial-speed controls and five obstacle ball-radius controls, five F11 table-height controls, five F12 incline-angle controls, and five F12 fixed-high-support-height ramp-length controls.
+This dataset contains 60 deterministic rigid-body video-continuation controls:
+45 V2V/scene cases, including the original V2V controls, five ice-puck barrier-angle controls, and five door-frame opening-width controls; five F11 table-height controls; five F12 incline-angle controls; and five F12 fixed-high-support-height ramp-length controls.
 F11 direction variants are intentionally excluded.
+
+The controls use three explicit taxonomy levels:
+
+- `Scene`: static environment geometry changes; the moving object remains fixed.
+- `Object`: the environment remains fixed; the moving object's geometry or initial state changes.
+- `Relation`: the object and environment remain fixed; only their relative position, direction, or support relation changes.
 
 Each `samples/<case_id>/` directory follows a RigidBench-inspired layout:
 

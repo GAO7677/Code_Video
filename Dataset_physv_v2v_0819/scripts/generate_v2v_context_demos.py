@@ -1007,14 +1007,16 @@ def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCas
         _object(
             name="puck",
             family_key="ice_puck",
-            shape="cylinder",
+            shape="puck",
             size={"radius": puck_radius, "height": puck_height},
             material_key="wood_dark",
-            position=(puck_start_x, 0.0, puck_height),
+            # Convex-mesh collision margins require a 1 mm initialization
+            # clearance; gravity settles the puck onto the floor in pre-roll.
+            position=(puck_start_x, 0.0, puck_height * 0.5 + 0.001),
             dynamic=True,
             mass=0.30,
             friction=0.03,
-            restitution=0.12,
+            restitution=0.86,
             velocity=(1.40, 0.0, 0.0),
             angular_velocity=(0.0, 0.0, 0.0),
             linear_damping=0.004,
@@ -1035,7 +1037,7 @@ def _make_puck_barrier_case(sample_key: str, normal_angle_deg: float) -> DemoCas
             dynamic=False,
             mass=0.0,
             friction=0.04,
-            restitution=0.75,
+            restitution=0.90,
             orientation=(0.0, 0.0, barrier_orientation_z_deg),
         ),
     ]
@@ -1095,7 +1097,7 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
     crate_hx, crate_hy, crate_hz = 0.28, 0.20, 0.22
     crate_start_x = -1.55
     crate_start_y = 0.10
-    crate_speed = 0.68
+    crate_speed = 1.20
     frame_x = 0.72
     frame_hx = 0.08
     frame_side_hy = 0.10
@@ -1113,7 +1115,7 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
             position=(crate_start_x, crate_start_y, crate_hz),
             dynamic=True,
             mass=2.40,
-            friction=0.52,
+            friction=0.10,
             restitution=0.08,
             velocity=(crate_speed, 0.0, 0.0),
             linear_damping=0.025,
@@ -1159,9 +1161,11 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
         ),
     ]
     camera = _camera(
-        eye=(0.10, -5.45, 1.38),
-        target=(0.10, 0.0, 0.55),
-        yfov_deg=43.0,
+        # Look across the doorway plane from the crate's approach side so
+        # both posts and the lintel remain legible in the same view.
+        eye=(-4.80, -2.40, 1.55),
+        target=(0.35, 0.0, 0.65),
+        yfov_deg=50.0,
         hdri_key="studio_warm",
     )
     blueprint = _blueprint(
@@ -1180,11 +1184,14 @@ def _make_door_frame_case(sample_key: str, opening_width: float) -> DemoCase:
             "controlled_variable": "door_opening_width_m",
             "door_opening_width_m": opening_width,
             "door_frame_center_x_m": frame_x,
+            "door_frame_half_x_m": frame_hx,
             "door_frame_thickness_m": 2.0 * frame_hx,
             "door_frame_height_m": frame_height + 2.0 * lintel_hz,
             "crate_size_m": {"length_x": 2.0 * crate_hx, "width_y": 2.0 * crate_hy, "height_z": 2.0 * crate_hz},
+            "crate_half_x_m": crate_hx,
             "crate_initial_y_m": crate_start_y,
             "initial_speed_mps": crate_speed,
+            "floor_friction": 0.10,
             "physics_sub_steps": 8,
         },
     )
@@ -1448,6 +1455,24 @@ def _first_event_frame(
             + float(metadata.get("contact_margin_m", 0.03))
         )
         frames = np.flatnonzero(np.abs(ball - barrier) <= contact_distance)
+    elif case.family_key == "SCENE_PUCK_BARRIER":
+        puck = positions[:, index["puck"], 0]
+        barrier = float(metadata["barrier_center_x_m"])
+        contact_distance = (
+            float(metadata.get("barrier_half_x_m", 0.045))
+            + float(metadata.get("puck_radius_m", 0.12))
+            + float(metadata.get("contact_margin_m", 0.04))
+        )
+        frames = np.flatnonzero(np.abs(puck - barrier) <= contact_distance)
+    elif case.family_key == "SCENE_DOOR_FRAME":
+        crate = positions[:, index["door_crate"], 0]
+        frame = float(metadata["door_frame_center_x_m"])
+        contact_distance = (
+            float(metadata.get("door_frame_half_x_m", 0.08))
+            + float(metadata.get("crate_half_x_m", 0.28))
+            + float(metadata.get("contact_margin_m", 0.05))
+        )
+        frames = np.flatnonzero(np.abs(crate - frame) <= contact_distance)
     elif case.family_key == "V2V_BOWL":
         ball_x = positions[:, index["bowl_ball"], 0]
         frames = np.flatnonzero(ball_x >= -0.04)
