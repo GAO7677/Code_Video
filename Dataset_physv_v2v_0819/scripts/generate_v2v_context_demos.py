@@ -886,8 +886,8 @@ def _make_pendulum_cabinet_case(sample_key: str, anchor_z: float) -> DemoCase:
     post_half_height = (anchor_z - 0.18) * 0.5
     post_center_z = 0.18 + post_half_height
 
-    cabinet_x = -0.95
-    cabinet_hx = 0.42
+    cabinet_x = -0.55
+    cabinet_hx = 0.24
     cabinet_hy = 0.36
     cabinet_hz = 1.275
     cabinet_center_z = cabinet_hz
@@ -898,7 +898,7 @@ def _make_pendulum_cabinet_case(sample_key: str, anchor_z: float) -> DemoCase:
             name="pendulum_base",
             family_key="platform_block",
             shape="box",
-            size={"hx": 0.55, "hy": 0.40, "hz": 0.09},
+            size={"hx": 0.45, "hy": 0.40, "hz": 0.09},
             material_key="concrete_painted",
             position=(anchor_x, 0.0, 0.09),
             dynamic=False,
@@ -983,7 +983,7 @@ def _make_pendulum_cabinet_case(sample_key: str, anchor_z: float) -> DemoCase:
             name="pendulum_cabinet_door",
             family_key="cabinet_door",
             shape="box",
-            size={"hx": 0.33, "hy": 0.025, "hz": 1.02},
+            size={"hx": 0.19, "hy": 0.025, "hz": 1.02},
             material_key="wood_plywood",
             position=(cabinet_x, cabinet_door_y, cabinet_door_z),
             dynamic=False,
@@ -1011,7 +1011,7 @@ def _make_pendulum_cabinet_case(sample_key: str, anchor_z: float) -> DemoCase:
         eye=(0.15, -4.50, 1.90),
         target=(-0.28, 0.0, 1.48),
         yfov_deg=50.0,
-        hdri_key="old_hall",
+        hdri_key="hall_neutral",
     )
     blueprint = _blueprint(
         family_key="V2V_PENDULUM_CABINET",
@@ -1864,7 +1864,7 @@ def _first_event_frame(
         cabinet_right = float(metadata["cabinet_right_face_x_m"])
         bob_radius = float(metadata["bob_radius_m"])
         cabinet_height = float(metadata["cabinet_height_m"])
-        horizontal_contact = bob[:, 0] <= cabinet_right + bob_radius + 0.04
+        horizontal_contact = bob[:, 0] <= cabinet_right + bob_radius + 0.005
         vertical_overlap = (bob[:, 2] >= bob_radius - 0.04) & (
             bob[:, 2] <= cabinet_height + bob_radius + 0.04
         )

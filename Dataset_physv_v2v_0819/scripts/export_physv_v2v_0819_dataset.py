@@ -1197,7 +1197,7 @@ def _write_dataset_files(output_root: Path, rows: list[dict[str, object]]) -> No
 This dataset contains 70 deterministic rigid-body video-continuation controls:
 55 V2V/scene cases, including the original V2V controls, five pendulum-cabinet suspension-height controls, five ice-puck barrier-angle controls, five wooden-crate door-frame opening-width controls, and five ball door-frame opening-width controls; five F11 table-height controls; five F12 incline-angle controls; and five F12 fixed-high-support-height ramp-length controls.
 F11 direction variants are intentionally excluded.
-The puck-barrier and wooden-crate door-frame groups include low-resolution Cycles previews at 640x360; the ball door-frame group includes low-resolution Cycles previews at 896x512. The PyBullet source videos remain the full-resolution simulation reference.
+The puck-barrier and wooden-crate door-frame groups include low-resolution Cycles previews at 640x360; the ball door-frame group includes low-resolution Cycles previews at 896x512. The pendulum-cabinet group currently retains PyBullet videos for motion review before Cycles rendering. The PyBullet source videos remain the full-resolution simulation reference.
 
 The controls use three explicit taxonomy levels:
 
