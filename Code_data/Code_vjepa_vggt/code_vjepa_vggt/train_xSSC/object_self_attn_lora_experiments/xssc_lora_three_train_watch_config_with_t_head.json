@@ -109,6 +109,8 @@
       "full_sa_physrvg_object_xssc_loss",
       "full_sa_physrvg_no_vjepa_0717_b2g2",
       "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
+      "full_sa_physrvg_vjepa_rect384x672_0717_w0p3_b4gacc1",
+      "full_sa_physrvg_phyco_kubric_0717_b4gacc1",
       "physrvg_test5_lora_off",
       "physrvg_test5_lora_on"
     ],
@@ -479,6 +481,17 @@
       ]
     },
     {
+      "key": "full_sa_physrvg_vjepa_rect384x672_0717_w0p3_b4gacc1",
+      "label": "PHYRVG-Full-SA + V-JEPA Loss · Rect384×672 · 0717 · w0.3 · b4-gacc1",
+      "color": "#9467BD",
+      "checkpoint_format": "peft_adapter",
+      "min_step": 500,
+      "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_rect384x672_w0p3/full-sa-pybullet-physrvg-vjepa-rect384x672-0717-w0p3-b4-gacc1-20260821T141323Z/checkpoints"
+      ]
+    },
+    {
       "key": "full_sa_no_object_cotracker_trajectory_loss",
       "label": "Full-SA + No-Object + CoTracker Trajectory Loss",
       "color": "#A23B72",
@@ -495,6 +508,17 @@
       "color": "#E69F00",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/gt_latent_mask_loss/full_sa_no_object_gt_latent_mask_loss_pybullet100_cached_gpu67/step000000_gpu67_20260816T193744Z/checkpoints"
+      ]
+    },
+    {
+      "key": "full_sa_physrvg_phyco_kubric_0717_b4gacc1",
+      "label": "PHYRVG-Full-SA · PHYCO Kubric · 0717 · b4-gacc1",
+      "color": "#17A2B8",
+      "checkpoint_format": "peft_adapter",
+      "min_step": 500,
+      "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_physrvg_vjepa.sh",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_phyco_0717/full-sa-pybullet-physrvg-phyco-sim-0717-gpu23-b4-gacc1-20260821T145303Z/checkpoints"
       ]
     }
   ]
