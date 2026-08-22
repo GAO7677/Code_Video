@@ -100,8 +100,10 @@ PHYRVG_DISPLAY_ORDER = (
     "full_sa_physrvg_vjepa_loss_0613_b2g2",
     "full_sa_physrvg_latent_mask_loss",
     "full_sa_physrvg_object_xssc_loss",
+    "full_sa_physrvg_phyco_kubric_0717_b4gacc1",
     "full_sa_physrvg_no_vjepa_0717_b2g2",
     "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
+    "full_sa_physrvg_vjepa_rect384x672_0717_w0p3_b4gacc1",
 )
 PHYRVG_DISPLAY_INDEX = {
     key: index for index, key in enumerate(PHYRVG_DISPLAY_ORDER)
@@ -113,6 +115,8 @@ PHYRVG_FULL_SA_PLUS_ORDER = (
     "full_sa_physrvg_vjepa_loss_0613_b2g2",
     "full_sa_physrvg_latent_mask_loss",
     "full_sa_physrvg_object_xssc_loss",
+    "full_sa_physrvg_vjepa_rect384x672_0717_w0p3_b4gacc1",
+    "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_b2gacc2",
 )
 PHYRVG_FULL_SA_PLUS_INDEX = {
     key: index for index, key in enumerate(PHYRVG_FULL_SA_PLUS_ORDER)
@@ -1664,6 +1668,21 @@ MERGED_METHODS = [
         "key": "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
         "label": "PHYRVG-Full-SA + V-JEPA Loss · Rect384×672 · 0717 · b2-gacc2",
         "color": "#76B7B2",
+    },
+    {
+        "key": "full_sa_physrvg_vjepa_rect384x672_0717_w0p3_b4gacc1",
+        "label": "PHYRVG-Full-SA + V-JEPA Loss · Rect384×672 · 0717 · w0.3 · b4-gacc1",
+        "color": "#9467BD",
+    },
+    {
+        "key": "full_sa_physrvg_phyco_kubric_0717_b4gacc1",
+        "label": "PHYRVG-Full-SA · PHYCO Kubric · 0717 · b4-gacc1",
+        "color": "#17A2B8",
+    },
+    {
+        "key": "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_b2gacc2",
+        "label": "PHYRVG-Full-SA + V-JEPA Loss · Utonia Scene Weights · No-Scene Eval · formal · b2-gacc2",
+        "color": "#E15759",
     },
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
     {

@@ -79,6 +79,13 @@ def read_inputs(path: Path) -> list[Path]:
 def checkpoint_files(method: dict[str, Any] | None = None) -> tuple[str, ...]:
     if method and method.get("checkpoint_format") == "peft_adapter":
         return ("adapter_model.safetensors", "adapter_config.json")
+    if method and method.get("checkpoint_format") == "physrvg_utonia_scene_adapter":
+        return (
+            "adapter_model.safetensors",
+            "adapter_config.json",
+            "physrvg_utonia_scene_trainable.safetensors",
+            "physrvg_utonia_scene_manifest.json",
+        )
     if method and method.get("checkpoint_format") == "physrvg_object_xssc_adapter":
         return (
             "adapter_model.safetensors",
@@ -697,6 +704,9 @@ def run_inference_task(
             ),
             "FORCE_INFERENCE": (
                 "1" if runtime.get("force_inference", True) else "0"
+            ),
+            "UTONIA_SCENE_MODE": str(
+                method.get("utonia_scene_mode", "required")
             ),
         }
     )
