@@ -489,7 +489,7 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
         if lower == "pendulum_crossbar":
             return "dark_metal"
         if lower == "pendulum_cabinet_body":
-            return "wood_dark"
+            return "domino_wood"
         if lower == "pendulum_cabinet_door":
             return "wood"
         if lower == "pendulum_cabinet_handle":
