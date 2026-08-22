@@ -167,3 +167,23 @@ viewer 前台启动命令：
 | Scene / 小球门框 | `scene_door_frame_ball_w074` | 小球穿过固定厚度门框 | `door_opening_width_m` 门框开口宽度 | 0.74 m |
 
 F12 斜面长度组保持斜面最高点/支撑高度不变，长度变化会使倾角随之变化；V2V 06 跷跷板保持 2.70 m 板长，载荷从中心向一侧均匀外移。摆锤撞立柜组固定摆长 `1.10 m` 和释放角 `18°`，只改变悬点高度，因此相对摆动能量和撞击速度保持一致，撞击位置随高度变化。
+
+## Cycles 输入列表
+
+全部 70 个 Cycles 视频已整理为：
+
+`/data/gaoya/AAA_test_video/physv_v2v_0819/testjsons/physv_v2v_0819_all_cycles_test70_ctx8.txt`
+
+该 txt 每行是一个 JSON 的绝对路径，JSON 位于：
+
+`/data/gaoya/AAA_test_video/physv_v2v_0819/testjsons/v2v_jsons/physv_v2v_0819_all_cycles/`
+
+每个 JSON 主要包含：
+
+- 视频：`input_video` / `input_video_8f` 为 Cycles 前 8 帧，`input_video_16f` 为前 16 帧，`source_video` 为完整 `rgb_cycles.mp4`。
+- 文本：`input_caption`、`input_caption_specific` 为具体变量描述，`input_caption_abstract` 为模糊变量描述。
+- 控制信息：`taxonomy`、`source_group`、`family_key`、`control`、`title`，其中 `control` 记录控制变量、数值、标签和单位。
+- 时序信息：`conditioning` 记录 context 帧选项、首个事件规则、事件帧和事件时间；`frame_counts` 与 `video_spec` 记录帧数、分辨率和帧率。
+- 物理监督引用：`metadata_json`、`manifest_json`、`captions_json`、`contacts_json`，以及轨迹、mask、深度和 `physics_supervision` 文件路径。
+
+列表中的 JSON 可直接作为 `batch_infer_from_input_json_lists.py` 的输入；默认使用 8 帧 Cycles context，完整 Cycles 视频作为后续运动参考。

@@ -1,19 +1,27 @@
-Analyze the video for physics-relevant information.
+Analyze the video for physics-aware future prediction.
 
-Describe only information that affects object motion.
+Describe in three parts:
 
-1. Object motion:
+The scene is:
+Describe the structures that affect motion (surfaces, slopes, obstacles, gaps, height differences).
 
-- Identify the moving object.
-- Describe its initial state (position, orientation, contact state).
-- Describe its trajectory and motion changes over time.
-- Include important transitions: sliding, rolling, falling, bouncing, collision, stopping, or changing direction.
+In the context video:
+Describe the object's initial state, trajectory, and motion changes, including contact changes.
 
-2. Scene interaction:
+In the future video:
+Predict the likely next motion or interaction based on the observed motion and scene geometry.
 
-- Describe scene elements that may interact with the object.
-- Focus on motion-relevant geometry: supporting surfaces, slopes, obstacles, gaps, boundaries, and height differences.
-- Describe possible interactions and their effects on motion (e.g., blocking, guiding, causing direction change, enabling falling or bouncing).
-- Only infer physical effects supported by visible geometry.
+Focus on physical interactions, not appearance.
+Ignore colors, background, and unrelated objects.
+Keep it concise.
 
-Avoid describing appearance, decoration, background, or perspective-based size.
+Example:
+
+The scene is:
+A ball is on an inclined surface connected to a lower flat surface.
+
+In the context video:
+The ball starts at the top, slides downward, leaves the surface, and moves toward the lower area.
+
+In the future video:
+The ball may contact the lower surface and continue moving with a changed trajectory.
