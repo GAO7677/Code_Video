@@ -2944,19 +2944,25 @@ def build_master_hub(
     phys_metric_extremes_root = hub_root / "physiciq-metric-extremes"
     test5_metric_extremes_root = hub_root / "test5-metric-extremes"
     if (hub_root / "physiciq" / "index.html").is_file():
-        build_metric_extremes_dashboard(
-            hub_root / "physiciq" / "index.html",
-            phys_metric_extremes_root,
-            page_title="PhysicIQ · 每 case 每指标 best/worst",
-            subtitle="按 source case 分组；每个 case 的每个指标都在所有生成结果里横向比较，展示 best/worst，视频懒加载。",
-        )
-        metric_extremes_entry = f"""
+        try:
+            build_metric_extremes_dashboard(
+                hub_root / "physiciq" / "index.html",
+                phys_metric_extremes_root,
+                page_title="PhysicIQ · 每 case 每指标 best/worst",
+                subtitle="按 source case 分组；每个 case 的每个指标都在所有生成结果里横向比较，展示 best/worst，视频懒加载。",
+            )
+            metric_extremes_entry = f"""
     <section class="entry"><div><h2>每 case 每指标 best / worst</h2>
       <div class="meta">按 source case 分组；每个 case 的每个指标都在所有生成结果里比较 best/worst，视频懒加载</div>
       <a href="physiciq-metric-extremes/">PhysicIQ 67-case</a>
       <a href="test5-metric-extremes/">test_5</a></div>
       <div class="status">统一极值视图<strong>case 内横向比较</strong><small>所有生成结果参与 best/worst 选择</small></div>
     </section>"""
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            # The current PhysicIQ portal is a dynamic page without the legacy
+            # inline payload expected by the extremes exporter.  Do not let
+            # this optional auxiliary page block the live checkpoint portal.
+            print(f"[dashboard] skip PhysicIQ metric-extremes refresh: {exc}", flush=True)
     step40_ab_entry = ""
     if (hub_root / "test5-step40-object-identity-count-ab").exists():
         step40_ab_entry = """

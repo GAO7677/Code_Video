@@ -9,11 +9,22 @@ metric-oriented page.
 
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
 
 ROOT = Path("/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub")
+UTONIA_DASHBOARD_PATH = "/utonia-scene-weights-no-scene-three-tests/dashboard.json"
+
+UTONIA_ROOT_ENTRY = r"""
+<!-- UTONIA_NO_SCENE_THREE_TESTS_ENTRY -->
+<section class="entry"><div><h2>PHYRVG-Full-SA · Utonia Scene Weights · No-Scene · 三测试集矩阵</h2>
+  <div class="meta">全部 Utonia Scene Weights · No-Scene checkpoint；可切换 test_5、PhysicIQ 67-case、physV V2V 0819 test70，固定每列一个权重、每行一个 case，未生成显示 pending</div>
+  <a href="utonia-scene-weights-no-scene-three-tests/">进入三测试集可视化</a></div>
+  <div class="status">动态矩阵<strong>9 个权重列</strong><small>手动刷新 · 每个 case 行可全部重新播放</small></div>
+</section>
+"""
 
 ORDER_SCRIPT = r"""
 <script id="vbench-dynamic-first-column">
@@ -152,6 +163,32 @@ class OrderedHubHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_json(self, body: bytes, status: int = 200) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_utonia_dashboard(self, path: str) -> bool:
+        if path != UTONIA_DASHBOARD_PATH:
+            return False
+        try:
+            from build_utonia_no_scene_three_test_dashboard import build_dashboard
+
+            payload = build_dashboard(write=True)
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self._send_json(body)
+        except Exception as exc:  # keep the error visible to the page/client
+            body = json.dumps(
+                {"error": f"failed to build Utonia dashboard: {exc}"},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self._send_json(body, status=500)
+        return True
+
     def _serve_html_with_order(self, path: str) -> bool:
         filesystem_path = Path(self.translate_path(path))
         if filesystem_path.is_dir():
@@ -159,6 +196,10 @@ class OrderedHubHandler(SimpleHTTPRequestHandler):
         if filesystem_path.suffix.lower() != ".html" or not filesystem_path.is_file():
             return False
         body = filesystem_path.read_bytes()
+        if path in ("/", "/index.html") and b"UTONIA_NO_SCENE_THREE_TESTS_ENTRY" not in body:
+            root_marker = b"</main>"
+            if root_marker in body:
+                body = body.replace(root_marker, UTONIA_ROOT_ENTRY.encode("utf-8") + root_marker, 1)
         marker = b"</body>"
         if marker in body:
             script = ORDER_SCRIPT.replace(
@@ -170,6 +211,8 @@ class OrderedHubHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
+        if self._serve_utonia_dashboard(path):
+            return
         if self._serve_html_with_order(path):
             return
         super().do_GET()

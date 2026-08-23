@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhysV full-video caption demo</title>
+  <style>
+    :root { color-scheme: dark; --bg: #101315; --panel: #181d20; --line: #30383d; --muted: #9aa6ad; --text: #eef2f3; --accent: #d8a75b; --ok: #7cc69a; --bad: #e68585; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, sans-serif; }
+    header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; background: rgba(16,19,21,.96); border-bottom: 1px solid var(--line); }
+    h1 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: 0; }
+    .sub { color: var(--muted); margin-top: 3px; }
+    button { border: 1px solid var(--line); background: #222a2e; color: var(--text); padding: 8px 12px; cursor: pointer; border-radius: 6px; }
+    button:hover { border-color: var(--accent); }
+    main { max-width: 1500px; margin: 0 auto; padding: 22px 24px 48px; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; color: var(--muted); }
+    .grid { display: grid; gap: 18px; }
+    article { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+    .case-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 12px 15px 9px; border-bottom: 1px solid var(--line); }
+    .case-id { font-weight: 650; color: var(--accent); word-break: break-all; }
+    .status { color: var(--ok); font-size: 12px; }
+    .status.error { color: var(--bad); }
+    .body { display: grid; grid-template-columns: minmax(360px, 1.15fr) minmax(340px, .85fr); gap: 18px; padding: 15px; }
+    video { width: 100%; display: block; background: #050606; aspect-ratio: 896 / 512; object-fit: contain; }
+    .meta { color: var(--muted); font-size: 12px; margin-top: 8px; }
+    .caption { border-left: 2px solid var(--accent); padding: 9px 12px; margin-bottom: 12px; background: #20262a; }
+    .caption h2 { font-size: 12px; color: var(--accent); margin: 0 0 5px; text-transform: uppercase; letter-spacing: .04em; }
+    .caption p { margin: 0; white-space: pre-wrap; }
+    details { border-top: 1px solid var(--line); padding-top: 10px; color: var(--muted); }
+    summary { cursor: pointer; color: var(--text); }
+    pre { white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, monospace; }
+    @media (max-width: 900px) { header { padding: 13px 15px; } main { padding: 15px 12px 36px; } .body { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>PhysV full-video caption demo</h1><div class="sub">RGB frames only · no physics supervision or contact annotations used for captioning</div></div>
+    <button id="refresh" title="Reload demo results">↻ Refresh</button>
+  </header>
+  <main>
+    <div class="toolbar"><span id="summary">Loading…</span><span id="updated"></span></div>
+    <section id="grid" class="grid"></section>
+  </main>
+  <script>
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const caption = (label, item) => `<div class="caption"><h2>${esc(label)}</h2><p>${esc(item?.text || (item?.status === 'error' ? item.error : 'Pending'))}</p></div>`;
+    async function load() {
+      const response = await fetch('/api/cases?ts=' + Date.now(), {cache: 'no-store'});
+      const rows = await response.json();
+      document.querySelector('#summary').textContent = `${rows.length} demo cases · captions generated from complete videos`;
+      document.querySelector('#updated').textContent = new Date().toLocaleTimeString();
+      document.querySelector('#grid').innerHTML = rows.map(row => {
+        const status = row.status === 'ok' ? 'complete' : 'error';
+        const info = row.video_params ? `fps ${row.video_params.fps} · max frames ${row.video_params.max_frames} · max pixels ${row.video_params.max_pixels.toLocaleString()}` : '';
+        const prompt = row.captions?.specific?.prompt || '';
+        return `<article><div class="case-head"><span class="case-id">${esc(row.case_id)}</span><span class="status ${status === 'error' ? 'error' : ''}">${esc(status)}</span></div><div class="body"><div><video controls preload="metadata" src="/media/${encodeURIComponent(row.case_id)}"></video><div class="meta">${esc(info)}<br>${esc(row.video_variant || 'full video')}</div></div><div>${caption('Specific · frame-only', row.captions?.specific)}${caption('Abstract · frame-only', row.captions?.abstract)}<details><summary>Prompt and run metadata</summary><pre>${esc(JSON.stringify({source_basis: row.source_basis, generation_mode: row.caption_generation_mode, model: row.model, physical_gpu: row.physical_gpu, prompt: prompt}, null, 2))}</pre></details></div></div></article>`;
+      }).join('') || '<article><div class="body">No results yet. The page will show rows after the inference process writes JSONL records.</div></article>';
+    }
+    document.querySelector('#refresh').addEventListener('click', load);
+    load().catch(error => { document.querySelector('#summary').textContent = error.toString(); });
+    setInterval(() => load().catch(() => {}), 5000);
+  </script>
+</body>
+</html>
