@@ -25,6 +25,7 @@
 | 物理监督 | `/data/gaoya/AAA_test_video/physv_v2v_0819/samples/<case_id>/physics_supervision.json` |
 | 指标报告 | `/data/gaoya/AAA_test_video/physv_v2v_0819/reports` |
 | Cycles 渲染缓存 | `/data/gaoya/agent-data/cache/physv_cycles_previews` |
+| Cycles 轨迹 overlay 与页面 | `/data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay` |
 | 纹理/HDRI 资源 | `/data/gaoya/dataset/blender_render_assets/polyhaven_v1`、`/data/gaoya/agent-data/assets/polyhaven_textures_20260820` |
 
 ## 数据内容
@@ -69,6 +70,11 @@ $PYTHON Dataset_physv_v2v_0819/eval/filter_motion_amplitude_pairs_0819.py \
 $PYTHON Dataset_physv_v2v_0819/scripts/run_physv_cycles_previews.py \
   v2v_bowl_r080 --dataset-root /data/gaoya/AAA_test_video/physv_v2v_0819 \
   --gpu 2 --width 896 --height 512 --samples 32 --engine CYCLES
+
+# 在 Cycles 原视频上叠加 physics_supervision.npz 的动态物体轨迹
+$PYTHON Dataset_physv_v2v_0819/tools/render_cycles_trajectory_overlay.py \
+  --input-list /data/gaoya/AAA_test_video/physv_v2v_0819/testjsons/physv_v2v_0819_all_cycles_test70_ctx8.txt \
+  --output-root /data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay
 ```
 
 viewer 前台启动命令：
@@ -79,6 +85,14 @@ viewer 前台启动命令：
   --host 0.0.0.0 --port 8765 \
   --dataset-root /data/gaoya/AAA_test_video/physv_v2v_0819 \
   --viewer-root /home/gaoya/Code_Video/Dataset_physv_v2v_0819/viewer
+```
+
+轨迹 overlay 页面前台启动命令：
+
+```bash
+/data/gaoya/miniconda3/envs/wan-cu128/bin/python -m http.server 8919 \
+  --bind 0.0.0.0 \
+  --directory /data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay
 ```
 
 ## Case 清单与控制变量

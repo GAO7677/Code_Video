@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhysV V2V / Cycles Trajectory Overlay</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #edf1e8;
+      --muted: #9da79c;
+      --line: #333b34;
+      --panel: #171c18;
+      --panel-strong: #1e251f;
+      --canvas: #10130f;
+      --amber: #f1b85b;
+      --cyan: #5bd7c3;
+      --green: #82d987;
+      --red: #ed7867;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--canvas); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+    button, input, select { font: inherit; }
+    button, select, input { color: var(--ink); }
+    button {
+      border: 1px solid #59675b;
+      background: #263029;
+      border-radius: 4px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--amber); background: #303b31; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--amber);
+      outline-offset: 2px;
+    }
+    .shell { width: min(1580px, calc(100% - 40px)); margin: 0 auto; }
+    .masthead {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 32px 0 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 7px;
+      color: var(--amber);
+      font: 600 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font: 650 clamp(26px, 3vw, 44px)/1.05 Georgia, "Times New Roman", serif; }
+    .lede { max-width: 620px; margin: 10px 0 0; color: var(--muted); font-size: 14px; }
+    .summary { display: flex; gap: 22px; align-items: flex-end; white-space: nowrap; }
+    .summary strong { display: block; color: var(--cyan); font: 650 25px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .summary span { color: var(--muted); font-size: 12px; }
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 14px 0;
+      background: rgba(16, 19, 15, .96);
+      border-bottom: 1px solid var(--line);
+    }
+    .toolbar label { color: var(--muted); font-size: 12px; }
+    .toolbar input, .toolbar select {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel);
+      padding: 7px 10px;
+    }
+    .toolbar input { min-width: 260px; }
+    .toolbar .spacer { flex: 1; }
+    #status { color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    main { padding: 8px 0 64px; }
+    .group {
+      padding: 25px 0 30px;
+      border-bottom: 1px solid var(--line);
+    }
+    .group[hidden] { display: none; }
+    .group-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 18px;
+      margin-bottom: 15px;
+    }
+    .group-kicker { color: var(--cyan); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    h2 { margin: 3px 0 4px; font-size: 20px; letter-spacing: 0; }
+    .group-sub { margin: 0; color: var(--muted); font-size: 13px; }
+    .group-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .case-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+      gap: 12px;
+    }
+    .case-card {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+    }
+    .case-card:hover { border-color: #68766a; }
+    .case-head { padding: 13px 14px 11px; }
+    .case-id { color: var(--amber); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .case-title { margin: 4px 0 8px; font-size: 15px; font-weight: 650; }
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      border: 1px solid #3c4b40;
+      border-radius: 3px;
+      padding: 2px 7px;
+      color: #cbd6c8;
+      background: #202820;
+      font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .chip.control { color: var(--green); border-color: #416a49; }
+    .media-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #0b0d0b; }
+    .media-panel { min-width: 0; padding-bottom: 8px; background: #0d100d; }
+    .media-label { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; color: #c7d0c5; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .media-label b { color: var(--cyan); font-weight: 650; }
+    video { display: block; width: 100%; height: auto; background: #050605; }
+    .media-note { padding: 4px 10px 0; color: #788278; font-size: 10px; }
+    details { border-top: 1px solid var(--line); }
+    summary { padding: 9px 14px; color: #bac5b9; cursor: pointer; font-size: 12px; }
+    .caption-body { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 14px 13px; color: var(--muted); font-size: 12px; }
+    .caption-body p { margin: 0; }
+    .caption-body strong { display: block; margin-bottom: 3px; color: var(--ink); font-size: 11px; }
+    .empty { padding: 50px 0; color: var(--muted); }
+    @media (max-width: 780px) {
+      .shell { width: min(100% - 24px, 620px); }
+      .masthead { display: block; }
+      .summary { margin-top: 20px; }
+      .toolbar input { min-width: min(100%, 260px); flex: 1; }
+      .case-grid { grid-template-columns: 1fr; }
+      .media-grid, .caption-body { grid-template-columns: 1fr; }
+      .group-head { display: block; }
+      .group-actions { margin-top: 12px; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+  </style>
+</head>
+<body>
+  <header class="shell masthead">
+    <div>
+      <p class="eyebrow">PhysV V2V 0819 / Cycles ground truth</p>
+      <h1>Trajectory Overlay</h1>
+      <p class="lede">Cycles 原视频与仿真动态物体轨迹叠加。输入侧显示 8 帧上下文，右侧显示同一 case 的完整运动过程。</p>
+    </div>
+    <div class="summary" aria-label="数据集统计">
+      <div><strong id="case-count">--</strong><span>cases</span></div>
+      <div><strong id="group-count">--</strong><span>groups</span></div>
+    </div>
+  </header>
+  <div class="shell toolbar">
+    <label for="group-filter">分组</label>
+    <select id="group-filter"><option value="all">全部组</option></select>
+    <label for="search">筛选</label>
+    <input id="search" type="search" placeholder="case、变量或场景名称">
+    <span class="spacer"></span>
+    <button id="reset-all" type="button">↺ 重置全部</button>
+    <span id="status">读取中…</span>
+  </div>
+  <main class="shell" id="groups"><div class="empty">正在加载 overlay manifest…</div></main>
+  <script>
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
+    const controlText = (control) => {
+      if (!control || !control.variable) return "控制变量未记录";
+      return `${control.variable} = ${control.value_label ?? control.value ?? "-"}`;
+    };
+    const groupLabel = (group) => group.cases[0]?.source_group || group.family_key;
+    const groupTaxonomy = (group) => group.cases[0]?.taxonomy || "";
+
+    function caseCard(item) {
+      const aspect = `${item.width}/${item.height}`;
+      return `<article class="case-card" data-search="${escapeHtml([item.sample_id, item.title, item.family_key, item.source_group, controlText(item.control)].join(" ").toLowerCase())}">
+        <header class="case-head">
+          <div class="case-id">${escapeHtml(item.sample_id)}</div>
+          <div class="case-title">${escapeHtml(item.title)}</div>
+          <div class="chips">
+            <span class="chip">${escapeHtml(item.taxonomy)}</span>
+            <span class="chip control">${escapeHtml(controlText(item.control))}</span>
+            <span class="chip">${item.width}×${item.height} · ${item.fps} fps</span>
+          </div>
+        </header>
+        <div class="media-grid">
+          <section class="media-panel">
+            <div class="media-label"><b>CTX 8</b><span>8 帧输入</span></div>
+            <video controls preload="metadata" playsinline src="${escapeHtml(item.context8_overlay)}" style="aspect-ratio:${aspect}"></video>
+            <div class="media-note">只显示 context 内已累积的轨迹</div>
+          </section>
+          <section class="media-panel">
+            <div class="media-label"><b>FULL</b><span>完整 Cycles</span></div>
+            <video controls preload="metadata" playsinline src="${escapeHtml(item.source_overlay)}" style="aspect-ratio:${aspect}"></video>
+            <div class="media-note">轨迹随时间逐帧累积</div>
+          </section>
+        </div>
+        <details>
+          <summary>查看 caption 与运动物体</summary>
+          <div class="caption-body">
+            <p><strong>具体 caption</strong>${escapeHtml(item.captions?.specific || "-")}</p>
+            <p><strong>模糊 caption</strong>${escapeHtml(item.captions?.abstract || "-")}</p>
+            <p><strong>动态物体</strong>${escapeHtml((item.dynamic_objects || []).join(", "))}</p>
+            <p><strong>轨迹来源</strong>physics_supervision.npz / dynamic_mask</p>
+          </div>
+        </details>
+      </article>`;
+    }
+
+    function render(manifest) {
+      const groups = new Map();
+      for (const item of manifest.cases) {
+        if (!groups.has(item.family_key)) groups.set(item.family_key, []);
+        groups.get(item.family_key).push(item);
+      }
+      $("#case-count").textContent = manifest.case_count;
+      $("#group-count").textContent = manifest.group_count;
+      const filter = $("#group-filter");
+      for (const [family, cases] of groups) {
+        const option = document.createElement("option");
+        option.value = family;
+        option.textContent = `${family} (${cases.length})`;
+        filter.append(option);
+      }
+      $("#groups").innerHTML = [...groups.entries()].map(([family, cases]) => `<section class="group" data-family="${escapeHtml(family)}" data-group-search="${escapeHtml([family, groupLabel({family_key: family, cases}), groupTaxonomy({cases})].join(" ").toLowerCase())}">
+        <div class="group-head">
+          <div><div class="group-kicker">${escapeHtml(groupTaxonomy({cases}))} / ${escapeHtml(family)}</div><h2>${escapeHtml(groupLabel({cases}))}</h2><p class="group-sub">${cases.length} 个控制变量 case · 轨迹真值叠加</p></div>
+          <div class="group-actions"><button type="button" data-play-group="${escapeHtml(family)}">▶ 播放本组</button></div>
+        </div>
+        <div class="case-grid">${cases.map(caseCard).join("")}</div>
+      </section>`).join("");
+      $("#status").textContent = `${manifest.case_count} cases loaded`;
+      bindControls();
+    }
+
+    function videosInGroup(family) {
+      const section = $(`.group[data-family="${CSS.escape(family)}"]`);
+      return section ? $$('video', section) : [];
+    }
+    function bindControls() {
+      $$('[data-play-group]').forEach(button => button.addEventListener("click", async () => {
+        const videos = videosInGroup(button.dataset.playGroup);
+        for (const video of videos) { video.currentTime = 0; try { await video.play(); } catch (_) {} }
+      }));
+      $("#group-filter").addEventListener("change", applyFilter);
+      $("#search").addEventListener("input", applyFilter);
+      $("#reset-all").addEventListener("click", () => $$('video').forEach(video => { video.pause(); video.currentTime = 0; }));
+    }
+    function applyFilter() {
+      const family = $("#group-filter").value;
+      const query = $("#search").value.trim().toLowerCase();
+      $$(".group").forEach(section => {
+        const familyMatch = family === "all" || section.dataset.family === family;
+        let visibleCards = 0;
+        $$(".case-card", section).forEach(card => {
+          const matches = !query || card.dataset.search.includes(query);
+          card.hidden = !matches;
+          if (matches) visibleCards += 1;
+        });
+        section.hidden = !familyMatch || visibleCards === 0;
+      });
+    }
+    fetch("./manifest.json", {cache: "no-store"}).then(response => {
+      if (!response.ok) throw new Error(`manifest HTTP ${response.status}`);
+      return response.json();
+    }).then(render).catch(error => {
+      $("#groups").innerHTML = `<div class="empty">无法读取 manifest：${escapeHtml(error.message)}</div>`;
+      $("#status").textContent = "load failed";
+    });
+  </script>
+</body>
+</html>

@@ -2911,6 +2911,34 @@ def build_master_hub(
       <a href="physv-v2v-0819-physrvg/metrics/">指标可视化</a></div>
       <div class="status" id="physv-v2v-0819-status"><span>生成 GPU3 · 指标 GPU0/1</span><strong>正在读取实时进度…</strong><small>demo 通过后自动进入全量队列</small><button id="physv-v2v-refresh" type="button">手动刷新</button></div>
     </section>"""
+    utonia_test70_entry = ""
+    utonia_test70_root = hub_root / "physv-v2v-0819-utonia-no-scene-test70"
+    if (utonia_test70_root / "index.html").is_file():
+        dashboard_path = utonia_test70_root / "dashboard.json"
+        generated_text = "生成状态读取中"
+        metric_text = "指标状态读取中"
+        if dashboard_path.is_file():
+            try:
+                utonia_dashboard = json.loads(
+                    dashboard_path.read_text(encoding="utf-8")
+                )
+                models = utonia_dashboard.get("models", [])
+                generated = sum(int(row.get("generated_cases", 0)) for row in models)
+                expected_generated = int(utonia_dashboard.get("case_count", 0)) * len(models)
+                metric_done = int(utonia_dashboard.get("metric_completed_records", 0))
+                metric_expected = int(utonia_dashboard.get("expected_metric_records", 0))
+                generated_text = f"生成 {generated}/{expected_generated}"
+                metric_text = f"指标 {metric_done}/{metric_expected}"
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                pass
+        utonia_test70_entry = f"""
+    <!-- PHYSV_V2V_0819_UTONIA_NO_SCENE_TEST70_ENTRY -->
+    <section class="entry"><div><h2>PHYRVG-Full-SA + V-JEPA Loss · Utonia Scene Weights · No-Scene · test70</h2>
+      <div class="meta">9 个 Utonia Scene Weights checkpoint + 1 个已生成的 LoRA ON reference；显式关闭 scene 分支；all-cycles test70，统一 512×896、49 帧、ctx8、40 steps、seed42</div>
+      <a href="physv-v2v-0819-utonia-no-scene-test70/">进入 test70 Case 视频</a>
+      <a href="physv-v2v-0819-utonia-no-scene-test70/metrics/">进入 test70 指标页面</a></div>
+      <div class="status">生成队列 GPU0/1/2/3/5/6<strong>{generated_text}</strong><small>{metric_text} · GPU4、GPU7 禁用</small></div>
+    </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -2969,6 +2997,7 @@ def build_master_hub(
     {physrvg_worst_case_entry}
     {phyrvg_train_validation_entry}
     {physv_v2v_0819_entry}
+    {utonia_test70_entry}
     <section class="entry"><div><h2>30-case train validation · 方法对比</h2>
       <div class="meta">固定 PyBullet train 30-case；当前三种方法 resume/latest 与标准 18-method inventory 的其他最新权重，包含视频同步对比和 validation loss</div>
       <a href="train-validation-30cases/">进入 30-case validation</a>
