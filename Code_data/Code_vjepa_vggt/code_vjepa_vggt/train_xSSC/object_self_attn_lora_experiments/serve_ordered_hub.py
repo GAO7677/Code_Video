@@ -10,12 +10,18 @@ metric-oriented page.
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import re
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path("/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub")
 UTONIA_DASHBOARD_PATH = "/utonia-scene-weights-no-scene-three-tests/dashboard.json"
+UTONIA_ENABLED_PAGE_KEY = "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled"
+UTONIA_ENABLED_RAW_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "physrvg_full_sa_vjepa_utonia_scene_enabled_eval"
+)
 
 UTONIA_ROOT_ENTRY = r"""
 <!-- UTONIA_NO_SCENE_THREE_TESTS_ENTRY -->
@@ -153,7 +159,49 @@ def is_metric_page(path: str) -> bool:
     )
 
 
+def _utonia_enabled_media_path(path: str) -> Path | None:
+    """Resolve dashboard media URLs to the raw Scene Enabled output files.
+
+    The dashboard intentionally avoids copying large generated videos into the
+    hub.  Keep the public media URL stable while serving the raw file directly.
+    """
+    parts = [unquote(part) for part in urlsplit(path).path.split("/") if part]
+    if len(parts) != 5 or parts[2] != UTONIA_ENABLED_PAGE_KEY:
+        return None
+    if parts[1] != "media" or parts[4].startswith("."):
+        return None
+    step_match = re.fullmatch(r"step-(\d{6})", parts[3])
+    if step_match is None or "/" in parts[4] or "\\" in parts[4]:
+        return None
+
+    step = int(step_match.group(1))
+    filename = parts[4]
+    if not filename.endswith(".mp4"):
+        return None
+    if parts[0] == "gallery":
+        raw_dir = UTONIA_ENABLED_RAW_ROOT / "test5" / (
+            f"full_sa_physrvg_vjepa_utonia_scene_enabled_step-{step:06d}_"
+            "steps8_512x896_ctx08_49f"
+        )
+    elif parts[0] == "physiciq-gallery":
+        raw_dir = UTONIA_ENABLED_RAW_ROOT / "physiciq" / (
+            f"full_sa_physrvg_vjepa_utonia_scene_enabled_step-{step:06d}_"
+            "steps40_512x896_ctx08_49f"
+        )
+    else:
+        return None
+
+    candidate = raw_dir / filename
+    return candidate if candidate.is_file() else None
+
+
 class OrderedHubHandler(SimpleHTTPRequestHandler):
+    def translate_path(self, path: str) -> str:
+        raw_path = _utonia_enabled_media_path(path)
+        if raw_path is not None:
+            return str(raw_path)
+        return super().translate_path(path)
+
     def _send_html(self, body: bytes) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")

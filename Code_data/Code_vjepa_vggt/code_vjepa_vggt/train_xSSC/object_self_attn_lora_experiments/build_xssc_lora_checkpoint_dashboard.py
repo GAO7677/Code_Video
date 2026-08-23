@@ -117,6 +117,7 @@ PHYRVG_FULL_SA_PLUS_ORDER = (
     "full_sa_physrvg_object_xssc_loss",
     "full_sa_physrvg_vjepa_rect384x672_0717_w0p3_b4gacc1",
     "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_b2gacc2",
+    "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled",
 )
 PHYRVG_FULL_SA_PLUS_INDEX = {
     key: index for index, key in enumerate(PHYRVG_FULL_SA_PLUS_ORDER)
@@ -1722,6 +1723,11 @@ MERGED_METHODS = [
         "key": "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_b2gacc2",
         "label": "PHYRVG-Full-SA + V-JEPA Loss · Utonia Scene Weights · No-Scene Eval · formal · b2-gacc2",
         "color": "#E15759",
+    },
+    {
+        "key": "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled",
+        "label": "PHYRVG-Full-SA + V-JEPA Loss · Utonia Scene Weights · Scene Enabled · formal · b2/b4",
+        "color": "#F28E2B",
     },
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
     {
