@@ -662,10 +662,14 @@ def run_all(*, once: bool, overwrite: bool) -> int:
         handle.flush()
         process = subprocess.Popen(command, env=env, stdout=handle, stderr=subprocess.STDOUT)
         processes.append((metric, None, process))
-    # GPU4 is deliberately absent.  GPU1/3 are admitted only when their
-    # current allocation is below the same queue threshold used by the
-    # existing evaluator; GPU5/6 are the fallback idle cards.
-    available_gpus = [1, 3, 5, 6]
+    # Keep all GPU-side GT metrics on the single approved queue GPU.  CPU
+    # metrics remain parallel and unchanged.  The environment override keeps
+    # this evaluator easy to reuse, while the default follows the PhysRVG
+    # watcher policy.
+    gpu_spec = os.environ.get("GT_METRIC_GPUS", "6")
+    available_gpus = [int(item.strip()) for item in gpu_spec.split(",") if item.strip()]
+    if not available_gpus or 4 in available_gpus:
+        raise ValueError("GT_METRIC_GPUS must contain at least one non-GPU4 device")
     running: list[tuple[str, str, subprocess.Popen[Any]]] = []
     pending = list(gpu_jobs)
     last_summary = 0.0

@@ -8,7 +8,9 @@ PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 CONFIG="${CONFIG:-${ROOT}/xssc_lora_three_train_watch_config_with_t_head.json}"
 METHOD="${METHOD:-full_sa_physrvg_vjepa_rect384x672_0717_w0p3_b4gacc1}"
 GPUS="${GPUS:-0,1,2,3,5,6,7}"
-GPU_WORKERS_PER_GPU="${GPU_WORKERS_PER_GPU:-2}"
+METRIC_GPUS="${METRIC_GPUS:-6}"
+METRIC_GPU_WORKERS_PER_GPU="${METRIC_GPU_WORKERS_PER_GPU:-1}"
+METRIC_GPU_LOCK="${METRIC_GPU_LOCK:-/data/gaoya/agent-data/locks/physrvg_gpu6_metrics.lock}"
 POLL_SECONDS="${POLL_SECONDS:-60}"
 LOG_ROOT="${LOG_ROOT:-/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_three_run_watch/logs/physrvg_vjepa_w0p3_b4gacc1_8844}"
 
@@ -16,7 +18,12 @@ if [[ ",${GPUS}," == *,4,* ]]; then
   echo "GPU4 is prohibited by workspace rules." >&2
   exit 2
 fi
+if [[ ",${METRIC_GPUS}," == *,4,* ]]; then
+  echo "GPU4 is prohibited by workspace rules." >&2
+  exit 2
+fi
 mkdir -p "${LOG_ROOT}"
+mkdir -p "$(dirname "${METRIC_GPU_LOCK}")"
 export PYTHONNOUSERSITE=1
 
 run_stage() {
@@ -24,6 +31,20 @@ run_stage() {
   shift
   echo "[$(date -u +%FT%TZ)] start ${name}"
   "$@" 2>&1 | tee -a "${LOG_ROOT}/${name}.log"
+  local status=${PIPESTATUS[0]}
+  echo "[$(date -u +%FT%TZ)] finish ${name} status=${status}"
+  return "${status}"
+}
+
+run_metric_stage() {
+  local name="$1"
+  shift
+  echo "[$(date -u +%FT%TZ)] wait metric lock ${name} gpu=${METRIC_GPUS}"
+  flock -x "${METRIC_GPU_LOCK}" bash -c '
+    echo "[$(date -u +%FT%TZ)] start metric stage $1"
+    shift
+    "$@"
+  ' _ "${name}" "$@" 2>&1 | tee -a "${LOG_ROOT}/${name}.log"
   local status=${PIPESTATUS[0]}
   echo "[$(date -u +%FT%TZ)] finish ${name} status=${status}"
   return "${status}"
@@ -45,14 +66,14 @@ while true; do
       --kind cpu \
       --once || true
 
-  run_stage test5_gpu_metrics \
+  run_metric_stage test5_gpu_metrics \
     "${PYTHON}" "${ROOT}/xssc_lora_checkpoint_watch.py" \
       --config "${CONFIG}" \
       --methods "${METHOD}" \
       --mode metrics \
       --kind gpu \
-      --gpus "${GPUS}" \
-      --gpu-metric-workers-per-gpu "${GPU_WORKERS_PER_GPU}" \
+      --gpus "${METRIC_GPUS}" \
+      --gpu-metric-workers-per-gpu "${METRIC_GPU_WORKERS_PER_GPU}" \
       --once || true
 
   run_stage physiciq_cpu_metrics \
@@ -63,14 +84,14 @@ while true; do
       --kind cpu \
       --once || true
 
-  run_stage physiciq_gpu_metrics \
+  run_metric_stage physiciq_gpu_metrics \
     "${PYTHON}" "${ROOT}/xssc_lora_physiciq_watch.py" \
       --config "${CONFIG}" \
       --methods "${METHOD}" \
       --mode metrics \
       --kind gpu \
-      --gpus "${GPUS}" \
-      --gpu-metric-workers-per-gpu "${GPU_WORKERS_PER_GPU}" \
+      --gpus "${METRIC_GPUS}" \
+      --gpu-metric-workers-per-gpu "${METRIC_GPU_WORKERS_PER_GPU}" \
       --once || true
 
   run_stage dashboard \

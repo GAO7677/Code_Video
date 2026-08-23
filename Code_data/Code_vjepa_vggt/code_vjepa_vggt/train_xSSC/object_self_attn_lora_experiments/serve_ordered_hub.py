@@ -19,10 +19,10 @@ UTONIA_DASHBOARD_PATH = "/utonia-scene-weights-no-scene-three-tests/dashboard.js
 
 UTONIA_ROOT_ENTRY = r"""
 <!-- UTONIA_NO_SCENE_THREE_TESTS_ENTRY -->
-<section class="entry"><div><h2>PHYRVG-Full-SA · Utonia Scene Weights · No-Scene · 三测试集矩阵</h2>
-  <div class="meta">全部 Utonia Scene Weights · No-Scene checkpoint；可切换 test_5、PhysicIQ 67-case、physV V2V 0819 test70，固定每列一个权重、每行一个 case，未生成显示 pending</div>
+<section class="entry"><div><h2>PHYRVG-Full-SA · Utonia Scene Weights · No-Scene / Scene Enabled · 三测试集矩阵</h2>
+  <div class="meta">全部 Utonia Scene Weights；No-Scene 与 Scene Enabled（online VGGT → Utonia）分色展示，可切换 test_5、PhysicIQ 67-case、physV V2V 0819 test70，未生成显示 pending</div>
   <a href="utonia-scene-weights-no-scene-three-tests/">进入三测试集可视化</a></div>
-  <div class="status">动态矩阵<strong>9 个权重列</strong><small>手动刷新 · 每个 case 行可全部重新播放</small></div>
+  <div class="status">动态矩阵<strong>18 个权重列</strong><small>手动刷新 · 每个 case 行可全部重新播放</small></div>
 </section>
 """
 

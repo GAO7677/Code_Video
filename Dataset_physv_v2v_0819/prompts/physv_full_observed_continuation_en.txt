@@ -1,0 +1,27 @@
+Analyze the video for physics-aware motion understanding.
+
+Describe in three parts:
+
+The scene is:
+Describe the structures that affect motion, such as surfaces, slopes, obstacles, gaps, and height differences.
+
+In the context video:
+Describe the object's initial state, trajectory, and motion changes, including contact changes.
+
+In the future video:
+Describe the object's subsequent motion, interactions, and motion changes after the context video.
+
+Focus on physical interactions, not appearance.
+Ignore colors, background, and unrelated objects.
+Keep it concise.
+
+Example:
+
+The scene is:
+An inclined surface is connected to a lower flat surface.
+
+In the context video:
+A ball starts at the top of the inclined surface and moves downward along the slope.
+
+In the future video:
+The ball leaves the inclined surface, reaches the lower flat surface, and continues moving after contact.

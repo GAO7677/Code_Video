@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Utonia No-Scene three-test matrix dashboard.
+"""Build the Utonia No-Scene/Scene-Enabled three-test matrix dashboard.
 
 The page is intentionally data-driven: checkpoint discovery and video
 existence are evaluated every time the 8844 server serves dashboard.json.
@@ -21,6 +21,11 @@ from urllib.parse import quote
 HUB_ROOT = Path("/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub")
 PAGE_ROOT = HUB_ROOT / "utonia-scene-weights-no-scene-three-tests"
 PAGE_KEY = "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_b2gacc2"
+ENABLED_PAGE_KEY = "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled"
+ENABLED_RAW_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "physrvg_full_sa_vjepa_utonia_scene_enabled_eval"
+)
 
 TEST5_LIST = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
 PHYSICIQ_LIST = Path("/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt")
@@ -67,6 +72,7 @@ BRANCHES = (
         ),
         "short_label": "Utonia · b2-gacc2",
         "color": "#59A14F",
+        "mode": "no_scene",
         "root": B2_ROOT,
     },
     {
@@ -78,6 +84,31 @@ BRANCHES = (
         ),
         "short_label": "Utonia · b4-gacc1 · resume1000",
         "color": "#76B7B2",
+        "mode": "no_scene",
+        "root": B4_ROOT,
+    },
+    {
+        "key": "enabled_b2gacc2",
+        "branch": "Scene Enabled · b2-gacc2",
+        "label": (
+            "PHYRVG-Full-SA + V-JEPA Loss · Utonia Scene Weights · "
+            "Scene Enabled · formal · b2-gacc2"
+        ),
+        "short_label": "Scene Enabled · b2-gacc2",
+        "color": "#F28E2B",
+        "mode": "scene_enabled",
+        "root": B2_ROOT,
+    },
+    {
+        "key": "enabled_b4gacc1",
+        "branch": "Scene Enabled · b4-gacc1",
+        "label": (
+            "PHYRVG-Full-SA + V-JEPA Loss · Utonia Scene Weights · "
+            "Scene Enabled · formal · b4-gacc1 · resume1000"
+        ),
+        "short_label": "Scene Enabled · b4-gacc1 · resume1000",
+        "color": "#E15759",
+        "mode": "scene_enabled",
         "root": B4_ROOT,
     },
 )
@@ -123,10 +154,13 @@ def _discover_weights() -> list[dict]:
             if not match or not checkpoint.is_dir() or not _checkpoint_is_valid(checkpoint):
                 continue
             step = int(match.group(1))
-            task_id = (
-                "full_sa_physrvg_vjepa_utonia_scene_"
-                f"{branch['key']}__step-{step:06d}"
-            )
+            if branch["mode"] == "no_scene":
+                task_id = (
+                    "full_sa_physrvg_vjepa_utonia_scene_"
+                    f"{branch['key']}__step-{step:06d}"
+                )
+            else:
+                task_id = f"{ENABLED_PAGE_KEY}__step-{step:06d}"
             weights.append(
                 {
                     "task_id": task_id,
@@ -139,9 +173,17 @@ def _discover_weights() -> list[dict]:
                     "step_label": f"step-{step:06d}",
                     "column_label": f"{branch['branch']} · step-{step:06d}",
                     "checkpoint_dir": str(checkpoint),
+                    "mode": branch["mode"],
                 }
             )
-    return sorted(weights, key=lambda item: (item["step"], item["branch_key"]))
+    return sorted(
+        weights,
+        key=lambda item: (
+            0 if item["mode"] == "no_scene" else 1,
+            item["step"],
+            item["branch_key"],
+        ),
+    )
 
 
 def _family_for_test5(stem: str) -> str:
@@ -266,15 +308,32 @@ def _task_state(task_id: str) -> dict:
 
 def _display_video_path(test_key: str, weight: dict, stem: str) -> Path:
     step = weight["step"]
+    page_key = ENABLED_PAGE_KEY if weight["mode"] == "scene_enabled" else PAGE_KEY
     if test_key == "test5":
-        return TEST5_MEDIA_ROOT / PAGE_KEY / f"step-{step:06d}" / f"{stem}.mp4"
+        return TEST5_MEDIA_ROOT / page_key / f"step-{step:06d}" / f"{stem}.mp4"
     if test_key == "physiciq":
-        return PHYSICIQ_MEDIA_ROOT / PAGE_KEY / f"step-{step:06d}" / f"{stem}.mp4"
+        return PHYSICIQ_MEDIA_ROOT / page_key / f"step-{step:06d}" / f"{stem}.mp4"
     return TEST70_ARTIFACT_ROOT / "results" / weight["task_id"] / f"{stem}.mp4"
 
 
 def _raw_video_candidates(test_key: str, weight: dict, stem: str) -> list[Path]:
     step = weight["step"]
+    if weight["mode"] == "scene_enabled":
+        if test_key == "test5":
+            return [
+                ENABLED_RAW_ROOT / "test5" / (
+                    f"full_sa_physrvg_vjepa_utonia_scene_enabled_step-{step:06d}_"
+                    "steps8_512x896_ctx08_49f"
+                ) / f"{stem}.mp4"
+            ]
+        if test_key == "physiciq":
+            return [
+                ENABLED_RAW_ROOT / "physiciq" / (
+                    f"full_sa_physrvg_vjepa_utonia_scene_enabled_step-{step:06d}_"
+                    "steps40_512x896_ctx08_49f"
+                ) / f"{stem}.mp4"
+            ]
+        return []
     if test_key == "test5":
         return [
             TEST5_RAW_ROOT / PAGE_KEY / f"step-{step:06d}_steps8_512x896_ctx08_49f" / f"{stem}.mp4"
@@ -298,11 +357,12 @@ def _video_exists(test_key: str, weight: dict, stem: str) -> bool:
 
 def _video_url(test_key: str, weight: dict, stem: str) -> str:
     step = weight["step"]
+    page_key = ENABLED_PAGE_KEY if weight["mode"] == "scene_enabled" else PAGE_KEY
     filename = f"{_quote(stem)}.mp4"
     if test_key == "test5":
-        return f"../gallery/media/{PAGE_KEY}/step-{step:06d}/{filename}"
+        return f"../gallery/media/{page_key}/step-{step:06d}/{filename}"
     if test_key == "physiciq":
-        return f"../physiciq-gallery/media/{PAGE_KEY}/step-{step:06d}/{filename}"
+        return f"../physiciq-gallery/media/{page_key}/step-{step:06d}/{filename}"
     return (
         "../physv-v2v-0819-utonia-no-scene-test70/results/"
         f"{weight['task_id']}/{filename}"
@@ -402,7 +462,7 @@ def build_dashboard(write: bool = True) -> dict:
             "test70",
             "physV V2V 0819 · all-cycles test70",
             test70_cases,
-            weights,
+            [item for item in weights if item["mode"] == "no_scene"],
             {
                 "num_inference_steps": 40,
                 "height": 512,
@@ -416,7 +476,7 @@ def build_dashboard(write: bool = True) -> dict:
     payload = {
         "schema_version": 1,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "title": "PHYRVG-Full-SA · Utonia Scene Weights · No-Scene · 三测试集矩阵",
+        "title": "PHYRVG-Full-SA · Utonia Scene Weights · No-Scene / Scene Enabled · 三测试集矩阵",
         "weights_count": len(weights),
         "weights": weights,
         "tests": tests,

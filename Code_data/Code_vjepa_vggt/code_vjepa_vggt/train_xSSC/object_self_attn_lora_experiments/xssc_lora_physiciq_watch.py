@@ -175,6 +175,21 @@ def run_phys_inference(
             "STEP_OUTPUT_DIR_NAME": name,
             "SHARD_TAG": "shard_00",
             "TRACE_ROOT": str(trace_root),
+            "UTONIA_SCENE_MODE": str(
+                method.get("utonia_scene_mode", "required")
+            ),
+            "UTONIA_SCENE_SOURCE": str(
+                method.get("utonia_scene_source", "cache")
+            ),
+            "UTONIA_SCENE_POOLING": str(
+                method.get("utonia_scene_pooling", "auto")
+            ),
+            "UTONIA_SCENE_TOKEN_COUNT": str(
+                method.get("utonia_scene_token_count", 1792)
+            ),
+            "UTONIA_SCENE_FEATURE_DIM": str(
+                method.get("utonia_scene_feature_dim", 1386)
+            ),
         }
     )
     log(
