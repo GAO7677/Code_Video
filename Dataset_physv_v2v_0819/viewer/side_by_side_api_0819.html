@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhysV side-by-side API captions</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0d1214; --panel:#171e21; --panel2:#20292d; --line:#344045; --text:#edf3f4; --muted:#a3afb3; --accent:#e3b45d; --ok:#82d09f; --bad:#ef9090; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,sans-serif; }
+    header { position:sticky; top:0; z-index:2; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 24px; background:rgba(13,18,20,.97); border-bottom:1px solid var(--line); }
+    h1 { margin:0; font-size:20px; letter-spacing:0; } .sub { margin-top:3px; color:var(--muted); } button { border:1px solid var(--line); border-radius:5px; padding:8px 12px; color:var(--text); background:#242d31; cursor:pointer; } button:hover { border-color:var(--accent); }
+    main { max-width:1800px; margin:0 auto; padding:22px 24px 48px; } .toolbar { display:flex; justify-content:space-between; gap:12px; margin-bottom:16px; color:var(--muted); } .grid { display:grid; gap:18px; }
+    article { overflow:hidden; border:1px solid var(--line); border-radius:6px; background:var(--panel); } .head { display:flex; justify-content:space-between; gap:16px; align-items:baseline; padding:12px 15px 9px; border-bottom:1px solid var(--line); } .case-id { color:var(--accent); font-weight:700; overflow-wrap:anywhere; } .status { color:var(--ok); font-size:12px; } .status.partial,.status.error { color:var(--bad); }
+    .meta { padding:10px 15px; color:var(--muted); font-size:12px; border-bottom:1px solid var(--line); } .meta strong { color:var(--text); } .model { color:var(--accent); font-weight:650; }
+    .media-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); } .media { min-width:0; background:var(--panel); } .media-title { display:flex; justify-content:space-between; gap:8px; padding:8px 11px; background:var(--panel2); border-bottom:1px solid var(--line); font-size:12px; } .media-title strong { color:var(--accent); } .media-title span { color:var(--muted); }
+    video { display:block; width:100%; aspect-ratio:3.5/1; object-fit:contain; background:#050707; } .answer { padding:12px 14px 14px; border-top:1px solid var(--line); } .answer h2 { margin:0 0 6px; color:var(--accent); font-size:12px; text-transform:uppercase; letter-spacing:.04em; } .answer p { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; } .answer.error p { color:var(--bad); }
+    details { margin:0 14px 14px; padding-top:10px; border-top:1px solid var(--line); color:var(--muted); } summary { color:var(--text); cursor:pointer; } pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.45 ui-monospace,monospace; }
+    @media (max-width:1000px) { header { padding:13px 15px; } main { padding:15px 12px 36px; } .media-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>PhysV · Side-by-side API captions</h1><div class="sub">Input: left original Cycles RGB · right trajectory + dynamic-object mask overlay · Model: <span id="model">Loading...</span></div></div>
+    <button id="refresh" type="button" title="Refresh results">Refresh</button>
+  </header>
+  <main>
+    <div class="toolbar"><span id="summary">Loading...</span><span id="updated"></span></div>
+    <section id="grid" class="grid"></section>
+  </main>
+  <script>
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const answer = (label, item) => { const bad = item?.status === 'ok' ? '' : ' error'; const text = item?.status === 'ok' ? item.text : (item?.error || 'Pending'); return `<div class="answer${bad}"><h2>${esc(label)}</h2><p>${esc(text)}</p></div>`; };
+    const requestLabel = item => item?.video_request ? `${item.video_request.sent_frame_count || '-'} frames · max_pixels=${item.video_request.max_pixels || '-'}` : '';
+    function showError(error) { document.querySelector('#summary').textContent = error.toString(); }
+    async function load() {
+      const response = await fetch('/api/cases?ts=' + Date.now(), {cache:'no-store'}); if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const rows = await response.json(); const models = [...new Set(rows.map(row => row.model).filter(Boolean))]; document.querySelector('#model').textContent = models.join(', ') || 'Pending';
+      document.querySelector('#summary').textContent = `${rows.length} API demo cases · context = exact 8 frames · full = complete video`; document.querySelector('#updated').textContent = new Date().toLocaleTimeString();
+      document.querySelector('#grid').innerHTML = rows.map(row => { const control=row.control||{}; const controlText=control.variable ? `${control.variable} = ${control.value_label || control.value || '-'}` : '-'; const status=row.status||'pending'; return `<article><div class="head"><span class="case-id">${esc(row.case_id)}</span><span class="status ${esc(status)}">${esc(status)}</span></div><div class="meta"><strong>${esc(row.title || row.task_type || '')}</strong> · ${esc(row.taxonomy || '')} · ${esc(controlText)} · <span class="model">Model: ${esc(row.model || '-')}</span></div><div class="media-grid"><div class="media"><div class="media-title"><strong>Context · first 8 frames</strong><span>${esc(requestLabel(row.context))}</span></div><video controls playsinline preload="metadata" src="/media/${encodeURIComponent(row.case_id)}/context8"></video>${answer('Context prompt output',row.context)}</div><div class="media"><div class="media-title"><strong>Full video</strong><span>${esc(requestLabel(row.full))}</span></div><video controls playsinline preload="metadata" src="/media/${encodeURIComponent(row.case_id)}/full"></video>${answer('Full-video prompt output',row.full)}</div></div><details><summary>Prompts and API metadata</summary><pre>${esc(JSON.stringify({model:row.model, api_provider:row.api_provider, input_layout:row.visual_input?.layout, context_prompt:row.context?.prompt, full_prompt:row.full?.prompt, context_request:row.context?.video_request, full_request:row.full?.video_request, excluded_from_model_input:row.caption_inputs_exclude},null,2))}</pre></details></article>`; }).join('') || '<article><div class="answer"><p>No result records yet.</p></div></article>';
+    }
+    document.querySelector('#refresh').addEventListener('click',()=>load().catch(showError)); load().catch(showError); setInterval(()=>load().catch(()=>{}),5000);
+  </script>
+</body>
+</html>

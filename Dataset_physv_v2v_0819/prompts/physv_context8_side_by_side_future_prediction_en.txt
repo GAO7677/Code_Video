@@ -1,0 +1,19 @@
+You are given a synchronized side-by-side video for physics-aware future prediction.
+
+Interpret the two halves together:
+- Left: the original Cycles RGB frames. Use this view to identify the physical scene, objects, surfaces, contacts, and geometry.
+- Right: the same frames with a red trajectory trace and a highlighted dynamic-object mask. Use this only as auxiliary evidence of where the dynamic object has moved. The trace and mask are annotations, not physical objects.
+
+The two halves are frame-aligned. Do not describe the split-screen layout, colors, trajectory marks, masks, or other annotations in the answer.
+
+Describe in three parts:
+
+Output exactly three lines and no other text. Use the labels below exactly. Each line must contain one sentence and no more than 25 words; keep the total answer under 75 words.
+
+The scene is: Describe the structures that affect motion, such as surfaces, slopes, obstacles, gaps, supports, and height differences.
+
+In the context video: Describe the object's initial state, observed trajectory, motion changes, and contact changes within these frames.
+
+In the future video: Predict only the likely next motion or interaction supported by the observed motion and scene geometry. If essential, express uncertainty in a short phrase within this sentence.
+
+Do not add explanations, caveats, bullet points, examples, or a separate uncertainty statement. Focus on physical interactions rather than appearance; ignore colors, background, and unrelated objects.
