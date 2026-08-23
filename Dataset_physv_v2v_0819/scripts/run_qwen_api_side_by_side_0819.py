@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-full-frames", type=int, default=2000)
     parser.add_argument("--fps", type=float, default=10.0)
     parser.add_argument("--max-pixels", type=int, default=1_048_576)
-    parser.add_argument("--max-tokens", type=int, default=160)
+    parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--retries", type=int, default=1)
     return parser.parse_args()

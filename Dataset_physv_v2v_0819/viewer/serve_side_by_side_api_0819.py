@@ -15,6 +15,9 @@ SIDE_BY_SIDE_ROOT = Path("/data/gaoya/agent-data/outputs/physv_v2v_0819_side_by_
 RESULTS_PATH = Path(
     "/data/gaoya/agent-data/outputs/physv_v2v_0819_side_by_side_api/demo_results.jsonl"
 )
+MANUAL_ANALYSIS_PATH = Path(
+    "/data/gaoya/agent-data/outputs/physv_v2v_0819_side_by_side_api/manual_analysis.json"
+)
 VIEWER_ROOT = Path(__file__).resolve().parent
 
 
@@ -29,6 +32,16 @@ def read_rows(path: Path) -> list[dict]:
             except json.JSONDecodeError:
                 continue
     return rows
+
+
+def read_manual_analysis(path: Path) -> dict[str, dict]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def send_file(handler: BaseHTTPRequestHandler, path: Path, content_type: str | None = None) -> None:
@@ -76,10 +89,18 @@ def send_file(handler: BaseHTTPRequestHandler, path: Path, content_type: str | N
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, handler, side_by_side_root: Path, results_path: Path):
+    def __init__(
+        self,
+        address,
+        handler,
+        side_by_side_root: Path,
+        results_path: Path,
+        manual_analysis_path: Path,
+    ):
         super().__init__(address, handler)
         self.side_by_side_root = side_by_side_root
         self.results_path = results_path
+        self.manual_analysis_path = manual_analysis_path
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -97,7 +118,13 @@ class Handler(BaseHTTPRequestHandler):
             send_file(self, VIEWER_ROOT / "side_by_side_api_0819.html", "text/html; charset=utf-8")
             return
         if path == "/api/cases":
-            payload = json.dumps(read_rows(self.server.results_path), ensure_ascii=False).encode("utf-8")
+            manual = read_manual_analysis(self.server.manual_analysis_path)
+            rows = read_rows(self.server.results_path)
+            for row in rows:
+                analysis = manual.get(str(row.get("case_id")))
+                if analysis is not None:
+                    row["manual_analysis"] = analysis
+            payload = json.dumps(rows, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
@@ -131,10 +158,18 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8922)
     parser.add_argument("--side-by-side-root", type=Path, default=SIDE_BY_SIDE_ROOT)
     parser.add_argument("--results", type=Path, default=RESULTS_PATH)
+    parser.add_argument("--manual-analysis", type=Path, default=MANUAL_ANALYSIS_PATH)
     args = parser.parse_args()
-    server = Server((args.host, args.port), Handler, args.side_by_side_root, args.results)
+    server = Server(
+        (args.host, args.port),
+        Handler,
+        args.side_by_side_root,
+        args.results,
+        args.manual_analysis,
+    )
     print(f"viewer=http://{args.host}:{args.port}/", flush=True)
     print(f"results={args.results}", flush=True)
+    print(f"manual_analysis={args.manual_analysis}", flush=True)
     print("serving_foreground=true", flush=True)
     try:
         server.serve_forever()
