@@ -354,7 +354,10 @@ def load_manifests(watch_root: Path) -> list[dict[str, Any]]:
         for path in sorted((watch_root / "state" / "checkpoints").glob("*/step-*.json"))
         if path.is_file()
     ]
-    return sorted(manifests, key=lambda row: (row["method_index"], row["step"]))
+    return sorted(
+        manifests,
+        key=lambda row: (int(row.get("method_index", 999)), int(row["step"])),
+    )
 
 
 def load_discovered_checkpoints(watch_root: Path) -> list[dict[str, Any]]:

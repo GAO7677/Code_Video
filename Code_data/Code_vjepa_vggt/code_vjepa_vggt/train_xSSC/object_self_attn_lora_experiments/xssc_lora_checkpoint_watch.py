@@ -947,7 +947,6 @@ def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
     while True:
         tasks = metric_tasks(config, kind)
         if not tasks:
-            refresh_site(config)
             if once:
                 return
             time.sleep(int(config["runtime"]["poll_seconds"]))

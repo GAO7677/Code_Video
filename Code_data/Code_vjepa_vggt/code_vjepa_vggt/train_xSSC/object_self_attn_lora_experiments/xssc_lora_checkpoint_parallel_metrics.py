@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpus", required=True, help="Comma-separated GPU ids.")
     parser.add_argument("--methods", default="", help="Optional comma-separated method keys.")
     parser.add_argument("--steps", default="", help="Optional comma-separated optimizer steps.")
+    parser.add_argument(
+        "--metrics",
+        default="",
+        help="Optional comma-separated metric names.",
+    )
     parser.add_argument("--kind", choices=["gpu"], default="gpu")
     parser.add_argument("--workers-per-gpu", type=int, default=1)
     parser.add_argument("--refresh", action="store_true")
@@ -52,6 +57,7 @@ def metric_tasks(
     kind: str,
     method_filter: set[str] | None,
     step_filter: set[int] | None,
+    metric_filter: set[str] | None,
 ) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
     metrics = config["metrics"][kind]
@@ -66,6 +72,8 @@ def metric_tasks(
         if not result_root.is_dir():
             continue
         for metric in metrics:
+            if metric_filter is not None and metric not in metric_filter:
+                continue
             marker = metric_marker_path(config, method_key, step, metric)
             if marker.is_file():
                 continue
@@ -245,6 +253,7 @@ def main() -> None:
         kind=args.kind,
         method_filter=parse_csv_strings(args.methods),
         step_filter=parse_csv_ints(args.steps),
+        metric_filter=parse_csv_strings(args.metrics),
     )
     log(f"parallel metric queue kind={args.kind} gpus={gpus} tasks={len(tasks)}")
     if not tasks:
