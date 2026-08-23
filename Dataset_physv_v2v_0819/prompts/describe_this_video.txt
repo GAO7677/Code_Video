@@ -1,1 +1,15 @@
-Describe this video.
+Analyze the video for physics-aware scene and motion description.
+
+Describe only information that is relevant to the physical scene and object motion. Do not give a general visual summary.
+
+1. Scene:
+Describe the motion-relevant scene geometry, including supporting surfaces, platforms, floors, slopes, edges, gaps, obstacles, and height differences. Describe how these structures are arranged relative to the moving object.
+
+2. Physical motion:
+Describe the moving object's initial state, trajectory, movement direction, and changes in motion. Include directly visible physical events such as rolling, sliding, falling, bouncing, collision, leaving a supporting surface, contacting another surface, changing direction, or stopping.
+
+Only describe information directly supported by the video. Describe contact or collision only when the visible object-surface relationship provides clear evidence. If the evidence is ambiguous, use neutral wording such as “moves toward the edge,” “passes near the surface,” or “moves downward toward the floor.”
+
+Do not describe colors, decorative appearance, room decoration, camera viewpoint, background details, or unrelated objects unless they are necessary to identify a motion-relevant structure or object. Do not infer hidden physical properties such as mass, friction, force, material, or restitution. Do not explain why the motion occurs and do not predict events beyond the video.
+
+Use exactly two sections titled “Scene:” and “Physical motion:”. Keep the description concise, objective, and focused on scene geometry and physical motion.

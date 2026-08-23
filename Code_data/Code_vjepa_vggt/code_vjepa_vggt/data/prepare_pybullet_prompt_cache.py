@@ -92,11 +92,25 @@ def _sample_prompt_roles(record) -> dict[str, str | list[str]]:
     }
 
 
-def _collect_prompts(dataset) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+def _append_prompt_suffix(prompt: str, suffix: str) -> str:
+    prompt = str(prompt).strip()
+    suffix = str(suffix).strip()
+    if not suffix:
+        return prompt
+    return f"{prompt} {suffix}"
+
+
+def _collect_prompts(
+    dataset,
+    positive_prompt_suffix: str = "",
+) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
     prompts: dict[str, str] = {}
     sample_roles: dict[str, dict[str, Any]] = {}
     for record in dataset.samples:
         roles = _sample_prompt_roles(record)
+        roles["positive_prompt"] = _append_prompt_suffix(
+            str(roles["positive_prompt"]), positive_prompt_suffix
+        )
         hashed_roles: dict[str, Any] = {}
         for role, value in roles.items():
             texts = [value] if isinstance(value, str) else value
@@ -275,7 +289,10 @@ def build_cache(args: argparse.Namespace) -> None:
     dataset = _build_cache_dataset(args)
     dataset_name, vae_cache_kind = _dataset_identity(args)
     cache_kind = vae_cache_kind.replace("vae_latents", "prompt_embeddings")
-    prompts, sample_roles = _collect_prompts(dataset)
+    prompts, sample_roles = _collect_prompts(
+        dataset,
+        positive_prompt_suffix=args.positive_prompt_suffix,
+    )
     checkpoint_hash = _broadcast_text(
         sha256_file(checkpoint_path) if rank == 0 else None,
         world_size,
@@ -325,8 +342,9 @@ def build_cache(args: argparse.Namespace) -> None:
             "dataset_name": dataset_name,
             "dataset_root": str(root),
             "num_samples": len(dataset.samples),
-            "num_unique_prompts": len(prompts),
-            "encoding_id": current_encoding_id,
+                "num_unique_prompts": len(prompts),
+                "positive_prompt_suffix": args.positive_prompt_suffix,
+                "encoding_id": current_encoding_id,
             **encoding_payload,
         }
         _atomic_write_text(config_path, json.dumps(config, indent=2, sort_keys=True) + "\n")
@@ -524,6 +542,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--log-every", type=int, default=20)
     parser.add_argument("--online-compare-samples", type=int, default=0)
+    parser.add_argument("--positive-prompt-suffix", default="")
     return parser
 
 
