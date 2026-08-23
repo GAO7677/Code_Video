@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PhysV V2V / Cycles Trajectory Overlay</title>
+  <title>PhysV V2V / Motion and Truth Views</title>
   <style>
     :root {
       color-scheme: dark;
@@ -160,8 +160,8 @@
   <header class="shell masthead">
     <div>
       <p class="eyebrow">PhysV V2V 0819 / Cycles ground truth</p>
-      <h1>Trajectory Overlay</h1>
-      <p class="lede">Cycles 原视频叠加红色运动轨迹与半透明仿真真值 mask。输入侧显示前 8 帧，右侧显示同一 case 的完整运动过程；数据中未保存 SAM/SAM2 预测。</p>
+      <h1>Motion + Truth Views</h1>
+      <p class="lede">同一批 case 提供三种真值视图：Cycles 红色轨迹与动态 mask、全物体实例 ID、深度伪彩。左侧始终是前 8 帧，右侧是完整视频；数据中未保存 SAM/SAM2 预测。</p>
     </div>
     <div class="summary" aria-label="数据集统计">
       <div><strong id="case-count">--</strong><span>cases</span></div>
@@ -173,6 +173,12 @@
     <select id="group-filter"><option value="all">全部组</option></select>
     <label for="search">筛选</label>
     <input id="search" type="search" placeholder="case、变量或场景名称">
+    <label for="view-mode">视图</label>
+    <select id="view-mode">
+      <option value="trajectory_mask">轨迹 + 动态 GT mask</option>
+      <option value="instance_ids">实例 ID 真值</option>
+      <option value="depth">深度真值</option>
+    </select>
     <span class="spacer"></span>
     <button id="reset-all" type="button">↺ 重置全部</button>
     <span id="status">读取中…</span>
@@ -188,9 +194,51 @@
     };
     const groupLabel = (group) => group.cases[0]?.source_group || group.family_key;
     const groupTaxonomy = (group) => group.cases[0]?.taxonomy || "";
+    const VIEW_INFO = {
+      trajectory_mask: {
+        label: "红色轨迹 + 动态 GT mask",
+        status: "Cycles 视角 · 轨迹与动态物体 mask",
+      },
+      instance_ids: {
+        label: "实例 ID 真值",
+        status: "原始仿真相机 · 全物体实例 ID",
+      },
+      depth: {
+        label: "深度真值",
+        status: "原始仿真相机 · 深度伪彩",
+      },
+    };
+    let currentManifest = null;
+
+    function legacyViews(item) {
+      return {
+        trajectory_mask: {
+          label: VIEW_INFO.trajectory_mask.label,
+          camera: "Cycles",
+          context8: item.context8_overlay,
+          source: item.source_overlay,
+          width: item.width,
+          height: item.height,
+          fps: item.fps,
+          context_note: "frame 0-7：红色轨迹与对应动态物体 GT mask",
+          source_note: "完整 Cycles 视频：红色轨迹逐帧累积，mask 为仿真动态物体真值",
+        },
+      };
+    }
+
+    function viewsFor(item) {
+      return item.visualizations || legacyViews(item);
+    }
+
+    function activeView(item) {
+      const views = viewsFor(item);
+      return views[currentManifest?.active_view || "trajectory_mask"] || views.trajectory_mask;
+    }
 
     function caseCard(item) {
-      const aspect = `${item.width}/${item.height}`;
+      const views = viewsFor(item);
+      const view = activeView(item);
+      const aspect = `${view.width}/${view.height}`;
       return `<article class="case-card" data-search="${escapeHtml([item.sample_id, item.title, item.family_key, item.source_group, controlText(item.control)].join(" ").toLowerCase())}">
         <header class="case-head">
           <div class="case-id">${escapeHtml(item.sample_id)}</div>
@@ -198,20 +246,21 @@
           <div class="chips">
             <span class="chip">${escapeHtml(item.taxonomy)}</span>
             <span class="chip control">${escapeHtml(controlText(item.control))}</span>
-            <span class="chip">${item.width}×${item.height} · ${item.fps} fps</span>
+            <span class="chip" data-view-spec>${view.width}×${view.height} · ${view.fps} fps</span>
             <span class="chip">GT mask · 非 SAM</span>
+            <span class="chip" data-view-chip>${escapeHtml(view.label)}</span>
           </div>
         </header>
-        <div class="media-grid">
+        <div class="media-grid" data-views="${escapeHtml(JSON.stringify(views))}">
           <section class="media-panel">
-            <div class="media-label"><b>CTX 8</b><span>前 8 帧输入</span></div>
-            <video controls preload="metadata" playsinline src="${escapeHtml(item.context8_overlay)}" style="aspect-ratio:${aspect}"></video>
-            <div class="media-note">对应 frame 0–7：红色轨迹 + 对应 8 帧 GT mask；未保存 SAM</div>
+            <div class="media-label"><b>CTX 8</b><span data-view-context-label>${escapeHtml(view.label)}</span></div>
+            <video controls preload="metadata" playsinline data-stream="context8" src="${escapeHtml(view.context8)}" style="aspect-ratio:${aspect}"></video>
+            <div class="media-note" data-view-context-note>${escapeHtml(view.context_note || "-")}</div>
           </section>
           <section class="media-panel">
-            <div class="media-label"><b>FULL</b><span>完整 Cycles</span></div>
-            <video controls preload="metadata" playsinline src="${escapeHtml(item.source_overlay)}" style="aspect-ratio:${aspect}"></video>
-            <div class="media-note">红色轨迹随时间逐帧累积，mask 为仿真动态物体真值</div>
+            <div class="media-label"><b>FULL</b><span data-view-source-label>${escapeHtml(view.label)}</span></div>
+            <video controls preload="metadata" playsinline data-stream="source" src="${escapeHtml(view.source)}" style="aspect-ratio:${aspect}"></video>
+            <div class="media-note" data-view-source-note>${escapeHtml(view.source_note || "-")}</div>
           </section>
         </div>
         <details>
@@ -222,6 +271,9 @@
             <p><strong>动态物体</strong>${escapeHtml((item.dynamic_objects || []).join(", "))}</p>
             <p><strong>轨迹来源</strong>physics_supervision.npz / dynamic_mask</p>
             <p><strong>mask 来源</strong>raw/masks.npz + raw/depth.npz（重投影到 Cycles）</p>
+            <p><strong>实例 ID 来源</strong>raw/instance_ids.npz</p>
+            <p><strong>深度来源</strong>raw/depth.npz</p>
+            <p><strong>当前视图</strong><span data-view-detail>${escapeHtml(`${view.label} · ${view.camera || ""}`)}</span></p>
             <p><strong>SAM 状态</strong>数据集中未发现 SAM/SAM2 结果</p>
           </div>
         </details>
@@ -229,6 +281,8 @@
     }
 
     function render(manifest) {
+      currentManifest = manifest;
+      currentManifest.active_view = $("#view-mode").value;
       const groups = new Map();
       for (const item of manifest.cases) {
         if (!groups.has(item.family_key)) groups.set(item.family_key, []);
@@ -245,13 +299,42 @@
       }
       $("#groups").innerHTML = [...groups.entries()].map(([family, cases]) => `<section class="group" data-family="${escapeHtml(family)}" data-group-search="${escapeHtml([family, groupLabel({family_key: family, cases}), groupTaxonomy({cases})].join(" ").toLowerCase())}">
         <div class="group-head">
-          <div><div class="group-kicker">${escapeHtml(groupTaxonomy({cases}))} / ${escapeHtml(family)}</div><h2>${escapeHtml(groupLabel({cases}))}</h2><p class="group-sub">${cases.length} 个控制变量 case · 轨迹真值叠加</p></div>
+          <div><div class="group-kicker">${escapeHtml(groupTaxonomy({cases}))} / ${escapeHtml(family)}</div><h2>${escapeHtml(groupLabel({cases}))}</h2><p class="group-sub">${cases.length} 个控制变量 case · 可切换轨迹、实例 ID、深度真值</p></div>
           <div class="group-actions"><button type="button" data-play-group="${escapeHtml(family)}">▶ 播放本组</button></div>
         </div>
         <div class="case-grid">${cases.map(caseCard).join("")}</div>
       </section>`).join("");
-      $("#status").textContent = `${manifest.case_count} cases · GT mask loaded · SAM not saved`;
+      $("#status").textContent = `${manifest.case_count} cases · ${VIEW_INFO[currentManifest.active_view].status} · SAM not saved`;
       bindControls();
+    }
+
+    function applyViewMode() {
+      if (!currentManifest) return;
+      currentManifest.active_view = $("#view-mode").value;
+      $$(".media-grid").forEach(mediaGrid => {
+        const card = mediaGrid.closest(".case-card");
+        const views = JSON.parse(mediaGrid.dataset.views || "{}");
+        const view = views[currentManifest.active_view] || views.trajectory_mask;
+        if (!view) return;
+        $("[data-view-chip]", card).textContent = view.label;
+        $("[data-view-spec]", card).textContent = `${view.width}×${view.height} · ${view.fps} fps`;
+        $("[data-view-context-label]", card).textContent = view.label;
+        $("[data-view-source-label]", card).textContent = view.label;
+        $("[data-view-context-note]", card).textContent = view.context_note || "-";
+        $("[data-view-source-note]", card).textContent = view.source_note || "-";
+        $("[data-view-detail]", card).textContent = `${view.label} · ${view.camera || ""}`;
+        $$('video[data-stream]', mediaGrid).forEach(video => {
+          const nextSource = view[video.dataset.stream];
+          if (!nextSource) return;
+          const wasPlaying = !video.paused;
+          video.pause();
+          video.src = nextSource;
+          video.style.aspectRatio = `${view.width}/${view.height}`;
+          video.load();
+          if (wasPlaying) video.play().catch(() => {});
+        });
+      });
+      $("#status").textContent = `${currentManifest.case_count} cases · ${VIEW_INFO[currentManifest.active_view].status} · SAM not saved`;
     }
 
     function videosInGroup(family) {
@@ -265,6 +348,7 @@
       }));
       $("#group-filter").addEventListener("change", applyFilter);
       $("#search").addEventListener("input", applyFilter);
+      $("#view-mode").addEventListener("change", applyViewMode);
       $("#reset-all").addEventListener("click", () => $$('video').forEach(video => { video.pause(); video.currentTime = 0; }));
     }
     function applyFilter() {

@@ -26,6 +26,7 @@
 | 指标报告 | `/data/gaoya/AAA_test_video/physv_v2v_0819/reports` |
 | Cycles 渲染缓存 | `/data/gaoya/agent-data/cache/physv_cycles_previews` |
 | Cycles 轨迹 overlay 与页面 | `/data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay` |
+| 深度/实例 ID 页面视频 | `/data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay/truth_videos` |
 | 纹理/HDRI 资源 | `/data/gaoya/dataset/blender_render_assets/polyhaven_v1`、`/data/gaoya/agent-data/assets/polyhaven_textures_20260820` |
 
 ## 数据内容
@@ -76,9 +77,14 @@ $PYTHON Dataset_physv_v2v_0819/scripts/run_physv_cycles_previews.py \
 $PYTHON Dataset_physv_v2v_0819/tools/render_cycles_trajectory_overlay.py \
   --input-list /data/gaoya/AAA_test_video/physv_v2v_0819/testjsons/physv_v2v_0819_all_cycles_test70_ctx8.txt \
   --output-root /data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay
+
+# 准备深度和全物体实例 ID 的完整/前 8 帧页面视频
+$PYTHON Dataset_physv_v2v_0819/tools/prepare_truth_visualizations.py \
+  --dataset-root /data/gaoya/AAA_test_video/physv_v2v_0819 \
+  --output-root /data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay
 ```
 
-overlay 页面中的 `CTX 8` 只包含完整视频的 frame 0–7；其中 mask 来自 `raw/masks.npz`，结合 `raw/depth.npz` 重投影到 Cycles 相机后显示，不能视为 SAM/SAM2 结果。视频画面不写入文字图例。
+overlay 页面中的 `CTX 8` 只包含完整视频的 frame 0–7。页面可切换三种视图：Cycles 红色轨迹 + 动态 GT mask、原始仿真相机的全物体实例 ID、原始仿真相机的深度伪彩；后两者分别来自 `raw/instance_ids.npz` 和 `raw/depth.npz`，不能视为 SAM/SAM2 结果。视频画面不写入文字图例。
 
 viewer 前台启动命令：
 
