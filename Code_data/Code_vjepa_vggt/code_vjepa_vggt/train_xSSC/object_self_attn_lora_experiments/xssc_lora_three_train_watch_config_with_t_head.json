@@ -531,7 +531,8 @@
       "min_step": 500,
       "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_vjepa_utonia_scene.sh",
       "watch_roots": [
-        "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene/full-sa-pybullet-physrvg-vjepa-utonia-scene-hardmask-v1-formal-b2-gacc2-bf16-restart-20260821/checkpoints"
+        "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene/full-sa-pybullet-physrvg-vjepa-utonia-scene-hardmask-v1-formal-b2-gacc2-bf16-restart-20260821/checkpoints",
+        "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene/full-sa-pybullet-physrvg-vjepa-utonia-scene-hardmask-v1-formal-b4-gacc1-resume1000-20260822/checkpoints"
       ]
     }
   ]

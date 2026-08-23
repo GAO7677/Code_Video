@@ -35,7 +35,8 @@
 - `context/context8.mp4`、`context/context16.mp4`: 8 帧和 16 帧短上下文。
 - `videos/depth.mp4`、`videos/masks.mp4`、`videos/trajectory.mp4`、`videos/contacts.mp4`: 深度、实例掩码、轨迹和接触可视化。
 - `samples/<case_id>/raw/masks.npz`: 仿真动态物体 GT mask；数据集未保存 SAM/SAM2 预测结果。
-- `captions/caption_specific.txt`: 暴露变量值的 caption；`captions/caption_abstract.txt`: 隐藏具体变量值的 caption。
+- `captions/caption_specific.txt`: 暴露变量值和实际末态的 caption；`captions/caption_abstract.txt`: 隐藏具体变量值但保留实际运动结果的 caption。
+- `metadata.json` / `manifest.json` 中的 `caption_observations`: 从 `physics_supervision.npz` 和 `contacts.json` 提取的观测结果，用于区分通过、碰撞、掉落、停止等 case 末态。
 - `metadata.json`、`physics_supervision.json`、`raw/trajectories.npz`: 场景参数、物体物理真值和逐帧状态。
 
 ## 常用命令
@@ -58,6 +59,8 @@ $PYTHON -m Dataset_physv_v2v_0819.scripts.refresh_physv_v2v_captions \
 # 补齐每个样本的 Scene/Object/Relation taxonomy 元数据
 $PYTHON -m Dataset_physv_v2v_0819.scripts.refresh_taxonomy_0819 \
   --output-root /data/gaoya/AAA_test_video/physv_v2v_0819
+
+# refresh_physv_v2v_captions 同时会同步 testjsons/**/*.json 的三个 caption 字段
 
 # 轨迹指标
 $PYTHON Dataset_physv_v2v_0819/eval/compute_motion_amplitude_0819.py \

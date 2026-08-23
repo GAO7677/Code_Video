@@ -21,7 +21,8 @@ import cv2
 import numpy as np
 
 from .common_specs import CameraSpec, ScenarioBlueprint
-from .caption_templates_0819 import CAPTION_FILES, attach_caption_metadata
+from .caption_templates_0819 import CAPTION_FILES, CAPTION_SCHEMA_VERSION, attach_caption_metadata
+from .caption_observations_0819 import derive_caption_observations
 from .generate_difficulty_pilot import (
     ANALYSIS_QUESTION,
     RAMP_INCLINE_CASES,
@@ -955,7 +956,8 @@ def _package_case(
         "depth_visualization": depth_visualization,
         "initialization_qa": render_metadata.get("initialization_qa"),
     }
-    caption_bundle = attach_caption_metadata(metadata)
+    caption_observations = derive_caption_observations(sample_dir, metadata)
+    caption_bundle = attach_caption_metadata(metadata, caption_observations)
     manifest = {
         "sample_id": case.case_id,
         "task_type": case.task_type,
@@ -970,6 +972,7 @@ def _package_case(
             "abstract": CAPTION_FILES["abstract"],
             "bundle": CAPTION_FILES["bundle"],
         },
+        "caption_observations": caption_observations,
         "objects": object_names,
         "dynamic_actors": actor_names,
     }
@@ -1041,7 +1044,7 @@ def _package_case(
     _write_json(
         caption_dir / "captions.json",
         {
-            "schema_version": "physv_caption_v1",
+            "schema_version": CAPTION_SCHEMA_VERSION,
             "source": "metadata.json",
             **caption_bundle,
         },

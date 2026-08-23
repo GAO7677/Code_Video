@@ -11,6 +11,7 @@ from .caption_templates_0819 import (
     CAPTION_SCHEMA_VERSION,
     attach_caption_metadata,
 )
+from .caption_observations_0819 import derive_caption_observations
 
 
 DATASET_SCHEMA_VERSION = "physv_v2v_rigidbench_style_v2"
@@ -20,10 +21,11 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def refresh_sample(sample_dir: Path) -> None:
+def refresh_sample(sample_dir: Path) -> dict[str, object]:
     metadata_path = sample_dir / "metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    bundle = attach_caption_metadata(metadata)
+    observations = derive_caption_observations(sample_dir, metadata)
+    bundle = attach_caption_metadata(metadata, observations)
     metadata["schema_version"] = DATASET_SCHEMA_VERSION
 
     caption_dir = sample_dir / "captions"
@@ -62,14 +64,49 @@ def refresh_sample(sample_dir: Path) -> None:
         "abstract": CAPTION_FILES["abstract"],
         "bundle": CAPTION_FILES["bundle"],
     }
+    manifest["caption_observations"] = observations
     _write_json(manifest_path, manifest)
     (sample_dir / "prompt.txt").unlink(missing_ok=True)
+    return {
+        "sample_id": str(metadata.get("sample_id", sample_dir.name)),
+        "bundle": bundle,
+        "observations": observations,
+    }
 
 
-def refresh_dataset(output_root: Path) -> int:
+def _refresh_testjsons(
+    output_root: Path,
+    refreshed: dict[str, dict[str, object]],
+) -> int:
+    """Synchronize caption text into every generated testjson variant."""
+    updated = 0
+    for path in sorted((output_root / "testjsons").rglob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        sample_id = str(payload.get("sample_id", ""))
+        item = refreshed.get(sample_id)
+        if item is None:
+            continue
+        bundle = item["bundle"]
+        observations = item["observations"]
+        payload["input_caption"] = bundle["specific"]
+        payload["input_caption_specific"] = bundle["specific"]
+        payload["input_caption_abstract"] = bundle["abstract"]
+        payload["caption_variant"] = "observed_metadata_caption"
+        payload["caption_schema_version"] = CAPTION_SCHEMA_VERSION
+        payload["caption_observations"] = observations
+        _write_json(path, payload)
+        updated += 1
+    return updated
+
+
+def refresh_dataset(output_root: Path) -> tuple[int, int]:
     sample_dirs = sorted(path for path in (output_root / "samples").iterdir() if path.is_dir())
+    refreshed: dict[str, dict[str, object]] = {}
     for sample_dir in sample_dirs:
-        refresh_sample(sample_dir)
+        item = refresh_sample(sample_dir)
+        refreshed[str(item["sample_id"])] = item
+
+    testjson_count = _refresh_testjsons(output_root, refreshed)
 
     for filename in ("manifest.json", "dataset_meta.json"):
         path = output_root / filename
@@ -81,6 +118,7 @@ def refresh_dataset(output_root: Path) -> int:
                 "abstract": CAPTION_FILES["abstract"],
                 "bundle": CAPTION_FILES["bundle"],
                 "caption_schema_version": CAPTION_SCHEMA_VERSION,
+                "observation_schema_version": "physv_caption_observations_v1",
             }
         _write_json(path, payload)
 
@@ -94,7 +132,7 @@ def refresh_dataset(output_root: Path) -> int:
         "- `metadata.json`, `meta.json`, `manifest.json`: sample metadata and caption references.",
     )
     readme_path.write_text(readme, encoding="utf-8")
-    return len(sample_dirs)
+    return len(sample_dirs), testjson_count
 
 
 def main() -> None:
@@ -105,8 +143,16 @@ def main() -> None:
         default=Path("/data/gaoya/AAA_test_video/physv_v2v_0819"),
     )
     args = parser.parse_args()
-    count = refresh_dataset(args.output_root)
-    print(json.dumps({"output_root": str(args.output_root), "samples_refreshed": count}))
+    sample_count, testjson_count = refresh_dataset(args.output_root)
+    print(
+        json.dumps(
+            {
+                "output_root": str(args.output_root),
+                "samples_refreshed": sample_count,
+                "testjsons_refreshed": testjson_count,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

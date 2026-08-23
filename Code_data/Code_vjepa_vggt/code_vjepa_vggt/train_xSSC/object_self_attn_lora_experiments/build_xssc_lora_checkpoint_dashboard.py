@@ -122,6 +122,10 @@ PHYRVG_FULL_SA_PLUS_INDEX = {
     key: index for index, key in enumerate(PHYRVG_FULL_SA_PLUS_ORDER)
 }
 
+GT_SUMMARY_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/gt_metrics_all_8844/summaries"
+)
+
 CASE_METRIC_SPECS = [
     {"key": "videophy2_pc_raw", "label": "VideoPhy2 PC raw", "direction": "higher", "path": ("videophy2", "pc_raw_score")},
     {"key": "cosmos_reason1", "label": "Cosmos Reason", "direction": "higher", "path": ("cosmos_reason1", "score")},
@@ -229,6 +233,38 @@ def load_case_metrics(
         if values:
             metrics[str(case["stem"])] = values
     return metrics
+
+
+def load_gt_average_record(
+    dataset_key: str,
+    cases: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Load the isolated GT summary as a synthetic average-table row."""
+
+    summary_path = GT_SUMMARY_ROOT / f"{dataset_key}.json"
+    if not summary_path.is_file():
+        return None
+    try:
+        payload = load_json(summary_path)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    case_metrics = payload.get("case_metrics", {})
+    if not isinstance(case_metrics, dict):
+        return None
+    # PhysicIQ's Solid Mechanics page is a subset of the 67-case summary.
+    # Accept it when every requested case is present, while still rejecting a
+    # mismatched/incomplete dataset-level sidecar.
+    if int(payload.get("case_count", -1)) != len(cases) and not all(
+        case["stem"] in case_metrics for case in cases
+    ):
+        return None
+    return {
+        "method_key": "gt_reference",
+        "method_label": "GT · Reference",
+        "step": -1,
+        "step_kind": "gt",
+        "metrics": case_metrics,
+    }
 
 
 def escape(value: object) -> str:
@@ -2037,6 +2073,7 @@ def build_average_metrics_page(
     *,
     page_title: str,
     methods_override: list[dict[str, str]] | None = None,
+    gt_dataset_key: str | None = None,
 ) -> str:
     expected = len(cases)
     summaries: list[dict[str, Any]] = []
@@ -2064,14 +2101,42 @@ def build_average_metrics_page(
                 "mean": sum(values) / len(values) if values else None,
             }
         summaries.append(summary)
+    if gt_dataset_key:
+        gt_record = load_gt_average_record(gt_dataset_key, cases)
+        if gt_record is not None:
+            gt_summary: dict[str, Any] = {
+                "method_key": gt_record["method_key"],
+                "method_label": gt_record["method_label"],
+                "step": -1,
+                "step_kind": "gt",
+                "metrics": {},
+            }
+            record_metrics = gt_record.get("metrics", {})
+            for spec in CASE_METRIC_SPECS:
+                values = [
+                    float(case_metrics[spec["key"]])
+                    for case in cases
+                    if isinstance(
+                        (case_metrics := record_metrics.get(case["stem"])),
+                        dict,
+                    )
+                    and spec["key"] in case_metrics
+                ]
+                gt_summary["metrics"][spec["key"]] = {
+                    "count": len(values),
+                    "mean": sum(values) / len(values) if values else None,
+                }
+            summaries.insert(0, gt_summary)
     methods = display_methods(
         MERGED_METHODS if methods_override is None else methods_override
     )
     phyrvg_count = sum(1 for method in methods if is_phyrvg_method(method))
     method_colors = {method["key"]: method["color"] for method in methods}
+    method_colors["gt_reference"] = "#C7852C"
     method_order = {
         method["key"]: index for index, method in enumerate(methods)
     }
+    method_order = {"gt_reference": -1, **method_order}
     metric_directions = {
         spec["key"]: spec["direction"] for spec in CASE_METRIC_SPECS
     }
@@ -2096,12 +2161,18 @@ def build_average_metrics_page(
                 f'data-value="{value:.12g}">{format_average_metric(value)}</td>'
             )
         color = method_colors.get(str(row["method_key"]), "#172126")
+        row_class = "gt-reference" if row["step_kind"] == "gt" else ""
+        step_text = (
+            "GT"
+            if row["step_kind"] == "gt"
+            else f'{"infer " if row["step_kind"] == "inference" else ""}{row["step"]}'
+        )
         body_rows.append(
-            f'<tr data-method="{escape(row["method_key"])}" '
+            f'<tr class="{row_class}" data-method="{escape(row["method_key"])}" '
             f'data-step="{row["step"]}"><td class="method" '
             f'style="color:{escape(color)}">'
             f'{escape(row["method_label"])}</td><td class="step">'
-            f'{"infer " if row["step_kind"] == "inference" else ""}{row["step"]}'
+            f'{step_text}'
             f'</td>{"".join(cells)}</tr>'
         )
     method_order_json = json.dumps(method_order, ensure_ascii=True)
@@ -2135,12 +2206,14 @@ thead .method{{z-index:4;background:#dce4e7}}.step{{position:sticky;left:190px;z
 min-width:72px;background:#fff;color:#657278}}thead .step{{z-index:4;background:#dce4e7}}
 td.best{{background:#dff3e7;color:#075d37;font-weight:900}}td.pending{{color:#98a3a8;font-size:10px}}
 .best::before{{content:"★ ";}}tr.group-start td{{border-top:3px solid #aebbc0}}
+tr.gt-reference td{{background:#fff7e6;border-top:3px solid #c7852c;color:#7a4b00}}
+tr.gt-reference td.method{{font-weight:900}}
 .comparison-band{{display:flex;align-items:baseline;gap:9px;margin:0 0 10px;padding:8px 10px;
   color:#075d63;background:#e8f5f4;border-left:4px solid #0b7285;font-size:12px}}
 .comparison-band strong{{font-size:13px}}.comparison-band span{{color:#45646a}}
 .back{{display:inline-block;margin-top:12px}}
 </style></head><body><header><h1>{escape(page_title)}</h1>
-<p>覆盖全部 {expected} 个 case 的均值才参与组内 ★ 最佳值比较；WMReward surprise 越低越好，其余越高越好。</p></header>
+<p>覆盖全部 {expected} 个 case 的均值才参与组内 ★ 最佳值比较；GT · Reference 使用 source_video，WMReward surprise 越低越好，其余越高越好。</p></header>
 <main><div class="toolbar"><div class="segmented" role="group" aria-label="指标表分组方式">
 <button type="button" data-view="model" class="active">按模型</button>
 <button type="button" data-view="step">按 Step</button></div>
@@ -2564,6 +2637,7 @@ def build_master_hub(
             methods_override=(
                 config["methods"] if config.get("ab_experiment") else None
             ),
+            gt_dataset_key="test5",
         ),
         encoding="utf-8",
     )
@@ -2622,6 +2696,7 @@ def build_master_hub(
             merged_phys_records,
             phys_cases,
             page_title="PhysicIQ · 67-case 平均指标",
+            gt_dataset_key="physiciq",
         ).replace(
             "</header>",
             '<p><a href="../physiciq-solid-mechanics/">Solid Mechanics · 39-case 视频与逐 case 指标</a> · '
@@ -2666,6 +2741,7 @@ def build_master_hub(
             page_title=(
                 f"PhysicIQ · Solid Mechanics · {len(solid_mechanics_cases)}-case 平均指标"
             ),
+            gt_dataset_key="physiciq",
         ).replace(
             "</header>",
             '<p><a href="../../physiciq-solid-mechanics/">查看 39-case 视频与逐 case 指标</a> · '

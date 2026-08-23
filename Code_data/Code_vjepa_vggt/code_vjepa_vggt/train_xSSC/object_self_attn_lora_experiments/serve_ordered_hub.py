@@ -134,6 +134,10 @@ def is_metric_page(path: str) -> bool:
             "context-length",
             "lora-ablation",
             "solid-mechanics",
+            "curve",
+            "motion-analysis",
+            "focused-impact",
+            "disagreement",
         )
     )
 

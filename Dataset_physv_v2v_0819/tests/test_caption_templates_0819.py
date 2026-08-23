@@ -44,6 +44,30 @@ class CaptionTemplateTests(unittest.TestCase):
                 self.assertTrue(bundle["specific"])
                 self.assertTrue(bundle["abstract"])
 
+    def test_observed_gap_outcomes_are_not_collapsed(self) -> None:
+        base = {
+            "family_key": "V2V_GAP",
+            "task_type": "gap_rolloff",
+            "control": {"value_label": "0.22 m", "value": 0.22, "units": "m"},
+        }
+        crossed = dict(base)
+        crossed["caption_observations"] = {
+            "outcome_code": "gap_crosses_to_right_platform",
+            "details": {"final_speed_mps": 0.6},
+        }
+        dropped = dict(base)
+        dropped["caption_observations"] = {
+            "outcome_code": "gap_drops_to_ground_and_reaches_support",
+            "details": {"final_speed_mps": 0.0},
+        }
+
+        crossed_bundle = build_caption_bundle(crossed)
+        dropped_bundle = build_caption_bundle(dropped)
+
+        self.assertIn("lands on the opposite platform", crossed_bundle["specific"])
+        self.assertIn("drops through the gap to the ground", dropped_bundle["specific"])
+        self.assertNotEqual(crossed_bundle["specific"], dropped_bundle["specific"])
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
