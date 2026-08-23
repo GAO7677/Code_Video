@@ -161,7 +161,7 @@
     <div>
       <p class="eyebrow">PhysV V2V 0819 / Cycles ground truth</p>
       <h1>Trajectory Overlay</h1>
-      <p class="lede">Cycles 原视频与仿真动态物体轨迹叠加。输入侧显示 8 帧上下文，右侧显示同一 case 的完整运动过程。</p>
+      <p class="lede">Cycles 原视频叠加红色运动轨迹与半透明仿真真值 mask。输入侧显示前 8 帧，右侧显示同一 case 的完整运动过程；数据中未保存 SAM/SAM2 预测。</p>
     </div>
     <div class="summary" aria-label="数据集统计">
       <div><strong id="case-count">--</strong><span>cases</span></div>
@@ -199,18 +199,19 @@
             <span class="chip">${escapeHtml(item.taxonomy)}</span>
             <span class="chip control">${escapeHtml(controlText(item.control))}</span>
             <span class="chip">${item.width}×${item.height} · ${item.fps} fps</span>
+            <span class="chip">GT mask · 非 SAM</span>
           </div>
         </header>
         <div class="media-grid">
           <section class="media-panel">
-            <div class="media-label"><b>CTX 8</b><span>8 帧输入</span></div>
+            <div class="media-label"><b>CTX 8</b><span>前 8 帧输入</span></div>
             <video controls preload="metadata" playsinline src="${escapeHtml(item.context8_overlay)}" style="aspect-ratio:${aspect}"></video>
-            <div class="media-note">只显示 context 内已累积的轨迹</div>
+            <div class="media-note">对应 frame 0–7：红色轨迹 + 对应 8 帧 GT mask；未保存 SAM</div>
           </section>
           <section class="media-panel">
             <div class="media-label"><b>FULL</b><span>完整 Cycles</span></div>
             <video controls preload="metadata" playsinline src="${escapeHtml(item.source_overlay)}" style="aspect-ratio:${aspect}"></video>
-            <div class="media-note">轨迹随时间逐帧累积</div>
+            <div class="media-note">红色轨迹随时间逐帧累积，mask 为仿真动态物体真值</div>
           </section>
         </div>
         <details>
@@ -220,6 +221,8 @@
             <p><strong>模糊 caption</strong>${escapeHtml(item.captions?.abstract || "-")}</p>
             <p><strong>动态物体</strong>${escapeHtml((item.dynamic_objects || []).join(", "))}</p>
             <p><strong>轨迹来源</strong>physics_supervision.npz / dynamic_mask</p>
+            <p><strong>mask 来源</strong>raw/masks.npz + raw/depth.npz（重投影到 Cycles）</p>
+            <p><strong>SAM 状态</strong>数据集中未发现 SAM/SAM2 结果</p>
           </div>
         </details>
       </article>`;
@@ -247,7 +250,7 @@
         </div>
         <div class="case-grid">${cases.map(caseCard).join("")}</div>
       </section>`).join("");
-      $("#status").textContent = `${manifest.case_count} cases loaded`;
+      $("#status").textContent = `${manifest.case_count} cases · GT mask loaded · SAM not saved`;
       bindControls();
     }
 

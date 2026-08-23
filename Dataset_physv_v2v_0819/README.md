@@ -33,6 +33,7 @@
 - `videos/rgb.mp4`: 完整视频；`videos/rgb_cycles.mp4`: Cycles 版本。
 - `context/context8.mp4`、`context/context16.mp4`: 8 帧和 16 帧短上下文。
 - `videos/depth.mp4`、`videos/masks.mp4`、`videos/trajectory.mp4`、`videos/contacts.mp4`: 深度、实例掩码、轨迹和接触可视化。
+- `samples/<case_id>/raw/masks.npz`: 仿真动态物体 GT mask；数据集未保存 SAM/SAM2 预测结果。
 - `captions/caption_specific.txt`: 暴露变量值的 caption；`captions/caption_abstract.txt`: 隐藏具体变量值的 caption。
 - `metadata.json`、`physics_supervision.json`、`raw/trajectories.npz`: 场景参数、物体物理真值和逐帧状态。
 
@@ -71,11 +72,13 @@ $PYTHON Dataset_physv_v2v_0819/scripts/run_physv_cycles_previews.py \
   v2v_bowl_r080 --dataset-root /data/gaoya/AAA_test_video/physv_v2v_0819 \
   --gpu 2 --width 896 --height 512 --samples 32 --engine CYCLES
 
-# 在 Cycles 原视频上叠加 physics_supervision.npz 的动态物体轨迹
+# 在 Cycles 原视频上叠加红色 physics_supervision.npz 动态物体轨迹和 GT mask
 $PYTHON Dataset_physv_v2v_0819/tools/render_cycles_trajectory_overlay.py \
   --input-list /data/gaoya/AAA_test_video/physv_v2v_0819/testjsons/physv_v2v_0819_all_cycles_test70_ctx8.txt \
   --output-root /data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay
 ```
+
+overlay 页面中的 `CTX 8` 只包含完整视频的 frame 0–7；其中 mask 来自 `raw/masks.npz`，结合 `raw/depth.npz` 重投影到 Cycles 相机后显示，不能视为 SAM/SAM2 结果。视频画面不写入文字图例。
 
 viewer 前台启动命令：
 
