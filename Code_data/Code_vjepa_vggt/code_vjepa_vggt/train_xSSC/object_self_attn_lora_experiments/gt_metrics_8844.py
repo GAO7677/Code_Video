@@ -72,7 +72,7 @@ DATASETS: dict[str, dict[str, Any]] = {
         ),
         "page_roots": [
             "physv-v2v-0819-full-sa-test70",
-            "physv-v2v-0819-utonia-no-scene-test70",
+            "physv-v2v-0819-test70-no-event-timing-40step",
         ],
     },
 }
