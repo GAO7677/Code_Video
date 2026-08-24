@@ -126,6 +126,7 @@ PHYRVG_FULL_SA_PLUS_ORDER = (
     "full_sa_physrvg_object_xssc_loss",
     "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
     "full_sa_physrvg_vjepa_rect384x672_0717_w0p3_b4gacc1",
+    "full_sa_physrvg_vjepa_utonia_scene_pool448",
     "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_b2gacc2",
     "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled",
 )
@@ -431,6 +432,24 @@ def load_configured_checkpoints(config: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
 
+def configured_result_root(
+    method: dict[str, Any],
+    dataset: str,
+    method_key: str,
+    step: int,
+    default: Path,
+) -> Path:
+    """Resolve an optional external result directory for a method."""
+    template = method.get(f"{dataset}_result_root_template")
+    if not isinstance(template, str) or not template:
+        return default
+    try:
+        value = template.format(method_key=method_key, step=int(step))
+    except (KeyError, IndexError, ValueError):
+        return default
+    return Path(value).expanduser().resolve()
+
+
 def load_physiciq_manifests(watch_root: Path) -> list[dict[str, Any]]:
     manifests = [
         load_json(path)
@@ -457,6 +476,7 @@ def load_live_test_manifests(
     """Add partially generated checkpoints to galleries without marking them complete."""
     watch_root = Path(config["paths"]["watch_root"]).resolve()
     runtime = config["runtime"]
+    methods = {method["key"]: method for method in config["methods"]}
     completed_pairs = {
         (str(row["method_key"]), int(row["step"])) for row in completed
     }
@@ -472,7 +492,13 @@ def load_live_test_manifests(
             f"_{int(runtime['height'])}x{int(runtime['width'])}"
             f"_ctx{int(runtime['context_frames']):02d}_{int(runtime['num_frames'])}f"
         )
-        result_root = watch_root / "results" / method_key / output_name
+        result_root = configured_result_root(
+            methods.get(method_key, {}),
+            "test5",
+            method_key,
+            step,
+            watch_root / "results" / method_key / output_name,
+        )
         live.append(
             {
                 "method_key": method_key,
@@ -509,8 +535,14 @@ def load_live_physiciq_manifests(
             method_key=method_key,
             step=step,
         )
-        result_root = Path(phys["output_root"]).resolve() / name
         method = methods.get(method_key, {})
+        result_root = configured_result_root(
+            method,
+            "physiciq",
+            method_key,
+            step,
+            Path(phys["output_root"]).resolve() / name,
+        )
         live.append(
             {
                 "method_key": method_key,
@@ -629,7 +661,13 @@ def build_physiciq_status(config: dict[str, Any]) -> dict[str, Any] | None:
     for method_key, step in task_pairs:
         method = methods.get(method_key, {"label": method_key, "color": "#657278"})
         name = phys["method_name_template"].format(method_key=method_key, step=step)
-        result_root = output_root / name
+        result_root = configured_result_root(
+            method,
+            "physiciq",
+            method_key,
+            step,
+            output_root / name,
+        )
         generated = count_paired_result_cases(result_root)
         manifest_path = (
             watch_root
@@ -1800,6 +1838,11 @@ MERGED_METHODS = [
         "key": "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled",
         "label": "PHYRVG-Full-SA + V-JEPA Loss · Utonia Scene Weights · Scene Enabled · formal · b2/b4",
         "color": "#F28E2B",
+    },
+    {
+        "key": "full_sa_physrvg_vjepa_utonia_scene_pool448",
+        "label": "PHYRVG-Full-SA + V-JEPA Loss · Utonia Scene · Pool448 (448-token) · b4-gacc1 · fresh",
+        "color": "#8C6D31",
     },
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
     {

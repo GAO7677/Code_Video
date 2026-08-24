@@ -113,6 +113,7 @@
       "full_sa_physrvg_phyco_kubric_0717_b4gacc1",
       "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_b2gacc2",
       "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled",
+      "full_sa_physrvg_vjepa_utonia_scene_pool448",
       "physrvg_test5_lora_off",
       "physrvg_test5_lora_on"
     ],
@@ -552,6 +553,44 @@
         "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene/full-sa-pybullet-physrvg-vjepa-utonia-scene-hardmask-v1-formal-b2-gacc2-bf16-restart-20260821/checkpoints",
         "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene/full-sa-pybullet-physrvg-vjepa-utonia-scene-hardmask-v1-formal-b4-gacc1-resume1000-20260822/checkpoints"
       ]
+    },
+    {
+      "key": "full_sa_physrvg_vjepa_utonia_scene_pool448",
+      "label": "PHYRVG-Full-SA + V-JEPA Loss · Utonia Scene · Pool448 (448-token) · b4-gacc1 · fresh",
+      "color": "#8C6D31",
+      "checkpoint_format": "physrvg_utonia_scene_adapter",
+      "utonia_scene_mode": "required",
+      "utonia_scene_source": "online",
+      "utonia_scene_pooling": "auto",
+      "utonia_scene_token_count": 448,
+      "utonia_scene_feature_dim": 1386,
+      "min_step": 500,
+      "run_infer_script": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/run_infer_full_sa_vjepa_utonia_scene.sh",
+      "test5_result_root_template": "/data/gaoya/agent-data/outputs/physrvg_full_sa_vjepa_utonia_scene_pool448_eval/test5/full_sa_physrvg_vjepa_utonia_scene_pool448_step-{step:06d}_steps8_512x896_ctx08_49f",
+      "physiciq_result_root_template": "/data/gaoya/agent-data/outputs/physrvg_full_sa_vjepa_utonia_scene_pool448_eval/physiciq/full_sa_physrvg_vjepa_utonia_scene_pool448_step-{step:06d}_steps40_512x896_ctx08_49f_customprompt",
+      "static_checkpoints": [
+        {
+          "step": 500,
+          "path": "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene_pool448/full-sa-pybullet-vjepa-utonia-scene-pool448-b4-gacc1-formal-restart1-20260825/checkpoints/step-000500"
+        },
+        {
+          "step": 1000,
+          "path": "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene_pool448/full-sa-pybullet-vjepa-utonia-scene-pool448-b4-gacc1-formal-restart1-20260825/checkpoints/step-001000"
+        },
+        {
+          "step": 1500,
+          "path": "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene_pool448/full-sa-pybullet-vjepa-utonia-scene-pool448-b4-gacc1-formal-restart1-20260825/checkpoints/step-001500"
+        },
+        {
+          "step": 2000,
+          "path": "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene_pool448/full-sa-pybullet-vjepa-utonia-scene-pool448-b4-gacc1-formal-restart1-20260825/checkpoints/step-002000"
+        },
+        {
+          "step": 2500,
+          "path": "/data/gaoya/agent-data/checkpoints/physrvg_full_sa_vjepa_utonia_scene_pool448/full-sa-pybullet-vjepa-utonia-scene-pool448-b4-gacc1-formal-restart1-20260825/checkpoints/step-002500"
+        }
+      ],
+      "watch_roots": []
     }
   ]
 }
