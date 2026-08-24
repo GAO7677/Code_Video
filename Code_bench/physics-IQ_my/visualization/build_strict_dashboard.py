@@ -78,6 +78,10 @@ PHYSRVG_72F_METRICS = (
     SYNCED_PHYSRVG_72F_ROOT
     / "physrvg-72f-xssc-aligned-bpp-run_01_mp4only_metrics.json"
 )
+STRICT_METRICS_JSON = Path(
+    "/data/gaoya/agent-data/outputs/physicsiq-verified-strict-metrics/"
+    "strict_metrics.json"
+)
 
 VIEW_ORDER = {"left": 0, "center": 1, "right": 2}
 NAME_RE = re.compile(r"^(\d{4})_perspective-(left|center|right)_(.+)\.mp4$")
@@ -225,6 +229,78 @@ def score_summary_from_metrics(path: Path) -> dict[str, float]:
     }
 
 
+AUXILIARY_METRIC_DEFS = [
+    {"key": "videophy2_pc_raw", "label": "PC raw", "group": "VideoPhy2", "format": "score"},
+    {"key": "videophy2", "label": "joint", "group": "VideoPhy2", "format": "rate"},
+    {"key": "videophy2_sa", "label": "SA", "group": "VideoPhy2", "format": "score"},
+    {"key": "videophy2_pc", "label": "PC", "group": "VideoPhy2", "format": "score"},
+    {"key": "videophy2_joint_rate", "label": "pass", "group": "VideoPhy2", "format": "rate"},
+    {"key": "cosmos_reason1", "label": "Cosmos Reason", "group": "Cosmos", "format": "score"},
+    {"key": "vbench_subject_consistency", "label": "subject", "group": "VBench", "format": "ratio"},
+    {"key": "vbench_background_consistency", "label": "background", "group": "VBench", "format": "ratio"},
+    {"key": "vbench_temporal_flickering", "label": "temporal", "group": "VBench", "format": "ratio"},
+    {"key": "vbench_motion_smoothness", "label": "smoothness", "group": "VBench", "format": "ratio"},
+    {"key": "vbench_dynamic_degree", "label": "dynamic", "group": "VBench", "format": "ratio"},
+    {"key": "vbench_aesthetic_quality", "label": "aesthetic", "group": "VBench", "format": "ratio"},
+    {"key": "vbench_imaging_quality", "label": "imaging", "group": "VBench", "format": "ratio"},
+]
+
+
+def load_auxiliary_metrics() -> dict[str, Any]:
+    """Load the resumable external-metric snapshot without requiring it."""
+    base: dict[str, Any] = {
+        "status": "pending",
+        "expected_cases": 198,
+        "runner": "AAAinfer/bench.py",
+        "metric_definitions": AUXILIARY_METRIC_DEFS,
+        "methods": {},
+        "note": "VBench / VideoPhy2 / Cosmos Reason1 are not evaluated yet.",
+    }
+    if not STRICT_METRICS_JSON.is_file():
+        return base
+    try:
+        source = json.loads(STRICT_METRICS_JSON.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        base["status"] = "invalid"
+        base["note"] = "The external-metric snapshot could not be parsed."
+        return base
+    methods: dict[str, Any] = {}
+    for key, method in (source.get("methods") or {}).items():
+        aggregate = method.get("aggregate") if isinstance(method, dict) else {}
+        aggregate = aggregate if isinstance(aggregate, dict) else {}
+        values: dict[str, float | None] = {}
+        coverage: dict[str, int] = {}
+        for definition in AUXILIARY_METRIC_DEFS:
+            metric_key = definition["key"]
+            summary = aggregate.get(metric_key)
+            if not isinstance(summary, dict):
+                values[metric_key] = None
+                coverage[metric_key] = 0
+                continue
+            mean = summary.get("mean")
+            values[metric_key] = float(mean) if isinstance(mean, (int, float)) else None
+            coverage[metric_key] = int(summary.get("count") or 0)
+        methods[str(key)] = {
+            "label": method.get("label", str(key)),
+            "complete": bool(method.get("complete")),
+            "num_records": int(method.get("num_records") or 0),
+            "expected_cases": int(method.get("expected_cases") or source.get("expected_cases") or 198),
+            "coverage": coverage,
+            "values": values,
+        }
+    base.update(
+        {
+            "status": source.get("status", "partial"),
+            "generated_at": source.get("generated_at"),
+            "expected_cases": int(source.get("expected_cases") or 198),
+            "runner": (source.get("protocol") or {}).get("runner", "AAAinfer/bench.py"),
+            "methods": methods,
+            "note": "DINOv3 is intentionally excluded; the table covers the three local P0 submissions.",
+        }
+    )
+    return base
+
+
 def title_for_event(event: str) -> str:
     return event.removeprefix("trimmed-").replace("-", " ")
 
@@ -309,6 +385,7 @@ def copy_page_template(output: Path) -> None:
 def build_payload(output: Path) -> dict[str, Any]:
     assets = output / "assets"
     assets.mkdir(parents=True, exist_ok=True)
+    auxiliary_metrics = load_auxiliary_metrics()
     asset_targets = {
         "context": CONDITIONING,
         "ground_truth": GROUND_TRUTH,
@@ -345,6 +422,7 @@ def build_payload(output: Path) -> dict[str, Any]:
             "case_metric_status": "Official CSV synced from SSH 118; per-view components are shown below each video.",
             "source": "Synced official metrics JSON + CSV from SSH 118",
             "color": "amber",
+            "auxiliary_metric_status": auxiliary_metrics["methods"].get("physrvg_72f", {}).get("complete", False),
         },
         {
             "key": "physrvg_full_sa",
@@ -357,6 +435,7 @@ def build_payload(output: Path) -> dict[str, Any]:
             "case_metric_status": "Official CSV mounted locally; per-view components are shown below each video.",
             "source": "Local official metrics JSON + CSV",
             "color": "violet",
+            "auxiliary_metric_status": auxiliary_metrics["methods"].get("physrvg_full_sa", {}).get("complete", False),
         },
         {
             "key": "xssc_step2000",
@@ -369,6 +448,7 @@ def build_payload(output: Path) -> dict[str, Any]:
             "case_metric_status": "Official CSV mounted locally; per-view components are shown below each video.",
             "source": "Local official metrics JSON + CSV",
             "color": "cyan",
+            "auxiliary_metric_status": auxiliary_metrics["methods"].get("xssc_step2000", {}).get("complete", False),
         },
         {
             "key": "xssc_dinov3",
@@ -388,6 +468,7 @@ def build_payload(output: Path) -> dict[str, Any]:
             "case_metric_status": "Official CSV and media remain on SSH 118; only recorded global scores are shown.",
             "source": "P0 results registry / official aggregate recorded 2026-08-12 UTC",
             "color": "rose",
+            "auxiliary_metric_status": False,
         },
     ]
     scoreboard.sort(key=lambda item: item["scores"]["verified"], reverse=True)
@@ -407,7 +488,7 @@ def build_payload(output: Path) -> dict[str, Any]:
         "title": "Physics-IQ Verified · P0 Strict Comparison",
         "protocol": {
             "benchmark": "Physics-IQ-Verified",
-            "comparison_scope": "P0 only — all four methods use the shared BPP V2V protocol.",
+            "comparison_scope": "P0 only — three local submissions have the auxiliary metric run.",
             "prompt": "Best-practice prompt (BPP)",
             "condition": "72 frames · 24 FPS · 3 seconds · V2V",
             "inference": "512×896 · 40 steps · guidance 5 · seed 42 · 189 raw frames",
@@ -415,6 +496,7 @@ def build_payload(output: Path) -> dict[str, Any]:
             "evaluator": "Official physiq/run_physics_iq.py + aggregate_runs_from_csvs.py --score-type verified",
         },
         "metric_definitions": metric_defs,
+        "auxiliary_metrics": auxiliary_metrics,
         "scoreboard": scoreboard,
         "availability": {
             "cases": len(cases),
@@ -425,12 +507,14 @@ def build_payload(output: Path) -> dict[str, Any]:
                 "physrvg_72f",
                 "physrvg_full_sa",
             ],
-            "note": "The P0 scoreboard includes all four completed runs. Per-view metrics are shown only where the official CSV is mounted locally; media cards never invent a missing asset.",
+            "note": "The P0 scoreboard retains the four recorded Physics-IQ aggregates. The auxiliary table intentionally covers only the three local submissions; media cards never invent a missing asset.",
         },
         "data_sources": {
             "physrvg_72f_csv": str(PHYSRVG_72F_CSV),
             "physrvg_72f_metrics_json": str(PHYSRVG_72F_METRICS),
             "physrvg_72f_remote_origin": "118:/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-72f-xssc-aligned-bpp-run_01/physics-IQ-benchmark-verified/results/",
+            "strict_auxiliary_metrics": str(STRICT_METRICS_JSON),
+            "strict_auxiliary_runner": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py",
         },
         "methods": [
             {

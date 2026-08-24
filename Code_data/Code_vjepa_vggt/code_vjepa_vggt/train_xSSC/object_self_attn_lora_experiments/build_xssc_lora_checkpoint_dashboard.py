@@ -784,12 +784,54 @@ def build_physiciq_section(phys_status: dict[str, Any] | None) -> str:
     </section>"""
 
 
+def _parse_inference_steps(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value)
+    match = re.search(r"(?:^|[_-])steps(\d+)(?:[_-]|$)", text)
+    return int(match.group(1)) if match else None
+
+
+def annotate_inference_steps(
+    record: dict[str, Any],
+    *,
+    inference_steps: object = None,
+    fallback_values: tuple[object, ...] = (),
+) -> dict[str, Any]:
+    """Attach the actual denoising-step label to every video/metric record.
+
+    ``step`` is the training checkpoint step for watcher records, while fixed
+    references and context sweeps use it for the inference run.  Keeping the
+    two fields separate prevents the UI from presenting a training step as the
+    number of denoising steps.
+    """
+    candidates = (
+        inference_steps,
+        record.get("inference_steps"),
+        *fallback_values,
+        record.get("result_root"),
+        record.get("checkpoint_dir"),
+    )
+    steps = next(
+        (parsed for candidate in candidates if (parsed := _parse_inference_steps(candidate)) is not None),
+        None,
+    )
+    record["inference_steps"] = steps
+    record["inference_label"] = (
+        f"{steps}-step inference" if steps is not None else "inference steps unknown"
+    )
+    return record
+
+
 def build_video_media(
     config: dict[str, Any],
     manifests: list[dict[str, Any]],
     cases: list[dict[str, Any]],
     *,
     site_name: str = "videos",
+    inference_steps: int | None = None,
 ) -> list[dict[str, Any]]:
     watch_root = Path(config["paths"]["watch_root"]).resolve()
     videos_root = watch_root / "site" / site_name
@@ -824,6 +866,11 @@ def build_video_media(
             "videos": {},
             "metrics": load_case_metrics(result_root, cases),
         }
+        annotate_inference_steps(
+            record,
+            inference_steps=inference_steps,
+            fallback_values=(result_root, manifest.get("checkpoint_dir")),
+        )
         for case in cases:
             source = result_root / f"{case['stem']}.mp4"
             if not source.is_file():
@@ -875,6 +922,10 @@ def build_videos_page(
         if phyrvg_count
         else ""
     )
+    inference_band = (
+        '<div class="inference-band"><strong>推理步数</strong>'
+        '<span>固定 reference 与 ctx=4/8/12：40-step inference；其他记录：8-step inference。标注以每条结果为准。</span></div>'
+    )
     data = json.dumps(
         {
             "methods": methods,
@@ -923,6 +974,9 @@ def build_videos_page(
     .comparison-band{{display:flex;align-items:baseline;gap:9px;margin:0 0 10px;padding:8px 10px;
       color:#075d63;background:#e8f5f4;border-left:4px solid #0b7285;font-size:12px}}
     .comparison-band strong{{font-size:13px}}.comparison-band span{{color:#45646a}}
+    .inference-band{{display:flex;align-items:baseline;gap:9px;margin:0 0 10px;padding:8px 10px;
+      color:#7a4b00;background:#fff7e6;border-left:4px solid #c7852c;font-size:12px}}
+    .inference-band strong{{font-size:13px}}.inference-band span{{color:#765f35}}
     .matrix-wrap{{overflow-x:auto;padding-bottom:8px}}
     .generated-matrix{{display:grid;gap:10px;min-width:1180px;align-items:stretch}}
     .generated-matrix.ab{{min-width:960px;grid-template-columns:minmax(220px,.55fr)
@@ -997,7 +1051,7 @@ def build_videos_page(
         <video id="context" preload="metadata" playsinline muted></video></div>
     </div>
     <div class="generated-head"><h2 id="generated-title">已完成 checkpoint</h2><span class="count" id="count"></span></div>
-    {comparison_band}
+    {comparison_band}{inference_band}
     <div class="matrix-wrap"><div class="generated-matrix" id="generated-matrix"></div></div>
     <section class="metrics-section"><h2>当前 case 指标对比</h2>
       <p class="metrics-note">每行一个方法 checkpoint；★ 表示当前筛选范围内该指标最佳。WMReward surprise 越低越好，其余越高越好。</p>
@@ -1012,10 +1066,17 @@ def build_videos_page(
     const D={data};
     const caseSelect=document.getElementById("case");
     const stepFilter=document.getElementById("step-filter");
+    function inferenceLabel(record){{
+      return record?.inference_label || "inference steps unknown";
+    }}
     function formatStepLabel(step){{
-      return D.records.some(record=>record.step===step&&record.step_kind==="inference")
+      const base=D.records.some(record=>record.step===step&&record.step_kind==="inference")
         ? `inference ${{step}}`
         : `step ${{step}}`;
+      const labels=[...new Set(D.records
+        .filter(record=>record.step===step)
+        .map(inferenceLabel))];
+      return labels.length ? `${{base}} · ${{labels.join(" / ")}}` : base;
     }}
     D.cases.forEach((c,i)=>caseSelect.add(new Option(`${{String(i+1).padStart(2,"0")}} · ${{c.stem}}`,c.stem)));
     stepFilter.add(new Option("全部已完成 step","all"));
@@ -1075,7 +1136,7 @@ def build_videos_page(
         const tr=document.createElement("tr");
         const methodCell=document.createElement("td");methodCell.className="method-col";
         if(row.method?.displayGroup==="phyrvg")methodCell.classList.add("phyrvg");
-        methodCell.textContent=row.record.method_label;
+        methodCell.textContent=`${{row.record.method_label}} · ${{inferenceLabel(row.record)}}`;
         methodCell.style.color=row.method?.color??"#172126";tr.append(methodCell);
         const stepCell=document.createElement("td");stepCell.className="step-col";
         stepCell.textContent=row.record.step_kind==="inference"
@@ -1105,7 +1166,7 @@ def build_videos_page(
       const condition=method.condition==="control_original_prompt"
         ? "A · original prompt"
         : "B · identity/count prompt";
-      label.textContent=`${{condition}} · ${{formatStepLabel(step)}}`;
+      label.textContent=`${{condition}} · ${{record.step_kind==="inference"?"inference":"step"}} ${{step}} · ${{inferenceLabel(record)}}`;
       label.style.color=method.color;
       const video=document.createElement("video");
       video.preload="metadata";video.playsInline=true;video.muted=true;video.src=videoPath;
@@ -1219,7 +1280,7 @@ def build_videos_page(
           }}
           cell.style.borderTop=`3px solid ${{method.color}}`;
           const label=document.createElement("div");label.className="label";
-          label.textContent=`${{record.method_label}} · ${{record.step_kind==="inference"?"inference":"step"}} ${{record.step}}`;
+          label.textContent=`${{record.method_label}} · ${{record.step_kind==="inference"?"inference":"step"}} ${{record.step}} · ${{inferenceLabel(record)}}`;
           label.style.color=method.color;
           const video=document.createElement("video");
           video.preload="metadata";video.playsInline=true;video.muted=true;
@@ -1897,6 +1958,10 @@ def load_legacy_video_records(
             if result_root is not None
             else {}
         )
+        annotate_inference_steps(
+            row,
+            fallback_values=(result_root, row.get("checkpoint_dir")),
+        )
         enriched_records.append(row)
     return prefix_video_records(enriched_records, videos_prefix)
 
@@ -1912,22 +1977,22 @@ def load_reference_records(
     for model in payload.get("models", []):
         result_root = Path(model["result_root"]).resolve()
         video_prefix = str(model["video_prefix"]).rstrip("/")
-        records.append(
-            {
-                "method_key": model["method_key"],
-                "method_label": model["method_label"],
-                "step": int(model["inference_steps"]),
-                "step_kind": "inference",
-                "checkpoint_dir": model["checkpoint_label"],
-                "origin": "fixed-reference",
-                "metrics": load_case_metrics(result_root, cases),
-                "videos": {
-                    case["stem"]: f"{video_prefix}/{case['stem']}.mp4"
-                    for case in cases
-                    if (result_root / f"{case['stem']}.mp4").is_file()
-                },
-            }
-        )
+        record = {
+            "method_key": model["method_key"],
+            "method_label": model["method_label"],
+            "step": int(model["inference_steps"]),
+            "step_kind": "inference",
+            "checkpoint_dir": model["checkpoint_label"],
+            "origin": "fixed-reference",
+            "metrics": load_case_metrics(result_root, cases),
+            "videos": {
+                case["stem"]: f"{video_prefix}/{case['stem']}.mp4"
+                for case in cases
+                if (result_root / f"{case['stem']}.mp4").is_file()
+            },
+        }
+        annotate_inference_steps(record, inference_steps=model["inference_steps"])
+        records.append(record)
     return records
 
 
@@ -1998,6 +2063,7 @@ def load_context_sweep_records(
             "videos": {},
             "metrics": load_case_metrics(result_root, cases),
         }
+        annotate_inference_steps(record, inference_steps=steps)
         for case in cases:
             source = result_root / f"{case['stem']}.mp4"
             if not source.is_file():
@@ -2027,23 +2093,27 @@ def load_physiciq_video_records_from_state(
         method = normalized_method(manifest)
         step = int(manifest["step"])
         original_method_key = manifest["method_key"]
-        records.append(
-            {
-                "method_key": method["key"],
-                "method_label": method["label"],
-                "step": step,
-                "checkpoint_dir": manifest.get("checkpoint_dir", ""),
-                "origin": manifest.get("origin", "watcher"),
-                "metrics": load_case_metrics(Path(manifest["result_root"]), cases),
-                "videos": {
-                    case["stem"]: (
-                        f"{videos_prefix}/{original_method_key}/"
-                        f"step-{step:06d}/{case['stem']}.mp4"
-                    )
-                    for case in cases
-                },
-            }
+        record = {
+            "method_key": method["key"],
+            "method_label": method["label"],
+            "step": step,
+            "checkpoint_dir": manifest.get("checkpoint_dir", ""),
+            "origin": manifest.get("origin", "watcher"),
+            "metrics": load_case_metrics(Path(manifest["result_root"]), cases),
+            "videos": {
+                case["stem"]: (
+                    f"{videos_prefix}/{original_method_key}/"
+                    f"step-{step:06d}/{case['stem']}.mp4"
+                )
+                for case in cases
+            },
+        }
+        annotate_inference_steps(
+            record,
+            inference_steps=manifest.get("num_inference_steps"),
+            fallback_values=(manifest.get("result_root"),),
         )
+        records.append(record)
     return records
 
 
@@ -2100,6 +2170,10 @@ def build_average_metrics_page(
             "method_label": record["method_label"],
             "step": int(record["step"]),
             "step_kind": record.get("step_kind", "training"),
+            "inference_steps": record.get("inference_steps"),
+            "inference_label": record.get(
+                "inference_label", "inference steps unknown"
+            ),
             "metrics": {},
         }
         record_metrics = record.get("metrics", {})
@@ -2126,6 +2200,8 @@ def build_average_metrics_page(
                 "method_label": gt_record["method_label"],
                 "step": -1,
                 "step_kind": "gt",
+                "inference_steps": None,
+                "inference_label": "GT reference",
                 "metrics": {},
             }
             record_metrics = gt_record.get("metrics", {})
@@ -2184,11 +2260,14 @@ def build_average_metrics_page(
             if row["step_kind"] == "gt"
             else f'{"infer " if row["step_kind"] == "inference" else ""}{row["step"]}'
         )
+        method_text = row["method_label"]
+        if row["step_kind"] != "gt":
+            method_text += f' · {row["inference_label"]}'
         body_rows.append(
             f'<tr class="{row_class}" data-method="{escape(row["method_key"])}" '
             f'data-step="{row["step"]}"><td class="method" '
             f'style="color:{escape(color)}">'
-            f'{escape(row["method_label"])}</td><td class="step">'
+            f'{escape(method_text)}</td><td class="step">'
             f'{step_text}'
             f'</td>{"".join(cells)}</tr>'
         )
@@ -2230,7 +2309,7 @@ tr.gt-reference td.method{{font-weight:900}}
 .comparison-band strong{{font-size:13px}}.comparison-band span{{color:#45646a}}
 .back{{display:inline-block;margin-top:12px}}
 </style></head><body><header><h1>{escape(page_title)}</h1>
-<p>覆盖全部 {expected} 个 case 的均值才参与组内 ★ 最佳值比较；GT · Reference 使用 source_video，WMReward surprise 越低越好，其余越高越好。</p></header>
+<p>覆盖全部 {expected} 个 case 的均值才参与组内 ★ 最佳值比较；GT · Reference 使用 source_video，WMReward surprise 越低越好，其余越高越好。固定 reference 与 ctx=4/8/12 为 40-step inference，其余记录为 8-step inference。</p></header>
 <main><div class="toolbar"><div class="segmented" role="group" aria-label="指标表分组方式">
 <button type="button" data-view="model" class="active">按模型</button>
 <button type="button" data-view="step">按 Step</button></div>
@@ -3157,7 +3236,12 @@ def main() -> None:
     completed_manifests = load_manifests(watch_root)
     manifests = load_live_test_manifests(config, completed_manifests)
     cases = read_inputs(Path(config["paths"]["input_list"]))
-    records = build_video_media(config, manifests, cases)
+    records = build_video_media(
+        config,
+        manifests,
+        cases,
+        inference_steps=int(config["runtime"]["num_inference_steps"]),
+    )
     videos_root = site_root / "videos"
     videos_root.mkdir(parents=True, exist_ok=True)
     (videos_root / "index.html").write_text(
@@ -3179,6 +3263,7 @@ def main() -> None:
                 phys_manifests,
                 phys_cases,
                 site_name="physiciq-videos",
+                inference_steps=int(phys_config["num_inference_steps"]),
             )
             phys_videos_root = site_root / "physiciq-videos"
             phys_videos_root.mkdir(parents=True, exist_ok=True)

@@ -177,6 +177,31 @@
       .bar-track i { display: block; height: 100%; background: var(--tone); }
       .scorecard footer { min-height: 35px; margin-top: 15px; padding-top: 11px; border-top: 1px solid var(--line); color: var(--muted); font-family: var(--mono); font-size: 0.64rem; line-height: 1.45; }
 
+      .aux-section { margin-bottom: 38px; }
+      .aux-panel { overflow: hidden; border: 1px solid var(--line); border-top: 5px solid var(--cyan); background: rgba(250, 248, 242, 0.94); box-shadow: var(--shadow); }
+      .aux-meta { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 13px 16px; color: var(--ink-2); border-bottom: 1px solid var(--line); background: #e9f3f1; font-size: 0.78rem; line-height: 1.45; }
+      .aux-meta strong { color: var(--cyan); font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }
+      .aux-meta span { color: var(--muted); text-align: right; }
+      .aux-table-wrap { overflow-x: auto; }
+      .aux-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-family: var(--mono); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+      .aux-table th, .aux-table td { padding: 9px 10px; border-right: 1px solid #dce1dd; border-bottom: 1px solid #dce1dd; text-align: center; white-space: nowrap; }
+      .aux-table thead th { color: #eaf4f2; background: var(--ink); font-size: 0.63rem; font-weight: 700; letter-spacing: 0.045em; text-transform: uppercase; }
+      .aux-table thead th.group-videophy2 { color: #9de4df; }
+      .aux-table thead th.group-cosmos { color: #f5c47b; }
+      .aux-table thead th.group-vbench { color: #d7b8ff; }
+      .aux-table th:first-child, .aux-table td:first-child { position: sticky; left: 0; z-index: 1; min-width: 205px; text-align: left; }
+      .aux-table thead th:first-child { z-index: 3; background: #10283d; }
+      .aux-table tbody td:first-child { background: #fffdf8; }
+      .aux-table tbody tr:hover td { background: #f0f7f5; }
+      .aux-table tbody tr:hover td:first-child { background: #e6f1ef; }
+      .aux-method { font-family: var(--display); font-size: 0.98rem; font-weight: 600; letter-spacing: -0.015em; }
+      .aux-method small { display: block; margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .aux-table td.aux-value { color: var(--ink); font-weight: 700; }
+      .aux-table td.aux-missing { color: #9ba5a3; }
+      .aux-coverage { color: var(--muted); font-size: 0.62rem; }
+      .aux-empty { padding: 22px 18px; color: var(--ink-2); background: repeating-linear-gradient(-45deg, #faf7f0, #faf7f0 8px, #f0e9dd 8px, #f0e9dd 16px); font-size: 0.82rem; line-height: 1.55; }
+      .aux-empty strong { display: block; margin-bottom: 4px; color: var(--ink); font-family: var(--display); font-size: 1.25rem; }
+
       .viewer-shell { border-top: 5px solid var(--ink); background: rgba(250, 248, 242, 0.7); box-shadow: var(--shadow); }
       .viewer-toolbar { display: grid; grid-template-columns: minmax(220px, 1.1fr) minmax(170px, 0.6fr) auto; gap: 14px; align-items: end; padding: 19px; border: 1px solid var(--line); border-top: 0; }
       .field { display: grid; gap: 6px; }
@@ -382,6 +407,63 @@
             </article>`).join("");
         }
 
+        function formatAuxMetric(definition, value) {
+          if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+          const numeric = Number(value);
+          if (definition.format === "rate") return `${fmt(numeric * 100, 1)}%`;
+          if (definition.format === "ratio") return fmt(numeric, 4);
+          return fmt(numeric, 3);
+        }
+
+        function renderAuxMetrics() {
+          const auxiliary = data.auxiliary_metrics || {};
+          const definitions = auxiliary.metric_definitions || [];
+          const methods = auxiliary.methods || {};
+          const methodKeys = Object.keys(methods).sort((left, right) => {
+            const leftRank = findScore(left)?.rank ?? 999;
+            const rightRank = findScore(right)?.rank ?? 999;
+            return leftRank - rightRank;
+          });
+          const groupSpans = [];
+          definitions.forEach((definition) => {
+            const current = groupSpans[groupSpans.length - 1];
+            if (current && current.group === definition.group) current.span += 1;
+            else groupSpans.push({ group: definition.group, span: 1 });
+          });
+          const groupClass = (group) => group.toLowerCase().replace(/[^a-z0-9]+/g, "");
+          if (!methodKeys.length) {
+            return `
+              <section class="aux-section" aria-label="Auxiliary metrics">
+                <div class="section-heading"><div><h2>Perceptual / reasoning metrics</h2></div><p>按 average-metrics 的同一套 bench.py 口径；DINOv3 按要求不纳入。</p></div>
+                <div class="aux-panel"><div class="aux-empty"><strong>Metric run pending</strong>三组本机 P0 submission 的 VBench、VideoPhy2、Cosmos Reason1 结果尚未写入。</div></div>
+              </section>`;
+          }
+          const groupHeader = groupSpans.map((group) => `<th class="group-${groupClass(group.group)}" colspan="${group.span}">${escapeHtml(group.group)}</th>`).join("");
+          const metricHeader = definitions.map((definition) => `<th title="${escapeHtml(definition.key)}">${escapeHtml(definition.label)}</th>`).join("");
+          const rows = methodKeys.map((key) => {
+            const method = methods[key];
+            const score = findScore(key);
+            const values = method.values || {};
+            const coverageValues = definitions.map((definition) => Number(method.coverage?.[definition.key] || 0));
+            const minCoverage = coverageValues.length ? Math.min(...coverageValues) : 0;
+            const coverageLabel = method.complete ? `${method.expected_cases}/${method.expected_cases}` : `${minCoverage}/${method.expected_cases}`;
+            const cells = definitions.map((definition) => {
+              const value = values[definition.key];
+              const missing = value === null || value === undefined;
+              return `<td class="${missing ? "aux-missing" : "aux-value"}">${formatAuxMetric(definition, value)}</td>`;
+            }).join("");
+            return `<tr><td><span class="aux-method" style="color:var(--${escapeHtml(score?.color || "cyan")})">${escapeHtml(method.label || key)}</span><small>${method.complete ? "complete" : "partial"} · n=${escapeHtml(coverageLabel)}</small></td>${cells}<td class="aux-coverage">${escapeHtml(coverageLabel)}</td></tr>`;
+          }).join("");
+          return `
+            <section class="aux-section" aria-label="VBench VideoPhy2 Cosmos metrics">
+              <div class="section-heading"><div><h2>Perceptual / reasoning metrics</h2></div><p>三组本机严格 submission，198 个视角逐视频均值。原始值域与 <a href="../physiciq-average-metrics/">average-metrics</a> 保持一致。</p></div>
+              <div class="aux-panel">
+                <div class="aux-meta"><strong>${escapeHtml(auxiliary.status || "pending")} · ${escapeHtml(String(auxiliary.expected_cases || 198))} views</strong><span>VideoPhy2 joint / pass 按比例显示；VBench 保留 0–1 原始均值；DINOv3 intentionally omitted.</span></div>
+                <div class="aux-table-wrap"><table class="aux-table"><thead><tr><th rowspan="2">Method</th>${groupHeader}<th rowspan="2">Coverage</th></tr><tr>${metricHeader}</tr></thead><tbody>${rows}</tbody></table></div>
+              </div>
+            </section>`;
+        }
+
         function renderProtocol() {
           const protocol = data.protocol;
           return `
@@ -495,9 +577,9 @@
                   <div class="field"><label for="view-select">Perspective</label><select id="view-select"><option value="all" ${selectedView === "all" ? "selected" : ""}>all three cameras</option><option value="left" ${selectedView === "left" ? "selected" : ""}>left</option><option value="center" ${selectedView === "center" ? "selected" : ""}>center</option><option value="right" ${selectedView === "right" ? "selected" : ""}>right</option></select></div>
                   <div class="toolbar-actions"><button class="control-button primary" id="play-all" type="button">Play visible</button><button class="control-button" id="pause-all" type="button">Pause</button><button class="control-button" id="restart-all" type="button">Restart</button></div>
                 </div>
-                <div class="search-row"><div class="field"><label for="case-search">Filter events</label><input id="case-search" type="search" placeholder="例如：ball, domino, mug…" autocomplete="off" /></div><div class="field"><label>Evidence coverage</label><div class="reference-panel"><strong>${data.availability.cases} cases · ${data.availability.views} views</strong><p>Media: xSSC / PhysRVG-72f / Full-SA VJEPA · per-view CSV: xSSC / PhysRVG-72f / Full-SA VJEPA</p></div></div></div>
+                <div class="search-row"><div class="field"><label for="case-search">Filter events</label><input id="case-search" type="search" placeholder="例如：ball, domino, mug…" autocomplete="off" /></div><div class="field"><label>Evidence coverage</label><div class="reference-panel"><strong>${data.availability.cases} cases · ${data.availability.views} views</strong><p>Media and official Physics-IQ CSV: xSSC / PhysRVG-72f / Full-SA VJEPA · auxiliary metrics: same three local runs</p></div></div></div>
                 <div class="transport"><span class="transport-status">SYNC TRANSPORT</span><input id="transport-range" type="range" min="0" max="1000" value="0" aria-label="同步播放进度" /><span class="transport-status" id="transport-readout">0.0s / —</span></div>
-                <div class="case-intro"><div class="case-line"><span class="case-id">IDs ${escapeHtml(ids)}</span><h3>${escapeHtml(active.title)}</h3></div><p>${escapeHtml(active.views[0].prompt)}</p><details><summary>Prompt / protocol note</summary><p>所有四组主分数均属于 P0：BPP prompt、72f/24 FPS V2V 条件、512×896、40 steps、guidance 5、seed 42、189f 原始输出，以及去掉 69 帧 clean prefix 后的 120f/5s official submission。</p></details></div>
+                <div class="case-intro"><div class="case-line"><span class="case-id">IDs ${escapeHtml(ids)}</span><h3>${escapeHtml(active.title)}</h3></div><p>${escapeHtml(active.views[0].prompt)}</p><details><summary>Prompt / protocol note</summary><p>所有登记主分数均属于 P0：BPP prompt、72f/24 FPS V2V 条件、512×896、40 steps、guidance 5、seed 42、189f 原始输出，以及去掉 69 帧 clean prefix 后的 120f/5s official submission。VBench / VideoPhy2 / Cosmos Reason1 仅对本机三组最终 submission 执行。</p></details></div>
                 ${views.map(renderView).join("")}
               </div>
             </section>`;
@@ -526,7 +608,8 @@
               <aside class="hero-score"><div><span class="metric-source">Current P0 leader · official aggregate</span><div class="score-value">${fmt(leader.scores.verified, 2)}</div><div class="score-label">Physics-IQ Verified ×100</div></div><div class="hero-winner"><span class="winner-dot"></span><span><strong>${escapeHtml(leader.label)}</strong><br />Original ${fmt(leader.scores.original, 2)} · ${escapeHtml(leader.video_status)}</span></div></aside>
             </section>
             ${renderProtocol()}
-            <section aria-label="P0 official score overview"><div class="section-heading"><div><h2>P0 score board</h2></div><p>按 Verified 主分数排序。四组均为 198/198、同一 BPP V2V P0 协议；底部文字明确指出各 run 的本机媒体与 CSV 可用性。</p></div><div class="scoreboard">${renderScoreboard()}</div></section>
+            <section aria-label="P0 official score overview"><div class="section-heading"><div><h2>P0 score board</h2></div><p>按 Verified 主分数排序。四组登记结果均使用同一 BPP V2V P0 协议；下方辅助指标表只覆盖本机已有的三组 submission。</p></div><div class="scoreboard">${renderScoreboard()}</div></section>
+            ${renderAuxMetrics()}
             ${renderViewer()}
             ${renderLegend()}`;
           bindControls();
