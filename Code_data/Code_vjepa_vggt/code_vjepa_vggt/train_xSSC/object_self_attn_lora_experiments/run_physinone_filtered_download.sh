@@ -6,7 +6,11 @@ PYTHON_BIN="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 TARGET="/data/gaoya/dataset/vLAR-PhysInOne"
 FILTER_SCRIPT="$TARGET/assets/scripts/filter_cases.py"
 ASSIGNMENT="$TARGET/assets/metadata/repo_assignment.txt"
+REPO_MAP="$TARGET/assets/metadata/repo_map.json"
 SELECTION_DIR="$TARGET/selection"
+CENTER_SELECTION="$SELECTION_DIR/selected_front_center_camera_1700.json"
+CENTER_OUTPUT="$TARGET/front_center_camera_1700"
+CENTER_DOWNLOADER="$(dirname "$0")/download_physinone_center_camera.py"
 
 mkdir -p "$TARGET" "$SELECTION_DIR"
 
@@ -32,6 +36,10 @@ download download vLAR/PhysInOne \
     --local-dir "$TARGET"
 download download vLAR/PhysInOne \
     assets/scripts/filter_cases.py \
+    --repo-type dataset \
+    --local-dir "$TARGET"
+download download vLAR/PhysInOne \
+    assets/metadata/repo_map.json \
     --repo-type dataset \
     --local-dir "$TARGET"
 
@@ -70,43 +78,63 @@ output_path.write_text("".join(f"{item}\n" for item in sorted(paths)), encoding=
 print(f"Selected unique zip files: {len(paths)}")
 PY
 
+"$PYTHON_BIN" - "$SELECTION_DIR" "$CENTER_SELECTION" <<'PY'
+import json
+import random
+import sys
+from pathlib import Path
+
+selection_dir = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+records = {}
+for path in sorted(selection_dir.glob("*.json")):
+    if path.name == output_path.name:
+        continue
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for case in payload.get("cases", []):
+        records[(case["part_id"], case["hf_zip_path"])] = case
+
+all_cases = sorted(
+    records.values(),
+    key=lambda item: (item["part_id"], item["hf_zip_path"]),
+)
+rng = random.Random(42)
+selected = rng.sample(all_cases, 1700) if len(all_cases) > 1700 else all_cases
+selected.sort(key=lambda item: (item["part_id"], item["hf_zip_path"]))
+payload = {
+    "filters": {
+        "source": "union of the eight requested phenomenon selections",
+        "deduplicated": True,
+        "num": 1700,
+        "seed": 42,
+        "camera": "front-center camera: smallest optical-axis vertical component, center-offset tie-break",
+    },
+    "stats": {
+        "available_unique_cases": len(all_cases),
+        "selected_cases": len(selected),
+    },
+    "cases": selected,
+}
+output_path.write_text(
+    json.dumps(payload, indent=2, ensure_ascii=False),
+    encoding="utf-8",
+)
+print(f"Available unique cases: {len(all_cases)}")
+print(f"Selected center-camera cases: {len(selected)}")
+print(f"Saved selection to: {output_path}")
+PY
+
 export HF_ENDPOINT=https://hf-mirror.com
 export HF_TOKEN="$HF_TOKEN_VALUE"
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 
-"$PYTHON_BIN" - "$SELECTION_DIR/selected_zip_paths.txt" "$TARGET" <<'PY'
-import os
-import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-
-from huggingface_hub import hf_hub_download
-
-list_path = Path(sys.argv[1])
-target = Path(sys.argv[2])
-files = [line.strip() for line in list_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-print(f"Downloading {len(files)} selected zip files with 8 workers")
-
-def fetch(filename: str) -> str:
-    return hf_hub_download(
-        repo_id="vLAR/PhysInOne",
-        filename=filename,
-        repo_type="dataset",
-        local_dir=str(target),
-        token=os.environ["HF_TOKEN"],
-    )
-
-completed = 0
-with ThreadPoolExecutor(max_workers=8) as executor:
-    futures = {executor.submit(fetch, filename): filename for filename in files}
-    for future in as_completed(futures):
-        filename = futures[future]
-        future.result()
-        completed += 1
-        if completed % 25 == 0 or completed == len(files):
-            print(f"Downloaded {completed}/{len(files)}: {filename}", flush=True)
-PY
+"$PYTHON_BIN" "$CENTER_DOWNLOADER" \
+    --selection "$CENTER_SELECTION" \
+    --repo-map "$REPO_MAP" \
+    --output-dir "$CENTER_OUTPUT" \
+    --endpoint "$HF_ENDPOINT" \
+    --workers 4
 
 echo "[$(date -u +%FT%TZ)] filtered PhysInOne download complete"
-echo "Target: $TARGET"
-echo "Selection list: $SELECTION_DIR/selected_zip_paths.txt"
+echo "Target: $CENTER_OUTPUT"
+echo "Selection: $CENTER_SELECTION"

@@ -34,6 +34,9 @@ from build_physiciq_top3_physrvg_top10_videos import (
 from build_metric_extremes_dashboard import (
     build_dashboard as build_metric_extremes_dashboard,
 )
+from build_key_metric_case_audit import (
+    write_page as build_key_metric_case_audit_page,
+)
 
 
 METHOD_PLOT_STYLES = {
@@ -3059,6 +3062,18 @@ def build_master_hub(
             # inline payload expected by the extremes exporter.  Do not let
             # this optional auxiliary page block the live checkpoint portal.
             print(f"[dashboard] skip PhysicIQ metric-extremes refresh: {exc}", flush=True)
+    key_metric_case_audit_entry = ""
+    try:
+        build_key_metric_case_audit_page()
+        key_metric_case_audit_entry = """
+    <section class="entry" style="border-left:4px solid #6d5ba6">
+      <div><h2>四项重点指标 · baseline vs 方案 · 典型 case 审计</h2>
+        <div class="meta">同一 source case 配对比较 PHYRVG baseline 与任意方案/step；展示 VBench degree、PhysicsIQ、VideoPhy、Cosmos Reason 的逐项差分，并按 case 标注有效、无效或权衡。</div>
+        <a href="physrvg-key-metric-case-audit/">进入典型 case 与指标审计</a></div>
+      <div class="status">交互筛选<strong>test_5 / PhysicIQ</strong><small>视频懒加载 · 缺失指标不计为 0</small></div>
+    </section>"""
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"[dashboard] skip key-metric case audit refresh: {exc}", flush=True)
     step40_ab_entry = ""
     if (hub_root / "test5-step40-object-identity-count-ab").exists():
         step40_ab_entry = """
@@ -3172,6 +3187,7 @@ def build_master_hub(
     {context_sweep_entry}
     {physiciq_entry}
     {metric_extremes_entry}
+    {key_metric_case_audit_entry}
     {solid_mechanics_entry}
     {physrvg_worst_case_entry}
     {phyrvg_train_validation_entry}
