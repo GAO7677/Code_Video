@@ -198,6 +198,9 @@
       .aux-method small { display: block; margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
       .aux-table td.aux-value { color: var(--ink); font-weight: 700; }
       .aux-table td.aux-missing { color: #9ba5a3; }
+      .aux-table td.aux-best { color: #714612; background: #fff1c8; box-shadow: inset 0 3px 0 var(--amber), inset 0 -3px 0 rgba(180, 108, 39, 0.28); }
+      .aux-best-mark { display: block; margin-top: 3px; color: var(--amber); font-size: 0.52rem; font-weight: 800; letter-spacing: 0.1em; line-height: 1; }
+      .aux-key { display: inline-block; margin-right: 5px; padding: 2px 4px; color: #6f4314; background: #ffe3a2; border: 1px solid #d49b4e; font-family: var(--mono); font-size: 0.58rem; font-weight: 800; letter-spacing: 0.08em; }
       .aux-coverage { color: var(--muted); font-size: 0.62rem; }
       .aux-empty { padding: 22px 18px; color: var(--ink-2); background: repeating-linear-gradient(-45deg, #faf7f0, #faf7f0 8px, #f0e9dd 8px, #f0e9dd 16px); font-size: 0.82rem; line-height: 1.55; }
       .aux-empty strong { display: block; margin-bottom: 4px; color: var(--ink); font-family: var(--display); font-size: 1.25rem; }
@@ -419,10 +422,27 @@
           const auxiliary = data.auxiliary_metrics || {};
           const definitions = auxiliary.metric_definitions || [];
           const methods = auxiliary.methods || {};
+          const expectedCases = Number(auxiliary.expected_cases || 198);
           const methodKeys = Object.keys(methods).sort((left, right) => {
             const leftRank = findScore(left)?.rank ?? 999;
             const rightRank = findScore(right)?.rank ?? 999;
             return leftRank - rightRank;
+          });
+          const bestByMetric = {};
+          definitions.forEach((definition) => {
+            const candidates = methodKeys.map((key) => {
+              const method = methods[key] || {};
+              const value = Number(method.values?.[definition.key]);
+              const requiredCoverage = Number(method.expected_cases || expectedCases);
+              const coverage = Number(method.coverage?.[definition.key] || 0);
+              return { key, value, coverage, requiredCoverage };
+            }).filter((candidate) => Number.isFinite(candidate.value) && candidate.coverage >= candidate.requiredCoverage);
+            if (!candidates.length) return;
+            const bestValue = Math.max(...candidates.map((candidate) => candidate.value));
+            const tolerance = Math.max(1e-9, Math.abs(bestValue) * 1e-8);
+            bestByMetric[definition.key] = new Set(
+              candidates.filter((candidate) => Math.abs(candidate.value - bestValue) <= tolerance).map((candidate) => candidate.key),
+            );
           });
           const groupSpans = [];
           definitions.forEach((definition) => {
@@ -447,18 +467,23 @@
             const coverageValues = definitions.map((definition) => Number(method.coverage?.[definition.key] || 0));
             const minCoverage = coverageValues.length ? Math.min(...coverageValues) : 0;
             const coverageLabel = method.complete ? `${method.expected_cases}/${method.expected_cases}` : `${minCoverage}/${method.expected_cases}`;
+            const bestCount = definitions.filter((definition) => bestByMetric[definition.key]?.has(key)).length;
             const cells = definitions.map((definition) => {
               const value = values[definition.key];
               const missing = value === null || value === undefined;
-              return `<td class="${missing ? "aux-missing" : "aux-value"}">${formatAuxMetric(definition, value)}</td>`;
+              const best = !missing && bestByMetric[definition.key]?.has(key);
+              const classes = [missing ? "aux-missing" : "aux-value", best ? "aux-best" : ""].filter(Boolean).join(" ");
+              const bestMark = best ? `<span class="aux-best-mark" title="当前完整覆盖方法中的最高值">BEST</span>` : "";
+              return `<td class="${classes}"><span>${formatAuxMetric(definition, value)}</span>${bestMark}</td>`;
             }).join("");
-            return `<tr><td><span class="aux-method" style="color:var(--${escapeHtml(score?.color || "cyan")})">${escapeHtml(method.label || key)}</span><small>${method.complete ? "complete" : "partial"} · n=${escapeHtml(coverageLabel)}</small></td>${cells}<td class="aux-coverage">${escapeHtml(coverageLabel)}</td></tr>`;
+            const bestSummary = bestCount ? ` · ${bestCount} BEST` : "";
+            return `<tr><td><span class="aux-method" style="color:var(--${escapeHtml(score?.color || "cyan")})">${escapeHtml(method.label || key)}</span><small>${method.complete ? "complete" : "partial"} · n=${escapeHtml(coverageLabel)}${bestSummary}</small></td>${cells}<td class="aux-coverage">${escapeHtml(coverageLabel)}</td></tr>`;
           }).join("");
           return `
             <section class="aux-section" aria-label="VBench VideoPhy2 Cosmos metrics">
               <div class="section-heading"><div><h2>Perceptual / reasoning metrics</h2></div><p>三组本机严格 submission，198 个视角逐视频均值。原始值域与 <a href="../physiciq-average-metrics/">average-metrics</a> 保持一致。</p></div>
               <div class="aux-panel">
-                <div class="aux-meta"><strong>${escapeHtml(auxiliary.status || "pending")} · ${escapeHtml(String(auxiliary.expected_cases || 198))} views</strong><span>VideoPhy2 joint / pass 按比例显示；VBench 保留 0–1 原始均值；DINOv3 intentionally omitted.</span></div>
+                <div class="aux-meta"><strong>${escapeHtml(auxiliary.status || "pending")} · ${escapeHtml(String(auxiliary.expected_cases || 198))} views</strong><span><b class="aux-key">BEST</b>仅在完整覆盖的方法中比较，数值越高越好；并列全部标注。VideoPhy2 joint / pass 按比例显示；DINOv3 intentionally omitted.</span></div>
                 <div class="aux-table-wrap"><table class="aux-table"><thead><tr><th rowspan="2">Method</th>${groupHeader}<th rowspan="2">Coverage</th></tr><tr>${metricHeader}</tr></thead><tbody>${rows}</tbody></table></div>
               </div>
             </section>`;
