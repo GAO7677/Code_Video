@@ -72,7 +72,8 @@
             <figure><figcaption>Context · first 8 frames</figcaption><video controls playsinline preload="metadata" src="/media/${id}/context8"></video></figure>
             <figure><figcaption>Context · first 16 frames</figcaption><video controls playsinline preload="metadata" src="/media/${id}/context16"></video></figure>
           </div>
-          <div class="result"><div class="result-label">Generated English truth description</div>${esc(row.description || '')}</div>
+          <div class="result"><div class="result-label">Generated English truth description · without event timing · description_no_event_timing</div>${esc(row.description_no_event_timing || row.description || '')}</div>
+          <div class="result"><div class="result-label">Original English truth description · description</div>${esc(row.description || '')}</div>
           <details><summary>Truth metadata and source paths</summary><pre>${esc(JSON.stringify({event_frame:obs.event_frame,event_time_s:obs.event_time_s,end_state:obs.end_state,truth_sources:row.truth_sources,video:row.video,context8_video:row.context8_video}, null, 2))}</pre></details>
         </article>`;
       }).join('') || '<div class="result">No matching cases.</div>';

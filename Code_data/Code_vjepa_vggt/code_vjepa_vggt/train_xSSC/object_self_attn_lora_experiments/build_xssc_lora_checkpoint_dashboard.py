@@ -3083,7 +3083,8 @@ def build_master_hub(
       <div class="meta">同一个 test_5 入口内按方法和 step 展示所有已完成 checkpoint</div>
       <a href="test5/">进入合并视图</a>
       <a href="test5-metrics/">指标曲线</a>
-      <a href="test5-average-metrics/">全 case 平均指标表</a></div>
+      <a href="test5-average-metrics/">全 case 平均指标表</a>
+      <a href="test5-0613pybullet-average-metrics/">0613 PyBullet 平均指标</a></div>
       <div class="status">全部 step<strong>{total_inferred + legacy_checkpoint_count} 组结果</strong><small>持续增量更新</small></div>
     </section>
     {step40_ab_entry}

@@ -67,6 +67,17 @@ PHYSRVG_FULL_SA_CSV = RESULTS_DIR / "physrvg-full-sa-vjepa-step000500-bpp-run_01
 PHYSRVG_FULL_SA_METRICS = (
     RESULTS_DIR / "physrvg-full-sa-vjepa-step000500-bpp-run_01_metrics.json"
 )
+SYNCED_PHYSRVG_72F_ROOT = Path(
+    "/data/gaoya/agent-data/cache/physics-iq-verified/remote/physrvg-72f"
+)
+PHYSRVG_72F_CSV = (
+    SYNCED_PHYSRVG_72F_ROOT
+    / "physrvg-72f-xssc-aligned-bpp-run_01_mp4only.csv"
+)
+PHYSRVG_72F_METRICS = (
+    SYNCED_PHYSRVG_72F_ROOT
+    / "physrvg-72f-xssc-aligned-bpp-run_01_mp4only_metrics.json"
+)
 
 VIEW_ORDER = {"left": 0, "center": 1, "right": 2}
 NAME_RE = re.compile(r"^(\d{4})_perspective-(left|center|right)_(.+)\.mp4$")
@@ -311,11 +322,13 @@ def build_payload(output: Path) -> dict[str, Any]:
         ensure_directory_link(assets / name, target)
 
     xssc_case_metrics = load_official_case_metrics(XSSC_CSV)
+    physrvg_72f_case_metrics = load_official_case_metrics(PHYSRVG_72F_CSV)
     full_sa_case_metrics = load_official_case_metrics(PHYSRVG_FULL_SA_CSV)
     cases = build_cases(
         assets,
         {
             "xssc_step2000": xssc_case_metrics,
+            "physrvg_72f": physrvg_72f_case_metrics,
             "physrvg_full_sa": full_sa_case_metrics,
         },
     )
@@ -327,17 +340,10 @@ def build_payload(output: Path) -> dict[str, Any]:
             "short_label": "PhysRVG-72f",
             "family": "PhysRVG",
             "run": "physrvg-72f-xssc-aligned-bpp-run_01",
-            "scores": {
-                "verified": 39.9116,
-                "original": 41.86,
-                "spatial": 40.8648,
-                "spatiotemporal": 51.2991,
-                "weighted_spatial": 33.8715,
-                "mse": 33.6110,
-            },
+            "scores": score_summary_from_metrics(PHYSRVG_72F_METRICS),
             "video_status": "198/198 mounted locally",
-            "case_metric_status": "Official per-case CSV remains on SSH 118; this page shows only its recorded global subscores.",
-            "source": "P0 results registry / official aggregate recorded 2026-08-20 UTC",
+            "case_metric_status": "Official CSV synced from SSH 118; per-view components are shown below each video.",
+            "source": "Synced official metrics JSON + CSV from SSH 118",
             "color": "amber",
         },
         {
@@ -414,8 +420,17 @@ def build_payload(output: Path) -> dict[str, Any]:
             "cases": len(cases),
             "views": sum(len(case["views"]) for case in cases),
             "assets": asset_counts,
-            "per_view_metric_methods": ["xssc_step2000", "physrvg_full_sa"],
+            "per_view_metric_methods": [
+                "xssc_step2000",
+                "physrvg_72f",
+                "physrvg_full_sa",
+            ],
             "note": "The P0 scoreboard includes all four completed runs. Per-view metrics are shown only where the official CSV is mounted locally; media cards never invent a missing asset.",
+        },
+        "data_sources": {
+            "physrvg_72f_csv": str(PHYSRVG_72F_CSV),
+            "physrvg_72f_metrics_json": str(PHYSRVG_72F_METRICS),
+            "physrvg_72f_remote_origin": "118:/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-72f-xssc-aligned-bpp-run_01/physics-IQ-benchmark-verified/results/",
         },
         "methods": [
             {
@@ -450,7 +465,7 @@ def build_payload(output: Path) -> dict[str, Any]:
             {
                 "key": "physrvg_72f",
                 "label": "PhysRVG-72f-adapted",
-                "detail": "P0 submission · 120 generated frames · Verified 39.91",
+                "detail": "P0 submission · 120 generated frames · synced official per-view CSV",
                 "kind": "model",
                 "color": "amber",
             },

@@ -21,6 +21,12 @@ from build_xssc_lora_checkpoint_dashboard import (
     build_average_metrics_page,
     display_methods,
 )
+from build_metric_extremes_dashboard import (
+    build_dashboard as build_metric_extremes_dashboard,
+)
+from build_method_filter_metrics_page import (
+    build_page as build_method_filter_metrics_page,
+)
 
 
 HUB_ROOT = Path("/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub")
@@ -28,6 +34,7 @@ WATCH_ROOT = Path(
     "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_three_run_watch"
 )
 SCENE_ENABLED_METHOD = "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled"
+TEST5_0613PYBULLET_PAGE = "test5-0613pybullet-average-metrics"
 DATA_RE = re.compile(r"const D=(\{.*?\});\n    const caseSelect", re.DOTALL)
 
 # These columns are emitted by one benchmark invocation.  Keep them together
@@ -172,6 +179,46 @@ def metric_cell_counts(records: list[dict[str, Any]], cases: list[dict[str, Any]
     return complete, total
 
 
+def refresh_overview_link() -> None:
+    """Expose the subset page from the existing 8844 overview entry."""
+
+    path = HUB_ROOT / "index.html"
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    anchor = '<a href="test5-average-metrics/">全 case 平均指标表</a>'
+    if anchor not in text:
+        return
+    links = (
+        '<a href="test5-0613pybullet-average-metrics/">0613 PyBullet 平均指标</a>',
+        '<a href="test5-physiciq-method-compare/">方案筛选指标对比</a>',
+    )
+    replacement = anchor
+    changed = False
+    for link in links:
+        if link not in text:
+            replacement += "\n      " + link
+            changed = True
+    if changed:
+        atomic_write(path, text.replace(anchor, replacement, 1))
+
+
+def refresh_metric_page_links() -> None:
+    """Add stable navigation from both existing average tables."""
+
+    for page_name in ("test5-average-metrics", "physiciq-average-metrics"):
+        path = HUB_ROOT / page_name / "index.html"
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        link = '<a href="../test5-physiciq-method-compare/">方案筛选指标对比</a>'
+        if link in text:
+            continue
+        anchor = '<a class="back" href="../">返回总览</a>'
+        if anchor in text:
+            atomic_write(path, text.replace(anchor, anchor + " · " + link, 1))
+
+
 def refresh_one(page_name: str, spec: dict[str, str]) -> dict[str, Any]:
     page_path = HUB_ROOT / page_name / "index.html"
     text, payload, match = load_page_data(page_path)
@@ -194,7 +241,38 @@ def refresh_one(page_name: str, spec: dict[str, str]) -> dict[str, Any]:
     average_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(average_path, average_html)
 
-    extra_pages: list[str] = []
+    extremes_path = HUB_ROOT / f"{page_name}-metric-extremes"
+    build_metric_extremes_dashboard(
+        page_path,
+        extremes_path,
+        page_title=f"{page_name} · 每 case 每指标 best/worst",
+        subtitle="按 source case 分组；每个 case 的每个指标都在当前已完成结果里横向比较，视频懒加载。",
+    )
+
+    extra_pages: list[str] = [str(extremes_path / "index.html")]
+    subset_count = 0
+    if page_name == "test5":
+        subset_cases = [
+            case
+            for case in cases
+            if "0613pybullet" in str(case.get("stem", "")).lower()
+        ]
+        subset_count = len(subset_cases)
+        subset_html = build_average_metrics_page(
+            records,
+            subset_cases,
+            page_title="test_5 · 0613 PyBullet · 平均指标",
+            methods_override=methods,
+            gt_dataset_key=None,
+        ).replace(
+            "</header>",
+            '<p><a href="../test5-average-metrics/">返回 test_5 全量平均指标</a></p></header>',
+            1,
+        )
+        subset_path = HUB_ROOT / TEST5_0613PYBULLET_PAGE / "index.html"
+        subset_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(subset_path, subset_html)
+        extra_pages.append(str(subset_path))
     if page_name == "physiciq":
         solid_cases = [
             case
@@ -220,13 +298,29 @@ def refresh_one(page_name: str, spec: dict[str, str]) -> dict[str, Any]:
         "extra_pages": extra_pages,
         "methods": len(methods),
         "records": len(records),
+        "test5_0613pybullet_cases": subset_count,
         "metric_values": f"{complete}/{total}",
     }
 
 
 def main() -> None:
-    results = [refresh_one(name, spec) for name, spec in PAGE_SPECS.items()]
-    print(json.dumps({"refreshed": results}, ensure_ascii=False))
+    results = []
+    payloads: dict[str, dict[str, Any]] = {}
+    for name, spec in PAGE_SPECS.items():
+        results.append(refresh_one(name, spec))
+        _, payload, _ = load_page_data(HUB_ROOT / name / "index.html")
+        payloads[name] = payload
+    compare_path = build_method_filter_metrics_page(
+        payloads["test5"], payloads["physiciq"]
+    )
+    refresh_metric_page_links()
+    refresh_overview_link()
+    print(
+        json.dumps(
+            {"refreshed": results, "method_compare_page": str(compare_path)},
+            ensure_ascii=False,
+        )
+    )
 
 
 if __name__ == "__main__":

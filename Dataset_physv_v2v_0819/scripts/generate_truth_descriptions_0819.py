@@ -2,8 +2,9 @@
 
 The generator re-derives caption observations from trajectories and contacts,
 then combines the existing observed-outcome templates with a motion-relevant
-scene description.  It does not call a language model and never modifies the
-exported dataset files.
+scene description.  It writes both the original description (with the event
+frame timing sentence) and a timing-free variant.  It does not call a language
+model and never modifies the exported dataset files.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ DATASET_ROOT = Path("/data/gaoya/AAA_test_video/physv_v2v_0819")
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/physv_v2v_0819_truth_descriptions"
 )
-SCHEMA_VERSION = "physv_truth_description_en_v1"
+SCHEMA_VERSION = "physv_truth_description_en_v3"
 
 
 SCENE_DESCRIPTIONS = {
@@ -78,24 +79,42 @@ def _neutralize_visual_adjectives(text: str) -> str:
     return text
 
 
+def _remove_temporal_end_markers(text: str) -> str:
+    """Remove video-boundary wording while preserving the physical state."""
+
+    replacements = (
+        (" through the end of the video", ""),
+        (" at the end of the video", ""),
+        (" by the end of the video", ""),
+        (" at the end", ""),
+        (" by the end", ""),
+    )
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
+
+
 def _format_description(
     metadata: Mapping[str, object],
     observations: Mapping[str, object],
     *,
     specific: bool,
+    include_event_timing: bool = True,
 ) -> str:
     caption_metadata = dict(metadata)
     caption_metadata["caption_observations"] = dict(observations)
     bundle = build_caption_bundle(caption_metadata)
     motion = _neutralize_visual_adjectives(bundle["specific" if specific else "abstract"])
+    motion = _remove_temporal_end_markers(motion)
 
-    event_frame = observations.get("event_frame")
-    event_time = observations.get("event_time_s")
-    if isinstance(event_frame, int) and event_frame >= 0:
-        if isinstance(event_time, (int, float)):
-            motion += f" The main recorded transition occurs around frame {event_frame} ({float(event_time):.2f} s)."
-        else:
-            motion += f" The main recorded transition occurs around frame {event_frame}."
+    if include_event_timing:
+        event_frame = observations.get("event_frame")
+        event_time = observations.get("event_time_s")
+        if isinstance(event_frame, int) and event_frame >= 0:
+            if isinstance(event_time, (int, float)):
+                motion += f" The main recorded transition occurs around frame {event_frame} ({float(event_time):.2f} s)."
+            else:
+                motion += f" The main recorded transition occurs around frame {event_frame}."
 
     return f"Scene:\n{_scene_description(metadata)}\n\nPhysical motion:\n{motion}"
 
@@ -113,7 +132,12 @@ def generate_case(sample_dir: Path, *, specific: bool) -> dict[str, object]:
     metadata_path = sample_dir / "metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     observations = derive_caption_observations(sample_dir, metadata)
-    description = _format_description(metadata, observations, specific=specific)
+    description = _format_description(
+        metadata, observations, specific=specific, include_event_timing=True
+    )
+    description_no_event_timing = _format_description(
+        metadata, observations, specific=specific, include_event_timing=False
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "case_id": str(metadata.get("sample_id", sample_dir.name)),
@@ -128,6 +152,7 @@ def generate_case(sample_dir: Path, *, specific: bool) -> dict[str, object]:
         },
         "observations": observations,
         "description": description,
+        "description_no_event_timing": description_no_event_timing,
     }
 
 
@@ -150,12 +175,18 @@ def main() -> int:
     output_root = args.output_root.resolve()
     cases_root = output_root / "cases"
     cases_root.mkdir(parents=True, exist_ok=True)
+    cases_no_event_timing_root = output_root / "cases_no_event_timing"
+    cases_no_event_timing_root.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, object]] = []
     for sample_dir in sample_dirs:
         record = generate_case(sample_dir, specific=args.specific)
         records.append(record)
         case_path = cases_root / f"{record['case_id']}.txt"
         case_path.write_text(str(record["description"]) + "\n", encoding="utf-8")
+        no_event_timing_path = cases_no_event_timing_root / f"{record['case_id']}.txt"
+        no_event_timing_path.write_text(
+            str(record["description_no_event_timing"]) + "\n", encoding="utf-8"
+        )
 
     jsonl_path = output_root / "truth_descriptions.jsonl"
     with jsonl_path.open("w", encoding="utf-8") as handle:
@@ -166,6 +197,8 @@ def main() -> int:
         "dataset_root": str(args.dataset_root.resolve()),
         "output_root": str(output_root),
         "caption_variant": "specific" if args.specific else "abstract",
+        "description_fields": ["description", "description_no_event_timing"],
+        "temporal_end_markers_removed": True,
         "case_count": len(records),
         "jsonl": str(jsonl_path),
     }
