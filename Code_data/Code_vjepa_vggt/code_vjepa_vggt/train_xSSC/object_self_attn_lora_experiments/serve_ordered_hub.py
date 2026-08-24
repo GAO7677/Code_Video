@@ -11,11 +11,27 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import re
+import subprocess
+import sys
+import threading
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path("/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub")
+STRICT_METRIC_REFRESH_PATH = "/physicsiq-verified-strict-dashboard/refresh-metrics"
+STRICT_METRIC_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/physicsiq-verified-strict-metrics"
+)
+STRICT_METRIC_COLLECTOR = Path(
+    "/home/gaoya/Code_Video/Code_bench/physics-IQ_my/visualization/"
+    "collect_strict_metric_results.py"
+)
+STRICT_METRIC_BUILDER = Path(
+    "/home/gaoya/Code_Video/Code_bench/physics-IQ_my/visualization/"
+    "build_strict_dashboard.py"
+)
+STRICT_METRIC_REFRESH_LOCK = threading.Lock()
 UTONIA_DASHBOARD_PATH = "/utonia-scene-weights-no-scene-three-tests/dashboard.json"
 UTONIA_ENABLED_PAGE_KEY = "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled"
 UTONIA_ENABLED_RAW_ROOT = Path(
@@ -248,6 +264,63 @@ class OrderedHubHandler(SimpleHTTPRequestHandler):
             self._send_json(body, status=500)
         return True
 
+    def _serve_strict_metric_refresh(self, path: str) -> bool:
+        if path != STRICT_METRIC_REFRESH_PATH:
+            return False
+        if not STRICT_METRIC_REFRESH_LOCK.acquire(blocking=False):
+            body = json.dumps(
+                {"ok": False, "error": "a metric refresh is already running"},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self._send_json(body, status=409)
+            return True
+        try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(STRICT_METRIC_COLLECTOR),
+                    "--root",
+                    str(STRICT_METRIC_ROOT),
+                    "--allow-partial",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            subprocess.run(
+                [sys.executable, str(STRICT_METRIC_BUILDER)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            manifest_path = (
+                Path("/data/gaoya/agent-data/outputs/")
+                / "physicsiq-verified-strict-dashboard"
+                / "manifest.json"
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            auxiliary = manifest.get("auxiliary_metrics") or {}
+            body = json.dumps(
+                {
+                    "ok": True,
+                    "status": auxiliary.get("status", "unknown"),
+                    "generated_at": manifest.get("generated_at"),
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self._send_json(body)
+        except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+            body = json.dumps(
+                {"ok": False, "error": f"strict metric refresh failed: {exc}"},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self._send_json(body, status=500)
+        finally:
+            STRICT_METRIC_REFRESH_LOCK.release()
+        return True
+
     def _serve_html_with_order(self, path: str) -> bool:
         filesystem_path = Path(self.translate_path(path))
         if filesystem_path.is_dir():
@@ -281,6 +354,12 @@ class OrderedHubHandler(SimpleHTTPRequestHandler):
         if self._serve_html_with_order(path):
             return
         super().do_GET()
+
+    def do_POST(self) -> None:
+        path = urlsplit(self.path).path
+        if self._serve_strict_metric_refresh(path):
+            return
+        self.send_error(404)
 
 
 def main() -> None:

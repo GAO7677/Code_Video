@@ -179,9 +179,13 @@
 
       .aux-section { margin-bottom: 38px; }
       .aux-panel { overflow: hidden; border: 1px solid var(--line); border-top: 5px solid var(--cyan); background: rgba(250, 248, 242, 0.94); box-shadow: var(--shadow); }
-      .aux-meta { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 13px 16px; color: var(--ink-2); border-bottom: 1px solid var(--line); background: #e9f3f1; font-size: 0.78rem; line-height: 1.45; }
+      .aux-meta { display: flex; justify-content: space-between; gap: 12px 16px; align-items: center; padding: 13px 16px; color: var(--ink-2); border-bottom: 1px solid var(--line); background: #e9f3f1; font-size: 0.78rem; line-height: 1.45; }
       .aux-meta strong { color: var(--cyan); font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }
       .aux-meta span { color: var(--muted); text-align: right; }
+      .aux-meta-copy { flex: 1 1 420px; }
+      .aux-refresh-button { flex: 0 0 auto; min-height: 31px; padding: 5px 8px; color: var(--ink); background: #fffdf8; border: 1px solid var(--ink); border-radius: 0; font-family: var(--mono); font-size: 0.65rem; font-weight: 800; letter-spacing: 0.035em; text-transform: uppercase; }
+      .aux-refresh-button:hover { color: #f7f4ec; background: var(--ink); }
+      .aux-refresh-button:disabled { cursor: wait; opacity: 0.62; }
       .aux-table-wrap { overflow-x: auto; }
       .aux-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-family: var(--mono); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
       .aux-table th, .aux-table td { padding: 9px 10px; border-right: 1px solid #dce1dd; border-bottom: 1px solid #dce1dd; text-align: center; white-space: nowrap; }
@@ -201,6 +205,9 @@
       .aux-table td.aux-best { color: #714612; background: #fff1c8; box-shadow: inset 0 3px 0 var(--amber), inset 0 -3px 0 rgba(180, 108, 39, 0.28); }
       .aux-best-mark { display: block; margin-top: 3px; color: var(--amber); font-size: 0.52rem; font-weight: 800; letter-spacing: 0.1em; line-height: 1; }
       .aux-key { display: inline-block; margin-right: 5px; padding: 2px 4px; color: #6f4314; background: #ffe3a2; border: 1px solid #d49b4e; font-family: var(--mono); font-size: 0.58rem; font-weight: 800; letter-spacing: 0.08em; }
+      .aux-direction { margin-left: 3px; color: #9de4df; font-size: 0.74rem; font-weight: 900; }
+      .aux-direction-low { color: #f5c47b; }
+      .aux-direction-unknown { color: #ff9aa8; }
       .aux-coverage { color: var(--muted); font-size: 0.62rem; }
       .aux-empty { padding: 22px 18px; color: var(--ink-2); background: repeating-linear-gradient(-45deg, #faf7f0, #faf7f0 8px, #f0e9dd 8px, #f0e9dd 16px); font-size: 0.82rem; line-height: 1.55; }
       .aux-empty strong { display: block; margin-bottom: 4px; color: var(--ink); font-family: var(--display); font-size: 1.25rem; }
@@ -357,6 +364,12 @@
           weighted_spatial: "WS",
           mse: "MSE",
         };
+        const metricDirections = {
+          spatial: "higher_is_better",
+          spatiotemporal: "higher_is_better",
+          weighted_spatial: "higher_is_better",
+          mse: "higher_is_better",
+        };
         let data;
         let selectedCase = 0;
         let selectedView = "all";
@@ -380,6 +393,12 @@
           return fmt(component.raw * 100, 1);
         }
 
+        function metricLabel(key, { raw = false } = {}) {
+          const direction = raw && key === "mse" ? "lower_is_better" : metricDirections[key];
+          const arrow = direction === "lower_is_better" ? "↓" : "↑";
+          return `${metricLabels[key]} ${arrow}`;
+        }
+
         function findScore(key) {
           return data.scoreboard.find((entry) => entry.key === key);
         }
@@ -389,7 +408,7 @@
             const value = entry.scores[metric];
             return `
               <div class="component-bar">
-                <span>${metricLabels[metric]}</span>
+                <span>${metricLabel(metric)}</span>
                 <div class="bar-track" aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, value))}%"></i></div>
                 <b>${fmt(value, 1)}</b>
               </div>`;
@@ -418,6 +437,16 @@
           return fmt(numeric, 3);
         }
 
+        function auxDirectionInfo(definition) {
+          if (definition.direction === "higher_is_better") {
+            return { arrow: "↑", text: "越高越好", className: "" };
+          }
+          if (definition.direction === "lower_is_better") {
+            return { arrow: "↓", text: "越低越好", className: "aux-direction-low" };
+          }
+          return { arrow: "?", text: "方向未定义，不参与 BEST", className: "aux-direction-unknown" };
+        }
+
         function renderAuxMetrics() {
           const auxiliary = data.auxiliary_metrics || {};
           const definitions = auxiliary.metric_definitions || [];
@@ -430,6 +459,8 @@
           });
           const bestByMetric = {};
           definitions.forEach((definition) => {
+            const direction = auxDirectionInfo(definition);
+            if (direction.arrow === "?") return;
             const candidates = methodKeys.map((key) => {
               const method = methods[key] || {};
               const value = Number(method.values?.[definition.key]);
@@ -438,7 +469,10 @@
               return { key, value, coverage, requiredCoverage };
             }).filter((candidate) => Number.isFinite(candidate.value) && candidate.coverage >= candidate.requiredCoverage);
             if (!candidates.length) return;
-            const bestValue = Math.max(...candidates.map((candidate) => candidate.value));
+            const candidateValues = candidates.map((candidate) => candidate.value);
+            const bestValue = definition.direction === "lower_is_better"
+              ? Math.min(...candidateValues)
+              : Math.max(...candidateValues);
             const tolerance = Math.max(1e-9, Math.abs(bestValue) * 1e-8);
             bestByMetric[definition.key] = new Set(
               candidates.filter((candidate) => Math.abs(candidate.value - bestValue) <= tolerance).map((candidate) => candidate.key),
@@ -455,11 +489,14 @@
             return `
               <section class="aux-section" aria-label="Auxiliary metrics">
                 <div class="section-heading"><div><h2>Perceptual / reasoning metrics</h2></div><p>按 average-metrics 的同一套 bench.py 口径；DINOv3 按要求不纳入。</p></div>
-                <div class="aux-panel"><div class="aux-empty"><strong>Metric run pending</strong>三组本机 P0 submission 的 VBench、VideoPhy2、Cosmos Reason1 结果尚未写入。</div></div>
+                <div class="aux-panel"><div class="aux-meta"><strong>pending</strong><button class="aux-refresh-button" id="refresh-aux-metrics" type="button">手动刷新指标</button></div><div class="aux-empty"><strong>Metric run pending</strong>三组本机 P0 submission 的 VBench、VideoPhy2、Cosmos Reason1 结果尚未写入。</div></div>
               </section>`;
           }
           const groupHeader = groupSpans.map((group) => `<th class="group-${groupClass(group.group)}" colspan="${group.span}">${escapeHtml(group.group)}</th>`).join("");
-          const metricHeader = definitions.map((definition) => `<th title="${escapeHtml(definition.key)}">${escapeHtml(definition.label)}</th>`).join("");
+          const metricHeader = definitions.map((definition) => {
+            const direction = auxDirectionInfo(definition);
+            return `<th title="${escapeHtml(definition.key)} · ${escapeHtml(direction.text)}">${escapeHtml(definition.label)} <span class="aux-direction ${direction.className}">${direction.arrow}</span></th>`;
+          }).join("");
           const rows = methodKeys.map((key) => {
             const method = methods[key];
             const score = findScore(key);
@@ -473,7 +510,8 @@
               const missing = value === null || value === undefined;
               const best = !missing && bestByMetric[definition.key]?.has(key);
               const classes = [missing ? "aux-missing" : "aux-value", best ? "aux-best" : ""].filter(Boolean).join(" ");
-              const bestMark = best ? `<span class="aux-best-mark" title="当前完整覆盖方法中的最高值">BEST</span>` : "";
+              const direction = auxDirectionInfo(definition);
+              const bestMark = best ? `<span class="aux-best-mark" title="${escapeHtml(direction.text)}；当前完整覆盖方法中的最佳值">BEST ${direction.arrow}</span>` : "";
               return `<td class="${classes}"><span>${formatAuxMetric(definition, value)}</span>${bestMark}</td>`;
             }).join("");
             const bestSummary = bestCount ? ` · ${bestCount} BEST` : "";
@@ -483,7 +521,7 @@
             <section class="aux-section" aria-label="VBench VideoPhy2 Cosmos metrics">
               <div class="section-heading"><div><h2>Perceptual / reasoning metrics</h2></div><p>三组本机严格 submission，198 个视角逐视频均值。原始值域与 <a href="../physiciq-average-metrics/">average-metrics</a> 保持一致。</p></div>
               <div class="aux-panel">
-                <div class="aux-meta"><strong>${escapeHtml(auxiliary.status || "pending")} · ${escapeHtml(String(auxiliary.expected_cases || 198))} views</strong><span><b class="aux-key">BEST</b>仅在完整覆盖的方法中比较，数值越高越好；并列全部标注。VideoPhy2 joint / pass 按比例显示；DINOv3 intentionally omitted.</span></div>
+                <div class="aux-meta"><strong>${escapeHtml(auxiliary.status || "pending")} · ${escapeHtml(String(auxiliary.expected_cases || 198))} views · manual</strong><span class="aux-meta-copy"><b class="aux-key">BEST</b>按各指标方向比较：<span class="aux-direction">↑ 越高越好</span> · <span class="aux-direction aux-direction-low">↓ 越低越好</span>；仅完整覆盖的方法参与，并列全部标注。点击按钮读取最新快照，DINOv3 intentionally omitted.</span><button class="aux-refresh-button" id="refresh-aux-metrics" type="button">手动刷新指标</button></div>
                 <div class="aux-table-wrap"><table class="aux-table"><thead><tr><th rowspan="2">Method</th>${groupHeader}<th rowspan="2">Coverage</th></tr><tr>${metricHeader}</tr></thead><tbody>${rows}</tbody></table></div>
               </div>
             </section>`;
@@ -507,7 +545,7 @@
               <div class="metric-topline"><span>Global P0 only</span><strong>${fmt(score.scores.verified, 2)}</strong></div>
               <div class="metric-grid">
                 ${metricOrder.map((metric) => `
-                  <div class="metric-cell"><span>${metricLabels[metric]}</span><b>${fmt(score.scores[metric], 1)}</b></div>`).join("")}
+                  <div class="metric-cell"><span>${metricLabel(metric)}</span><b>${fmt(score.scores[metric], 1)}</b></div>`).join("")}
               </div>
               <p class="metric-footnote">本机无对应官方 CSV；此处为登记的全局子指标。</p>
             </div>`;
@@ -519,7 +557,7 @@
               <div class="metric-topline"><span>Official CSV · case × view</span><strong>${fmt(metrics.view_verified, 1)}</strong></div>
               <div class="metric-grid">
                 ${metricOrder.map((metric) => `
-                  <div class="metric-cell"><span>${metricLabels[metric]}${metric === "mse" ? " ↓" : " ↑"}</span><b>${displayMetric(metric, metrics.components[metric])}</b></div>`).join("")}
+                  <div class="metric-cell"><span>${metricLabel(metric, { raw: true })}</span><b>${displayMetric(metric, metrics.components[metric])}</b></div>`).join("")}
               </div>
               <p class="metric-footnote">SP/ST/WS 为 v1 原始 IoU ×100；MSE 为原始值。标题分数按官方 per-view 公式推导。</p>
             </div>`;
@@ -613,12 +651,13 @@
         function renderLegend() {
           return `
             <aside class="legend" aria-label="Metrics explanation">
-              <div><h3>如何读这张页</h3><p>P0 总览的 <strong>Verified</strong> 是官方 aggregate 的主分数（×100）。视频卡片中的 SP、ST、WS 是对应 case × perspective 的官方 v1 原始 IoU（×100）；MSE 是原始误差，越低越好。卡片标题右侧的 case × view 分数严格复刻官方 stable evaluator 的逐视角组件归一化、截断及算术均值流程，但不是官方对单一 case 单独发布的排行榜分数。</p></div>
+              <div><h3>如何读这张页</h3><p>P0 总览的 <strong>Verified</strong> 是官方 aggregate 的主分数（×100）。分数栏中的 SP、ST、WS 和归一化 MSE component 都是 score 口径（↑）；视频卡片中的 MSE 展示原始逐帧误差（↓）。辅助指标表按各自声明的方向计算 BEST，不把原始误差方向和归一化 score 方向混用。卡片标题右侧的 case × view 分数严格复刻官方 stable evaluator 的逐视角组件归一化、截断及算术均值流程，但不是官方对单一 case 单独发布的排行榜分数。</p></div>
               <dl>
-                <dt>SP</dt><dd>spatial IoU · higher is better</dd>
-                <dt>ST</dt><dd>mean per-frame spatiotemporal IoU · higher is better</dd>
-                <dt>WS</dt><dd>weighted spatial IoU · higher is better</dd>
-                <dt>MSE</dt><dd>mean per-frame error · lower is better</dd>
+                <dt>SP</dt><dd>spatial IoU score · higher is better</dd>
+                <dt>ST</dt><dd>mean per-frame spatiotemporal IoU score · higher is better</dd>
+                <dt>WS</dt><dd>weighted spatial IoU score · higher is better</dd>
+                <dt>MSE</dt><dd>raw per-frame error · lower is better; normalized MSE score is higher-is-better</dd>
+                <dt>BEST</dt><dd>per-column direction-aware comparison; only complete 198/198 coverage qualifies</dd>
                 <dt>Gap card</dt><dd>产物不在本机，页面不会伪造媒体或逐 case 指标。</dd>
               </dl>
             </aside>`;
@@ -634,10 +673,67 @@
             </section>
             ${renderProtocol()}
             <section aria-label="P0 official score overview"><div class="section-heading"><div><h2>P0 score board</h2></div><p>按 Verified 主分数排序。四组登记结果均使用同一 BPP V2V P0 协议；下方辅助指标表只覆盖本机已有的三组 submission。</p></div><div class="scoreboard">${renderScoreboard()}</div></section>
-            ${renderAuxMetrics()}
+            <div id="auxiliary-metrics-root">${renderAuxMetrics()}</div>
             ${renderViewer()}
             ${renderLegend()}`;
           bindControls();
+        }
+
+        function auxiliarySnapshotKey(auxiliary) {
+          return JSON.stringify(auxiliary || {});
+        }
+
+        function bindAuxiliaryRefreshButton() {
+          const button = document.getElementById("refresh-aux-metrics");
+          if (button) button.addEventListener("click", refreshAuxiliaryMetrics);
+        }
+
+        async function refreshAuxiliaryMetrics() {
+          if (!data) return;
+          const button = document.getElementById("refresh-aux-metrics");
+          if (button) {
+            button.disabled = true;
+            button.textContent = "刷新中…";
+          }
+          let changed = false;
+          try {
+            const refreshResponse = await fetch("refresh-metrics", {
+              method: "POST",
+              cache: "no-store",
+            });
+            if (!refreshResponse.ok) throw new Error(`refresh-metrics: HTTP ${refreshResponse.status}`);
+            const refreshPayload = await refreshResponse.json();
+            if (!refreshPayload.ok) throw new Error(refreshPayload.error || "metric refresh failed");
+            const response = await fetch("manifest.json", { cache: "no-store" });
+            if (!response.ok) throw new Error(`manifest.json: HTTP ${response.status}`);
+            const payload = await response.json();
+            const nextAuxiliary = payload.auxiliary_metrics || {};
+            changed = auxiliarySnapshotKey(nextAuxiliary) !== auxiliarySnapshotKey(data.auxiliary_metrics);
+            if (changed) {
+              data.auxiliary_metrics = nextAuxiliary;
+              data.generated_at = payload.generated_at || data.generated_at;
+              const target = document.getElementById("auxiliary-metrics-root");
+              if (target) target.innerHTML = renderAuxMetrics();
+              footer.innerHTML = `Generated ${escapeHtml(new Date(data.generated_at).toUTCString())} · ${escapeHtml(data.availability.note)} · Source registry: <code>Physics-IQ-Verified-RESULTS.md</code>`;
+              bindAuxiliaryRefreshButton();
+            }
+          } catch (_) {
+            const currentButton = document.getElementById("refresh-aux-metrics");
+            if (currentButton) {
+              currentButton.disabled = false;
+              currentButton.textContent = "刷新失败，重试";
+            }
+            return;
+          }
+          const currentButton = document.getElementById("refresh-aux-metrics");
+          if (currentButton) {
+            currentButton.disabled = false;
+            currentButton.textContent = changed ? "已刷新" : "已是最新";
+            window.setTimeout(() => {
+              const resetButton = document.getElementById("refresh-aux-metrics");
+              if (resetButton) resetButton.textContent = "手动刷新指标";
+            }, 1400);
+          }
         }
 
         function currentVideos() {
@@ -722,6 +818,7 @@
             video.addEventListener("ended", updateTransport);
           });
           transportTimer = window.setInterval(updateTransport, 500);
+          bindAuxiliaryRefreshButton();
         }
 
         fetch("manifest.json", { cache: "no-store" })

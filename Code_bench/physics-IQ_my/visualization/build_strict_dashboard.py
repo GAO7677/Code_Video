@@ -230,20 +230,35 @@ def score_summary_from_metrics(path: Path) -> dict[str, float]:
 
 
 AUXILIARY_METRIC_DEFS = [
-    {"key": "videophy2_pc_raw", "label": "PC raw", "group": "VideoPhy2", "format": "score"},
-    {"key": "videophy2", "label": "joint", "group": "VideoPhy2", "format": "rate"},
-    {"key": "videophy2_sa", "label": "SA", "group": "VideoPhy2", "format": "score"},
-    {"key": "videophy2_pc", "label": "PC", "group": "VideoPhy2", "format": "score"},
-    {"key": "videophy2_joint_rate", "label": "pass", "group": "VideoPhy2", "format": "rate"},
-    {"key": "cosmos_reason1", "label": "Cosmos Reason", "group": "Cosmos", "format": "score"},
-    {"key": "vbench_subject_consistency", "label": "subject", "group": "VBench", "format": "ratio"},
-    {"key": "vbench_background_consistency", "label": "background", "group": "VBench", "format": "ratio"},
-    {"key": "vbench_temporal_flickering", "label": "temporal", "group": "VBench", "format": "ratio"},
-    {"key": "vbench_motion_smoothness", "label": "smoothness", "group": "VBench", "format": "ratio"},
-    {"key": "vbench_dynamic_degree", "label": "dynamic", "group": "VBench", "format": "ratio"},
-    {"key": "vbench_aesthetic_quality", "label": "aesthetic", "group": "VBench", "format": "ratio"},
-    {"key": "vbench_imaging_quality", "label": "imaging", "group": "VBench", "format": "ratio"},
+    # Direction applies to the displayed/normalized value.  The raw error
+    # convention is kept separate (for example, VBench temporal flickering
+    # internally starts from MAE but exposes (255 - MAE) / 255).
+    {"key": "videophy2_pc_raw", "label": "PC raw", "group": "VideoPhy2", "format": "score", "direction": "higher_is_better"},
+    {"key": "videophy2", "label": "joint", "group": "VideoPhy2", "format": "rate", "direction": "higher_is_better"},
+    {"key": "videophy2_sa", "label": "SA", "group": "VideoPhy2", "format": "score", "direction": "higher_is_better"},
+    {"key": "videophy2_pc", "label": "PC", "group": "VideoPhy2", "format": "score", "direction": "higher_is_better"},
+    {"key": "videophy2_joint_rate", "label": "pass", "group": "VideoPhy2", "format": "rate", "direction": "higher_is_better"},
+    {"key": "cosmos_reason1", "label": "Cosmos Reason", "group": "Cosmos", "format": "score", "direction": "higher_is_better"},
+    {"key": "vbench_subject_consistency", "label": "subject", "group": "VBench", "format": "ratio", "direction": "higher_is_better"},
+    {"key": "vbench_background_consistency", "label": "background", "group": "VBench", "format": "ratio", "direction": "higher_is_better"},
+    {"key": "vbench_temporal_flickering", "label": "temporal", "group": "VBench", "format": "ratio", "direction": "higher_is_better"},
+    {"key": "vbench_motion_smoothness", "label": "smoothness", "group": "VBench", "format": "ratio", "direction": "higher_is_better"},
+    {"key": "vbench_dynamic_degree", "label": "dynamic", "group": "VBench", "format": "ratio", "direction": "higher_is_better"},
+    {"key": "vbench_aesthetic_quality", "label": "aesthetic", "group": "VBench", "format": "ratio", "direction": "higher_is_better"},
+    {"key": "vbench_imaging_quality", "label": "imaging", "group": "VBench", "format": "ratio", "direction": "higher_is_better"},
 ]
+
+AUXILIARY_DIRECTION_NOTES = {
+    "vbench_temporal_flickering": (
+        "VBench official normalized score: (255 - adjacent-frame MAE) / 255; higher is better."
+    ),
+    "videophy2": "Joint pass rate (SA>=4 and PC>=4); higher is better.",
+    "videophy2_joint_rate": "Joint pass rate alias; higher is better.",
+    "videophy2_sa": "VideoPhy-2 SA judge score; higher is better.",
+    "videophy2_pc": "VideoPhy-2 PC judge score; higher is better.",
+    "videophy2_pc_raw": "VideoPhy-2 PC raw judge score; higher is better.",
+    "cosmos_reason1": "Cosmos-Reason1 physical-plausibility judge score; higher is better.",
+}
 
 
 def load_auxiliary_metrics() -> dict[str, Any]:
@@ -253,6 +268,11 @@ def load_auxiliary_metrics() -> dict[str, Any]:
         "expected_cases": 198,
         "runner": "AAAinfer/bench.py",
         "metric_definitions": AUXILIARY_METRIC_DEFS,
+        "metric_directions": {
+            definition["key"]: definition["direction"]
+            for definition in AUXILIARY_METRIC_DEFS
+        },
+        "metric_direction_notes": AUXILIARY_DIRECTION_NOTES,
         "methods": {},
         "note": "VBench / VideoPhy2 / Cosmos Reason1 are not evaluated yet.",
     }
@@ -265,6 +285,18 @@ def load_auxiliary_metrics() -> dict[str, Any]:
         base["note"] = "The external-metric snapshot could not be parsed."
         return base
     methods: dict[str, Any] = {}
+    source_directions = source.get("metric_directions")
+    if not isinstance(source_directions, dict):
+        source_directions = {}
+    metric_definitions = [
+        {
+            **definition,
+            "direction": source_directions.get(
+                definition["key"], definition["direction"]
+            ),
+        }
+        for definition in AUXILIARY_METRIC_DEFS
+    ]
     for key, method in (source.get("methods") or {}).items():
         aggregate = method.get("aggregate") if isinstance(method, dict) else {}
         aggregate = aggregate if isinstance(aggregate, dict) else {}
@@ -294,8 +326,21 @@ def load_auxiliary_metrics() -> dict[str, Any]:
             "generated_at": source.get("generated_at"),
             "expected_cases": int(source.get("expected_cases") or 198),
             "runner": (source.get("protocol") or {}).get("runner", "AAAinfer/bench.py"),
+            "metric_definitions": metric_definitions,
+            "metric_directions": {
+                definition["key"]: definition["direction"]
+                for definition in metric_definitions
+            },
+            "metric_direction_notes": {
+                **AUXILIARY_DIRECTION_NOTES,
+                **(
+                    source.get("metric_direction_notes")
+                    if isinstance(source.get("metric_direction_notes"), dict)
+                    else {}
+                ),
+            },
             "methods": methods,
-            "note": "DINOv3 is intentionally excluded; the table covers the three local P0 submissions.",
+            "note": "DINOv3 is intentionally excluded; each column uses its declared metric direction.",
         }
     )
     return base
@@ -479,7 +524,7 @@ def build_payload(output: Path) -> dict[str, Any]:
         "spatial": "SP · spatial IoU (v1), higher is better",
         "spatiotemporal": "ST · mean per-frame IoU (v1), higher is better",
         "weighted_spatial": "WS · weighted spatial IoU (v1), higher is better",
-        "mse": "MSE · mean per-frame error (v1), lower is better",
+        "mse": "MSE score · normalized official component, higher is better (raw MSE is lower-is-better)",
         "view_verified": "Case-view composite · official per-view clipped arithmetic mean ×100",
     }
     asset_counts = {name: count_available(cases, name) for name in asset_targets}

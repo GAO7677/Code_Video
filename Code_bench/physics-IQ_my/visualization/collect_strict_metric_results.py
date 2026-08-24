@@ -26,6 +26,33 @@ VBA = (
     "vbench_imaging_quality",
 )
 METRICS = VBA + ("videophy2", "cosmos_reason1")
+ALL_AGGREGATE_METRICS = METRICS + (
+    "videophy2_sa",
+    "videophy2_pc",
+    "videophy2_joint_rate",
+    "videophy2_pc_raw",
+)
+
+# Directions describe the values exposed by this snapshot, not necessarily a
+# metric's internal/raw error.  In particular, VBench temporal_flickering is
+# normalized by the official implementation to (255 - MAE) / 255, so the
+# displayed score is higher-is-better.  The broader single-case metric notes
+# keep raw error fields such as MSE/WMReward surprise as lower-is-better.
+METRIC_DIRECTIONS = {
+    metric: "higher_is_better" for metric in ALL_AGGREGATE_METRICS
+}
+METRIC_DIRECTION_NOTES = {
+    "vbench_temporal_flickering": (
+        "Official VBench normalized score (255 - adjacent-frame MAE) / 255; "
+        "higher means less flickering."
+    ),
+    "videophy2": "Per-case SA>=4 and PC>=4 joint pass rate; higher is better.",
+    "videophy2_joint_rate": "Alias of the per-case joint pass rate; higher is better.",
+    "videophy2_sa": "VideoPhy-2 SA judge score (1-5); higher is better.",
+    "videophy2_pc": "VideoPhy-2 PC judge score (1-5); higher is better.",
+    "videophy2_pc_raw": "VideoPhy-2 PC raw judge score (1-5); higher is better.",
+    "cosmos_reason1": "Cosmos-Reason1 physical-plausibility judge score (1-5); higher is better.",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -122,12 +149,7 @@ def main() -> None:
             row.update(videophy_fields(payload))
             per_case[case_key] = row
         aggregate: dict[str, Any] = {}
-        for metric in METRICS + (
-            "videophy2_sa",
-            "videophy2_pc",
-            "videophy2_joint_rate",
-            "videophy2_pc_raw",
-        ):
+        for metric in ALL_AGGREGATE_METRICS:
             values = [
                 value
                 for row in per_case.values()
@@ -155,12 +177,15 @@ def main() -> None:
         "status": "complete" if all_complete else "partial",
         "expected_cases": required,
         "metric_names": list(METRICS),
+        "metric_directions": METRIC_DIRECTIONS,
+        "metric_direction_notes": METRIC_DIRECTION_NOTES,
         "protocol": {
             "runner": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py",
             "videophy2_task": "generated_only_sa_pc_joint",
             "vbench_dimensions": list(VBA),
             "candidate_input": "120-frame Physics-IQ Verified submission video",
             "context_frames_removed_by_metric_adapter": 0,
+            "direction_source": "/home/gaoya/Code_Video/Code_data/Code_try0526/physv_eval/single_case/README.md",
         },
         "methods": methods,
     }
