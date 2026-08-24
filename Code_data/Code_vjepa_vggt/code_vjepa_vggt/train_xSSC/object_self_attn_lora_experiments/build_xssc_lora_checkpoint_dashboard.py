@@ -109,12 +109,19 @@ PHYRVG_DISPLAY_INDEX = {
     key: index for index, key in enumerate(PHYRVG_DISPLAY_ORDER)
 }
 
-# Keep every PHYRVG-Full-SA + variant adjacent in all gallery and metric views.
+# Keep every PHYRVG-Full-SA variant adjacent in all gallery and metric views.
+# The key prefix is intentionally also checked below so newly added Full-SA
+# experiments join this block without requiring a page-builder edit first.
 PHYRVG_FULL_SA_PLUS_ORDER = (
+    "full_sa_physrvg_dit",
+    "full_sa_physrvg_dit_gpu56",
+    "full_sa_physrvg_phyco_kubric_0717_b4gacc1",
+    "full_sa_physrvg_no_vjepa_0717_b2g2",
     "full_sa_physrvg_vjepa_loss",
     "full_sa_physrvg_vjepa_loss_0613_b2g2",
     "full_sa_physrvg_latent_mask_loss",
     "full_sa_physrvg_object_xssc_loss",
+    "full_sa_physrvg_vjepa_rect384x672_0717_b2g2",
     "full_sa_physrvg_vjepa_rect384x672_0717_w0p3_b4gacc1",
     "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_b2gacc2",
     "full_sa_physrvg_vjepa_utonia_scene_hardmask_v1_enabled",
@@ -175,7 +182,8 @@ def is_phyrvg_full_sa_plus_method(method: dict[str, Any]) -> bool:
     label = str(method.get("label", "")).strip().upper()
     return (
         key in PHYRVG_FULL_SA_PLUS_INDEX
-        or label.startswith("PHYRVG-FULL-SA +")
+        or key.startswith("full_sa_physrvg")
+        or label.startswith("PHYRVG-FULL-SA")
     )
 
 

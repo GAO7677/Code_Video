@@ -32,6 +32,17 @@ UTONIA_ROOT_ENTRY = r"""
 </section>
 """
 
+STRICT_PHYSICS_IQ_ROOT_ENTRY = r"""
+<!-- PHYSIQ_VERIFIED_STRICT_ENTRY -->
+<section class="entry"><div><h2>Physics-IQ Verified · 严格可比总览</h2>
+  <div class="meta">统一 BPP V2V 条件、官方 Verified 聚合、4 组 P0 结果；可同步浏览生成视频，并查看 xSSC 与 Full-SA VJEPA 的逐视角 SP / ST / WS / MSE 指标。</div>
+  <a href="physicsiq-verified-strict-dashboard/">打开视频与指标 Dashboard</a>
+  <a href="physicsiq-verified-strict-dashboard/manifest.json">查看数据 manifest</a></div>
+  <div class="status">官方聚合<strong>最高 Verified 39.91</strong><small>66 cases · 198 views · P0 only</small></div>
+</section>
+<!-- /PHYSIQ_VERIFIED_STRICT_ENTRY -->
+"""
+
 ORDER_SCRIPT = r"""
 <script id="vbench-dynamic-first-column">
 (() => {
@@ -244,10 +255,16 @@ class OrderedHubHandler(SimpleHTTPRequestHandler):
         if filesystem_path.suffix.lower() != ".html" or not filesystem_path.is_file():
             return False
         body = filesystem_path.read_bytes()
-        if path in ("/", "/index.html") and b"UTONIA_NO_SCENE_THREE_TESTS_ENTRY" not in body:
+        if path in ("/", "/index.html"):
             root_marker = b"</main>"
             if root_marker in body:
-                body = body.replace(root_marker, UTONIA_ROOT_ENTRY.encode("utf-8") + root_marker, 1)
+                dynamic_entries = b""
+                if b"UTONIA_NO_SCENE_THREE_TESTS_ENTRY" not in body:
+                    dynamic_entries += UTONIA_ROOT_ENTRY.encode("utf-8")
+                if b"PHYSIQ_VERIFIED_STRICT_ENTRY" not in body:
+                    dynamic_entries += STRICT_PHYSICS_IQ_ROOT_ENTRY.encode("utf-8")
+                if dynamic_entries:
+                    body = body.replace(root_marker, dynamic_entries + root_marker, 1)
         marker = b"</body>"
         if marker in body:
             script = ORDER_SCRIPT.replace(

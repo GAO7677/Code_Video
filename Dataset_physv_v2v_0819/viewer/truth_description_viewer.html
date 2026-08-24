@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhysV truth descriptions</title>
+  <style>
+    :root { color-scheme: dark; --bg:#11161b; --panel:#1a2229; --panel2:#202b33; --ink:#edf3f5; --muted:#9eafb6; --accent:#77d6bd; --line:#30414a; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:linear-gradient(145deg,#10151a,#172127 58%,#11161b); color:var(--ink); font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    header { position:sticky; top:0; z-index:3; padding:18px 24px 15px; background:rgba(17,22,27,.94); border-bottom:1px solid var(--line); backdrop-filter:blur(10px); }
+    h1 { margin:0; font-size:21px; letter-spacing:.01em; }
+    .sub { color:var(--muted); margin-top:3px; }
+    .toolbar { display:flex; gap:10px; flex-wrap:wrap; margin-top:13px; }
+    input, select, button { border:1px solid var(--line); border-radius:7px; padding:8px 10px; background:var(--panel); color:var(--ink); }
+    input { min-width:260px; flex:1; }
+    button { cursor:pointer; }
+    main { max-width:1500px; margin:0 auto; padding:20px 24px 60px; }
+    #summary { color:var(--muted); margin:0 0 14px; }
+    article { background:rgba(26,34,41,.92); border:1px solid var(--line); border-radius:11px; margin:0 0 18px; overflow:hidden; box-shadow:0 10px 26px rgba(0,0,0,.14); }
+    .head { display:flex; align-items:baseline; gap:12px; padding:13px 16px 3px; }
+    .case { color:var(--accent); font-weight:700; font-size:16px; }
+    .title { color:var(--ink); }
+    .meta { padding:0 16px 11px; color:var(--muted); font-size:12px; }
+    .media-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:0 16px 14px; }
+    figure { margin:0; min-width:0; }
+    figcaption { color:var(--muted); font-size:12px; margin:0 0 5px; }
+    video { display:block; width:100%; background:#080b0d; border:1px solid var(--line); border-radius:6px; aspect-ratio:16/9; }
+    .result { margin:0 16px 14px; padding:13px 15px; background:var(--panel2); border-left:3px solid var(--accent); white-space:pre-wrap; overflow-wrap:anywhere; }
+    .result-label { color:var(--accent); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px; }
+    details { margin:0 16px 14px; color:var(--muted); }
+    summary { cursor:pointer; }
+    pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; color:#bfd1d5; }
+    @media (max-width:900px) { .media-grid { grid-template-columns:1fr; } main { padding:15px 10px 40px; } header { padding:15px 12px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PhysV · videos and truth descriptions</h1>
+    <div class="sub">All RGB Cycles videos with deterministic descriptions generated from trajectories, contacts, and event frames.</div>
+    <div class="toolbar">
+      <input id="search" placeholder="Filter by case, title, family, or outcome">
+      <select id="family"><option value="">All families</option></select>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+  <main>
+    <p id="summary">Loading…</p>
+    <section id="grid"></section>
+  </main>
+  <script>
+    const state = { rows: [] };
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const controlText = control => control?.variable ? `${control.variable} = ${control.value_label || control.value || '-'}` : '-';
+    const outcomeText = row => row.observations?.outcome_code || '-';
+    function render() {
+      const query = document.querySelector('#search').value.trim().toLowerCase();
+      const family = document.querySelector('#family').value;
+      const rows = state.rows.filter(row => {
+        const haystack = [row.case_id,row.title,row.control?.variable,row.family_key,outcomeText(row)].join(' ').toLowerCase();
+        return (!query || haystack.includes(query)) && (!family || row.family_key === family);
+      });
+      document.querySelector('#summary').textContent = `${rows.length} / ${state.rows.length} cases · videos: rgb_cycles + context8 + context16 · results: physics-truth descriptions`;
+      document.querySelector('#grid').innerHTML = rows.map(row => {
+        const id = encodeURIComponent(row.case_id);
+        const obs = row.observations || {};
+        return `<article>
+          <div class="head"><span class="case">${esc(row.case_id)}</span><span class="title">${esc(row.title)}</span></div>
+          <div class="meta">${esc(row.family_key || '')} · ${esc(row.task_type || '')} · ${esc(controlText(row.control))} · outcome=${esc(outcomeText(row))}</div>
+          <div class="media-grid">
+            <figure><figcaption>Full RGB Cycles · 90 frames</figcaption><video controls playsinline preload="metadata" src="/media/${id}/cycles"></video></figure>
+            <figure><figcaption>Context · first 8 frames</figcaption><video controls playsinline preload="metadata" src="/media/${id}/context8"></video></figure>
+            <figure><figcaption>Context · first 16 frames</figcaption><video controls playsinline preload="metadata" src="/media/${id}/context16"></video></figure>
+          </div>
+          <div class="result"><div class="result-label">Generated English truth description</div>${esc(row.description || '')}</div>
+          <details><summary>Truth metadata and source paths</summary><pre>${esc(JSON.stringify({event_frame:obs.event_frame,event_time_s:obs.event_time_s,end_state:obs.end_state,truth_sources:row.truth_sources,video:row.video,context8_video:row.context8_video}, null, 2))}</pre></details>
+        </article>`;
+      }).join('') || '<div class="result">No matching cases.</div>';
+    }
+    async function load() {
+      const response = await fetch('/api/cases?ts=' + Date.now(), {cache:'no-store'});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      state.rows = await response.json();
+      const values = [...new Set(state.rows.map(row => row.family_key).filter(Boolean))].sort();
+      const select = document.querySelector('#family');
+      const current = select.value;
+      select.innerHTML = '<option value="">All families</option>' + values.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join('');
+      select.value = values.includes(current) ? current : '';
+      render();
+    }
+    document.querySelector('#search').addEventListener('input', render);
+    document.querySelector('#family').addEventListener('change', render);
+    document.querySelector('#refresh').addEventListener('click', () => load().catch(error => { document.querySelector('#summary').textContent = error; }));
+    load().catch(error => { document.querySelector('#summary').textContent = error; });
+  </script>
+</body>
+</html>

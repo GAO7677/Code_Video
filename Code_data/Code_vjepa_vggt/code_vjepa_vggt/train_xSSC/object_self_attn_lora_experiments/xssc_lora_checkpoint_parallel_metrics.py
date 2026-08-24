@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run xSSC LoRA checkpoint GPU metrics on multiple idle GPUs."""
+"""Run xSSC LoRA checkpoint metrics with isolated parallel workers."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from xssc_lora_checkpoint_watch import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--gpus", required=True, help="Comma-separated GPU ids.")
+    parser.add_argument("--gpus", default="", help="Comma-separated GPU ids.")
     parser.add_argument("--methods", default="", help="Optional comma-separated method keys.")
     parser.add_argument("--steps", default="", help="Optional comma-separated optimizer steps.")
     parser.add_argument(
@@ -36,8 +36,9 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional comma-separated metric names.",
     )
-    parser.add_argument("--kind", choices=["gpu"], default="gpu")
+    parser.add_argument("--kind", choices=["cpu", "gpu"], default="gpu")
     parser.add_argument("--workers-per-gpu", type=int, default=1)
+    parser.add_argument("--cpu-workers", type=int, default=4)
     parser.add_argument("--refresh", action="store_true")
     return parser.parse_args()
 
@@ -85,7 +86,7 @@ def run_metric_task_on_gpu(
     config: dict[str, Any],
     kind: str,
     task: dict[str, Any],
-    gpu_id: int,
+    gpu_id: int | None,
 ) -> None:
     metric = task["metric"]
     manifest = task["manifest"]
@@ -114,7 +115,7 @@ def run_metric_task_on_gpu_unlocked(
     config: dict[str, Any],
     kind: str,
     task: dict[str, Any],
-    gpu_id: int,
+    gpu_id: int | None,
 ) -> None:
     metric = task["metric"]
     manifest = task["manifest"]
@@ -133,7 +134,7 @@ def run_metric_task_on_gpu_unlocked(
         paths["logs"]
         / "metrics_parallel"
         / kind
-        / f"gpu{gpu_id}"
+        / (f"gpu{gpu_id}" if gpu_id is not None else "cpu")
         / method_key
         / f"step-{step:06d}"
         / f"{metric}.log"
@@ -162,10 +163,14 @@ def run_metric_task_on_gpu_unlocked(
         "/home/gaoya/Code_Video/Code_data/Code_try0526"
     )
     environment["TOKENIZERS_PARALLELISM"] = "false"
-    environment["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    environment["CUDA_VISIBLE_DEVICES"] = (
+        str(gpu_id) if gpu_id is not None else ""
+    )
+
+    device_label = f"gpu{gpu_id}" if gpu_id is not None else "cpu"
 
     log(
-        f"parallel metric start gpu={gpu_id} method={method_key} "
+        f"parallel metric start device={device_label} method={method_key} "
         f"step={step} metric={metric}"
     )
     with log_path.open("a", encoding="utf-8") as log_handle:
@@ -198,10 +203,11 @@ def run_metric_task_on_gpu_unlocked(
         "result_root": str(manifest["result_root"]),
         "summary_path": str(summary_path),
         "worker_gpu": gpu_id,
+        "worker_device": device_label,
     }
     atomic_write_json(marker_path, marker)
     log(
-        f"parallel metric complete gpu={gpu_id} method={method_key} "
+        f"parallel metric complete device={device_label} method={method_key} "
         f"step={step} metric={metric}"
     )
 
@@ -210,7 +216,7 @@ def worker(
     config: dict[str, Any],
     kind: str,
     task_queue: "queue.Queue[dict[str, Any]]",
-    gpu_id: int,
+    gpu_id: int | None,
     failures: list[str],
     failure_lock: threading.Lock,
 ) -> None:
@@ -224,7 +230,8 @@ def worker(
         except Exception as exc:  # noqa: BLE001 - keep long metric queue moving.
             manifest = task["manifest"]
             message = (
-                f"gpu={gpu_id} method={manifest['method_key']} "
+                f"device={'gpu' + str(gpu_id) if gpu_id is not None else 'cpu'} "
+                f"method={manifest['method_key']} "
                 f"step={manifest['step']} metric={task['metric']}: {exc}"
             )
             log(f"parallel metric failed {message}")
@@ -240,13 +247,17 @@ def main() -> None:
     config["_config_path"] = str(args.config.resolve())
     prepare_directories(config)
 
-    gpus = [int(item.strip()) for item in args.gpus.split(",") if item.strip()]
-    if 4 in gpus:
-        raise SystemExit("GPU4 is forbidden by workspace rules; remove it from --gpus.")
-    if not gpus:
-        raise SystemExit("No GPU ids provided.")
     if int(args.workers_per_gpu) < 1:
         raise SystemExit("--workers-per-gpu must be >= 1")
+    if int(args.cpu_workers) < 1:
+        raise SystemExit("--cpu-workers must be >= 1")
+
+    gpus = [int(item.strip()) for item in args.gpus.split(",") if item.strip()]
+    if args.kind == "gpu":
+        if 4 in gpus:
+            raise SystemExit("GPU4 is forbidden by workspace rules; remove it from --gpus.")
+        if not gpus:
+            raise SystemExit("No GPU ids provided for --kind gpu.")
 
     tasks = metric_tasks(
         config=config,
@@ -255,7 +266,10 @@ def main() -> None:
         step_filter=parse_csv_ints(args.steps),
         metric_filter=parse_csv_strings(args.metrics),
     )
-    log(f"parallel metric queue kind={args.kind} gpus={gpus} tasks={len(tasks)}")
+    log(
+        f"parallel metric queue kind={args.kind} gpus={gpus} "
+        f"cpu_workers={args.cpu_workers} tasks={len(tasks)}"
+    )
     if not tasks:
         if args.refresh:
             refresh_site(config)
@@ -268,16 +282,24 @@ def main() -> None:
     failures: list[str] = []
     failure_lock = threading.Lock()
     threads = []
-    for gpu in gpus:
-        for worker_index in range(int(args.workers_per_gpu)):
-            threads.append(
-                threading.Thread(
-                    target=worker,
-                    args=(config, args.kind, task_queue, gpu, failures, failure_lock),
-                    name=f"gpu{gpu}-worker{worker_index}",
-                    daemon=False,
-                )
+    worker_specs: list[tuple[str, int | None]] = []
+    if args.kind == "gpu":
+        for gpu in gpus:
+            for worker_index in range(int(args.workers_per_gpu)):
+                worker_specs.append((f"gpu{gpu}-worker{worker_index}", gpu))
+    else:
+        for worker_index in range(int(args.cpu_workers)):
+            worker_specs.append((f"cpu-worker{worker_index}", None))
+
+    for worker_label, gpu in worker_specs:
+        threads.append(
+            threading.Thread(
+                target=worker,
+                args=(config, args.kind, task_queue, gpu, failures, failure_lock),
+                name=worker_label,
+                daemon=False,
             )
+        )
     for thread in threads:
         thread.start()
     for thread in threads:
