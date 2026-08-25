@@ -73,22 +73,47 @@ def _dynamic_names(sample_dir: Path) -> list[str]:
     return selected
 
 
-def _extract_index_pass(width: int, height: int) -> np.ndarray:
-    result = bpy.data.images.get("Render Result")
-    if result is None:
-        raise RuntimeError("Blender did not expose a Render Result image")
-    if tuple(result.size) != (width, height):
-        raise RuntimeError(f"Render Result size {tuple(result.size)} != {(width, height)}")
-    if not result.layers:
-        raise RuntimeError("Render Result contains no view layer")
-    layer = result.layers[0]
-    index_pass = next((item for item in layer.passes if item.name == "IndexOB"), None)
-    if index_pass is None:
-        available = [item.name for item in layer.passes]
-        raise RuntimeError(f"Object Index pass is missing; available passes={available}")
-    values = np.asarray(index_pass.rect, dtype=np.float32)
+def _configure_index_compositor(scene, output_dir: Path):
+    """Write the IndexOB pass to a temporary EXR for each rendered frame.
+
+    Blender 3.6 keeps ``Render Result`` at 0x0 in background mode for this
+    pass, while a File Output compositor node receives the full pass.  Reading
+    the temporary EXR also avoids relying on a version-specific Render Result
+    API.
+    """
+
+    scene.use_nodes = True
+    tree = scene.node_tree
+    tree.nodes.clear()
+    layers = tree.nodes.new("CompositorNodeRLayers")
+    output = tree.nodes.new("CompositorNodeOutputFile")
+    output.base_path = str(output_dir / "_index_pass")
+    output.file_slots[0].path = "frame_"
+    output.format.file_format = "OPEN_EXR"
+    output.format.color_depth = "32"
+    output.format.color_mode = "RGBA"
+    tree.links.new(layers.outputs["IndexOB"], output.inputs[0])
+    return output
+
+
+def _index_pass_path(output_node, output_dir: Path, frame_index: int) -> Path:
+    base = Path(output_node.base_path)
+    stem = str(output_node.file_slots[0].path)
+    return base / f"{stem}{frame_index:04d}.exr"
+
+
+def _extract_index_file(path: Path, width: int, height: int) -> np.ndarray:
+    if not path.is_file():
+        raise RuntimeError(f"IndexOB compositor output is missing: {path}")
+    image = bpy.data.images.load(str(path), check_existing=False)
+    try:
+        if tuple(image.size) != (width, height):
+            raise RuntimeError(f"IndexOB file size {tuple(image.size)} != {(width, height)}: {path}")
+        values = np.asarray(image.pixels[:], dtype=np.float32)
+    finally:
+        bpy.data.images.remove(image)
     if values.size != width * height * 4:
-        raise RuntimeError(f"unexpected IndexOB buffer size {values.size}")
+        raise RuntimeError(f"unexpected IndexOB file buffer size {values.size}: {path}")
     return np.rint(values.reshape(height, width, 4)[..., 0]).astype(np.int32)
 
 
@@ -153,13 +178,17 @@ def main() -> None:
     scene.frame_start = 1
     scene.frame_end = frame_count
     scene.render.filepath = str(output_dir / "index_")
+    index_output = _configure_index_compositor(scene, output_dir)
+    (output_dir / "_index_pass").mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     dynamic_masks = np.zeros((len(dynamic_names), frame_count, args.height, args.width), dtype=np.bool_)
     dynamic_centers = np.zeros((frame_count, len(dynamic_names), 3), dtype=np.float32)
     for frame_index in range(frame_count):
         scene.frame_set(frame_index + 1)
         bpy.ops.render.render(write_still=False)
-        object_ids = _extract_index_pass(args.width, args.height)
+        index_path = _index_pass_path(index_output, output_dir, frame_index + 1)
+        object_ids = _extract_index_file(index_path, args.width, args.height)
+        index_path.unlink(missing_ok=True)
         for object_index, name in enumerate(dynamic_names):
             dynamic_masks[object_index, frame_index] = object_ids == (object_index + 1)
         dynamic_centers[frame_index] = _pixel_centers(

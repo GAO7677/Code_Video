@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260825)
     parser.add_argument("--samples", type=int, default=12)
     parser.add_argument("--exposure", type=float, default=-0.15)
+    parser.add_argument("--camera-distance-scale", type=float, default=1.0)
     args = parser.parse_args()
 
     gpus = [item.strip() for item in args.gpu_list.split(",") if item.strip()]
@@ -53,6 +54,8 @@ def main() -> None:
             str(args.samples),
             "--exposure",
             str(args.exposure),
+            "--camera-distance-scale",
+            str(args.camera_distance_scale),
             "--gpu",
             gpu,
             "--worker-index",

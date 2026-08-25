@@ -25,6 +25,7 @@
 | 物理监督 | `/data/gaoya/AAA_test_video/physv_v2v_0819/samples/<case_id>/physics_supervision.json` |
 | 指标报告 | `/data/gaoya/AAA_test_video/physv_v2v_0819/reports` |
 | Cycles 渲染缓存 | `/data/gaoya/agent-data/cache/physv_cycles_previews` |
+| CYCLES 对齐真值（独立生成、不覆盖原始真值） | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_aligned_truth_v1` |
 | Cycles 轨迹 overlay 与页面 | `/data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay` |
 | 深度/实例 ID 页面视频 | `/data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay/truth_videos` |
 | 纹理/HDRI 资源 | `/data/gaoya/dataset/blender_render_assets/polyhaven_v1`、`/data/gaoya/agent-data/assets/polyhaven_textures_20260820` |
@@ -35,6 +36,10 @@
 - `context/context8.mp4`、`context/context16.mp4`: 8 帧和 16 帧短上下文。
 - `videos/depth.mp4`、`videos/masks.mp4`、`videos/trajectory.mp4`、`videos/contacts.mp4`: 深度、实例掩码、轨迹和接触可视化。
 - `samples/<case_id>/raw/masks.npz`: 仿真动态物体 GT mask；数据集未保存 SAM/SAM2 预测结果。
+- `physv_v2v_0819_cycles_aligned_truth_v1/cases/<case_id>/dynamic_masks.npz`: 使用与 `videos/rgb_cycles.mp4` 相同的 CYCLES 场景构建、相机、轨迹、分辨率和帧序重新渲染 Object Index pass 得到的动态物体像素真值；`masks_thw` 为 `[动态物体数, 帧数, 高, 宽]`，`union_thw` 为所有动态物体并集，背景/静态物体为 0，动态物体从 1 开始编号。
+- `physv_v2v_0819_cycles_aligned_truth_v1/cases/<case_id>/trajectory_pixels.npz`: 同一 CYCLES 相机坐标系下的动态物体中心投影，`centers_tnc` 为 `[帧数, 动态物体数, (x_pixel,y_pixel,depth)]`；像素原点在左上角，frame 0 对应 `rgb_cycles.mp4` frame 0。
+- `physv_v2v_0819_cycles_aligned_truth_v1/cases/<case_id>/truth_metadata.json`: 记录 CYCLES 配置、分辨率、帧数、动态物体名称与 Object Index 映射，并记录源 `rgb_cycles.mp4`、轨迹真值和渲染脚本。
+- 这批 CYCLES 对齐真值不替换 `raw/masks.npz`：后者仍是原始 PyBullet/仿真相机坐标系的 mask。`raw/contacts.json`、`physics_supervision.npz` 和 `raw/trajectories.npz` 仍是同一 90 帧仿真时间轴上的接触、状态和位姿真值；它们不需要因为 CYCLES 像素坐标变化而重算。
 - `captions/caption_specific.txt`: 暴露变量值和实际末态的 caption；`captions/caption_abstract.txt`: 隐藏具体变量值但保留实际运动结果的 caption。
 - `metadata.json` / `manifest.json` 中的 `caption_observations`: 从 `physics_supervision.npz` 和 `contacts.json` 提取的观测结果，用于区分通过、碰撞、掉落、停止等 case 末态。
 - `metadata.json`、`physics_supervision.json`、`raw/trajectories.npz`: 场景参数、物体物理真值和逐帧状态。

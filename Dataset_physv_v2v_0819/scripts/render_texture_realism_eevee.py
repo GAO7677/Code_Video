@@ -89,6 +89,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exposure", type=float, default=-0.15)
     parser.add_argument("--frame-limit", type=int, default=0)
     parser.add_argument(
+        "--camera-distance-scale",
+        type=float,
+        default=1.0,
+        help="Scale the fixed-camera distance after trajectory fitting; below 1.0 zooms in.",
+    )
+    parser.add_argument(
         "--background-profile",
         choices=BACKGROUND_PROFILE_ORDER,
         default="warehouse_cobalt",
@@ -1357,6 +1363,7 @@ def configure_fixed_camera(
     meta: dict,
     positions: np.ndarray,
     frame_count: int,
+    distance_scale: float = 1.0,
 ) -> dict[str, object]:
     """Choose one static view that contains the complete sampled trajectory."""
 
@@ -1369,7 +1376,7 @@ def configure_fixed_camera(
     if points.size == 0:
         points = np.asarray([camera_spec["target"]], dtype=np.float64)
     center = 0.5 * (np.min(points, axis=0) + np.max(points, axis=0))
-    max_extent = 0.35
+    max_extent = 0.18
     for actor in meta.get("objects", []):
         size = actor.get("size", {})
         if "radius" in size:
@@ -1389,10 +1396,13 @@ def configure_fixed_camera(
     original_distance = float(np.linalg.norm(offset))
     direction = offset / max(original_distance, 1e-6)
     yfov_deg = float(camera_spec.get("yfov_deg", 50.0))
-    distance = max(
+    if distance_scale <= 0.0:
+        raise ValueError("camera distance scale must be positive")
+    fitted_distance = max(
         original_distance,
         1.18 * radius / max(math.tan(math.radians(yfov_deg) * 0.5), 1e-6),
     )
+    distance = float(distance_scale) * fitted_distance
     target = center
     eye_vector = target + direction * distance
     camera.location = tuple(float(value) for value in eye_vector)
@@ -1409,6 +1419,7 @@ def configure_fixed_camera(
         "last_eye": eye,
         "last_target": target_list,
         "distance_m": float(distance),
+        "distance_scale": float(distance_scale),
         "trajectory_radius_m": float(radius),
     }
 
@@ -1583,7 +1594,13 @@ def main() -> None:
     for name in names:
         objects[name] = add_generic_actor(name, actors[name], actor_materials[name])
     set_animation(objects, names, positions, quats_xyzw, frame_count)
-    camera_tracking = configure_fixed_camera(camera, meta, positions, frame_count)
+    camera_tracking = configure_fixed_camera(
+        camera,
+        meta,
+        positions,
+        frame_count,
+        distance_scale=float(args.camera_distance_scale),
+    )
 
     scene.frame_start = 1
     scene.frame_end = frame_count

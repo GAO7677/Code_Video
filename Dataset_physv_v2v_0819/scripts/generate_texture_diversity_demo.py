@@ -295,6 +295,7 @@ def _stage_and_render_job(
     gpu: str,
     exposure: float,
     samples: int,
+    camera_distance_scale: float,
     stage_width: int,
     stage_height: int,
     seed: int,
@@ -364,6 +365,8 @@ def _stage_and_render_job(
                 str(samples),
                 "--exposure",
                 str(exposure),
+                "--camera-distance-scale",
+                str(camera_distance_scale),
                 "--frame-limit",
                 "0",
                 "--background-profile",
@@ -489,6 +492,7 @@ def main() -> None:
     parser.add_argument("--only-job", type=int)
     parser.add_argument("--samples", type=int, default=12)
     parser.add_argument("--exposure", type=float, default=-0.15)
+    parser.add_argument("--camera-distance-scale", type=float, default=1.0)
     parser.add_argument("--stage-width", type=int, default=320)
     parser.add_argument("--stage-height", type=int, default=180)
     parser.add_argument("--finalize", action="store_true")
@@ -525,6 +529,7 @@ def main() -> None:
                 gpu=str(args.gpu),
                 exposure=float(args.exposure),
                 samples=int(args.samples),
+                camera_distance_scale=float(args.camera_distance_scale),
                 stage_width=int(args.stage_width),
                 stage_height=int(args.stage_height),
                 seed=int(args.seed),
