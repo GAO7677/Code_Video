@@ -10,6 +10,7 @@ from the already-produced PyBullet state file.
 from __future__ import annotations
 
 import argparse
+import colorsys
 import hashlib
 import json
 import math
@@ -56,7 +57,24 @@ DISPLAY_PALETTE = (
     ("crimson", (0.72, 0.035, 0.075)),
     ("pink", (0.96, 0.22, 0.56)),
     ("teal_bright", (0.02, 0.86, 0.78)),
+    ("ivory", (0.88, 0.86, 0.78)),
+    ("charcoal", (0.08, 0.09, 0.11)),
 )
+
+# A profile-specific complementary order prevents a dark/neutral object from
+# being selected just because it wins a numeric score against a small
+# decorative background accent.  The order is still checked against the
+# already selected actors; unused labels fall back to the general palette.
+PROFILE_DISPLAY_ORDER = {
+    "warehouse_cobalt": ("coral", "gold", "lime", "ivory"),
+    "machine_shop_amber": ("turquoise", "magenta", "gold", "ivory"),
+    "color_studio": ("azure", "violet", "ivory", "teal_bright"),
+    "glasshouse_mint": ("magenta", "coral", "violet", "ivory"),
+    "courtyard_terracotta": ("azure", "teal_bright", "violet", "ivory"),
+    "foundry_safety": ("turquoise", "violet", "pink", "ivory"),
+    "garage_teal": ("coral", "gold", "magenta", "ivory"),
+    "neon_studio": ("gold", "coral", "ivory", "lime"),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--samples", type=int, default=24)
-    parser.add_argument("--exposure", type=float, default=0.35)
+    parser.add_argument("--exposure", type=float, default=-0.15)
     parser.add_argument("--frame-limit", type=int, default=0)
     parser.add_argument(
         "--background-profile",
@@ -373,6 +391,83 @@ def _downloaded_texture_spec(asset_id: str) -> tuple[Path, dict[str, str]] | Non
     return root, names
 
 
+def _muted_background_rgb(
+    rgb: tuple[float, float, float] | list[float],
+    *,
+    saturation: float = 0.22,
+    value_scale: float = 0.78,
+) -> tuple[float, float, float]:
+    """Reduce background chroma/value without changing object display colors."""
+
+    values = np.asarray([float(value) for value in rgb], dtype=np.float64)
+    luminance = float(np.dot(values, np.asarray([0.2126, 0.7152, 0.0722])))
+    muted = luminance + float(saturation) * (values - luminance)
+    muted *= float(value_scale)
+    return tuple(float(np.clip(value, 0.0, 1.0)) for value in muted)
+
+
+def _jitter_background_rgb(
+    rgb: tuple[float, float, float] | list[float],
+    *,
+    hue_shift: float,
+    saturation_scale: float,
+    value_scale: float,
+) -> tuple[float, float, float]:
+    """Make a deterministic, restrained color variant for a background set."""
+
+    hue, saturation, value = _hsv(rgb)
+    hue = (hue + float(hue_shift)) % 1.0
+    saturation = float(np.clip(saturation * saturation_scale, 0.0, 1.0))
+    value = float(np.clip(value * value_scale, 0.0, 1.0))
+    return tuple(float(np.clip(channel, 0.0, 1.0)) for channel in colorsys.hsv_to_rgb(hue, saturation, value))
+
+
+def _varied_background_profile(profile_name: str, variant: int = 0) -> dict:
+    """Return a profile copy with varied tint, HDRI rotation, and intensity."""
+
+    profile = dict(BACKGROUND_PROFILES[profile_name])
+    variant = int(variant)
+    if variant == 0:
+        return profile
+    # The profile still determines the semantic set and downloaded assets; the
+    # following low-amplitude changes provide visual diversity between samples
+    # without returning to the previous neon/saturated look.
+    phase = (variant * 0.173 + 0.071) % 1.0
+    hue_shift = (phase - 0.5) * 0.18
+    saturation_scale = 0.78 + 0.18 * ((variant * 7) % 5) / 4.0
+    value_scale = 0.88 + 0.10 * ((variant * 11) % 6) / 5.0
+    for key in ("floor_color", "wall_color", "trim_color", "accent_color", "secondary_color", "dominant_rgb"):
+        profile[key] = _jitter_background_rgb(
+            profile[key],
+            hue_shift=hue_shift,
+            saturation_scale=saturation_scale,
+            value_scale=value_scale,
+        )
+    profile["hdri_rotation_deg"] = float(profile["hdri_rotation_deg"]) + 17.0 * variant
+    profile["hdri_strength"] = float(profile["hdri_strength"]) * (0.92 + 0.04 * (variant % 4))
+    profile["_variant"] = variant
+    return profile
+
+
+def _set_mapping_variation(
+    material: bpy.types.Material,
+    *,
+    rotation_deg: float = 0.0,
+    scale_multiplier: float = 1.0,
+) -> None:
+    """Vary PBR map orientation/scale while retaining the same downloaded map."""
+
+    mappings = [node for node in material.node_tree.nodes if node.bl_idname == "ShaderNodeMapping"]
+    for mapping in mappings:
+        scale = mapping.inputs.get("Scale")
+        if scale is not None:
+            values = tuple(float(value) * float(scale_multiplier) for value in scale.default_value)
+            scale.default_value = values
+        rotation = mapping.inputs.get("Rotation")
+        if rotation is not None:
+            rotation.default_value[2] = math.radians(float(rotation_deg))
+
+
 def _background_material(
     name: str,
     asset_id: str,
@@ -381,15 +476,17 @@ def _background_material(
     roughness: float = 0.78,
     metallic: float = 0.0,
     uv_scale: float = 2.0,
+    uv_rotation_deg: float = 0.0,
 ) -> bpy.types.Material:
+    muted_tint = _muted_background_rgb(tint)
     texture_dir = BACKGROUND_ASSET_ROOT / "textures" / asset_id
     names = _background_texture_names(asset_id)
     material = reference.pbr_material(
         name,
         texture_dir=texture_dir if names else None,
         texture_names=names,
-        tint=tuple(0.25 + 1.65 * float(value) for value in tint),
-        tint_strength=0.92,
+        tint=tuple(0.22 + 1.10 * float(value) for value in muted_tint),
+        tint_strength=0.60,
         roughness=roughness,
         metallic=metallic,
         uv_scale=uv_scale,
@@ -397,7 +494,11 @@ def _background_material(
         detail_bump_strength=0.016,
         detail_bump_scale=18.0,
     )
-    _force_material_color(material, tint, factor=0.62)
+    # Keep the downloaded surface detail, but make its overall hue follow the
+    # muted studio palette instead of letting a saturated albedo dominate the
+    # whole frame.
+    _force_material_color(material, muted_tint, factor=0.58)
+    _set_mapping_variation(material, rotation_deg=uv_rotation_deg)
     return material
 
 
@@ -516,7 +617,7 @@ def _add_albedo_relief(
     emission_strength = shader.inputs.get("Emission Strength")
     if emission is not None and emission_strength is not None:
         links.new(ramp.outputs["Color"], emission)
-        emission_strength.default_value = 0.075
+        emission_strength.default_value = 0.045
 
     relief = nodes.new("ShaderNodeBump")
     relief.name = f"Albedo relief bump {material.name}"
@@ -670,15 +771,20 @@ def set_profile_hdri(scene: bpy.types.Scene, profile: dict) -> Path:
     nodes.clear()
     output = nodes.new("ShaderNodeOutputWorld")
     background = nodes.new("ShaderNodeBackground")
-    background.inputs["Strength"].default_value = float(profile["hdri_strength"])
+    background.inputs["Strength"].default_value = float(profile["hdri_strength"]) * 0.42
     environment = nodes.new("ShaderNodeTexEnvironment")
     environment.image = bpy.data.images.load(str(path), check_existing=True)
+    mute = nodes.new("ShaderNodeHueSaturation")
+    mute.name = "Muted background HDRI"
+    mute.inputs["Saturation"].default_value = 0.25
+    mute.inputs["Value"].default_value = 0.72
     mapping = nodes.new("ShaderNodeMapping")
     mapping.inputs["Rotation"].default_value[2] = math.radians(float(profile["hdri_rotation_deg"]))
     texcoord = nodes.new("ShaderNodeTexCoord")
     links.new(texcoord.outputs["Generated"], mapping.inputs["Vector"])
     links.new(mapping.outputs["Vector"], environment.inputs["Vector"])
-    links.new(environment.outputs["Color"], background.inputs["Color"])
+    links.new(environment.outputs["Color"], mute.inputs["Color"])
+    links.new(mute.outputs["Color"], background.inputs["Color"])
     links.new(background.outputs["Background"], output.inputs["Surface"])
     return path
 
@@ -752,15 +858,60 @@ def _add_profile_props(profile: dict, trim, accent, secondary) -> None:
         reference.add_cube("Neon upper strip", (0.0, 7.50, 4.2), (4.3, 0.06, 0.09), secondary, bevel=0.025)
 
 
-def add_fast_studio_background(materials: dict[str, bpy.types.Material], profile_name: str) -> dict[str, object]:
+def add_fast_studio_background(
+    materials: dict[str, bpy.types.Material],
+    profile_name: str,
+    *,
+    profile_variant: int = 0,
+) -> dict[str, object]:
     """Build a distinct textured set for the selected downloaded background."""
 
-    profile = BACKGROUND_PROFILES[profile_name]
-    floor = _background_material(f"{profile_name} floor", profile["floor_asset"], profile["floor_color"], roughness=0.82, uv_scale=2.8)
-    wall = _background_material(f"{profile_name} wall", profile["wall_asset"], profile["wall_color"], roughness=0.86, uv_scale=2.3)
-    trim = _background_material("background trim", "blue_metal_plate", profile["trim_color"], roughness=0.43, metallic=0.60, uv_scale=1.2)
-    accent = _background_material("background accent", "blue_metal_plate", profile["accent_color"], roughness=0.48, metallic=0.25, uv_scale=1.5)
-    secondary = _background_material("background secondary", "box_profile_metal_sheet", profile["secondary_color"], roughness=0.56, metallic=0.20, uv_scale=1.6)
+    profile = _varied_background_profile(profile_name, profile_variant)
+    texture_phase = float((int(profile_variant) * 37) % 360)
+    texture_scale = 0.86 + 0.08 * (int(profile_variant) % 5)
+    floor = _background_material(
+        f"{profile_name} floor",
+        profile["floor_asset"],
+        profile["floor_color"],
+        roughness=0.82,
+        uv_scale=2.8 * texture_scale,
+        uv_rotation_deg=texture_phase,
+    )
+    wall = _background_material(
+        f"{profile_name} wall",
+        profile["wall_asset"],
+        profile["wall_color"],
+        roughness=0.86,
+        uv_scale=2.3 * (1.08 - 0.04 * (int(profile_variant) % 4)),
+        uv_rotation_deg=texture_phase + 31.0,
+    )
+    trim = _background_material(
+        "background trim",
+        "blue_metal_plate",
+        profile["trim_color"],
+        roughness=0.43,
+        metallic=0.60,
+        uv_scale=1.2,
+        uv_rotation_deg=texture_phase + 67.0,
+    )
+    accent = _background_material(
+        "background accent",
+        "blue_metal_plate",
+        profile["accent_color"],
+        roughness=0.48,
+        metallic=0.25,
+        uv_scale=1.5,
+        uv_rotation_deg=texture_phase + 103.0,
+    )
+    secondary = _background_material(
+        "background secondary",
+        "box_profile_metal_sheet",
+        profile["secondary_color"],
+        roughness=0.56,
+        metallic=0.20,
+        uv_scale=1.6,
+        uv_rotation_deg=texture_phase + 139.0,
+    )
 
     reference.add_cube("Fast studio floor", (0.0, 2.0, -0.055), (14.0, 11.0, 0.055), floor, bevel=0.0)
     reference.add_cube("Fast studio back wall", (0.0, 9.0, 3.0), (14.0, 0.06, 3.0), wall, bevel=0.0)
@@ -772,14 +923,15 @@ def add_fast_studio_background(materials: dict[str, bpy.types.Material], profile
     _add_profile_props(profile, trim, accent, secondary)
 
     anchors = [
-        list(profile["dominant_rgb"]),
-        list(profile["floor_color"]),
-        list(profile["wall_color"]),
-        list(profile["accent_color"]),
-        list(profile["secondary_color"]),
+        list(_muted_background_rgb(profile["dominant_rgb"])),
+        list(_muted_background_rgb(profile["floor_color"])),
+        list(_muted_background_rgb(profile["wall_color"])),
+        list(_muted_background_rgb(profile["accent_color"])),
+        list(_muted_background_rgb(profile["secondary_color"])),
     ]
     return {
         "name": profile_name,
+        "variant": int(profile_variant),
         "set_kind": profile["set_kind"],
         "hdri_id": profile["hdri_id"],
         "hdri": str(_asset_hdri_path(str(profile["hdri_id"]))),
@@ -789,17 +941,20 @@ def add_fast_studio_background(materials: dict[str, bpy.types.Material], profile
     }
 
 
-def add_profile_lighting(profile_name: str) -> str:
-    profile = BACKGROUND_PROFILES[profile_name]
+def add_profile_lighting(profile_name: str, *, profile_variant: int = 0) -> str:
+    profile = _varied_background_profile(profile_name, profile_variant)
     for label, key in (("Key", "key"), ("Fill", "fill"), ("Top", "top"), ("Rim", "rim")):
         location, energy, color = profile[key]
+        # Keep a faint profile tint, but use mostly neutral illumination so a
+        # colored HDRI cannot pull object and background into the same hue.
+        neutral_color = tuple(0.88 + 0.12 * float(channel) for channel in color)
         reference.add_area_light(
             f"Fast studio {label}",
             location,
             (0.0, 1.0, 0.45),
-            float(energy),
+            float(energy) * 0.62,
             3.5 if label == "Key" else 3.0,
-            color,
+            neutral_color,
         )
     # A compact, low-angle source is intentional: it turns the real albedo
     # relief and normal map into readable highlights instead of relying only
@@ -808,7 +963,7 @@ def add_profile_lighting(profile_name: str) -> str:
         "Fast studio Texture rake",
         (-3.8, -1.8, 1.15),
         (0.0, 0.55, 0.35),
-        330.0,
+        220.0,
         1.15,
         (1.0, 0.93, 0.84),
     )
@@ -816,18 +971,58 @@ def add_profile_lighting(profile_name: str) -> str:
         "Fast studio Texture counter-rake",
         (3.6, 0.25, 1.35),
         (0.0, 0.55, 0.40),
-        210.0,
+        140.0,
         1.0,
         (0.78, 0.88, 1.0),
     )
-    return f"{profile_name}_four_point_softboxes"
+    return f"{profile_name}_four_point_softboxes_muted_texture_rake"
 
 
 def _color_distance(left, right) -> float:
     return float(np.linalg.norm(np.asarray(left, dtype=np.float64) - np.asarray(right, dtype=np.float64)))
 
 
-def choose_display_colors(sample_id: str, names: list[str], profile_name: str) -> dict[str, dict[str, object]]:
+def _hsv(rgb) -> tuple[float, float, float]:
+    return colorsys.rgb_to_hsv(*(float(value) for value in rgb))
+
+
+def _hue_distance(left_hue: float, right_hue: float) -> float:
+    distance = abs(float(left_hue) - float(right_hue))
+    return min(distance, 1.0 - distance)
+
+
+def _contrast_score(candidate, reference_rgb, *, hue_reference=None) -> float:
+    """Score color separation in RGB, value, and hue space.
+
+    RGB-only distance is insufficient after textured albedos and colored
+    lights are applied.  Hue distance is used only when both colors are
+    chromatic; for muted background anchors, value/RGB contrast carries the
+    score instead.
+    """
+
+    candidate = np.asarray(candidate, dtype=np.float64)
+    reference_rgb = np.asarray(reference_rgb, dtype=np.float64)
+    rgb_distance = float(np.linalg.norm(candidate - reference_rgb) / math.sqrt(3.0))
+    candidate_h, candidate_s, candidate_v = _hsv(candidate)
+    reference_h, reference_s, reference_v = _hsv(hue_reference if hue_reference is not None else reference_rgb)
+    # Use the original profile color only as a hue direction when the final
+    # background is intentionally muted.  Otherwise a warm brick albedo can
+    # still make a gold object look like part of the floor.
+    if hue_reference is not None:
+        hue_term = 2.0 * _hue_distance(candidate_h, reference_h)
+    else:
+        hue_term = 0.5 if min(candidate_s, reference_s) < 0.20 else 2.0 * _hue_distance(candidate_h, reference_h)
+    value_term = abs(candidate_v - reference_v)
+    return 0.52 * rgb_distance + 0.30 * hue_term + 0.18 * value_term
+
+
+def choose_display_colors(
+    sample_id: str,
+    names: list[str],
+    profile_name: str,
+    *,
+    palette_offset: int = 0,
+) -> dict[str, dict[str, object]]:
     """Assign pairwise-separated display colors for one video.
 
     The physical material keys remain in metadata; this palette only controls
@@ -838,26 +1033,80 @@ def choose_display_colors(sample_id: str, names: list[str], profile_name: str) -
     """
 
     profile = BACKGROUND_PROFILES[profile_name]
-    anchors = np.asarray(
-        [
-            profile["dominant_rgb"],
-            profile["floor_color"],
-            profile["wall_color"],
-            profile["accent_color"],
-            profile["secondary_color"],
-        ],
-        dtype=np.float64,
-    )
+    # Compare against the colors that are actually sent to the background
+    # materials, not the saturated profile source colors.  This makes the
+    # object palette robust to the same desaturation used by the renderer.
+    raw_anchors = [
+        profile["dominant_rgb"],
+        profile["floor_color"],
+        profile["wall_color"],
+        profile["accent_color"],
+        profile["secondary_color"],
+    ]
+    anchors = [
+        (_muted_background_rgb(raw_anchor), raw_anchor)
+        for raw_anchor in raw_anchors
+    ]
     seed = int(hashlib.sha256(sample_id.encode("utf-8")).hexdigest()[:8], 16)
-    palette = list(DISPLAY_PALETTE)
+    palette_by_label = {label: rgb for label, rgb in DISPLAY_PALETTE}
+    preferred = [
+        (label, palette_by_label[label])
+        for label in PROFILE_DISPLAY_ORDER.get(profile_name, ())
+        if label in palette_by_label
+    ]
+    if preferred:
+        offset = int(palette_offset) % len(preferred)
+        preferred = preferred[offset:] + preferred[:offset]
+    palette = preferred + [item for item in DISPLAY_PALETTE if item[0] not in {label for label, _ in preferred}]
     selected: list[tuple[str, tuple[float, float, float]]] = []
     result: dict[str, dict[str, object]] = {}
     for object_index, name in enumerate(names):
+        # Use the complementary profile palette first.  The fallback ranking
+        # below remains available for unusual cases with many actors.
+        preferred_candidate = None
+        selected_labels = {label for label, _ in selected}
+        for candidate in preferred:
+            if candidate[0] in selected_labels:
+                continue
+            candidate_label, candidate_rgb = candidate
+            candidate_background_distance = min(
+                _contrast_score(candidate_rgb, muted_anchor, hue_reference=raw_anchor)
+                for muted_anchor, raw_anchor in anchors
+            )
+            candidate_object_distance = min(
+                (_contrast_score(candidate_rgb, previous_rgb) for _, previous_rgb in selected),
+                default=1.0,
+            )
+            if candidate_object_distance >= 0.26 and candidate_background_distance >= 0.20:
+                preferred_candidate = (candidate_label, candidate_rgb)
+                break
+        if preferred_candidate is not None:
+            preferred_label, preferred_rgb = preferred_candidate
+            preferred_background_distance = min(
+                _contrast_score(preferred_rgb, muted_anchor, hue_reference=raw_anchor)
+                for muted_anchor, raw_anchor in anchors
+            )
+            preferred_object_distance = min(
+                (_contrast_score(preferred_rgb, previous_rgb) for _, previous_rgb in selected),
+                default=1.0,
+            )
+            if preferred_object_distance >= 0.26 and preferred_background_distance >= 0.20:
+                selected.append((preferred_label, preferred_rgb))
+                result[name] = {
+                    "label": preferred_label,
+                    "rgb": [float(value) for value in preferred_rgb],
+                    "min_background_distance": preferred_background_distance,
+                    "min_other_object_distance": preferred_object_distance,
+                }
+                continue
         ranked = []
         for palette_index, (label, rgb) in enumerate(palette):
-            anchor_distance = min(_color_distance(rgb, anchor) for anchor in anchors)
+            anchor_distance = min(
+                _contrast_score(rgb, muted_anchor, hue_reference=raw_anchor)
+                for muted_anchor, raw_anchor in anchors
+            )
             object_distance = min(
-                (_color_distance(rgb, previous_rgb) for _, previous_rgb in selected),
+                (_contrast_score(rgb, previous_rgb) for _, previous_rgb in selected),
                 default=1.0,
             )
             tie_break = (seed + object_index * 37 + palette_index * 101) % len(palette)
@@ -867,10 +1116,10 @@ def choose_display_colors(sample_id: str, names: list[str], profile_name: str) -
         for candidate in ranked:
             _, anchor_distance, _, label, rgb = candidate
             object_distance = min(
-                (_color_distance(rgb, previous_rgb) for _, previous_rgb in selected),
+                (_contrast_score(rgb, previous_rgb) for _, previous_rgb in selected),
                 default=1.0,
             )
-            if anchor_distance >= 0.28 and object_distance >= 0.34:
+            if anchor_distance >= 0.40 and object_distance >= 0.42:
                 chosen = (label, rgb)
                 break
         if chosen is None:
@@ -881,10 +1130,11 @@ def choose_display_colors(sample_id: str, names: list[str], profile_name: str) -
             "label": label,
             "rgb": [float(value) for value in rgb],
             "min_background_distance": min(
-                _color_distance(rgb, anchor) for anchor in anchors
+                _contrast_score(rgb, muted_anchor, hue_reference=raw_anchor)
+                for muted_anchor, raw_anchor in anchors
             ),
             "min_other_object_distance": min(
-                (_color_distance(rgb, previous_rgb) for _, previous_rgb in selected[:-1]),
+                (_contrast_score(rgb, previous_rgb) for _, previous_rgb in selected[:-1]),
                 default=1.0,
             ),
         }
@@ -894,6 +1144,7 @@ def choose_display_colors(sample_id: str, names: list[str], profile_name: str) -
 def _object_texture_spec(
     material_key: str,
     variant_index: int = 0,
+    asset_override: str | None = None,
 ) -> tuple[str, Path, dict[str, str], float, float, float]:
     """Choose a real downloaded PBR surface for each actor.
 
@@ -949,6 +1200,11 @@ def _object_texture_spec(
         legacy_names = _pbr_texture_names()
         settings = (0.82, 0.02, 0.55)
 
+    if asset_override:
+        candidates = (str(asset_override),) + tuple(
+            candidate for candidate in candidates if candidate != str(asset_override)
+        )
+
     for offset in range(len(candidates)):
         asset_id = candidates[(int(variant_index) + offset) % len(candidates)]
         downloaded = _downloaded_texture_spec(asset_id)
@@ -963,15 +1219,25 @@ def build_actor_materials(
     names: list[str],
     sample_id: str,
     profile_name: str,
+    *,
+    palette_offset: int = 0,
+    texture_offset: int = 0,
+    texture_overrides: dict[str, str] | None = None,
 ) -> tuple[dict[str, bpy.types.Material], dict[str, dict[str, object]]]:
-    display_colors = choose_display_colors(sample_id, names, profile_name)
+    display_colors = choose_display_colors(
+        sample_id,
+        names,
+        profile_name,
+        palette_offset=palette_offset,
+    )
     materials: dict[str, bpy.types.Material] = {}
     for object_index, name in enumerate(names):
         actor = actors[name]
         material_key = str(actor.get("material_key", ""))
         texture_asset_id, texture_dir, texture_names, roughness, metallic, uv_scale = _object_texture_spec(
             material_key,
-            object_index,
+            object_index + int(texture_offset),
+            (texture_overrides or {}).get(name),
         )
         rgb = display_colors[name]["rgb"]
         # Keep the downloaded albedo dominant enough to show weave, scratches,
@@ -996,6 +1262,11 @@ def build_actor_materials(
             materials[name],
             texture_asset_id,
             object_index=object_index,
+        )
+        _set_mapping_variation(
+            materials[name],
+            rotation_deg=float((object_index * 47 + int(texture_offset) * 29) % 360),
+            scale_multiplier=0.82 + 0.09 * ((object_index + int(texture_offset)) % 5),
         )
         display_colors[name]["source_material_key"] = material_key
         display_colors[name]["texture_asset_id"] = texture_asset_id
@@ -1065,8 +1336,11 @@ def add_camera(meta: dict, width: int, height: int) -> bpy.types.Object:
     data = bpy.data.cameras.new("Texture realism camera")
     data.type = "PERSP"
     data.sensor_fit = "VERTICAL"
-    data.angle_y = math.radians(float(camera_spec.get("yfov_deg", 50.0)))
     data.lens = 50.0
+    # Set the requested field of view after lens.  In Blender, assigning lens
+    # recalculates angle_y; the previous order silently narrowed the view to
+    # the 50 mm default after the trajectory-fit calculation.
+    data.angle_y = math.radians(float(camera_spec.get("yfov_deg", 50.0)))
     data.clip_start = 0.01
     data.clip_end = 100.0
     obj = bpy.data.objects.new("Texture realism camera", data)
@@ -1076,6 +1350,67 @@ def add_camera(meta: dict, width: int, height: int) -> bpy.types.Object:
     obj.rotation_euler = (target - obj.location).to_track_quat("-Z", "Y").to_euler()
     bpy.context.scene.camera = obj
     return obj
+
+
+def configure_fixed_camera(
+    camera: bpy.types.Object,
+    meta: dict,
+    positions: np.ndarray,
+    frame_count: int,
+) -> dict[str, object]:
+    """Choose one static view that contains the complete sampled trajectory."""
+
+    camera_spec = meta["camera"]
+    dynamic_indices = [
+        index for index, actor in enumerate(meta.get("objects", []))
+        if bool(actor.get("dynamic", True))
+    ]
+    points = np.asarray(positions[:frame_count], dtype=np.float64).reshape(-1, 3)
+    if points.size == 0:
+        points = np.asarray([camera_spec["target"]], dtype=np.float64)
+    center = 0.5 * (np.min(points, axis=0) + np.max(points, axis=0))
+    max_extent = 0.35
+    for actor in meta.get("objects", []):
+        size = actor.get("size", {})
+        if "radius" in size:
+            max_extent = max(max_extent, float(size["radius"]))
+        else:
+            max_extent = max(
+                max_extent,
+                float(size.get("hx", 0.0)),
+                float(size.get("hy", 0.0)),
+                float(size.get("hz", 0.0)),
+            )
+    radius = float(np.max(np.linalg.norm(points - center[None, :], axis=1))) + max_extent
+
+    original_eye = np.asarray(camera_spec["eye"], dtype=np.float64)
+    original_target = np.asarray(camera_spec["target"], dtype=np.float64)
+    offset = original_eye - original_target
+    original_distance = float(np.linalg.norm(offset))
+    direction = offset / max(original_distance, 1e-6)
+    yfov_deg = float(camera_spec.get("yfov_deg", 50.0))
+    distance = max(
+        original_distance,
+        1.18 * radius / max(math.tan(math.radians(yfov_deg) * 0.5), 1e-6),
+    )
+    target = center
+    eye_vector = target + direction * distance
+    camera.location = tuple(float(value) for value in eye_vector)
+    camera.rotation_euler = (Vector(tuple(float(value) for value in target)) - camera.location).to_track_quat("-Z", "Y").to_euler()
+    eye = [float(value) for value in eye_vector]
+    target_list = [float(value) for value in target]
+    return {
+        "enabled": False,
+        "fixed": True,
+        "mode": "fixed_global_trajectory_camera",
+        "dynamic_object_indices": dynamic_indices,
+        "first_eye": eye,
+        "first_target": target_list,
+        "last_eye": eye,
+        "last_target": target_list,
+        "distance_m": float(distance),
+        "trajectory_radius_m": float(radius),
+    }
 
 
 def add_motion_tracking_camera(
@@ -1197,10 +1532,38 @@ def main() -> None:
     # Use a furniture-free studio profile rather than the F11/test70 room.
     # The object PBR maps still come from the same local asset library, but
     # the set, palette, HDRI orientation, and lights are independent.
+    appearance_payload = meta.get("appearance_variation") or {}
+    profile_variant = int(
+        meta.get(
+            "background_variant",
+            appearance_payload.get("background_variant", 0),
+        )
+    )
+    palette_offset = int(
+        meta.get(
+            "appearance_palette_offset",
+            appearance_payload.get("palette_offset", 0),
+        )
+    )
+    texture_offset = int(
+        meta.get(
+            "appearance_texture_offset",
+            appearance_payload.get("texture_offset", 0),
+        )
+    )
+    texture_overrides = meta.get("appearance_texture_assets") or appearance_payload.get("texture_assets") or {}
+    varied_profile = _varied_background_profile(args.background_profile, profile_variant)
     camera = add_camera(meta, args.width, args.height)
-    room_scene = add_fast_studio_background(materials, args.background_profile)
-    hdri_path = set_profile_hdri(scene, BACKGROUND_PROFILES[args.background_profile])
-    lighting_preset = add_profile_lighting(args.background_profile)
+    room_scene = add_fast_studio_background(
+        materials,
+        args.background_profile,
+        profile_variant=profile_variant,
+    )
+    hdri_path = set_profile_hdri(scene, varied_profile)
+    lighting_preset = add_profile_lighting(
+        args.background_profile,
+        profile_variant=profile_variant,
+    )
 
     actors = {str(item["name"]): item for item in meta.get("objects", [])}
     for name in names:
@@ -1212,12 +1575,15 @@ def main() -> None:
         names,
         sample_id,
         args.background_profile,
+        palette_offset=palette_offset,
+        texture_offset=texture_offset,
+        texture_overrides={str(key): str(value) for key, value in texture_overrides.items()},
     )
     objects = {}
     for name in names:
         objects[name] = add_generic_actor(name, actors[name], actor_materials[name])
     set_animation(objects, names, positions, quats_xyzw, frame_count)
-    camera_tracking = add_motion_tracking_camera(camera, meta, positions, frame_count)
+    camera_tracking = configure_fixed_camera(camera, meta, positions, frame_count)
 
     scene.frame_start = 1
     scene.frame_end = frame_count
@@ -1241,6 +1607,7 @@ def main() -> None:
         "resolution": [args.width, args.height],
         "room_scene": room_scene,
         "background_profile": args.background_profile,
+        "background_variant": profile_variant,
         "lighting_preset": lighting_preset,
         "hdri": str(hdri_path),
         "camera_tracking": camera_tracking,
@@ -1253,11 +1620,17 @@ def main() -> None:
         "material_assignments": material_keys,
         "display_material_assignments": display_colors,
         "color_separation": {
-            "constraint": "per-video object/background RGB distance",
+            "constraint": "per-video object/background muted-RGB + value + hue distance",
             "background_anchors": room_scene["background_color_anchors"],
             "objects": display_colors,
         },
         "texture_profile": "polyhaven_pbr_fast_eevee_varied_backgrounds_textured_objects",
+        "texture_visibility_mode": "high_visibility_albedo_macro_relief",
+        "appearance_variation": {
+            "palette_offset": palette_offset,
+            "texture_offset": texture_offset,
+            "texture_assets": {str(key): str(value) for key, value in texture_overrides.items()},
+        },
         "texture_sources": [
             str(reference.TEXTURE_ROOT),
             str(reference.EXTRA_TEXTURE_ROOT),

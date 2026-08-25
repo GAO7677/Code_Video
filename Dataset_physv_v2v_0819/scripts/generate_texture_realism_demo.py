@@ -99,7 +99,7 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--samples", type=int, default=24)
-    parser.add_argument("--exposure", type=float, default=0.35)
+    parser.add_argument("--exposure", type=float, default=-0.15)
     parser.add_argument("--frame-limit", type=int, default=0)
     parser.add_argument(
         "--background-profile",
