@@ -30,7 +30,7 @@ INPUT_JSON_ROOT = DATA_ROOT / "input_jsons"
 MANIFEST_PATH = DATA_ROOT / "manifest.json"
 ALLOWLIST_PATH = DATA_ROOT / "input_allowlist.txt"
 
-BENCH_PYTHON = Path("/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python")
+BENCH_PYTHON = Path(os.environ.get("BENCH_PYTHON", str(sys.executable)))
 BENCH_SCRIPT = Path(
     "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/"
     "code_vjepa_vggt/AAAinfer/bench.py"
