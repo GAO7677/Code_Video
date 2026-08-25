@@ -279,7 +279,7 @@ def main() -> None:
                 "reference_page": "http://localhost:8844/physv-v2v-0819-test70-no-event-timing-40step",
                 "engine": "BLENDER_EEVEE",
                 "cycles_used": False,
-                "texture_profile": "polyhaven_pbr_fast_eevee",
+                "texture_profile": "polyhaven_pbr_fast_eevee_textured_objects",
                 "background_profiles": list(BACKGROUND_PROFILES),
                 "camera_mode": "smoothed_dynamic_centroid_follow",
                 "cases": list(selected),

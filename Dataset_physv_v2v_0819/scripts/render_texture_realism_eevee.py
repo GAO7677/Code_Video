@@ -401,7 +401,13 @@ def _background_material(
     return material
 
 
-def _force_material_color(material: bpy.types.Material, rgb, *, factor: float) -> None:
+def _force_material_color(
+    material: bpy.types.Material,
+    rgb,
+    *,
+    factor: float,
+    texture_contrast: float = 0.0,
+) -> None:
     """Keep PBR detail while making the requested hue visible in RGB output."""
 
     nodes = material.node_tree.nodes
@@ -418,6 +424,42 @@ def _force_material_color(material: bpy.types.Material, rgb, *, factor: float) -
     if source is None:
         base_color.default_value = (*tuple(float(value) for value in rgb), 1.0)
         return
+    if texture_contrast > 0.0:
+        # PBR albedos can be visually too low-contrast after hue separation at
+        # 720p.  Remap their luminance into shades of the requested display
+        # hue, preserving the real image texture's weave, grain, scratches,
+        # and stains instead of painting a solid-color mask over it.
+        luminance = nodes.new("ShaderNodeRGBToBW")
+        luminance.name = f"Texture luminance {material.name}"
+        ramp = nodes.new("ShaderNodeValToRGB")
+        ramp.name = f"Texture contrast {material.name}"
+        # Keep the hue but stretch the source texture over a much wider value
+        # range.  The previous ramp was deliberately restrained for realism;
+        # at 1280x720 that made the downloaded detail disappear after video
+        # encoding.  A normalized hue keeps the objects separated while the
+        # dark/bright endpoints make weave, grain, ribs, and scratches survive
+        # downsampling.
+        max_channel = max(float(value) for value in rgb) or 1.0
+        hue = [float(value) / max_channel for value in rgb]
+        ramp.color_ramp.elements[0].position = 0.24
+        ramp.color_ramp.elements[0].color = tuple(
+            min(1.0, 0.006 + 0.035 * value) for value in hue
+        ) + (1.0,)
+        ramp.color_ramp.elements[1].position = 0.66
+        ramp.color_ramp.elements[1].color = tuple(
+            min(1.0, 0.018 + 0.98 * value) for value in hue
+        ) + (1.0,)
+        ramp.color_ramp.interpolation = "EASE"
+        links.new(source, luminance.inputs[0])
+        links.new(luminance.outputs[0], ramp.inputs[0])
+        colorize = nodes.new("ShaderNodeMixRGB")
+        colorize.name = f"Texture colorize {material.name}"
+        colorize.blend_type = "MIX"
+        colorize.inputs[0].default_value = min(1.0, float(texture_contrast))
+        links.new(source, colorize.inputs[1])
+        links.new(ramp.outputs[0], colorize.inputs[2])
+        source = colorize.outputs[0]
+
     mix = nodes.new("ShaderNodeMixRGB")
     mix.name = f"Display hue {material.name}"
     mix.blend_type = "MIX"
@@ -425,6 +467,195 @@ def _force_material_color(material: bpy.types.Material, rgb, *, factor: float) -
     mix.inputs[2].default_value = (*tuple(float(value) for value in rgb), 1.0)
     links.new(source, mix.inputs[1])
     links.new(mix.outputs[0], base_color)
+
+
+def _add_albedo_relief(
+    material: bpy.types.Material,
+    *,
+    strength: float = 0.34,
+    distance: float = 0.045,
+) -> None:
+    """Make real albedo detail catch light in Eevee at final video scale."""
+
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    shader = next((node for node in nodes if node.type == "BSDF_PRINCIPLED"), None)
+    if shader is None:
+        return
+    albedo = None
+    for node in nodes:
+        if node.type != "TEX_IMAGE" or node.image is None:
+            continue
+        image_path = str(getattr(node.image, "filepath", "")).lower()
+        if any(token in image_path for token in ("_diff_", "_diffuse_", "_albedo_")):
+            albedo = node
+            break
+    if albedo is None:
+        return
+    vector_socket = albedo.inputs.get("Vector")
+    if vector_socket is None or not vector_socket.links:
+        return
+
+    grayscale = nodes.new("ShaderNodeRGBToBW")
+    grayscale.name = f"Albedo relief luminance {material.name}"
+    links.new(albedo.outputs["Color"], grayscale.inputs[0])
+    ramp = nodes.new("ShaderNodeValToRGB")
+    ramp.name = f"Albedo relief contrast {material.name}"
+    ramp.color_ramp.elements[0].position = 0.28
+    ramp.color_ramp.elements[1].position = 0.68
+    ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
+    ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
+    ramp.color_ramp.interpolation = "EASE"
+    links.new(grayscale.outputs[0], ramp.inputs[0])
+
+    # A very small emissive contribution is used only as a visibility aid.
+    # It keeps the albedo pattern readable on faces that happen to be turned
+    # away from the key/raking lights; it is not intended to make the object
+    # look self-luminous.
+    emission = shader.inputs.get("Emission") or shader.inputs.get("Emission Color")
+    emission_strength = shader.inputs.get("Emission Strength")
+    if emission is not None and emission_strength is not None:
+        links.new(ramp.outputs["Color"], emission)
+        emission_strength.default_value = 0.075
+
+    relief = nodes.new("ShaderNodeBump")
+    relief.name = f"Albedo relief bump {material.name}"
+    relief.inputs["Strength"].default_value = float(strength)
+    relief.inputs["Distance"].default_value = float(distance)
+    links.new(ramp.outputs["Color"], relief.inputs["Height"])
+    normal_input = shader.inputs.get("Normal")
+    if normal_input is not None and normal_input.links:
+        links.new(normal_input.links[0].from_socket, relief.inputs["Normal"])
+    if normal_input is not None:
+        while normal_input.links:
+            links.remove(normal_input.links[0])
+        links.new(relief.outputs["Normal"], normal_input)
+
+
+def _add_macro_texture_emphasis(
+    material: bpy.types.Material,
+    texture_asset_id: str,
+    *,
+    object_index: int = 0,
+) -> None:
+    """Add a restrained, large-scale texture cue that survives 720p video.
+
+    The downloaded albedo/normal/roughness maps remain the primary material.
+    This secondary cue only prevents fine photographic detail from vanishing
+    when a small actor is downsampled: fabric uses a coarse weave, wood uses
+    irregular grain bands, and metal/rubber uses broad wear variation.
+    """
+
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    shader = next((node for node in nodes if node.type == "BSDF_PRINCIPLED"), None)
+    if shader is None:
+        return
+    base_input = shader.inputs.get("Base Color")
+    if base_input is None or not base_input.links:
+        return
+    base_socket = base_input.links[0].from_socket
+
+    albedo = None
+    for node in nodes:
+        if node.type != "TEX_IMAGE" or node.image is None:
+            continue
+        image_path = str(getattr(node.image, "filepath", "")).lower()
+        if any(token in image_path for token in ("_diff_", "_diffuse_", "_albedo_")):
+            albedo = node
+            break
+    if albedo is None:
+        return
+    vector_input = albedo.inputs.get("Vector")
+    if vector_input is None or not vector_input.links:
+        return
+    vector_socket = vector_input.links[0].from_socket
+
+    asset = texture_asset_id.lower()
+    if any(token in asset for token in ("hessian", "fabric", "denim", "leather")):
+        kind = "weave"
+        scale_x, scale_y = 18.0, 24.0
+        contrast = 0.38
+        bump_strength = 0.26
+    elif any(token in asset for token in ("wood", "oak")):
+        kind = "grain"
+        scale_x, scale_y = 4.5, 8.0
+        contrast = 0.34
+        bump_strength = 0.22
+    elif any(token in asset for token in ("metal", "rust")):
+        kind = "wear"
+        scale_x, scale_y = 5.0, 3.0
+        contrast = 0.42
+        bump_strength = 0.20
+    else:
+        kind = "surface"
+        scale_x, scale_y = 7.0, 7.0
+        contrast = 0.20
+        bump_strength = 0.18
+
+    if kind == "wear":
+        pattern_a = nodes.new("ShaderNodeTexNoise")
+        pattern_a.name = f"Macro texture wear noise {material.name}"
+        pattern_a.inputs["Scale"].default_value = 4.2
+        pattern_a.inputs["Detail"].default_value = 6.0
+        pattern_a.inputs["Roughness"].default_value = 0.78
+        pattern_a.inputs["Distortion"].default_value = 1.4
+    else:
+        pattern_a = nodes.new("ShaderNodeTexWave")
+        pattern_a.name = f"Macro texture {kind} A {material.name}"
+        pattern_a.wave_type = "BANDS"
+        pattern_a.bands_direction = "X"
+        pattern_a.inputs["Scale"].default_value = scale_x
+        pattern_a.inputs["Distortion"].default_value = 3.2
+        pattern_a.inputs["Detail"].default_value = 5.0
+        pattern_a.inputs["Detail Scale"].default_value = 2.0
+    links.new(vector_socket, pattern_a.inputs["Vector"])
+
+    pattern_b = nodes.new("ShaderNodeTexWave")
+    pattern_b.name = f"Macro texture {kind} B {material.name}"
+    pattern_b.wave_type = "BANDS"
+    pattern_b.bands_direction = "Y"
+    pattern_b.inputs["Scale"].default_value = scale_y
+    pattern_b.inputs["Distortion"].default_value = 2.4 if kind != "wear" else 4.5
+    pattern_b.inputs["Detail"].default_value = 4.0
+    pattern_b.inputs["Detail Scale"].default_value = 2.0
+    links.new(vector_socket, pattern_b.inputs["Vector"])
+
+    combine = nodes.new("ShaderNodeMixRGB")
+    combine.name = f"Macro texture combine {material.name}"
+    combine.blend_type = "MULTIPLY"
+    combine.inputs[0].default_value = 1.0
+    links.new(pattern_a.outputs["Color"], combine.inputs[1])
+    links.new(pattern_b.outputs["Color"], combine.inputs[2])
+    pattern_ramp = nodes.new("ShaderNodeValToRGB")
+    pattern_ramp.name = f"Macro texture contrast {material.name}"
+    pattern_ramp.color_ramp.elements[0].position = 0.28 if kind == "wear" else 0.34
+    pattern_ramp.color_ramp.elements[0].color = (0.08, 0.08, 0.08, 1.0)
+    pattern_ramp.color_ramp.elements[1].position = 0.56 if kind == "wear" else 0.62
+    pattern_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
+    links.new(combine.outputs["Color"], pattern_ramp.inputs[0])
+
+    mix = nodes.new("ShaderNodeMixRGB")
+    mix.name = f"Macro texture overlay {material.name}"
+    mix.blend_type = "MULTIPLY"
+    mix.inputs[0].default_value = contrast
+    links.new(base_socket, mix.inputs[1])
+    links.new(pattern_ramp.outputs["Color"], mix.inputs[2])
+    links.remove(base_input.links[0])
+    links.new(mix.outputs["Color"], base_input)
+
+    macro_bump = nodes.new("ShaderNodeBump")
+    macro_bump.name = f"Macro texture bump {material.name}"
+    macro_bump.inputs["Strength"].default_value = bump_strength
+    macro_bump.inputs["Distance"].default_value = 0.035
+    links.new(pattern_ramp.outputs["Color"], macro_bump.inputs["Height"])
+    normal_input = shader.inputs.get("Normal")
+    if normal_input is not None and normal_input.links:
+        links.new(normal_input.links[0].from_socket, macro_bump.inputs["Normal"])
+    if normal_input is not None:
+        while normal_input.links:
+            links.remove(normal_input.links[0])
+        links.new(macro_bump.outputs["Normal"], normal_input)
 
 
 def set_profile_hdri(scene: bpy.types.Scene, profile: dict) -> Path:
@@ -476,7 +707,7 @@ def _add_profile_props(profile: dict, trim, accent, secondary) -> None:
             reference.add_cube(f"Warehouse crate top {index}", (x, 6.9, 1.25), (0.65, 0.45, 0.32), accent, bevel=0.04)
     elif kind == "machine_shop":
         for index, z in enumerate((1.0, 2.0, 3.0)):
-            _add_profile_cylinder(f"Machine rear pipe {index}", (-5.6, 7.25, z), 0.10, 4.2, accent, horizontal=True)
+            _add_background_cylinder(f"Machine rear pipe {index}", (-5.6, 7.25, z), 0.10, 4.2, accent, horizontal=True)
         for index, x in enumerate((-4.8, 4.8)):
             reference.add_cube(f"Machine rack {index}", (x, 7.3, 1.5), (0.85, 0.18, 1.5), trim, bevel=0.025)
             reference.add_cube(f"Machine rack shelf {index}", (x, 6.9, 2.1), (1.15, 0.45, 0.07), secondary, bevel=0.015)
@@ -570,6 +801,25 @@ def add_profile_lighting(profile_name: str) -> str:
             3.5 if label == "Key" else 3.0,
             color,
         )
+    # A compact, low-angle source is intentional: it turns the real albedo
+    # relief and normal map into readable highlights instead of relying only
+    # on broad softboxes, which tend to flatten small objects in video.
+    reference.add_area_light(
+        "Fast studio Texture rake",
+        (-3.8, -1.8, 1.15),
+        (0.0, 0.55, 0.35),
+        330.0,
+        1.15,
+        (1.0, 0.93, 0.84),
+    )
+    reference.add_area_light(
+        "Fast studio Texture counter-rake",
+        (3.6, 0.25, 1.35),
+        (0.0, 0.55, 0.40),
+        210.0,
+        1.0,
+        (0.78, 0.88, 1.0),
+    )
     return f"{profile_name}_four_point_softboxes"
 
 
@@ -654,25 +904,25 @@ def _object_texture_spec(
 
     key = material_key.lower()
     if "rubber" in key or "wheel" in key or "tire" in key:
-        candidates = ("rubber_tiles", "rubberized_track")
+        candidates = ("rubberized_track", "rubber_tiles")
         legacy_id = "rubber_tiles"
         legacy_dir = reference.EXTRA_TEXTURE_ROOT / legacy_id
         legacy_names = _pbr_texture_names()
-        settings = (0.70, 0.04, 2.4)
+        settings = (0.70, 0.04, 0.72)
     elif "metal" in key:
-        candidates = ("metal_plate_02", "rusty_metal_03", "painted_metal_shutter")
+        candidates = ("rusty_metal_03", "metal_plate_02", "painted_metal_shutter")
         legacy_id = "metal_plate"
         legacy_dir = reference.EXTRA_TEXTURE_ROOT / legacy_id
         legacy_names = _metal_texture_names()
-        settings = (0.46, 0.38, 1.35)
+        settings = (0.46, 0.38, 0.48)
     elif "cardboard" in key or "paper" in key:
         candidates = ("hessian_230", "fabric_leather_01")
         legacy_id = "beige_wall_001"
         legacy_dir = reference.TEXTURE_ROOT / legacy_id
         legacy_names = _cardboard_texture_names()
-        settings = (0.84, 0.02, 2.0)
+        settings = (0.84, 0.02, 0.62)
     elif "wood" in key or "domino" in key:
-        candidates = ("dark_wood", "oak_wood_planks")
+        candidates = ("oak_wood_planks", "dark_wood")
         legacy_id = "wood_floor"
         legacy_dir = reference.TEXTURE_ROOT / legacy_id
         legacy_names = {
@@ -681,19 +931,23 @@ def _object_texture_spec(
             "roughness": "wood_floor_rough_2k.jpg",
             "ao": "wood_floor_ao_2k.jpg",
         }
-        settings = (0.58, 0.04, 2.2)
+        settings = (0.58, 0.04, 0.66)
     elif "fabric" in key or "textile" in key or "rope" in key:
         candidates = ("denim_fabric_03", "fabric_leather_01")
         legacy_id = "rubber_tiles"
         legacy_dir = reference.EXTRA_TEXTURE_ROOT / legacy_id
         legacy_names = _pbr_texture_names()
-        settings = (0.92, 0.0, 4.2)
+        settings = (0.92, 0.0, 1.20)
     else:
-        candidates = ("rubber_tiles", "rubberized_track")
+        # Synthetic plastic labels in the source metadata are rendered as
+        # varied coated surfaces: visible hessian weave, painted-metal ribs,
+        # and wood grain.  This keeps the shapes recognizable while making
+        # the image texture legible at the final 1280x720 display size.
+        candidates = ("hessian_230", "rusty_metal_03", "oak_wood_planks")
         legacy_id = "rubber_tiles"
         legacy_dir = reference.EXTRA_TEXTURE_ROOT / legacy_id
         legacy_names = _pbr_texture_names()
-        settings = (0.70, 0.04, 2.4)
+        settings = (0.82, 0.02, 0.55)
 
     for offset in range(len(candidates)):
         asset_id = candidates[(int(variant_index) + offset) % len(candidates)]
@@ -728,15 +982,21 @@ def build_actor_materials(
             texture_dir=texture_dir,
             texture_names=texture_names,
             tint=tint,
-            tint_strength=0.46,
+            tint_strength=0.04,
             roughness=roughness,
             metallic=metallic,
             uv_scale=uv_scale,
-            normal_strength=0.52,
-            detail_bump_strength=0.012,
+            normal_strength=1.50,
+            detail_bump_strength=0.105,
             detail_bump_scale=20.0,
         )
-        _force_material_color(materials[name], rgb, factor=0.46)
+        _force_material_color(materials[name], rgb, factor=0.0, texture_contrast=1.0)
+        _add_albedo_relief(materials[name], strength=0.72, distance=0.080)
+        _add_macro_texture_emphasis(
+            materials[name],
+            texture_asset_id,
+            object_index=object_index,
+        )
         display_colors[name]["source_material_key"] = material_key
         display_colors[name]["texture_asset_id"] = texture_asset_id
         display_colors[name]["texture_maps"] = sorted(texture_names)
@@ -997,7 +1257,7 @@ def main() -> None:
             "background_anchors": room_scene["background_color_anchors"],
             "objects": display_colors,
         },
-        "texture_profile": "polyhaven_pbr_fast_eevee_varied_backgrounds",
+        "texture_profile": "polyhaven_pbr_fast_eevee_varied_backgrounds_textured_objects",
         "texture_sources": [
             str(reference.TEXTURE_ROOT),
             str(reference.EXTRA_TEXTURE_ROOT),
