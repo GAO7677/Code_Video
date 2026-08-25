@@ -269,6 +269,12 @@
       .metric-cell span { color: var(--muted); font-family: var(--mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.04em; }
       .metric-cell b { font-family: var(--mono); font-size: 0.78rem; }
       .metric-footnote { margin: 10px 0 0; color: var(--muted); font-size: 0.67rem; line-height: 1.34; }
+      .aux-case-panel { padding: 9px 12px 11px; border-top: 1px dashed #d8d0c3; background: rgba(239, 232, 219, 0.42); }
+      .aux-case-title { color: var(--muted); font-family: var(--mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .aux-case-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; margin-top: 7px; }
+      .aux-case-cell { display: flex; justify-content: space-between; gap: 5px; color: var(--ink-2); font-family: var(--mono); font-size: 0.58rem; }
+      .aux-case-cell b { color: var(--tone); font-weight: 700; }
+      .aux-case-empty { color: var(--muted); font-family: var(--mono); font-size: 0.58rem; line-height: 1.4; }
       .reference-panel { display: grid; place-content: center start; min-height: 153px; padding: 12px; background: linear-gradient(135deg, rgba(16, 40, 61, 0.025), transparent); }
       .reference-panel strong { font-family: var(--display); font-size: 1.08rem; font-weight: 600; }
       .reference-panel p { margin: 5px 0 0; color: var(--muted); font-size: 0.74rem; line-height: 1.42; }
@@ -488,8 +494,8 @@
           if (!methodKeys.length) {
             return `
               <section class="aux-section" aria-label="Auxiliary metrics">
-                <div class="section-heading"><div><h2>Perceptual / reasoning metrics</h2></div><p>按 average-metrics 的同一套 bench.py 口径；DINOv3 按要求不纳入。</p></div>
-                <div class="aux-panel"><div class="aux-meta"><strong>pending</strong><button class="aux-refresh-button" id="refresh-aux-metrics" type="button">手动刷新指标</button></div><div class="aux-empty"><strong>Metric run pending</strong>三组本机 P0 submission 的 VBench、VideoPhy2、Cosmos Reason1 结果尚未写入。</div></div>
+                <div class="section-heading"><div><h2>Perceptual / reasoning metrics</h2></div><p>按 average-metrics 的同一套 bench.py 口径；只展示能够追溯到同一 P0 视频协议的记录。</p></div>
+                <div class="aux-panel"><div class="aux-meta"><strong>pending</strong><button class="aux-refresh-button" id="refresh-aux-metrics" type="button">手动刷新指标</button></div><div class="aux-empty"><strong>Metric run pending</strong>严格 P0 submission 的 VBench、VideoPhy2、Cosmos Reason1 结果尚未写入。</div></div>
               </section>`;
           }
           const groupHeader = groupSpans.map((group) => `<th class="group-${groupClass(group.group)}" colspan="${group.span}">${escapeHtml(group.group)}</th>`).join("");
@@ -519,9 +525,9 @@
           }).join("");
           return `
             <section class="aux-section" aria-label="VBench VideoPhy2 Cosmos metrics">
-              <div class="section-heading"><div><h2>Perceptual / reasoning metrics</h2></div><p>三组本机严格 submission，198 个视角逐视频均值。原始值域与 <a href="../physiciq-average-metrics/">average-metrics</a> 保持一致。</p></div>
+              <div class="section-heading"><div><h2>Perceptual / reasoning metrics</h2></div><p>当前快照对 4 个严格 P0 method 都保留列；其中 3 组有 198 个视角逐视频均值。xSSC DINOv3 没有找到同一批 198 views 的附加指标记录，因此保留为空，不填充估计值。</p></div>
               <div class="aux-panel">
-                <div class="aux-meta"><strong>${escapeHtml(auxiliary.status || "pending")} · ${escapeHtml(String(auxiliary.expected_cases || 198))} views · manual</strong><span class="aux-meta-copy"><b class="aux-key">BEST</b>按各指标方向比较：<span class="aux-direction">↑ 越高越好</span> · <span class="aux-direction aux-direction-low">↓ 越低越好</span>；仅完整覆盖的方法参与，并列全部标注。点击按钮读取最新快照，DINOv3 intentionally omitted.</span><button class="aux-refresh-button" id="refresh-aux-metrics" type="button">手动刷新指标</button></div>
+                <div class="aux-meta"><strong>${escapeHtml(auxiliary.status || "pending")} · ${escapeHtml(String(auxiliary.expected_cases || 198))} views · manual</strong><span class="aux-meta-copy"><b class="aux-key">BEST</b>按各指标方向比较：<span class="aux-direction">↑ 越高越好</span> · <span class="aux-direction aux-direction-low">↓ 越低越好</span>；仅完整覆盖的方法参与，并列全部标注。xSSC DINOv3 暂无同协议附加指标记录。</span><button class="aux-refresh-button" id="refresh-aux-metrics" type="button">手动刷新指标</button></div>
                 <div class="aux-table-wrap"><table class="aux-table"><thead><tr><th rowspan="2">Method</th>${groupHeader}<th rowspan="2">Coverage</th></tr><tr>${metricHeader}</tr></thead><tbody>${rows}</tbody></table></div>
               </div>
             </section>`;
@@ -563,6 +569,29 @@
             </div>`;
         }
 
+        function formatAuxCaseValue(key, value) {
+          if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+          const numeric = Number(value);
+          if (key === "videophy2" || key === "videophy2_joint_rate") return `${fmt(numeric * 100, 0)}%`;
+          if (key.startsWith("vbench_")) return fmt(numeric, 3);
+          return fmt(numeric, 1);
+        }
+
+        function perViewAuxiliaryPanel(metrics) {
+          if (!metrics) {
+            return `<div class="aux-case-panel"><div class="aux-case-title">Other metrics</div><div class="aux-case-empty">No exact same-protocol auxiliary record</div></div>`;
+          }
+          const fields = [
+            ["PC raw", "videophy2_pc_raw"],
+            ["joint", "videophy2"],
+            ["Cosmos", "cosmos_reason1"],
+            ["subject", "vbench_subject_consistency"],
+            ["temporal", "vbench_temporal_flickering"],
+            ["dynamic", "vbench_dynamic_degree"],
+          ];
+          return `<div class="aux-case-panel"><div class="aux-case-title">Other metrics · same P0 view</div><div class="aux-case-grid">${fields.map(([label, key]) => `<span class="aux-case-cell"><span>${label}</span><b>${formatAuxCaseValue(key, metrics[key])}</b></span>`).join("")}</div></div>`;
+        }
+
         function referencePanel(method) {
           const text = method.key === "context"
             ? "模型看到的 72 帧条件片段；它不是待评分的 5 秒预测。"
@@ -595,6 +624,7 @@
                 <span class="video-status">${isReference ? method.key === "context" ? "72f · 3s context" : "official test" : "120f · 5s output"}</span>
               </div>
               ${isReference ? referencePanel(method) : metrics ? perViewMetricPanel(metrics) : globalMetricPanel(score)}
+              ${isReference ? "" : perViewAuxiliaryPanel(view.auxiliary_metrics?.[method.key])}
             </article>`;
         }
 
@@ -640,7 +670,7 @@
                   <div class="field"><label for="view-select">Perspective</label><select id="view-select"><option value="all" ${selectedView === "all" ? "selected" : ""}>all three cameras</option><option value="left" ${selectedView === "left" ? "selected" : ""}>left</option><option value="center" ${selectedView === "center" ? "selected" : ""}>center</option><option value="right" ${selectedView === "right" ? "selected" : ""}>right</option></select></div>
                   <div class="toolbar-actions"><button class="control-button primary" id="play-all" type="button">Play visible</button><button class="control-button" id="pause-all" type="button">Pause</button><button class="control-button" id="restart-all" type="button">Restart</button></div>
                 </div>
-                <div class="search-row"><div class="field"><label for="case-search">Filter events</label><input id="case-search" type="search" placeholder="例如：ball, domino, mug…" autocomplete="off" /></div><div class="field"><label>Evidence coverage</label><div class="reference-panel"><strong>${data.availability.cases} cases · ${data.availability.views} views</strong><p>Media and official Physics-IQ CSV: xSSC / PhysRVG-72f / Full-SA VJEPA · auxiliary metrics: same three local runs</p></div></div></div>
+                <div class="search-row"><div class="field"><label for="case-search">Filter events</label><input id="case-search" type="search" placeholder="例如：ball, domino, mug…" autocomplete="off" /></div><div class="field"><label>Evidence coverage</label><div class="reference-panel"><strong>${data.availability.cases} cases · ${data.availability.views} views</strong><p>Media and official Physics-IQ CSV: xSSC step-2000 / xSSC DINOv3 step-500 / PhysRVG-72f / Full-SA VJEPA · auxiliary snapshot: 3 methods</p></div></div></div>
                 <div class="transport"><span class="transport-status">SYNC TRANSPORT</span><input id="transport-range" type="range" min="0" max="1000" value="0" aria-label="同步播放进度" /><span class="transport-status" id="transport-readout">0.0s / —</span></div>
                 <div class="case-intro"><div class="case-line"><span class="case-id">IDs ${escapeHtml(ids)}</span><h3>${escapeHtml(active.title)}</h3></div><p>${escapeHtml(active.views[0].prompt)}</p><details><summary>Prompt / protocol note</summary><p>所有登记主分数均属于 P0：BPP prompt、72f/24 FPS V2V 条件、512×896、40 steps、guidance 5、seed 42、189f 原始输出，以及去掉 69 帧 clean prefix 后的 120f/5s official submission。VBench / VideoPhy2 / Cosmos Reason1 仅对本机三组最终 submission 执行。</p></details></div>
                 ${views.map(renderView).join("")}
@@ -651,7 +681,7 @@
         function renderLegend() {
           return `
             <aside class="legend" aria-label="Metrics explanation">
-              <div><h3>如何读这张页</h3><p>P0 总览的 <strong>Verified</strong> 是官方 aggregate 的主分数（×100）。分数栏中的 SP、ST、WS 和归一化 MSE component 都是 score 口径（↑）；视频卡片中的 MSE 展示原始逐帧误差（↓）。辅助指标表按各自声明的方向计算 BEST，不把原始误差方向和归一化 score 方向混用。卡片标题右侧的 case × view 分数严格复刻官方 stable evaluator 的逐视角组件归一化、截断及算术均值流程，但不是官方对单一 case 单独发布的排行榜分数。</p></div>
+                <div><h3>如何读这张页</h3><p>P0 总览的 <strong>Verified</strong> 是官方 aggregate 的主分数（×100）。分数栏中的 SP、ST、WS 和归一化 MSE component 都是 score 口径（↑）；视频卡片中的 MSE 展示原始逐帧误差（↓）。辅助指标表按各自声明的方向计算 BEST，不把原始误差方向和归一化 score 方向混用。卡片标题右侧的 case × view 分数严格复刻官方 stable evaluator 的逐视角组件归一化、截断及算术均值流程，但不是官方对单一 case 单独发布的排行榜分数。四个模型方法均有 66 case / 198 view 的官方视频与逐视角 Physics-IQ 组件；附加指标缺失时保留为 —。</p></div>
               <dl>
                 <dt>SP</dt><dd>spatial IoU score · higher is better</dd>
                 <dt>ST</dt><dd>mean per-frame spatiotemporal IoU score · higher is better</dd>

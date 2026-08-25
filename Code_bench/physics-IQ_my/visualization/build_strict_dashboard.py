@@ -53,6 +53,19 @@ PHYSRVG_FULL_SA_RAW = Path(
     "/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/raw/"
     "physrvg-full-sa-vjepa-step000500-bpp-run_01"
 )
+XSSC_DINOV3_ROOT = Path(
+    "/data/gaoya/agent-data/cache/physics-iq-verified/remote/"
+    "xssc-loss-dinov3"
+)
+XSSC_DINOV3_SUBMISSION = XSSC_DINOV3_ROOT / "submission"
+XSSC_DINOV3_CSV = XSSC_DINOV3_ROOT / "evaluation" / (
+    "full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-"
+    "2c970f718bcf-bpp-run_01.csv"
+)
+XSSC_DINOV3_METRICS = XSSC_DINOV3_ROOT / "evaluation" / (
+    "full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-"
+    "2c970f718bcf-bpp-run_01_metrics.json"
+)
 RESULTS_DIR = Path(
     "/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/"
     "physics-IQ-benchmark-verified/results"
@@ -273,8 +286,17 @@ def load_auxiliary_metrics() -> dict[str, Any]:
             for definition in AUXILIARY_METRIC_DEFS
         },
         "metric_direction_notes": AUXILIARY_DIRECTION_NOTES,
-        "methods": {},
-        "note": "VBench / VideoPhy2 / Cosmos Reason1 are not evaluated yet.",
+        "methods": {
+            "xssc_dinov3": {
+                "label": "xSSC Full-SA + xSSC-loss DINOv3 MOVi-C",
+                "complete": False,
+                "num_records": 0,
+                "expected_cases": 198,
+                "coverage": {},
+                "values": {},
+            }
+        },
+        "note": "VBench / VideoPhy2 / Cosmos Reason1 are not evaluated yet; xSSC DINOv3 has no exact P0 auxiliary snapshot.",
     }
     if not STRICT_METRICS_JSON.is_file():
         return base
@@ -319,7 +341,25 @@ def load_auxiliary_metrics() -> dict[str, Any]:
             "expected_cases": int(method.get("expected_cases") or source.get("expected_cases") or 198),
             "coverage": coverage,
             "values": values,
+            "cases": {
+                case_key: {
+                    metric: row.get(metric)
+                    for metric in ALL_AUXILIARY_METRICS
+                }
+                for case_key, row in (method.get("cases") or {}).items()
+            },
         }
+    methods.setdefault(
+        "xssc_dinov3",
+        {
+            "label": "xSSC Full-SA + xSSC-loss DINOv3 MOVi-C",
+            "complete": False,
+            "num_records": 0,
+            "expected_cases": int(source.get("expected_cases") or 198),
+            "coverage": {},
+            "values": {},
+        },
+    )
     base.update(
         {
             "status": source.get("status", "partial"),
@@ -340,7 +380,7 @@ def load_auxiliary_metrics() -> dict[str, Any]:
                 ),
             },
             "methods": methods,
-            "note": "DINOv3 is intentionally excluded; each column uses its declared metric direction.",
+            "note": "xSSC DINOv3 is listed with empty auxiliary cells because no exact P0 snapshot was found; each populated column uses its declared metric direction.",
         }
     )
     return base
@@ -350,9 +390,15 @@ def title_for_event(event: str) -> str:
     return event.removeprefix("trimmed-").replace("-", " ")
 
 
+ALL_AUXILIARY_METRICS = tuple(
+    definition["key"] for definition in AUXILIARY_METRIC_DEFS
+)
+
+
 def build_cases(
     assets: Path,
     case_metrics: dict[str, dict[str, dict[str, dict[str, Any]]]],
+    auxiliary_metrics: dict[str, Any],
 ) -> list[dict[str, Any]]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for json_path in sorted(INPUT_JSONS.glob("*.json")):
@@ -370,6 +416,12 @@ def build_cases(
             for method, metrics in case_metrics.items()
             if event in metrics and view in metrics[event]
         }
+        auxiliary_case_metrics = {}
+        auxiliary_view_key = Path(output_name).stem
+        for method, summary in (auxiliary_metrics.get("methods") or {}).items():
+            row = (summary.get("cases") or {}).get(auxiliary_view_key)
+            if isinstance(row, dict):
+                auxiliary_case_metrics[method] = row
         groups[event].append(
             {
                 "id": case_id,
@@ -390,8 +442,12 @@ def build_cases(
                     "physrvg_full_sa_raw": relative_asset(
                         assets, "physrvg_full_sa_raw", output_name
                     ),
+                    "xssc_dinov3": relative_asset(
+                        assets, "xssc_dinov3", output_name
+                    ),
                 },
                 "metrics": view_metrics,
+                "auxiliary_metrics": auxiliary_case_metrics,
             }
         )
 
@@ -436,6 +492,7 @@ def build_payload(output: Path) -> dict[str, Any]:
         "ground_truth": GROUND_TRUTH,
         "xssc_step2000": XSSC_SUBMISSION,
         "xssc_step2000_raw": XSSC_RAW,
+        "xssc_dinov3": XSSC_DINOV3_SUBMISSION,
         "physrvg_72f": PHYSRVG_72F_SUBMISSION,
         "physrvg_full_sa": PHYSRVG_FULL_SA_SUBMISSION,
         "physrvg_full_sa_raw": PHYSRVG_FULL_SA_RAW,
@@ -444,15 +501,18 @@ def build_payload(output: Path) -> dict[str, Any]:
         ensure_directory_link(assets / name, target)
 
     xssc_case_metrics = load_official_case_metrics(XSSC_CSV)
+    xssc_dinov3_case_metrics = load_official_case_metrics(XSSC_DINOV3_CSV)
     physrvg_72f_case_metrics = load_official_case_metrics(PHYSRVG_72F_CSV)
     full_sa_case_metrics = load_official_case_metrics(PHYSRVG_FULL_SA_CSV)
     cases = build_cases(
         assets,
         {
             "xssc_step2000": xssc_case_metrics,
+            "xssc_dinov3": xssc_dinov3_case_metrics,
             "physrvg_72f": physrvg_72f_case_metrics,
             "physrvg_full_sa": full_sa_case_metrics,
         },
+        auxiliary_metrics,
     )
 
     scoreboard = [
@@ -483,6 +543,19 @@ def build_payload(output: Path) -> dict[str, Any]:
             "auxiliary_metric_status": auxiliary_metrics["methods"].get("physrvg_full_sa", {}).get("complete", False),
         },
         {
+            "key": "xssc_dinov3",
+            "label": "xSSC Full-SA + xSSC-loss DINOv3 MOVi-C",
+            "short_label": "xSSC DINOv3 · step-500",
+            "family": "xSSC",
+            "run": "full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01",
+            "scores": score_summary_from_metrics(XSSC_DINOV3_METRICS),
+            "video_status": "198/198 mounted locally",
+            "case_metric_status": "Official CSV and 198 submission videos synced from SSH 118; no exact auxiliary-metric snapshot found.",
+            "source": "Synced official metrics JSON + CSV from SSH 118",
+            "color": "rose",
+            "auxiliary_metric_status": False,
+        },
+        {
             "key": "xssc_step2000",
             "label": "xSSC Full-SA no-object",
             "short_label": "xSSC step-2000",
@@ -494,26 +567,6 @@ def build_payload(output: Path) -> dict[str, Any]:
             "source": "Local official metrics JSON + CSV",
             "color": "cyan",
             "auxiliary_metric_status": auxiliary_metrics["methods"].get("xssc_step2000", {}).get("complete", False),
-        },
-        {
-            "key": "xssc_dinov3",
-            "label": "xSSC xSSC-loss DINOv3 MOVi-C",
-            "short_label": "xSSC DINOv3",
-            "family": "xSSC",
-            "run": "full_sa_no_object_xssc_loss_dinov3_movic_step50000-step-000500-2c970f718bcf-bpp-run_01",
-            "scores": {
-                "verified": 33.2976,
-                "original": 34.45,
-                "spatial": 30.4234,
-                "spatiotemporal": 50.4199,
-                "weighted_spatial": 23.0123,
-                "mse": 29.3349,
-            },
-            "video_status": "Not mounted on this host",
-            "case_metric_status": "Official CSV and media remain on SSH 118; only recorded global scores are shown.",
-            "source": "P0 results registry / official aggregate recorded 2026-08-12 UTC",
-            "color": "rose",
-            "auxiliary_metric_status": False,
         },
     ]
     scoreboard.sort(key=lambda item: item["scores"]["verified"], reverse=True)
@@ -533,7 +586,7 @@ def build_payload(output: Path) -> dict[str, Any]:
         "title": "Physics-IQ Verified · P0 Strict Comparison",
         "protocol": {
             "benchmark": "Physics-IQ-Verified",
-            "comparison_scope": "P0 only — three local submissions have the auxiliary metric run.",
+            "comparison_scope": "P0 only — four strictly comparable methods; auxiliary snapshot covers three.",
             "prompt": "Best-practice prompt (BPP)",
             "condition": "72 frames · 24 FPS · 3 seconds · V2V",
             "inference": "512×896 · 40 steps · guidance 5 · seed 42 · 189 raw frames",
@@ -549,15 +602,19 @@ def build_payload(output: Path) -> dict[str, Any]:
             "assets": asset_counts,
             "per_view_metric_methods": [
                 "xssc_step2000",
+                "xssc_dinov3",
                 "physrvg_72f",
                 "physrvg_full_sa",
             ],
-            "note": "The P0 scoreboard retains the four recorded Physics-IQ aggregates. The auxiliary table intentionally covers only the three local submissions; media cards never invent a missing asset.",
+            "note": "All four P0 methods have 66 cases / 198 views, videos, official CSV and per-view component metrics. Auxiliary VBench / VideoPhy2 / Cosmos records are available for three methods only.",
         },
         "data_sources": {
             "physrvg_72f_csv": str(PHYSRVG_72F_CSV),
             "physrvg_72f_metrics_json": str(PHYSRVG_72F_METRICS),
             "physrvg_72f_remote_origin": "118:/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/evaluation/physrvg-72f-xssc-aligned-bpp-run_01/physics-IQ-benchmark-verified/results/",
+            "xssc_dinov3_csv": str(XSSC_DINOV3_CSV),
+            "xssc_dinov3_metrics_json": str(XSSC_DINOV3_METRICS),
+            "xssc_dinov3_remote_origin": "118:/home/gaoya/data/AAA_test_video/0623/test/physicsiq/physicsiq_verified/",
             "strict_auxiliary_metrics": str(STRICT_METRICS_JSON),
             "strict_auxiliary_runner": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py",
         },
@@ -585,11 +642,10 @@ def build_payload(output: Path) -> dict[str, Any]:
             },
             {
                 "key": "xssc_dinov3",
-                "label": "xSSC xSSC-loss DINOv3",
-                "detail": "P0 run · global score only; media not mounted locally",
+                "label": "xSSC Full-SA + xSSC-loss DINOv3 MOVi-C",
+                "detail": "P0 submission · 120 generated frames · Verified 33.30",
                 "kind": "model",
                 "color": "rose",
-                "unavailable": True,
             },
             {
                 "key": "physrvg_72f",
