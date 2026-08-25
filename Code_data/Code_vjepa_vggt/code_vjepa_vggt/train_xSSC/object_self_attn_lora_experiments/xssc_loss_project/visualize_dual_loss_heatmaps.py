@@ -309,12 +309,40 @@ code{{color:#b8dbff;word-break:break-all}} @media(max-width:1000px){{.grid{{grid
 {''.join(sections)}
 <p>训练样本：<code>{metadata_text}</code></p>
 <p>时间轴映射：<code>{timeline_text}</code></p>
-</main><button id="replay">全部重新播放</button>
+</main><button id="replay">同步重新播放</button>
 <script>
 const select=document.getElementById('level');
-function showLevel(){{document.querySelectorAll('.level').forEach((el,i)=>el.hidden=i!==Number(select.value)); replay();}}
-function replay(){{document.querySelectorAll('.level:not([hidden]) video').forEach(v=>{{v.pause();v.currentTime=0;v.play().catch(()=>{{}});}})}}
-select.addEventListener('change',showLevel);document.getElementById('replay').addEventListener('click',replay);
+const replayButton=document.getElementById('replay');
+function waitUntilReady(video){{
+  video.loop=false;
+  video.removeAttribute('loop');
+  if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return Promise.resolve();
+  return new Promise((resolve) => {{
+    const done = () => resolve();
+    video.addEventListener('canplay', done, {{once:true}});
+    video.addEventListener('error', done, {{once:true}});
+    video.preload='auto';
+    video.load();
+  }});
+}}
+async function replay(){{
+  const videos=[...document.querySelectorAll('.level:not([hidden]) video')];
+  if (!videos.length) return;
+  replayButton.disabled=true;
+  videos.forEach((video)=>{{video.pause(); video.currentTime=0;}});
+  await Promise.all(videos.map(waitUntilReady));
+  await Promise.allSettled(videos.map((video)=>video.play()));
+  replayButton.disabled=false;
+}}
+function showLevel(){{
+  document.querySelectorAll('.level').forEach((el,i)=>{{
+    el.hidden=i!==Number(select.value);
+    if (el.hidden) el.querySelectorAll('video').forEach((video)=>video.pause());
+  }});
+  replay();
+}}
+select.addEventListener('change',showLevel);
+replayButton.addEventListener('click',replay);
 </script></body></html>"""
     (output_dir / "index.html").write_text(page, encoding="utf-8")
 
