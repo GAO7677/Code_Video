@@ -36,8 +36,12 @@ from Dataset_physv_v2v_0819.scripts.generate_external_variants_demo import (  # 
 from Dataset_physv_v2v_0819.scripts.render_sim_0705 import (  # noqa: E402
     render_blueprint_case,
 )
+from Dataset_physv_v2v_0819.scripts.render_blueprint_states_only import (  # noqa: E402
+    render_blueprint_states_only,
+)
 from Dataset_physv_v2v_0819.scripts.scene_generators_0705 import (  # noqa: E402
     _collision_vertical_extent,
+    _horizontal_clearance_radius,
 )
 
 
@@ -194,6 +198,33 @@ def _scale_object_size(obj, rng: np.random.Generator) -> tuple[dict[str, float],
     }
 
 
+def _resolve_spawn_position_against_static(
+    obj,
+    position: list[float],
+    static_objects: list[Any],
+) -> tuple[list[float], list[float]]:
+    """Move a resized dynamic actor out of legacy fixed geometry at spawn."""
+    original_xy = np.asarray(position[:2], dtype=np.float64)
+    resolved_xy = original_xy.copy()
+    actor_radius = _horizontal_clearance_radius(obj)
+    for _ in range(4):
+        changed = False
+        for static in static_objects:
+            delta = resolved_xy - np.asarray(static.position[:2], dtype=np.float64)
+            distance = float(np.linalg.norm(delta))
+            required = actor_radius + _horizontal_clearance_radius(static) + 0.012
+            if distance >= required:
+                continue
+            direction = delta / distance if distance > 1e-8 else np.asarray((1.0, 0.0))
+            resolved_xy = np.asarray(static.position[:2], dtype=np.float64) + direction * required
+            changed = True
+        if not changed:
+            break
+    resolved = [float(resolved_xy[0]), float(resolved_xy[1]), float(position[2])]
+    adjustment = [float(resolved_xy[0] - original_xy[0]), float(resolved_xy[1] - original_xy[1])]
+    return resolved, adjustment
+
+
 def _diversify_blueprint(
     blueprint,
     *,
@@ -205,7 +236,43 @@ def _diversify_blueprint(
     objects = []
     geometry_records: list[dict[str, Any]] = []
     texture_assets: dict[str, str] = {}
+    static_objects = [obj for obj in blueprint.objects if not obj.dynamic]
     for object_index, obj in enumerate(blueprint.objects):
+        # The original 0717 F1-F10 metadata predates the stricter 0819
+        # initialization contract.  Static supports are still valid fixed
+        # scene geometry for these legacy families; use the explicit role
+        # understood by the current validator while leaving their collision
+        # geometry unchanged.
+        if not obj.dynamic:
+            appearance_group = f"diverse_{job_index:02d}_{object_index:02d}"
+            texture_assets[obj.name] = TEXTURE_POOL[(job_index * 3 + object_index * 5) % len(TEXTURE_POOL)]
+            objects.append(
+                replace(
+                    obj,
+                    role="anchored_occluder",
+                    metadata={
+                        **obj.metadata,
+                        "appearance_group": appearance_group,
+                        "diversity_variant": True,
+                        "source_case_id": source_case_id,
+                        "job_index": job_index,
+                        "static_geometry_preserved": True,
+                    },
+                )
+            )
+            geometry_records.append(
+                {
+                    "object": obj.name,
+                    "shape": obj.shape,
+                    "original_size": obj.size,
+                    "new_size": obj.size,
+                    "scale": {"global": 1.0, "x": 1.0, "y": 1.0, "z": 1.0},
+                    "original_mass": float(obj.mass),
+                    "new_mass_constant_density": float(obj.mass),
+                    "static_geometry_preserved": True,
+                }
+            )
+            continue
         new_size, scale_record = _scale_object_size(obj, rng)
         old_volume = _shape_volume(obj.shape, obj.size)
         new_volume = _shape_volume(obj.shape, new_size)
@@ -215,9 +282,25 @@ def _diversify_blueprint(
         new_position = list(obj.position)
         # Keep the changed shape grounded at the same physical contact plane.
         new_position[2] += new_extent - old_extent
+        # A subset of legacy F1-F10 objects has a conservative source extent
+        # that is slightly below the current plane-audit threshold.  Raising
+        # only those floor-contact actors preserves the visible setup while
+        # preventing the stricter reconstruction preflight from rejecting the
+        # derived case.
+        if new_position[2] < new_extent + 0.020:
+            new_position[2] = new_extent + 0.020
+        new_position, spawn_xy_adjustment = _resolve_spawn_position_against_static(
+            provisional,
+            new_position,
+            static_objects,
+        )
         # Constant density makes the geometry change physically meaningful;
         # friction/restitution/damping remain unchanged.
         new_mass = float(obj.mass * new_volume / max(old_volume, 1e-9))
+        angular_velocity_scale = 0.75 if obj.shape == "wheel_thick" else 1.0
+        new_angular_velocity = tuple(
+            float(value * angular_velocity_scale) for value in obj.angular_velocity
+        )
         appearance_group = f"diverse_{job_index:02d}_{object_index:02d}"
         texture_assets[obj.name] = TEXTURE_POOL[(job_index * 3 + object_index * 5) % len(TEXTURE_POOL)]
         objects.append(
@@ -225,6 +308,7 @@ def _diversify_blueprint(
                 provisional,
                 mass=new_mass,
                 position=tuple(float(value) for value in new_position),
+                angular_velocity=new_angular_velocity,
                 metadata={
                     **obj.metadata,
                     "appearance_group": appearance_group,
@@ -246,6 +330,8 @@ def _diversify_blueprint(
                 "new_mass_constant_density": new_mass,
                 "original_ground_extent_m": old_extent,
                 "new_ground_extent_m": new_extent,
+                "spawn_xy_adjustment_m": spawn_xy_adjustment,
+                "angular_velocity_scale": angular_velocity_scale,
             }
         )
 
@@ -321,14 +407,10 @@ def _stage_and_render_job(
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     with log_path.open("w", encoding="utf-8") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
-        staged_manifest = render_blueprint_case(
+        staged_manifest = render_blueprint_states_only(
             blueprint=variant,
             seed=variant_seed,
             output_root=stage_root,
-            width=stage_width,
-            height=stage_height,
-            scene_style="indoor_realistic",
-            preserve_states=True,
         )
         staged_meta_path = Path(str(staged_manifest["meta"]))
         staged_states_path = Path(str(staged_manifest["states"]))
