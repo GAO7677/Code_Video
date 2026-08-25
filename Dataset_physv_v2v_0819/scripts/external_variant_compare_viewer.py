@@ -72,6 +72,15 @@ def load_groups(root: Path) -> tuple[dict[str, dict], list[str]]:
                 "perturbations": item.get("perturbations", {}).get("objects", []),
                 "collision": item.get("collision_summary", {}),
                 "objects": variant_meta.get("objects", []),
+                "background_profile": str(
+                    item.get("background_profile", variant_meta.get("background_profile", ""))
+                ),
+                "display_colors": (
+                    variant_meta.get("render_metadata", {}).get(
+                        "display_material_assignments", {}
+                    )
+                    or variant_meta.get("display_material_assignments", {})
+                ),
             }
         )
     ordered = sorted(groups, key=lambda key: (groups[key]["source"]["family"], key))
@@ -115,7 +124,7 @@ PAGE = r"""<!doctype html>
   </style>
 </head>
 <body><main class="shell">
-  <header><div><div class="eyebrow">0717 / __MODE__ / DEMO</div><h1>Same physics.<br><em>New motion.</em></h1><p class="lede">Each row keeps the original material and physical parameters, then changes only the external starting conditions. Compare the source simulation on the left with its randomized variants on the right.</p></div><div class="stats"><div class="stat"><strong id="source-count">—</strong><span>source cases</span></div><div class="stat"><strong id="variant-count">—</strong><span>derived cases</span></div><div class="stat"><strong>2–3</strong><span>variants / source</span></div></div></header>
+  <header><div><div class="eyebrow">0717 / __MODE__ / DEMO</div><h1>Same physics.<br><em>New motion.</em></h1><p class="lede">Each row keeps the original material and physical parameters, then changes only the external starting conditions. Compare the source simulation on the left with its randomized variants on the right.</p></div><div class="stats"><div class="stat"><strong id="source-count">—</strong><span>source cases</span></div><div class="stat"><strong id="variant-count">—</strong><span>derived cases</span></div><div class="stat"><strong id="profile-count">—</strong><span>background profiles</span></div></div></header>
   <section class="toolbar"><div><div class="eyebrow">CASE GROUPS</div><div class="filters" id="filters"></div></div><label><span class="label">Jump to source</span><br><select id="select"></select></label></section>
   <section class="groups" id="groups"></section>
   <footer>Demo output: __ROOT__ · No VAE, prompt, or Utonia cache was generated.</footer>
@@ -125,12 +134,12 @@ PAGE = r"""<!doctype html>
   const DATA=JSON.parse(document.getElementById('payload').textContent), groups=DATA.groups, order=DATA.order;
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const fmt=(v,d=3)=>v==null?'—':Number(v).toFixed(d), media=(kind,id)=>`/media/${kind}/${encodeURIComponent(id)}`;
-  document.getElementById('source-count').textContent=order.length; document.getElementById('variant-count').textContent=order.reduce((n,id)=>n+groups[id].variants.length,0);
+  document.getElementById('source-count').textContent=order.length; document.getElementById('variant-count').textContent=order.reduce((n,id)=>n+groups[id].variants.length,0); document.getElementById('profile-count').textContent=new Set(order.flatMap(id=>groups[id].variants.map(v=>v.background_profile).filter(Boolean))).size||'—';
   const families=[...new Set(order.map(id=>groups[id].source.family))].sort();
   const select=document.getElementById('select'); order.forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=`${groups[id].source.family} · ${id}`;select.appendChild(o)});
   function objectText(objects){return (objects||[]).filter(o=>o.dynamic).map(o=>`${o.name}: ${o.material_key||o.material||o.shape}`).join(' · ')||'no dynamic object';}
-  function variantCard(v){const first=(v.perturbations||[])[0]||{},rows=(v.perturbations||[]).map(p=>`${esc(p.object)}: Δxy ${esc((p.position_delta_m||[]).map(x=>Number(x).toFixed(3)).join(', '))} m · speed ×${fmt(p.velocity_scale)} · heading ${fmt(p.heading_delta_deg,2)}°`).join('<br>');const c=v.collision||{},pairs=Object.entries(c.pair_contact_frames||{}).map(([k,n])=>`${esc(k.replaceAll('__',' ↔ '))}: ${esc(n)} frames`).join(' · ')||'contact not recorded';return `<article class="variant"><video controls playsinline preload="metadata" src="${media('variant',v.case_id)}"></video><div class="variant-body"><div class="variant-top"><span>EXT V${String(v.index).padStart(2,'0')}</span><span class="variant-id">${esc(v.case_id)}</span></div><div class="delta">${rows}<br>angular scale ${fmt(first.angular_velocity_scale)} · seed ${esc(v.seed)}<br><span class="contact-badge">CONTACT · ${pairs}</span></div></div></article>`}
-  function groupCard(id){const g=groups[id],s=g.source;return `<article class="group" id="group-${esc(id)}"><div class="group-head"><h2>${esc(s.title)} <span style="color:var(--copper)">/ ${esc(s.family)}</span></h2><small>${esc(id)} · ${g.variants.length} derived samples</small></div><div class="compare"><div class="original"><div class="label">Original simulation</div><video controls playsinline preload="metadata" src="${media('source',id)}"></video><div class="case-name">${esc(id)}</div><p class="caption">${esc(s.caption)}</p><div class="object-line">${esc(objectText(s.objects))}</div></div><div class="variants"><div class="label">External-condition variants</div><div class="variant-grid">${g.variants.map(variantCard).join('')}</div></div></div></article>`}
+  function variantCard(v){const first=(v.perturbations||[])[0]||{},rows=(v.perturbations||[]).map(p=>`${esc(p.object)}: Δxy ${esc((p.position_delta_m||[]).map(x=>Number(x).toFixed(3)).join(', '))} m · speed ×${fmt(p.velocity_scale)} · heading ${fmt(p.heading_delta_deg,2)}°`).join('<br>');const c=v.collision||{},pairs=Object.entries(c.pair_contact_frames||{}).map(([k,n])=>`${esc(k.replaceAll('__',' ↔ '))}: ${esc(n)} frames`).join(' · ')||'contact not recorded';const colors=Object.entries(v.display_colors||{}).map(([name,info])=>`${name}: ${info.label||'—'}${info.texture_asset_id?' · '+info.texture_asset_id:''}`).join(' · ');return `<article class="variant"><video controls playsinline preload="metadata" src="${media('variant',v.case_id)}"></video><div class="variant-body"><div class="variant-top"><span>EXT V${String(v.index).padStart(2,'0')}</span><span class="variant-id">${esc(v.case_id)}</span></div><div class="delta"><b>${esc(v.background_profile||'background')}</b><br>${esc(colors||'textured PBR objects')}<br>${rows}<br>angular scale ${fmt(first.angular_velocity_scale)} · seed ${esc(v.seed)}<br><span class="contact-badge">CONTACT · ${pairs}</span></div></div></article>`}
+  function groupCard(id){const g=groups[id],s=g.source;return `<article class="group" id="group-${esc(id)}"><div class="group-head"><h2>${esc(s.title)} <span style="color:var(--copper)">/ ${esc(s.family)}</span></h2><small>${esc(id)} · ${g.variants.length} derived samples</small></div><div class="compare"><div class="original"><div class="label">__SOURCE_LABEL__</div><video controls playsinline preload="metadata" src="${media('source',id)}"></video><div class="case-name">${esc(id)}</div><p class="caption">${esc(s.caption)}</p><div class="object-line">${esc(objectText(s.objects))}</div></div><div class="variants"><div class="label">__VARIANT_LABEL__</div><div class="variant-grid">${g.variants.map(variantCard).join('')}</div></div></div></article>`}
   function render(family='ALL'){const ids=family==='ALL'?order:order.filter(id=>groups[id].source.family===family);document.getElementById('groups').innerHTML=ids.map(groupCard).join('');document.querySelectorAll('#filters button').forEach(b=>b.classList.toggle('active',b.dataset.family===family));}
   document.getElementById('filters').innerHTML=['ALL',...families].map(f=>`<button data-family="${f}">${f}</button>`).join('');document.getElementById('filters').addEventListener('click',e=>{if(e.target.matches('button'))render(e.target.dataset.family)});select.addEventListener('change',e=>document.getElementById('group-'+e.target.value)?.scrollIntoView({behavior:'smooth',block:'start'}));render();
 </script></body></html>"""
@@ -140,11 +149,20 @@ class Viewer:
     def __init__(self, root: Path):
         self.root = root
         self.groups, self.order = load_groups(root)
-        mode = "COLLISION VARIANTS" if "collision" in root.name.lower() else "EXTERNAL CONDITIONS"
+        if "texture" in root.name.lower():
+            mode = "TEXTURE REALISM"
+            source_label = "Existing fast pyrender baseline"
+            variant_label = "Eevee PBR · downloaded varied backgrounds + textured objects"
+        else:
+            mode = "COLLISION VARIANTS" if "collision" in root.name.lower() else "EXTERNAL CONDITIONS"
+            source_label = "Original simulation"
+            variant_label = "External-condition variants"
         self.page = (
             PAGE.replace("__DATA__", html_json({"groups": self.groups, "order": self.order}))
             .replace("__MODE__", mode)
             .replace("__ROOT__", str(root))
+            .replace("__SOURCE_LABEL__", source_label)
+            .replace("__VARIANT_LABEL__", variant_label)
             .encode("utf-8")
         )
         self.source_paths = {key: Path(value["source"]["video"]) for key, value in self.groups.items()}
