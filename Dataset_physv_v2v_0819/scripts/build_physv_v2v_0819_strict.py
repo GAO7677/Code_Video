@@ -96,6 +96,42 @@ def cycle_config(sample_dir: Path) -> dict[str, Any]:
     }
 
 
+def synchronize_cycle_config(sample_dir: Path) -> None:
+    """Make the copied preview metadata agree with the strict video on disk."""
+    video_path = sample_dir / "videos/rgb_cycles.mp4"
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        capture.release()
+        raise RuntimeError(f"Could not open CYCLES video: {video_path}")
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = float(capture.get(cv2.CAP_PROP_FPS))
+    capture.release()
+    if [width, height, frame_count] != [896, 512, 90] or abs(fps - 30.0) >= 0.1:
+        raise RuntimeError(
+            f"Strict video is not 896x512/30 FPS/90 frames: {video_path} "
+            f"({width}x{height}, {fps} FPS, {frame_count} frames)"
+        )
+    config_path = sample_dir / "videos/rgb_cycles.json"
+    config = load_json(config_path)
+    config["source_sample_dir"] = str(sample_dir)
+    config["frame_count"] = frame_count
+    config["fps"] = 30
+    config["resolution"] = [width, height]
+    config["samples"] = 32
+    config["engine"] = "CYCLES"
+    config["video"] = {
+        "width": width,
+        "height": height,
+        "avg_frame_rate": "30/1",
+        "duration": f"{frame_count / 30.0:.6f}",
+        "nb_frames": str(frame_count),
+    }
+    config["output_video"] = str(video_path)
+    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def stage_samples(source_root: Path, output_root: Path, *, resume: bool) -> tuple[list[Path], list[str]]:
     source_samples = sorted(
         path for path in (source_root / "samples").iterdir()
@@ -123,6 +159,7 @@ def stage_samples(source_root: Path, output_root: Path, *, resume: bool) -> tupl
         for caption in captions.iterdir():
             if caption.is_file():
                 copy_file(caption, destination / "captions" / caption.name, resume=resume)
+        synchronize_cycle_config(destination)
         config = cycle_config(source)
         if config["resolution"] != [896, 512]:
             low_resolution.append(source.name)
