@@ -20,6 +20,7 @@
 | 生成、导出、物理审计、Cycles | `/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts` |
 | 轨迹/运动/VBench 指标 | `/home/gaoya/Code_Video/Dataset_physv_v2v_0819/eval` |
 | viewer 服务与页面 | `/home/gaoya/Code_Video/Dataset_physv_v2v_0819/viewer` |
+| RigidBench 指标与 GT 审查 | `/home/gaoya/Code_Video/Dataset_physv_v2v_0819/RIGIDBENCH_METRICS_AUDIT.md` |
 | 正式数据集 | `/data/gaoya/AAA_test_video/physv_v2v_0819` |
 | 数据集总 manifest | `/data/gaoya/AAA_test_video/physv_v2v_0819/manifest.json` |
 | case 视频 | `/data/gaoya/AAA_test_video/physv_v2v_0819/samples/<case_id>/videos` |

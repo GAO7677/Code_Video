@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CYCLES · 动态 GT Mask 逐帧核查</title>
+  <style>
+    :root {
+      --ink: #17262b;
+      --ink-soft: #294148;
+      --paper: #eef3ef;
+      --panel: #fbfdf9;
+      --line: #c9d7d1;
+      --muted: #6d807a;
+      --lime: #d8f36a;
+      --cyan: #22d3ee;
+      --orange: #f59e0b;
+      --purple: #a855f7;
+      --green: #34d399;
+      --red: #f43f5e;
+      --shadow: 0 18px 50px rgba(23, 38, 43, .12);
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper); }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, select, input { color: inherit; font: inherit; }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid rgba(34, 211, 238, .44); outline-offset: 2px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .shell { min-height: 100vh; display: grid; grid-template-columns: 286px minmax(0, 1fr); }
+    aside { position: sticky; top: 0; height: 100vh; padding: 24px 19px; color: #effdf7; background: var(--ink); border-right: 5px solid var(--lime); overflow: auto; }
+    .brand { display: flex; align-items: center; gap: 11px; padding-bottom: 23px; border-bottom: 1px solid rgba(216, 243, 106, .24); }
+    .mark { display: grid; place-items: center; width: 42px; height: 42px; color: var(--ink); background: var(--lime); border-radius: 3px; font: 950 11px/1 ui-monospace, monospace; letter-spacing: -.04em; }
+    .brand h1 { margin: 0; font-size: 16px; line-height: 1.1; }
+    .brand p { margin: 5px 0 0; color: #a9c2b8; font: 10px/1.2 ui-monospace, monospace; }
+    .eyebrow { color: var(--lime); font: 800 10px/1.2 ui-monospace, monospace; letter-spacing: .09em; text-transform: uppercase; }
+    .control-block { margin-top: 25px; }
+    label { display: block; margin-bottom: 7px; color: #b8cec5; font-size: 11px; font-weight: 750; }
+    select, .search { width: 100%; padding: 9px 10px; color: #effdf7; background: var(--ink-soft); border: 1px solid #49635f; border-radius: 3px; }
+    .search::placeholder { color: #8ea9a0; }
+    .case-list { display: grid; gap: 5px; margin-top: 9px; }
+    .case-button { width: 100%; padding: 9px 10px; color: #bfd3cb; background: transparent; border: 1px solid transparent; border-radius: 3px; text-align: left; cursor: pointer; }
+    .case-button:hover { color: #fff; background: #243d42; }
+    .case-button.active { color: var(--ink); background: var(--lime); border-color: var(--lime); }
+    .case-button .case-name { display: block; overflow-wrap: anywhere; font: 700 11px/1.25 ui-monospace, monospace; }
+    .case-button .case-meta { display: block; margin-top: 4px; font-size: 10px; opacity: .72; }
+    .sidebar-note { margin-top: 25px; padding: 12px; color: #bcd0c7; background: #21363b; border-left: 3px solid var(--cyan); font-size: 11px; }
+    .sidebar-note strong { display: block; margin-bottom: 5px; color: #effdf7; }
+    main { min-width: 0; padding: 32px clamp(20px, 4vw, 58px) 64px; }
+    .topline { display: flex; justify-content: space-between; align-items: start; gap: 20px; max-width: 1540px; margin: 0 auto 24px; }
+    .topline h2 { max-width: 850px; margin: 8px 0 0; font-size: clamp(26px, 3.6vw, 48px); line-height: 1.02; letter-spacing: -.045em; }
+    .topline p { max-width: 760px; margin: 12px 0 0; color: var(--muted); }
+    .badge { flex: 0 0 auto; padding: 9px 11px; color: var(--ink); background: var(--lime); border-radius: 3px; font: 850 11px/1.2 ui-monospace, monospace; }
+    .workspace { max-width: 1540px; margin: 0 auto; }
+    .case-strip { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding: 15px 17px; background: var(--panel); border-top: 3px solid var(--ink); border-bottom: 1px solid var(--line); }
+    .case-strip h3 { margin: 2px 0 0; font-size: 21px; line-height: 1.16; overflow-wrap: anywhere; }
+    .case-id { margin-top: 5px; color: var(--muted); font: 10px/1.2 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .case-facts { display: flex; flex-wrap: wrap; justify-content: end; gap: 7px; }
+    .fact { padding: 6px 8px; color: var(--ink-soft); background: #e5efea; border: 1px solid #d3e0da; border-radius: 2px; font: 750 10px/1.1 ui-monospace, monospace; white-space: nowrap; }
+    .fact.accent { color: #744210; background: #fff0cf; border-color: #f6d48f; }
+    .frame-stage { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.05fr) minmax(220px, .72fr); gap: 12px; margin-top: 12px; }
+    .frame-panel { min-width: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); }
+    .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    .panel-head strong { font-size: 12px; }
+    .panel-head span { color: var(--muted); font: 9px/1.2 ui-monospace, monospace; }
+    .frame-panel img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #111d20; }
+    .frame-panel:last-child img { image-rendering: auto; }
+    .mask-note { min-height: 34px; padding: 8px 11px; color: var(--muted); border-top: 1px solid var(--line); font-size: 10px; }
+    .mask-note strong { color: var(--ink); }
+    .transport { margin-top: 15px; padding: 16px 18px 17px; background: var(--ink); box-shadow: var(--shadow); }
+    .transport-top { display: flex; justify-content: space-between; align-items: center; gap: 14px; color: #effdf7; }
+    .frame-readout { font: 900 22px/1 ui-monospace, monospace; letter-spacing: -.05em; }
+    .time-readout { color: #a9c2b8; font: 11px/1 ui-monospace, monospace; }
+    .transport-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: end; }
+    .transport button, .view-control button { padding: 8px 10px; color: #effdf7; background: #294148; border: 1px solid #49635f; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 800; }
+    .transport button:hover, .view-control button:hover { color: var(--ink); background: var(--lime); border-color: var(--lime); }
+    .transport button.primary { color: var(--ink); background: var(--lime); border-color: var(--lime); }
+    .ruler { position: relative; height: 37px; margin: 17px 1px 0; }
+    .ruler::before { content: ""; position: absolute; left: 0; right: 0; top: 14px; height: 5px; background: #42565a; border-radius: 3px; }
+    .context-band { position: absolute; left: 0; top: 9px; height: 15px; width: 8.99%; background: rgba(34, 211, 238, .52); border: 1px solid var(--cyan); border-radius: 2px; pointer-events: none; }
+    .ruler input { position: absolute; left: 0; top: 5px; width: 100%; height: 24px; margin: 0; background: transparent; accent-color: var(--lime); cursor: pointer; }
+    .tick { position: absolute; top: 27px; color: #9ab1a8; transform: translateX(-50%); font: 9px/1 ui-monospace, monospace; }
+    .tick.start { left: 0; transform: none; }
+    .tick.ctx { left: 8%; }
+    .tick.mid { left: 55%; }
+    .tick.end { right: 0; transform: none; }
+    .subcontrols { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-top: 6px; }
+    .view-control { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .view-control span { color: #9ab1a8; font-size: 10px; }
+    .view-control button.selected { color: var(--ink); background: var(--cyan); border-color: var(--cyan); }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 14px 2px 0; color: var(--muted); font-size: 11px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch { width: 11px; height: 11px; border-radius: 2px; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 15px; }
+    .detail-card { padding: 15px 17px; background: var(--panel); border: 1px solid var(--line); }
+    .detail-card h4 { margin: 0 0 12px; color: var(--ink); font-size: 12px; }
+    .detail-card dl { display: grid; grid-template-columns: minmax(115px, .4fr) 1fr; gap: 7px 13px; margin: 0; font-size: 11px; }
+    .detail-card dt { color: var(--muted); }
+    .detail-card dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 10px; }
+    .loading { padding: 50px; color: var(--muted); text-align: center; }
+    @media (max-width: 1050px) {
+      .shell { display: block; }
+      aside { position: static; height: auto; border-right: 0; border-bottom: 5px solid var(--lime); }
+      .case-list { max-height: 230px; overflow: auto; }
+      .frame-stage { grid-template-columns: 1fr 1fr; }
+      .frame-panel:last-child { grid-column: 1 / -1; max-width: 520px; }
+    }
+    @media (max-width: 690px) {
+      main { padding: 22px 12px 40px; }
+      .topline, .case-strip, .transport-top, .subcontrols { display: block; }
+      .badge { display: inline-block; margin-top: 15px; }
+      .case-facts { justify-content: start; margin-top: 13px; }
+      .frame-stage { grid-template-columns: 1fr; }
+      .frame-panel:last-child { grid-column: auto; max-width: none; }
+      .transport-actions { justify-content: start; margin-top: 14px; }
+      .view-control { margin-top: 13px; }
+      .detail-grid { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand">
+        <div class="mark">GT<br>MASK</div>
+        <div><h1>CYCLES frame lab</h1><p>PHYSV V2V 0819 · ALIGNED TRUTH</p></div>
+      </div>
+      <div class="control-block">
+        <div class="eyebrow">Navigate</div>
+        <div style="margin-top:15px"><label for="family-filter">Family</label><select id="family-filter"></select></div>
+        <div style="margin-top:12px"><label for="case-search">Search cases</label><input class="search" id="case-search" type="search" placeholder="case id / title"></div>
+        <div id="case-list" class="case-list"><div class="loading">loading 70 cases…</div></div>
+      </div>
+      <div class="sidebar-note">
+        <strong>What is shown</strong>
+        CYCLES RGB 与同一帧号的动态物体 GT mask 同步显示。mask 来自独立的 CYCLES 对齐真值，不是 SAM/SAM2 预测；静态物体不着色。
+      </div>
+    </aside>
+    <main>
+      <div class="topline">
+        <div>
+          <div class="eyebrow">Frame-accurate inspection / 01—90</div>
+          <h2>逐帧核查运动物体<br>是否落在正确像素上。</h2>
+          <p>同一个 frame index 同时请求原始 CYCLES 画面、动态 GT overlay 和纯 mask。拖动时间尺或使用 ← / → 逐帧检查；前 8 帧以青色标出。</p>
+        </div>
+        <div class="badge mono">SIMULATOR GT<br>· DYNAMIC ONLY</div>
+      </div>
+      <div id="workspace" class="workspace"><div class="loading">loading aligned truth…</div></div>
+    </main>
+  </div>
+  <script>
+    const $ = (selector) => document.querySelector(selector);
+    const state = { cases: [], current: null, frame: 0, view: 'overlay', mask: 'objects', playing: false, timer: null, loaded: false };
+    const palette = ['#22d3ee', '#f59e0b', '#a855f7', '#34d399', '#f43f5e', '#60a5fa', '#a3e635', '#fb7185'];
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>'"]/g, (char) => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'}[char]));
+    }
+    function controlText(item) {
+      const control = item.control || {};
+      if (control.value_label) return `${control.variable || 'control'} ${control.value_label}`;
+      if (control.value !== undefined) return `${control.variable || 'control'} ${control.value}`;
+      return 'control metadata unavailable';
+    }
+    function frameLabel() { return String(state.frame).padStart(3, '0'); }
+    function imageUrl(view) {
+      const params = new URLSearchParams({ case_id: state.current.case_id, frame: state.frame, view, mask: state.mask, nonce: Date.now() });
+      return `/api/frame?${params.toString()}`;
+    }
+    function setImage(id, view) {
+      const image = document.getElementById(id);
+      if (!image) return;
+      image.src = imageUrl(view);
+      image.alt = `${state.current.case_id} frame ${state.frame} ${view}`;
+    }
+    function renderCaseList() {
+      const family = $('#family-filter').value;
+      const query = $('#case-search').value.trim().toLowerCase();
+      const visible = state.cases.filter((item) => {
+        const familyOk = family === 'ALL' || item.family_key === family;
+        const text = `${item.case_id} ${item.title} ${item.source_group}`.toLowerCase();
+        return familyOk && (!query || text.includes(query));
+      });
+      $('#case-list').innerHTML = visible.length ? visible.map((item) => `
+        <button class="case-button ${item.case_id === state.current?.case_id ? 'active' : ''}" data-case="${esc(item.case_id)}">
+          <span class="case-name">${esc(item.case_id)}</span><span class="case-meta">${esc(item.family_key)} · ${esc(controlText(item))}</span>
+        </button>`).join('') : '<div class="loading">no matching case</div>';
+      document.querySelectorAll('.case-button').forEach((button) => button.addEventListener('click', () => selectCase(button.dataset.case)));
+    }
+    function renderWorkspace() {
+      const item = state.current;
+      if (!item) return;
+      const objects = item.dynamic_objects || [];
+      $('#workspace').innerHTML = `
+        <section class="case-strip">
+          <div><div class="eyebrow">Selected case</div><h3>${esc(item.title)}</h3><div class="case-id">${esc(item.case_id)}</div></div>
+          <div class="case-facts">
+            <span class="fact">${esc(item.family_key)} / ${esc(item.taxonomy)}</span>
+            <span class="fact">${esc(item.width)}×${esc(item.height)} · ${esc(item.fps)} FPS</span>
+            <span class="fact accent">${objects.length} dynamic object${objects.length === 1 ? '' : 's'}</span>
+          </div>
+        </section>
+        <section class="frame-stage">
+          <div class="frame-panel"><div class="panel-head"><strong>01 · CYCLES RGB</strong><span>same frame / source</span></div><img id="rgb-frame" alt="CYCLES RGB frame"></div>
+          <div class="frame-panel"><div class="panel-head"><strong>02 · GT OVERLAY</strong><span>dynamic mask contours</span></div><img id="overlay-frame" alt="CYCLES dynamic GT overlay"></div>
+          <div class="frame-panel"><div class="panel-head"><strong>03 · MASK PLANE</strong><span>${state.mask === 'union' ? 'union' : 'per object'}</span></div><img id="mask-frame" alt="CYCLES dynamic GT mask"><div class="mask-note"><strong>Mask semantics:</strong> dynamic actors only; background and static fixtures remain empty. Display converts Blender bottom-up pixels to the video’s top-left coordinates.</div></div>
+        </section>
+        <section class="transport">
+          <div class="transport-top"><div><div class="frame-readout">FRAME <span id="frame-value">${frameLabel()}</span> / ${String(item.frame_count - 1).padStart(3, '0')}</div><div class="time-readout" id="time-value">t = ${(state.frame / item.fps).toFixed(3)} s · zero-based index</div></div><div class="transport-actions"><button id="prev-frame">← Prev</button><button id="play-frame" class="primary">▶ Play</button><button id="next-frame">Next →</button><button id="jump-context">Jump to frame 7</button></div></div>
+          <div class="ruler"><div class="context-band"></div><input id="frame-slider" type="range" min="0" max="${item.frame_count - 1}" value="${state.frame}" step="1" aria-label="Frame index"><span class="tick start">00</span><span class="tick ctx">08 · context</span><span class="tick mid">${Math.floor(item.frame_count / 2)}</span><span class="tick end">${String(item.frame_count - 1).padStart(2, '0')}</span></div>
+          <div class="subcontrols"><div class="view-control"><span>Mask display</span><button data-mask="objects" class="${state.mask === 'objects' ? 'selected' : ''}">Per object</button><button data-mask="union" class="${state.mask === 'union' ? 'selected' : ''}">Union</button></div><div class="time-readout">← / → step · Home / End jump · Space play/pause</div></div>
+        </section>
+        <div class="legend">${objects.length ? objects.map((name, index) => `<span class="legend-item"><i class="swatch" style="background:${palette[index % palette.length]}"></i>${esc(name)}</span>`).join('') : '<span>No dynamic actor metadata</span>'}</div>
+        <section class="detail-grid"><div class="detail-card"><h4>Alignment record</h4><dl><dt>video source</dt><dd>videos/rgb_cycles.mp4</dd><dt>truth schema</dt><dd>physv_cycles_aligned_truth_v1</dd><dt>frame mapping</dt><dd>frame 0 ↔ rgb_cycles frame 0</dd><dt>mask resolution</dt><dd>${esc((item.mask_shape || []).join(' × '))}</dd></dl></div><div class="detail-card"><h4>Case control</h4><dl><dt>family / taxonomy</dt><dd>${esc(item.family_key)} / ${esc(item.taxonomy)}</dd><dt>control</dt><dd>${esc(controlText(item))}</dd><dt>scene</dt><dd>${esc(item.scene || '—')}</dd><dt>task</dt><dd>${esc(item.task_type || '—')}</dd></dl></div></section>`;
+      setImage('rgb-frame', 'rgb'); setImage('overlay-frame', 'overlay'); setImage('mask-frame', 'mask');
+      $('#frame-slider').addEventListener('input', (event) => setFrame(Number(event.target.value)));
+      $('#prev-frame').addEventListener('click', () => setFrame(state.frame - 1));
+      $('#next-frame').addEventListener('click', () => setFrame(state.frame + 1));
+      $('#jump-context').addEventListener('click', () => setFrame(Math.min(7, item.frame_count - 1)));
+      $('#play-frame').addEventListener('click', togglePlay);
+      document.querySelectorAll('[data-mask]').forEach((button) => button.addEventListener('click', () => { state.mask = button.dataset.mask; renderWorkspace(); }));
+      updateReadout();
+    }
+    function updateReadout() {
+      const item = state.current;
+      if (!item) return;
+      const value = $('#frame-value'); if (value) value.textContent = frameLabel();
+      const time = $('#time-value'); if (time) time.textContent = `t = ${(state.frame / item.fps).toFixed(3)} s · zero-based index`;
+      const slider = $('#frame-slider'); if (slider) slider.value = state.frame;
+    }
+    function setFrame(value) {
+      if (!state.current) return;
+      state.frame = Math.max(0, Math.min(state.current.frame_count - 1, value));
+      updateReadout();
+      setImage('rgb-frame', 'rgb'); setImage('overlay-frame', 'overlay'); setImage('mask-frame', 'mask');
+      if (state.playing && state.frame >= state.current.frame_count - 1) togglePlay();
+    }
+    function togglePlay() {
+      state.playing = !state.playing;
+      const button = $('#play-frame');
+      if (button) button.textContent = state.playing ? 'Ⅱ Pause' : '▶ Play';
+      if (state.playing) {
+        state.timer = window.setInterval(() => setFrame(state.frame + 1), 1000 / state.current.fps);
+      } else if (state.timer) {
+        window.clearInterval(state.timer); state.timer = null;
+      }
+    }
+    function selectCase(caseId) {
+      const item = state.cases.find((candidate) => candidate.case_id === caseId);
+      if (!item) return;
+      if (state.playing) togglePlay();
+      state.current = item; state.frame = 0; state.mask = 'objects';
+      renderCaseList(); renderWorkspace();
+    }
+    function init() {
+      fetch('/api/cases').then((response) => response.json()).then((data) => {
+        state.cases = data.cases || [];
+        const families = [...new Set(state.cases.map((item) => item.family_key))].sort();
+        $('#family-filter').innerHTML = '<option value="ALL">ALL families</option>' + families.map((family) => `<option value="${esc(family)}">${esc(family)}</option>`).join('');
+        $('#family-filter').addEventListener('change', renderCaseList);
+        $('#case-search').addEventListener('input', renderCaseList);
+        state.loaded = true; state.current = state.cases[0]; renderCaseList(); renderWorkspace();
+      }).catch((error) => { $('#workspace').innerHTML = `<div class="loading">Unable to load case index: ${esc(error.message)}</div>`; });
+    }
+    document.addEventListener('keydown', (event) => {
+      if (!state.loaded || ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+      if (event.key === 'ArrowLeft') { event.preventDefault(); setFrame(state.frame - 1); }
+      if (event.key === 'ArrowRight') { event.preventDefault(); setFrame(state.frame + 1); }
+      if (event.key === 'Home') { event.preventDefault(); setFrame(0); }
+      if (event.key === 'End') { event.preventDefault(); setFrame(state.current.frame_count - 1); }
+      if (event.code === 'Space') { event.preventDefault(); togglePlay(); }
+    });
+    init();
+  </script>
+</body>
+</html>

@@ -5,8 +5,9 @@ The RGB videos already present in each sample are the source of truth for the
 render configuration. For every sample this wrapper reads
 ``videos/rgb_cycles.json`` and invokes Blender with the same resolution,
 Cycles sample count, exposure, camera construction, scene construction, and
-trajectory. The Blender companion script writes only a new Object Index pass;
-the original ``raw`` truth and ``rgb_cycles.mp4`` are never modified.
+trajectory. The Blender companion script writes new CYCLES Object Index and
+Depth passes; the original ``raw`` truth and ``rgb_cycles.mp4`` are never
+modified.
 """
 
 from __future__ import annotations
@@ -97,7 +98,22 @@ def complete_case(case_dir: Path, config: dict) -> bool:
     metadata_path = case_dir / "truth_metadata.json"
     masks_path = case_dir / "dynamic_masks.npz"
     trajectory_path = case_dir / "trajectory_pixels.npz"
-    if not (metadata_path.is_file() and masks_path.is_file() and trajectory_path.is_file()):
+    depth_path = case_dir / "cycles_depth.npz"
+    adapter_dir = case_dir / "rigidbench"
+    adapter_paths = [
+        adapter_dir / "metadata.json",
+        adapter_dir / "masks.npz",
+        adapter_dir / "depth.npz",
+        adapter_dir / "trajectories.npz",
+        adapter_dir / "video.mp4",
+    ]
+    if not (
+        metadata_path.is_file()
+        and masks_path.is_file()
+        and trajectory_path.is_file()
+        and depth_path.is_file()
+        and all(path.exists() for path in adapter_paths)
+    ):
         return False
     try:
         metadata = load_json(metadata_path)
@@ -106,6 +122,8 @@ def complete_case(case_dir: Path, config: dict) -> bool:
             union = arrays["union_thw"]
         with np.load(trajectory_path, allow_pickle=False) as arrays:
             centers = arrays["centers_tnc"]
+        with np.load(depth_path, allow_pickle=False) as arrays:
+            depth = arrays["depth"]
         return (
             metadata.get("schema_version") == "physv_cycles_aligned_truth_v1"
             and metadata.get("frame_count") == config["frame_count"]
@@ -115,9 +133,22 @@ def complete_case(case_dir: Path, config: dict) -> bool:
             and union.shape == (config["frame_count"], config["height"], config["width"])
             and centers.shape[0] == config["frame_count"]
             and centers.shape[1] == masks.shape[0]
+            and depth.shape == (config["frame_count"], config["height"], config["width"])
         )
     except Exception:
         return False
+
+
+def expose_rigidbench_sample(output_root: Path, sample_id: str, case_dir: Path) -> Path:
+    """Expose nested adapters through the official ``<root>/samples`` layout."""
+    adapter_sample = output_root / "rigidbench_dataset" / "samples" / sample_id
+    adapter_sample.parent.mkdir(parents=True, exist_ok=True)
+    if adapter_sample.is_symlink() or adapter_sample.is_file():
+        adapter_sample.unlink()
+    elif adapter_sample.exists():
+        raise RuntimeError(f"Refusing to replace existing adapter directory: {adapter_sample}")
+    adapter_sample.symlink_to(case_dir / "rigidbench", target_is_directory=True)
+    return adapter_sample
 
 
 def run_case(
@@ -134,6 +165,7 @@ def run_case(
     log_path = logs_dir / f"{sample_id}.log"
     case_dir.mkdir(parents=True, exist_ok=True)
     if not rerun_complete and complete_case(case_dir, config):
+        adapter_sample = expose_rigidbench_sample(output_root, sample_id, case_dir)
         return {
             "sample_id": sample_id,
             "status": "skipped_complete",
@@ -141,6 +173,7 @@ def run_case(
             "resolution": [config["width"], config["height"]],
             "frame_count": config["frame_count"],
             "output_dir": str(case_dir),
+            "rigidbench_sample": str(adapter_sample),
             "log": str(log_path),
         }
 
@@ -186,6 +219,7 @@ def run_case(
             "log": str(log_path),
         }
     report = load_json(case_dir / "truth_metadata.json")
+    adapter_sample = expose_rigidbench_sample(output_root, sample_id, case_dir)
     source_video = sample_dir / "videos" / "rgb_cycles.mp4"
     return {
         "sample_id": sample_id,
@@ -197,6 +231,7 @@ def run_case(
         "elapsed_seconds": elapsed,
         "source_rgb_cycles_sha256": sha256_file(source_video) if source_video.is_file() else None,
         "output_dir": str(case_dir),
+        "rigidbench_sample": str(adapter_sample),
         "log": str(log_path),
     }
 
@@ -261,6 +296,9 @@ def main() -> None:
             "cycles_config": "samples/<sample_id>/videos/rgb_cycles.json",
             "aligned_dynamic_masks": "cases/<sample_id>/dynamic_masks.npz",
             "aligned_trajectory_pixels": "cases/<sample_id>/trajectory_pixels.npz",
+            "aligned_cycles_depth": "cases/<sample_id>/cycles_depth.npz",
+            "rigidbench_adapter": "cases/<sample_id>/rigidbench/{metadata,masks,depth,trajectories}.(json|npz) + video.mp4",
+            "rigidbench_dataset_root": "rigidbench_dataset/samples/<sample_id> (symlink to the adapter)",
             "case_metadata": "cases/<sample_id>/truth_metadata.json",
             "simulator_trajectory": "samples/<sample_id>/raw/trajectories.npz",
             "simulator_mask": "samples/<sample_id>/raw/masks.npz (not used as the CYCLES pixel mask)",
