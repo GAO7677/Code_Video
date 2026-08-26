@@ -2,6 +2,8 @@
 
 面向视频物理动态理解和 V2V 短上下文续写的仿真数据集。共 70 个 case，14 组、每组 5 个控制变量取值。每组只改变表中变量，其余仿真参数、初始外观和相机设置保持一致；F11 不保留方向变体。
 
+> 数据与派生训练资产最后核查：2026-08-26 UTC。本文档以 `/data/gaoya/AAA_test_video/physv_v2v_0819` 中实际存在的 70 个 case、CYCLES 对齐真值和 2026-08-25 生成的训练 cache 为准。
+
 冰球挡板、木箱门框和小球门框组已完成 PyBullet 运动核查，并生成低分辨率 Cycles 预览；前两组为 `640×360`，小球门框组为 `896×512`。
 
 - 冰球挡板组：冰球半径 `0.25 m`、厚度 `0.10 m`，挡板总高 `0.50 m`，各 case 相同；地面摩擦系数 `0.04`。
@@ -19,6 +21,7 @@
 | 轨迹/运动/VBench 指标 | `/home/gaoya/Code_Video/Dataset_physv_v2v_0819/eval` |
 | viewer 服务与页面 | `/home/gaoya/Code_Video/Dataset_physv_v2v_0819/viewer` |
 | 正式数据集 | `/data/gaoya/AAA_test_video/physv_v2v_0819` |
+| 数据集总 manifest | `/data/gaoya/AAA_test_video/physv_v2v_0819/manifest.json` |
 | case 视频 | `/data/gaoya/AAA_test_video/physv_v2v_0819/samples/<case_id>/videos` |
 | 短上下文视频 | `/data/gaoya/AAA_test_video/physv_v2v_0819/samples/<case_id>/context` |
 | 真值轨迹 | `/data/gaoya/AAA_test_video/physv_v2v_0819/samples/<case_id>/raw/trajectories.npz` |
@@ -26,23 +29,45 @@
 | 指标报告 | `/data/gaoya/AAA_test_video/physv_v2v_0819/reports` |
 | Cycles 渲染缓存 | `/data/gaoya/agent-data/cache/physv_cycles_previews` |
 | CYCLES 对齐真值（独立生成、不覆盖原始真值） | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_aligned_truth_v1` |
+| CYCLES 训练 overlay（70 条 list-manifest） | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_train_v1` |
+| CYCLES 动态 mask 源缓存 | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_mask_source_v1` |
+| VAE latent cache | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_vae_latents` |
+| prompt embedding cache | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_prompt_cache` |
+| latent-mask cache（train split） | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_latent_mask_cache` |
+| collision supervision cache | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_collision_supervision` |
+| Utonia scene cache | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_utonia_scene_cache` |
 | Cycles 轨迹 overlay 与页面 | `/data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay` |
 | 深度/实例 ID 页面视频 | `/data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay/truth_videos` |
 | 纹理/HDRI 资源 | `/data/gaoya/dataset/blender_render_assets/polyhaven_v1`、`/data/gaoya/agent-data/assets/polyhaven_textures_20260820` |
 
 ## 数据内容
 
-- `videos/rgb.mp4`: 完整视频；`videos/rgb_cycles.mp4`: Cycles 版本。
-- `context/context8.mp4`、`context/context16.mp4`: 8 帧和 16 帧短上下文。
+- `videos/rgb.mp4`: 原始仿真完整视频；`videos/rgb_cycles.mp4`: 与同一套场景、相机和轨迹对齐的 CYCLES 版本；`videos/rgb_cycles.json`: CYCLES 渲染配置。
+- `context/context8.mp4`、`context/context16.mp4`: 原始视频的 8 帧和 16 帧短上下文；`context/context8_cycles.mp4`、`context/context16_cycles.mp4`: CYCLES 视频对应的短上下文。
 - `videos/depth.mp4`、`videos/masks.mp4`、`videos/trajectory.mp4`、`videos/contacts.mp4`: 深度、实例掩码、轨迹和接触可视化。
-- `samples/<case_id>/raw/masks.npz`: 仿真动态物体 GT mask；数据集未保存 SAM/SAM2 预测结果。
+- `samples/<case_id>/raw/masks.npz`: 原始仿真相机坐标系的动态物体 GT mask；数据集未保存 SAM/SAM2 预测结果。
 - `physv_v2v_0819_cycles_aligned_truth_v1/cases/<case_id>/dynamic_masks.npz`: 使用与 `videos/rgb_cycles.mp4` 相同的 CYCLES 场景构建、相机、轨迹、分辨率和帧序重新渲染 Object Index pass 得到的动态物体像素真值；`masks_thw` 为 `[动态物体数, 帧数, 高, 宽]`，`union_thw` 为所有动态物体并集，背景/静态物体为 0，动态物体从 1 开始编号。
 - `physv_v2v_0819_cycles_aligned_truth_v1/cases/<case_id>/trajectory_pixels.npz`: 同一 CYCLES 相机坐标系下的动态物体中心投影，`centers_tnc` 为 `[帧数, 动态物体数, (x_pixel,y_pixel,depth)]`；像素原点在左上角，frame 0 对应 `rgb_cycles.mp4` frame 0。
 - `physv_v2v_0819_cycles_aligned_truth_v1/cases/<case_id>/truth_metadata.json`: 记录 CYCLES 配置、分辨率、帧数、动态物体名称与 Object Index 映射，并记录源 `rgb_cycles.mp4`、轨迹真值和渲染脚本。
-- 这批 CYCLES 对齐真值不替换 `raw/masks.npz`：后者仍是原始 PyBullet/仿真相机坐标系的 mask。`raw/contacts.json`、`physics_supervision.npz` 和 `raw/trajectories.npz` 仍是同一 90 帧仿真时间轴上的接触、状态和位姿真值；它们不需要因为 CYCLES 像素坐标变化而重算。
+- 这批 CYCLES 对齐真值不替换 `raw/masks.npz`：后者仍是原始 PyBullet/仿真相机坐标系的 mask。`samples/<case_id>/contacts.json`、`physics_supervision.npz` 和 `raw/trajectories.npz` 仍是同一 90 帧仿真时间轴上的接触、状态和位姿真值；它们不需要因为 CYCLES 像素坐标变化而重算。
 - `captions/caption_specific.txt`: 暴露变量值和实际末态的 caption；`captions/caption_abstract.txt`: 隐藏具体变量值但保留实际运动结果的 caption。
 - `metadata.json` / `manifest.json` 中的 `caption_observations`: 从 `physics_supervision.npz` 和 `contacts.json` 提取的观测结果，用于区分通过、碰撞、掉落、停止等 case 末态。
 - `metadata.json`、`physics_supervision.json`、`raw/trajectories.npz`: 场景参数、物体物理真值和逐帧状态。
+
+## 已生成训练资产
+
+所有派生资产均放在数据集根目录下的独立子目录中，不覆盖 `samples/` 中的原始视频和真值。除特别注明外，cache 的数据集入口都是 `physv_v2v_0819_cycles_train_v1`，训练/推理视频使用 `videos/rgb_cycles.mp4`。
+
+| 资产 | 当前状态与内容 |
+| --- | --- |
+| `physv_v2v_0819_cycles_train_v1` | 70 条 list-manifest；caption 使用 `caption_abstract.txt`；通过 `SHA1(family_key/case_id)` 规则划分 train/val/test。 |
+| `physv_v2v_0819_vae_latents` | complete，70/70；49 帧输入，latent 形状 `[48, 13, 32, 56]`。 |
+| `physv_v2v_0819_prompt_cache` | complete，70/70；最大长度 512，embedding 形状 `[512, 4096]`。 |
+| `physv_v2v_0819_latent_mask_cache` | complete，当前为 `split=train` 的 60 条；不是 70 条数据缺失，若要对 val/test 或全量训练使用，需另生成对应 split。 |
+| `physv_v2v_0819_collision_supervision` | complete，70/70；49 个视频帧映射到 13 个 latent frame，碰撞加权为 `clip(1 + 2 * latent_score, 1, 3)`。 |
+| `physv_v2v_0819_utonia_scene_cache` | complete，70/70；读取 context 前 8 帧的第 7 帧，特征形状 `[448, 1386]`，使用官方 VGGT crop、Utonia full-upcast 和 3D-safe 动态过滤。 |
+
+其中 `physv_v2v_0819_cycles_aligned_truth_v1` 提供 CYCLES 像素坐标系的动态 mask/轨迹投影；`raw/masks.npz`、`contacts.json`、`physics_supervision.npz` 和 `raw/trajectories.npz` 仍是原始仿真时间轴真值，两者不可直接混用。
 
 ## 常用命令
 
@@ -53,7 +78,7 @@ cd /home/gaoya/Code_Video
 export PYTHONPATH=/home/gaoya/Code_Video
 PYTHON=/data/gaoya/miniconda3/envs/physxnet_mpm_env/bin/python
 
-# 重新导出全部 65 个 case
+# 重新导出全部 70 个 case
 $PYTHON -m Dataset_physv_v2v_0819.scripts.export_physv_v2v_0819_dataset \
   --output-root /data/gaoya/AAA_test_video/physv_v2v_0819
 
@@ -204,6 +229,10 @@ F12 斜面长度组保持斜面最高点/支撑高度不变，长度变化会使
 全部 70 个 Cycles 视频已整理为：
 
 `/data/gaoya/AAA_test_video/physv_v2v_0819/testjsons/physv_v2v_0819_all_cycles_test70_ctx8.txt`
+
+不带事件时间描述的同规模列表为：
+
+`/data/gaoya/AAA_test_video/physv_v2v_0819/testjsons/physv_v2v_0819_all_cycles_test70_ctx8_description_no_event_timing.txt`
 
 该 txt 每行是一个 JSON 的绝对路径，JSON 位于：
 

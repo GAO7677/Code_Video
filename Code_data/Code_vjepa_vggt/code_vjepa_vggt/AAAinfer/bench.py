@@ -72,6 +72,27 @@ from physv_eval.paths import FLUX_PYTHON
 
 DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
 CONTEXT_PREFIX_CACHE_ROOT = Path("/data/gaoya/agent-data/cache/AAAinfer_bench_context_prefix")
+
+
+def remap_metric_path(path: Path) -> Path:
+    """Resolve a path recorded on a remote mount without changing provenance.
+
+    Result metadata must retain the path used by the remote inference host.
+    Metric workers may opt into a narrowly scoped mount translation through
+    PHYSV_BENCH_PATH_REMAP_FROM/TO. With the variables unset this is a no-op.
+    """
+    source = os.environ.get("PHYSV_BENCH_PATH_REMAP_FROM", "").strip()
+    target = os.environ.get("PHYSV_BENCH_PATH_REMAP_TO", "").strip()
+    if not source or not target:
+        return path
+    source = source.rstrip("/")
+    raw = str(path)
+    if raw != source and not raw.startswith(source + "/"):
+        return path
+    mapped = target.rstrip("/") + raw[len(source):]
+    return Path(mapped).expanduser().resolve()
+
+
 @dataclass
 class CaseRecord:
     result_json_path: Path
@@ -247,7 +268,7 @@ def resolve_input_json_path(result_payload: dict[str, Any], result_json_path: Pa
         input_json = result_payload.get("case_json")
     if not isinstance(input_json, str) or not input_json.strip():
         raise ValueError(f"Missing input_json/case_json in {result_json_path}")
-    candidate = Path(input_json).expanduser().resolve()
+    candidate = remap_metric_path(Path(input_json).expanduser().resolve())
     if not candidate.is_absolute():
         raise ValueError(f"input_json must be an absolute path in {result_json_path}: {input_json}")
     if candidate.is_file():
@@ -260,7 +281,7 @@ def resolve_gt_video_path(input_json_path: Path) -> Path:
     source_video = source_payload.get("source_video")
     if not isinstance(source_video, str) or not source_video.strip():
         raise ValueError(f"Missing source_video in source json: {input_json_path}")
-    candidate = Path(source_video).expanduser().resolve()
+    candidate = remap_metric_path(Path(source_video).expanduser().resolve())
     if not candidate.is_absolute():
         raise ValueError(f"source_video must be an absolute path in {input_json_path}: {source_video}")
     if candidate.is_file():
@@ -274,7 +295,7 @@ def resolve_context_video_path(input_json_path: Path) -> Path | None:
         candidate_value = source_payload.get(key)
         if not isinstance(candidate_value, str) or not candidate_value.strip():
             continue
-        candidate = Path(candidate_value).expanduser().resolve()
+        candidate = remap_metric_path(Path(candidate_value).expanduser().resolve())
         if candidate.is_file():
             return candidate
     return None
@@ -920,6 +941,14 @@ def write_summary(
         "metric_status": round_floats(metric_status),
         "errors": errors,
     }
+    remap_from = os.environ.get("PHYSV_BENCH_PATH_REMAP_FROM", "").strip()
+    remap_to = os.environ.get("PHYSV_BENCH_PATH_REMAP_TO", "").strip()
+    if remap_from and remap_to:
+        summary_payload["path_remap"] = {
+            "from": remap_from,
+            "to": remap_to,
+            "scope": "metric-worker-only",
+        }
     if not dry_run:
         write_json(summary_path, summary_payload)
     print(json.dumps(summary_payload, ensure_ascii=False, indent=2))
