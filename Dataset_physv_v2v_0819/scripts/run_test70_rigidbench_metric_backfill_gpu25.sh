@@ -4,7 +4,7 @@ set -euo pipefail
 RUNNER="/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/run_test70_rigidbench_metric_backfill.sh"
 BUILDER="/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/build_test70_rigidbench_metrics.py"
 PYTHON="${PYTHON:-/home/gaoya/miniconda3/envs/sam/bin/python}"
-LOG_ROOT="/data/gaoya/agent-data/outputs/physv_v2v_0819_rigidbench_strict_test70/logs/metric_backfill_gpu25"
+LOG_ROOT="/data/gaoya/agent-data/outputs/physv_v2v_0819_rigidbench_strict_test70/logs/metric_backfill_gpu2"
 export PYTHONNOUSERSITE=1
 mkdir -p "$LOG_ROOT"
 
@@ -42,17 +42,17 @@ run_metric() {
 }
 
 # Exactly one process per metric; each process loads its prediction models once.
+# Keep all metric workers on GPU 2; GPU 5 is deliberately unused here.
 run_metric 2 iou & pid_iou=$!
 run_metric 2 ate & pid_ate=$!
 run_metric 2 lpips & pid_lpips=$!
 run_metric 2 ate3d & pid_ate3d=$!
 run_metric 2 bgdrift & pid_bgdrift=$!
-
-run_metric 5 l2 & pid_l2=$!
-run_metric 5 chamfer & pid_chamfer=$!
-run_metric 5 si_mse & pid_si_mse=$!
-run_metric 5 ssim & pid_ssim=$!
-run_metric 5 iddrift & pid_iddrift=$!
+run_metric 2 l2 & pid_l2=$!
+run_metric 2 chamfer & pid_chamfer=$!
+run_metric 2 si_mse & pid_si_mse=$!
+run_metric 2 ssim & pid_ssim=$!
+run_metric 2 iddrift & pid_iddrift=$!
 
 status=0
 for pid in "$pid_iou" "$pid_ate" "$pid_lpips" "$pid_ate3d" "$pid_bgdrift" \
