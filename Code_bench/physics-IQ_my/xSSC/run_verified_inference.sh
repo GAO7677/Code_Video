@@ -23,6 +23,13 @@ RUN_INDEX="$3"
 }
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+P0_PROMPT_CONFIG="${SCRIPT_ROOT}/../common/physicsiq_p0_prompt.env"
+[[ -r "$P0_PROMPT_CONFIG" ]] || {
+  echo "Missing shared P0 negative-prompt config: $P0_PROMPT_CONFIG" >&2
+  exit 2
+}
+# shellcheck source=/dev/null
+source "$P0_PROMPT_CONFIG"
 EXPERIMENT_ROOT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments
 PROJECT_ROOT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
@@ -96,7 +103,11 @@ else
 fi
 RAW_FOLDER="$RAW_ROOT/$RUN_NAME"
 FINAL_FOLDER="$FINAL_ROOT/$RUN_NAME"
-NEGATIVE_PROMPT="模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理"
+# New P0 runs use the same long prompt as PhysRVG-72f-adapted. An explicit
+# PHYSIQ_NEGATIVE_PROMPT override remains available for reproducing a frozen
+# historical run whose metadata records a different prompt.
+NEGATIVE_PROMPT="${PHYSIQ_NEGATIVE_PROMPT:-${PHYSIQ_P0_NEGATIVE_PROMPT}}"
+NEGATIVE_PROMPT_VERSION="${PHYSIQ_NEGATIVE_PROMPT_VERSION:-${PHYSIQ_P0_NEGATIVE_PROMPT_VERSION}}"
 mkdir -p "$RAW_ROOT" "$FINAL_ROOT"
 
 CMD=(
@@ -123,6 +134,7 @@ CMD=(
   --negative-prompt "$NEGATIVE_PROMPT"
 )
 
+printf 'negative_prompt_version=%s\n' "$NEGATIVE_PROMPT_VERSION"
 printf 'Inference command:'
 printf ' %q' "${CMD[@]}"
 printf '\nrun_name=%s\ncheckpoint_sha=%s\ncases=%s\nseed=%s\nraw=%s\nfinal=%s\n' \

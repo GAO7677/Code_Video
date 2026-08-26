@@ -24,6 +24,15 @@ The exact names are taken from the selected official descriptions CSV. All 198 v
 
 Generation resolution, sampling steps, guidance, negative prompt, and model preprocessing belong to the adapter. They must remain fixed across the four independent runs.
 
+For every newly launched Physics-IQ Verified `P0` (`bpp` + `v2v`) run, use the
+canonical long negative prompt from
+`common/physicsiq_p0_prompt.env`. Its version is
+`physrvg-72f-adapted-long-v1` and its SHA-256 (without a trailing newline) is
+`ce96e0324e4b54ce4b6e867f669ca520952e1a34cc116543516b1897f0d3c47e`. This is
+the project comparison convention; it is not an additional official evaluator
+input requirement. Historical run-specific configs remain frozen for
+reproducibility.
+
 ## Generic commands
 
 Validate any model output without running metrics:
@@ -81,4 +90,7 @@ The adapter receives stable `PHYSIQ_*` environment variables and must write the 
 - `PHYSIQ_RUN_INDEX`: `1` through `4`.
 - `PHYSIQ_RUN_TAG`: normalized `run_01` through `run_04`.
 - `PHYSIQ_SEED`: default mapping `42` through `45`.
+- `PHYSIQ_NEGATIVE_PROMPT`: canonical long prompt for new P0 adapters.
+- `PHYSIQ_NEGATIVE_PROMPT_VERSION`: prompt version supplied by the launcher.
+- `PHYSIQ_NEGATIVE_PROMPT_SHA256`: prompt digest supplied by the launcher.
 - `PHYSIQ_RESULT_FILE`: adapter-to-launcher result path; adapters must write it.

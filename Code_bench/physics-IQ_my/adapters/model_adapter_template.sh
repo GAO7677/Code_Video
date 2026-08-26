@@ -4,7 +4,8 @@ set -euo pipefail
 # Copy this file for a new model. The generic launcher exports:
 #   PHYSIQ_WORKSPACE, PHYSIQ_DATASET, PHYSIQ_PROMPT_SETTING,
 #   PHYSIQ_INPUT_MODE, PHYSIQ_RUN_INDEX, PHYSIQ_RUN_TAG,
-#   PHYSIQ_SEED, PHYSIQ_MODEL_NAME, and PHYSIQ_RESULT_FILE.
+#   PHYSIQ_SEED, PHYSIQ_MODEL_NAME, PHYSIQ_RESULT_FILE, and (for new P0
+#   bpp/v2v runs) PHYSIQ_NEGATIVE_PROMPT plus its version/digest.
 
 : "${PHYSIQ_RESULT_FILE:?launcher must set PHYSIQ_RESULT_FILE}"
 : "${PHYSIQ_WORKSPACE:?launcher must set PHYSIQ_WORKSPACE}"

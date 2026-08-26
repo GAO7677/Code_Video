@@ -12,6 +12,19 @@ export PHYSIQ_INPUT_MODE="${PHYSIQ_INPUT_MODE:-v2v}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/data/gaoya/agent-data/cache/uv}"
 export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-/data/gaoya/agent-data/cache/envs/physics-iq-verified}"
 
+P0_PROMPT_CONFIG="$ROOT/common/physicsiq_p0_prompt.env"
+[[ -r "$P0_PROMPT_CONFIG" ]] || {
+  echo "Missing shared P0 negative-prompt config: $P0_PROMPT_CONFIG" >&2
+  exit 2
+}
+# shellcheck source=/dev/null
+source "$P0_PROMPT_CONFIG"
+if [[ "$PHYSIQ_PROMPT_SETTING" == "bpp" && "$PHYSIQ_INPUT_MODE" == "v2v" ]]; then
+  export PHYSIQ_NEGATIVE_PROMPT="$PHYSIQ_P0_NEGATIVE_PROMPT"
+  export PHYSIQ_NEGATIVE_PROMPT_VERSION="$PHYSIQ_P0_NEGATIVE_PROMPT_VERSION"
+  export PHYSIQ_NEGATIVE_PROMPT_SHA256="$PHYSIQ_P0_NEGATIVE_PROMPT_SHA256"
+fi
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -24,6 +37,8 @@ Environment overrides:
   PHYSIQ_MODEL_NAME      Stable model name exposed to adapters.
   PHYSIQ_PROMPT_SETTING  bpp (default) or op.
   PHYSIQ_INPUT_MODE      v2v (default) or i2v.
+  PHYSIQ_NEGATIVE_PROMPT New P0 adapters receive the canonical long prompt.
+  PHYSIQ_NEGATIVE_PROMPT_VERSION  Version of the canonical P0 prompt.
 
 An adapter must write its completed run-folder path to PHYSIQ_RESULT_FILE.
 EOF

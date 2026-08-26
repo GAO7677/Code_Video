@@ -6,10 +6,12 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import subprocess
 from pathlib import Path
 
 import cv2
 import numpy as np
+import imageio_ffmpeg
 
 
 PALETTE = (
@@ -28,19 +30,59 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def writer(path: Path, width: int, height: int, fps: float) -> cv2.VideoWriter:
-    for codec in ("mp4v", "avc1"):
-        path.unlink(missing_ok=True)
-        handle = cv2.VideoWriter(
-            str(path),
-            cv2.VideoWriter_fourcc(*codec),
-            fps,
-            (width, height),
+class H264Writer:
+    """Pipe BGR frames to the bundled FFmpeg/libx264 encoder."""
+
+    def __init__(self, path: Path, width: int, height: int, fps: float) -> None:
+        self.path = path
+        self.path.unlink(missing_ok=True)
+        self.process = subprocess.Popen(
+            [
+                imageio_ffmpeg.get_ffmpeg_exe(),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "bgr24",
+                "-s",
+                f"{width}x{height}",
+                "-r",
+                str(fps),
+                "-i",
+                "-",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(self.path),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
-        if handle.isOpened():
-            return handle
-        handle.release()
-    raise RuntimeError(f"OpenCV cannot create an MP4 writer for {path}")
+
+    def write(self, frame: np.ndarray) -> None:
+        if self.process.stdin is None:
+            raise RuntimeError("FFmpeg stdin is unavailable")
+        self.process.stdin.write(np.ascontiguousarray(frame).tobytes())
+
+    def release(self) -> None:
+        if self.process.stdin is not None:
+            self.process.stdin.close()
+        error = self.process.stderr.read().decode("utf-8", errors="replace") if self.process.stderr else ""
+        return_code = self.process.wait()
+        if return_code != 0:
+            raise RuntimeError(f"H.264 encoding failed for {self.path}: {error[-2000:]}")
 
 
 def label(frame: np.ndarray, text: str, color: tuple[int, int, int]) -> np.ndarray:
@@ -144,13 +186,13 @@ input[type=range]{{flex:1;min-width:180px;accent-color:var(--mint)}}#frame-label
   <div class="metric"><span>active actors</span><strong>{object_names}</strong></div>
 </div>
 <section class="hero"><div class="hero-head"><h2>三路同步总览 · RGB / MASK / DEPTH</h2><small id="time-label">0.000 s</small></div>
-  <video id="composite" controls muted playsinline preload="metadata" src="assets/truth_composite.mp4"></video>
+  <video id="composite" controls muted playsinline preload="metadata" src="assets/truth_composite_h264.mp4"></video>
   <div class="controlbar"><button class="primary" id="play">播放全部</button><button id="pause">暂停</button><button id="back">上一帧</button><button id="forward">下一帧</button><input id="scrub" type="range" min="0" max="{summary["frame_count"] - 1}" value="0" step="1" aria-label="帧号"><span id="frame-label">frame 000 / {summary["frame_count"] - 1:03d}</span></div>
 </section>
 <section class="views">
   <article class="view"><h3>01 · RGB CYCLES</h3><video class="sync" controls muted playsinline preload="metadata" src="assets/rgb_cycles.mp4"></video><p>原始 CYCLES 渲染视频，作为像素坐标参考。</p></article>
-  <article class="view"><h3>02 · INDEXOB MASK</h3><video class="sync" controls muted playsinline preload="metadata" src="assets/mask_overlay.mp4"></video><p>动态 actor GT mask；红色十字为 `trajectory_pixels.npz` 中心投影。</p></article>
-  <article class="view"><h3>03 · DEPTH / Z PASS</h3><video class="sync" controls muted playsinline preload="metadata" src="assets/depth_colormap.mp4"></video><p>同一 CYCLES 相机的 Depth/Z pass 伪彩，近处偏暖，背景/无效值为黑。</p></article>
+  <article class="view"><h3>02 · INDEXOB MASK</h3><video class="sync" controls muted playsinline preload="metadata" src="assets/mask_overlay_h264.mp4"></video><p>动态 actor GT mask；红色十字为 `trajectory_pixels.npz` 中心投影。</p></article>
+  <article class="view"><h3>03 · DEPTH / Z PASS</h3><video class="sync" controls muted playsinline preload="metadata" src="assets/depth_colormap_h264.mp4"></video><p>同一 CYCLES 相机的 Depth/Z pass 伪彩，近处偏暖，背景/无效值为黑。</p></article>
 </section>
 <section class="note"><section><h2>Caption</h2><p>{prompt}</p></section><section><h2>Files</h2><p><code>cycles_depth.npz</code> · <code>dynamic_masks.npz</code> · <code>trajectory_pixels.npz</code> · <code>rigidbench/</code></p></section></section>
 </main>
@@ -208,24 +250,24 @@ def main() -> None:
     height, width = int(masks.shape[2]), int(masks.shape[3])
     depth_values = depth[np.isfinite(depth) & (depth > 0.0)]
     low, high = np.percentile(depth_values, [1.0, 99.0]).tolist()
-    composite_writer = writer(assets / "truth_composite.mp4", width * 3, height, fps)
-    mask_writer = writer(assets / "mask_overlay.mp4", width, height, fps)
-    depth_writer = writer(assets / "depth_colormap.mp4", width, height, fps)
+    composite_writer = H264Writer(assets / "truth_composite_h264.mp4", width * 3, height, fps)
+    mask_writer = H264Writer(assets / "mask_overlay_h264.mp4", width, height, fps)
+    depth_writer = H264Writer(assets / "depth_colormap_h264.mp4", width, height, fps)
     frames_written = 0
     try:
         while frames_written < frame_count:
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError(f"RGB video ended at frame {frames_written}, expected {frame_count}")
-            rgb = label(frame, "RGB · CYCLES", (220, 240, 235))
+            rgb = label(frame, "RGB | CYCLES", (220, 240, 235))
             mask = label(
                 mask_overlay(frame, masks[:, frames_written], centers[frames_written]),
-                "MASK · INDEXOB / ACTIVE ACTOR",
+                "MASK | INDEXOB / ACTIVE ACTOR",
                 (111, 224, 197),
             )
             depth_frame = label(
                 depth_colormap(depth[frames_written], low, high),
-                f"DEPTH · Z PASS  {low:.2f}–{high:.2f} m",
+                f"DEPTH | Z PASS  {low:.2f}..{high:.2f} m",
                 (242, 183, 102),
             )
             composite_writer.write(np.concatenate([rgb, mask, depth_frame], axis=1))

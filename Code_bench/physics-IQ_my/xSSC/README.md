@@ -17,7 +17,7 @@ train_xSSC/object_self_attn_lora_experiments/infer_full_sa_no_object_lora.py
 
 ## 官方要求与模型设置
 
-官方硬性要求包括完整 V2V conditioning、198 个 take-1 多视角样本、精确 5 秒生成段、连续 ID、统一 FPS，以及使用 `final_score_view`。分辨率、采样步数、negative prompt 和随机种子属于固定的 xSSC 模型推理设置，不是 benchmark 对所有模型的统一规定。
+官方硬性要求包括完整 V2V conditioning、198 个 take-1 多视角样本、精确 5 秒生成段、连续 ID、统一 FPS，以及使用 `final_score_view`。分辨率、采样步数、negative prompt 和随机种子属于模型推理设置，不是 benchmark 对所有模型的官方统一规定；本项目从新启动的 P0 横向比较开始，统一采用 `../common/physicsiq_p0_prompt.env` 中与 PhysRVG-72f-adapted 相同的长版 negative prompt。
 
 - Benchmark：Physics-IQ Verified。
 - 输入模式：V2V。

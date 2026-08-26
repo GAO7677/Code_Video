@@ -27,6 +27,11 @@ rigidbench evaluate <prediction-dir>
 `physv_v2v_0819_cycles_aligned_truth_v2_rigidbench/cases/difficulty_l2_f11_h030_sr048/`
 包含 CYCLES Depth/Z pass、显式 K/外参和嵌套的 RigidBench 标准样本。RigidBench 官方 loader 能加载该样本，官方 GT 20 点轨迹函数也能正常运行；70 个 case 尚未批量生成。
 
+该单 case 的同步检查页面位于：
+`physv_v2v_0819_cycles_aligned_truth_v2_rigidbench/visualization/index.html`。
+它同时展示 CYCLES RGB、IndexOB mask overlay 和 Depth/Z 伪彩，可用帧滑块逐帧核对 mask 中心与投影轨迹。
+页面中的派生 overlay 视频使用 `avc1/H.264`；此前 OpenCV 默认生成的 `mp4v` 在浏览器中可能无法播放，已改用 bundled FFmpeg/libx264 重新编码。
+
 ## 1. RigidBench 官方评估协议
 
 官方 README 要求每个样本提交一个按 sample ID 命名的视频，覆盖 `t=0` 到 `t=2.0 s`；评估器会记录并对齐输入视频的 FPS 和分辨率，完整 benchmark 包含 100 个 eval examples。[官方评估说明](https://github.com/swarnim-j/RigidBench/blob/main/README.md#generate-one-video-per-example)
@@ -155,8 +160,17 @@ CYCLES 对齐真值的字段和来源见 [CYCLES 对齐真值 README](/data/gaoy
 
 - [render_physv_cycles_aligned_truth.py](/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/render_physv_cycles_aligned_truth.py)
 - [generate_physv_cycles_aligned_truth.py](/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/generate_physv_cycles_aligned_truth.py)
+- [build_cycles_rigidbench_truth_viewer.py](/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/build_cycles_rigidbench_truth_viewer.py)
 
 单 case 验证命令已经实际运行过，输出为 `difficulty_l2_f11_h030_sr048`。需要批量生成时，再用非 GPU 4 的 Blender worker 执行全部 70 个 case；预计按单 case 约 1–2 分钟、并行度取决于空闲 GPU 和磁盘吞吐，批量输出会明显增加存储占用。
+
+页面以以下前台命令提供：
+
+```bash
+/usr/bin/python3 -m http.server 8860 \
+  --bind 0.0.0.0 \
+  --directory /data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_aligned_truth_v2_rigidbench/visualization
+```
 
 后续指标执行建议分两步：
 

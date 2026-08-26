@@ -4,6 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${1:-${SCRIPT_DIR}/slot_dedup_step002000_physicsiq_verified_gpu2.json}"
 PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
+P0_PROMPT_CONFIG="${SCRIPT_DIR}/../common/physicsiq_p0_prompt.env"
+
+if [[ ! -r "${P0_PROMPT_CONFIG}" ]]; then
+  echo "Missing shared P0 negative-prompt config: ${P0_PROMPT_CONFIG}" >&2
+  exit 2
+fi
+# shellcheck source=/dev/null
+source "${P0_PROMPT_CONFIG}"
 
 if [[ ! -s "${CONFIG}" ]]; then
   echo "Missing benchmark config: ${CONFIG}" >&2
@@ -51,6 +59,10 @@ PY
 
 if [[ "${BENCHMARK}" != "Physics-IQ-Verified" || "${PROMPT_SETTING}" != "bpp" || "${INPUT_MODE}" != "v2v" ]]; then
   echo "This launcher requires Physics-IQ-Verified bpp/v2v configuration." >&2
+  exit 2
+fi
+if [[ "${NEGATIVE_PROMPT}" != "${PHYSIQ_P0_NEGATIVE_PROMPT}" ]]; then
+  echo "New P0 slot-dedup runs must use ${PHYSIQ_P0_NEGATIVE_PROMPT_VERSION}." >&2
   exit 2
 fi
 if [[ "${GPU_ID}" == "4" ]]; then

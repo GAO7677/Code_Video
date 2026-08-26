@@ -11,6 +11,7 @@ predicted frames are submitted at 24 FPS.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -33,6 +34,8 @@ NEGATIVE_PROMPT = (
     "低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，"
     "毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
 )
+NEGATIVE_PROMPT_VERSION = "physrvg-72f-adapted-long-v1"
+NEGATIVE_PROMPT_SHA256 = hashlib.sha256(NEGATIVE_PROMPT.encode("utf-8")).hexdigest()
 
 
 def parse_args() -> argparse.Namespace:
@@ -215,6 +218,11 @@ def main() -> None:
         "num_shard_cases": len(cases),
         "input_list": str(args.input_list),
         "condition": {"fps": 24, "frames": 72, "seconds": 3.0},
+        "negative_prompt": {
+            "value": NEGATIVE_PROMPT,
+            "version": NEGATIVE_PROMPT_VERSION,
+            "sha256": NEGATIVE_PROMPT_SHA256,
+        },
         "physrvg_xssc_aligned": {
             "input_context_frames": 72,
             "total_frames": 189,

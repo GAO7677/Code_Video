@@ -30,6 +30,8 @@
 | 指标报告 | `/data/gaoya/AAA_test_video/physv_v2v_0819/reports` |
 | Cycles 渲染缓存 | `/data/gaoya/agent-data/cache/physv_cycles_previews` |
 | CYCLES 对齐真值（独立生成、不覆盖原始真值） | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_aligned_truth_v1` |
+| CYCLES/RigidBench 对齐真值 v2（含 Depth/Z、K/E 和 adapter） | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_aligned_truth_v2_rigidbench` |
+| CYCLES/RigidBench 真值单 case 可视化（当前已验证 1 个 case） | `http://localhost:8860/`；页面文件位于上述 v2 目录的 `visualization/index.html` |
 | CYCLES 训练 overlay（70 条 list-manifest） | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_train_v1` |
 | CYCLES 动态 mask 源缓存 | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_mask_source_v1` |
 | VAE latent cache | `/data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_vae_latents` |
@@ -50,6 +52,9 @@
 - `physv_v2v_0819_cycles_aligned_truth_v1/cases/<case_id>/dynamic_masks.npz`: 使用与 `videos/rgb_cycles.mp4` 相同的 CYCLES 场景构建、相机、轨迹、分辨率和帧序重新渲染 Object Index pass 得到的动态物体像素真值；`masks_thw` 为 `[动态物体数, 帧数, 高, 宽]`，`union_thw` 为所有动态物体并集，背景/静态物体为 0，动态物体从 1 开始编号。
 - `physv_v2v_0819_cycles_aligned_truth_v1/cases/<case_id>/trajectory_pixels.npz`: 同一 CYCLES 相机坐标系下的动态物体中心投影，`centers_tnc` 为 `[帧数, 动态物体数, (x_pixel,y_pixel,depth)]`；像素原点在左上角，frame 0 对应 `rgb_cycles.mp4` frame 0。
 - `physv_v2v_0819_cycles_aligned_truth_v1/cases/<case_id>/truth_metadata.json`: 记录 CYCLES 配置、分辨率、帧数、动态物体名称与 Object Index 映射，并记录源 `rgb_cycles.mp4`、轨迹真值和渲染脚本。
+- `physv_v2v_0819_cycles_aligned_truth_v2_rigidbench/cases/<case_id>/cycles_depth.npz`: 与 CYCLES RGB 同坐标系的 Depth/Z pass；`truth_metadata.json` 同时记录显式相机内参 K、四元数外参和坐标约定。
+- `physv_v2v_0819_cycles_aligned_truth_v2_rigidbench/cases/<case_id>/rigidbench/`: RigidBench 文件名和字段约定的单 case adapter；其中 `masks.npz` 为 `[T,N,H,W]`，并将 `dynamic` 映射为 `active`。
+- `physv_v2v_0819_cycles_aligned_truth_v2_rigidbench/visualization/index.html`: 单 case 的 RGB、mask overlay、Depth/Z 伪彩同步检查页面；当前样本为 `difficulty_l2_f11_h030_sr048`。overlay 视频使用 `avc1/H.264` 编码，保证浏览器可播放。
 - 这批 CYCLES 对齐真值不替换 `raw/masks.npz`：后者仍是原始 PyBullet/仿真相机坐标系的 mask。`samples/<case_id>/contacts.json`、`physics_supervision.npz` 和 `raw/trajectories.npz` 仍是同一 90 帧仿真时间轴上的接触、状态和位姿真值；它们不需要因为 CYCLES 像素坐标变化而重算。
 - `captions/caption_specific.txt`: 暴露变量值和实际末态的 caption；`captions/caption_abstract.txt`: 隐藏具体变量值但保留实际运动结果的 caption。
 - `metadata.json` / `manifest.json` 中的 `caption_observations`: 从 `physics_supervision.npz` 和 `contacts.json` 提取的观测结果，用于区分通过、碰撞、掉落、停止等 case 末态。
@@ -68,7 +73,7 @@
 | `physv_v2v_0819_collision_supervision` | complete，70/70；49 个视频帧映射到 13 个 latent frame，碰撞加权为 `clip(1 + 2 * latent_score, 1, 3)`。 |
 | `physv_v2v_0819_utonia_scene_cache` | complete，70/70；读取 context 前 8 帧的第 7 帧，特征形状 `[448, 1386]`，使用官方 VGGT crop、Utonia full-upcast 和 3D-safe 动态过滤。 |
 
-其中 `physv_v2v_0819_cycles_aligned_truth_v1` 提供 CYCLES 像素坐标系的动态 mask/轨迹投影；`raw/masks.npz`、`contacts.json`、`physics_supervision.npz` 和 `raw/trajectories.npz` 仍是原始仿真时间轴真值，两者不可直接混用。
+其中 `physv_v2v_0819_cycles_aligned_truth_v1` 提供早期 CYCLES 像素坐标系的动态 mask/轨迹投影；`physv_v2v_0819_cycles_aligned_truth_v2_rigidbench` 在此基础上增加 CYCLES Depth/Z、相机 K/E 和 RigidBench adapter。`raw/masks.npz`、`contacts.json`、`physics_supervision.npz` 和 `raw/trajectories.npz` 仍是原始仿真时间轴真值，两者不可直接混用。
 
 ## 常用命令
 
@@ -116,6 +121,11 @@ $PYTHON Dataset_physv_v2v_0819/tools/render_cycles_trajectory_overlay.py \
 $PYTHON Dataset_physv_v2v_0819/tools/prepare_truth_visualizations.py \
   --dataset-root /data/gaoya/AAA_test_video/physv_v2v_0819 \
   --output-root /data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay
+
+# 构建 CYCLES/RigidBench 单 case 真值检查页面
+$PYTHON Dataset_physv_v2v_0819/scripts/build_cycles_rigidbench_truth_viewer.py \
+  --case-dir /data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_aligned_truth_v2_rigidbench/cases/difficulty_l2_f11_h030_sr048 \
+  --output-dir /data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_aligned_truth_v2_rigidbench/visualization
 ```
 
 overlay 页面中的 `CTX 8` 只包含完整视频的 frame 0–7。页面可切换三种视图：Cycles 红色轨迹 + 动态 GT mask、原始仿真相机的全物体实例 ID、原始仿真相机的深度伪彩；后两者分别来自 `raw/instance_ids.npz` 和 `raw/depth.npz`，不能视为 SAM/SAM2 结果。视频画面不写入文字图例。
@@ -136,6 +146,14 @@ viewer 前台启动命令：
 /data/gaoya/miniconda3/envs/wan-cu128/bin/python -m http.server 8919 \
   --bind 0.0.0.0 \
   --directory /data/gaoya/agent-data/outputs/physv_v2v_0819_trajectory_overlay
+```
+
+CYCLES/RigidBench 真值页面前台启动命令：
+
+```bash
+/usr/bin/python3 -m http.server 8860 \
+  --bind 0.0.0.0 \
+  --directory /data/gaoya/AAA_test_video/physv_v2v_0819/physv_v2v_0819_cycles_aligned_truth_v2_rigidbench/visualization
 ```
 
 ## Case 清单与控制变量

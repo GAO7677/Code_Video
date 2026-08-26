@@ -67,7 +67,13 @@ validate_config() {
   assert_value CONTEXT_FRAMES "$CONTEXT_FRAMES" 72
   assert_value CONTEXT_MASK_MODE "$CONTEXT_MASK_MODE" dynamic_effective
   assert_value DO_CFG "$DO_CFG" 0
-  assert_value RESET_GLOBAL_SEED_PER_CASE "$RESET_GLOBAL_SEED_PER_CASE" 0
+  assert_value RESET_GLOBAL_SEED_PER_CASE "$RESET_GLOBAL_SEED_PER_CASE" 1
+  assert_value RNG_MODE "$RNG_MODE" global_seed_per_case
+  assert_value NEGATIVE_PROMPT_VERSION "$NEGATIVE_PROMPT_VERSION" physrvg-72f-adapted-long-v1
+  local prompt_hash
+  prompt_hash="$(sha256_of <(printf '%s' "$NEGATIVE_PROMPT"))"
+  [[ "$prompt_hash" == "$NEGATIVE_PROMPT_SHA256" ]] || \
+    die "negative prompt SHA256 mismatch: ${prompt_hash}"
   [[ "$GPU_ID" =~ ^[0-9]+$ ]] || die "GPU_ID must be an integer"
   [[ "$GPU_ID" != 4 ]] || die "GPU 4 is prohibited by workspace rules"
 
@@ -118,7 +124,8 @@ print_protocol() {
   printf '%s\n' "raw=${RAW_FRAMES}@${RAW_FPS}fps"
   printf '%s\n' "resolution=${HEIGHT}x${WIDTH}"
   printf '%s\n' "steps=${NUM_INFERENCE_STEPS} guidance=${GUIDANCE_SCALE} seed=${SEED}"
-  printf '%s\n' "context=${CONTEXT_FRAMES} mask=${CONTEXT_MASK_MODE} cfg=${DO_CFG} global_seed_reset=${RESET_GLOBAL_SEED_PER_CASE}"
+  printf '%s\n' "negative_prompt_version=${NEGATIVE_PROMPT_VERSION}"
+  printf '%s\n' "context=${CONTEXT_FRAMES} mask=${CONTEXT_MASK_MODE} cfg=${DO_CFG} global_seed_reset=${RESET_GLOBAL_SEED_PER_CASE} rng_mode=${RNG_MODE}"
 }
 
 full_normalized_list() {
@@ -174,6 +181,8 @@ run_inference() {
     --context-frames "$CONTEXT_FRAMES" \
     --context-mask-mode "$CONTEXT_MASK_MODE" \
     --seed "$SEED" \
+    --rng-mode "$RNG_MODE" \
+    --reset-global-seed-per-case \
     --shard-index 0 \
     --shard-count 1 \
     --flat-output \
@@ -197,7 +206,8 @@ smoke() {
   rg -q '"fps": 24' "$metadata" || die "smoke metadata FPS mismatch"
   rg -q '"context_mask_mode": "dynamic_effective"' "$metadata" || die "smoke mask mismatch"
   rg -q '"classifier_free_guidance_enabled": false' "$metadata" || die "smoke CFG mismatch"
-  rg -q '"global_seed_reset_per_case": false' "$metadata" || die "smoke seed-reset mismatch"
+  rg -q '"global_seed_reset_per_case": true' "$metadata" || die "smoke seed-reset mismatch"
+  rg -q '"rng_mode": "global_seed_per_case"' "$metadata" || die "smoke RNG mode mismatch"
   printf '%s\n' "smoke=PASS output=${SMOKE_ROOT}"
 }
 

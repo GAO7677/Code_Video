@@ -14,6 +14,17 @@ EOF
   exit 2
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+P0_PROMPT_CONFIG="${SCRIPT_DIR}/../common/physicsiq_p0_prompt.env"
+[[ -r "$P0_PROMPT_CONFIG" ]] || {
+  echo "Missing shared P0 negative-prompt config: $P0_PROMPT_CONFIG" >&2
+  exit 2
+}
+# shellcheck source=/dev/null
+source "$P0_PROMPT_CONFIG"
+NEGATIVE_PROMPT="${PHYSIQ_NEGATIVE_PROMPT:-${PHYSIQ_P0_NEGATIVE_PROMPT}}"
+NEGATIVE_PROMPT_VERSION="${PHYSIQ_NEGATIVE_PROMPT_VERSION:-${PHYSIQ_P0_NEGATIVE_PROMPT_VERSION}}"
+
 CHECKPOINT_DIR="$(realpath "$1")"
 GPU_ID="$2"
 OUTPUT_ROOT="$(realpath -m "$3")"
@@ -66,6 +77,7 @@ echo "protocol=Physics-IQ-Verified P0"
 echo "condition=72 frames @ 24 FPS"
 echo "output=189 frames @ 24 FPS; dynamic-effective 72-frame condition mask"
 echo "steps=40 guidance=5 seed=42"
+echo "negative_prompt_version=${NEGATIVE_PROMPT_VERSION}"
 
 exec env \
   PYTHONNOUSERSITE=1 \
@@ -88,6 +100,7 @@ exec env \
   --seed 42 \
   --context-frames 72 \
   --context-mask-mode dynamic_effective \
+  --negative-prompt "$NEGATIVE_PROMPT" \
   --shard-index "$SHARD_INDEX" \
   --shard-count "$SHARD_COUNT" \
   --flat-output \

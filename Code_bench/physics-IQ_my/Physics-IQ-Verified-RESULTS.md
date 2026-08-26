@@ -1,6 +1,6 @@
 # Physics-IQ-Verified 评测结果登记
 
-最后更新：2026-08-20 UTC
+最后更新：2026-08-26 UTC
 
 本文档是本项目 Physics-IQ-Verified 评测结果的唯一登记入口。新增评测方案时必须先在本文档登记，生成和官方评分完成后必须补充最终进度、分数与产物路径。不得覆盖、删除或静默修改历史结果的含义。
 
@@ -29,6 +29,7 @@
 | 推理步数 | 40 |
 | Guidance | 5 |
 | Seed | 42 |
+| 新启动 P0 的 negative prompt | `physrvg-72f-adapted-long-v1`（SHA256 `ce96e0324e4b54ce4b6e867f669ca520952e1a34cc116543516b1897f0d3c47e`） |
 | 原始模型输出 | 189帧、24 FPS |
 | 干净条件前缀 | 69帧 |
 | Evaluator 输入 | 后120帧纯预测视频，24 FPS、5秒 |
@@ -46,6 +47,13 @@
 预期生成文件名集合 SHA256：
 
 `8ee2101106b2acaaecac752ea5175cee89d30b3aab9c602623ff02360eacc071`
+
+新启动的 `P0` 测评必须从
+`common/physicsiq_p0_prompt.env` 读取上述长版 negative prompt，并在推理
+元数据或运行日志中记录其版本。该约定与 `PhysRVG-72f-adapted` 一致，
+用于后续严格横向比较；官方 evaluator 本身并不规定这一项目级 prompt。
+已完成的两组 xSSC P0 结果使用历史短版 prompt，历史配置和分数保持原样，
+不因本约定而重新标注或静默改写。
 
 官方评测代码来源：
 
