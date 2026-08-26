@@ -20,7 +20,7 @@
 | 单 case GT-vs-GT 结果 | `evaluations/gt_oracle_single_case/results.json` |
 | 单 case SAM2/CoTracker/VDA 结果 | `evaluations/rigidbench_tracker_gt_native_single_case/cycles_gt_native_sam2_cotracker3_vda/results.json` |
 | 评测日志 | `evaluations/logs/rigidbench_gt_native_eval_gpu0.log` |
-| 真值可视化页面 | `http://localhost:8860/` |
+| 真值与 SAM2/CoTracker/VDA 对比页面 | `http://localhost:8860/` |
 
 当前真值页面的前台启动命令是：
 
@@ -31,6 +31,8 @@
 ```
 
 不要把该服务改成后台 daemon；需要重启时在前台执行上述命令。当前服务若仍在运行，可先确认 `ss -ltnp | rg ':8860'`。
+
+页面现在同时包含两部分：上半部分是 CYCLES GT 的 RGB/mask/Depth/Z；下半部分是本次 SAM2/CoTracker/VDA 对同一视频重新估计后的 mask、tracks、depth 与 GT 对比。浏览器若使用旧缓存，执行硬刷新（例如 `Ctrl+F5`）。
 
 ## 3. 数据契约与来源
 
@@ -61,7 +63,20 @@
 
 原始 case 目录中的 `contacts.json`、`physics_supervision.npz`、`raw/trajectories.npz` 等仍然保留，主要用于物理事件/训练监督；它们不是本次 RigidBench 十项指标的直接输入。`raw/masks.npz` 是原始仿真相机坐标系的 mask，也不能直接替代 CYCLES 坐标系的 `rigidbench/masks.npz`。
 
-### 3.3 数据生成代码
+### 3.3 “输入视频”与 GT 的边界
+
+这次评测不是只给一个视频就能完成。准确地说：
+
+- **视频观测输入**：`rgb_cycles.mp4`。评测 runner 先把它解码成 JPG 帧，SAM2、CoTracker3 和 VDA 都从这些帧提取预测结果；这里没有使用 `rgb.mp4`。
+- **GT mask**：`rigidbench/masks.npz`。SAM2 用第 0 帧 active actor mask 初始化传播；IoU、L2、Chamfer 使用逐帧 GT mask 对比预测 mask。
+- **GT 轨迹与相机**：`rigidbench/trajectories.npz` + `rigidbench/metadata.json`。CoTracker 使用 GT actor 查询点作为起始点，ATE/ATE3D 需要 GT actor 轨迹以及相机内外参。
+- **GT depth**：`rigidbench/depth.npz`。SI-MSE 和 ATE3D 需要与 `rgb_cycles.mp4` 同坐标系、同分辨率、同帧序的 CYCLES Depth/Z。
+- **reference RGB**：SSIM、LPIPS 和 IdDrift 需要 reference/generated RGB 帧；本次 sanity check 中 prediction video 与 reference video 是同一份 `rgb_cycles.mp4`。
+- **评测中间结果，不是已有 GT**：SAM2 产生的 `masks/.../mask.npz`、CoTracker 产生的 `tracks/.../tracks.npz`、VDA 产生的 `depth/.../depth.npz` 都是本次运行生成的预测结果；`gt_tracks.npz` 是评测代码根据 GT 轨迹和相机重新导出的比较基准。
+
+因此，已有 GT 数据集提供了完整的对齐监督；视频负责提供模型观测，GT 负责初始化、对齐和计算误差。若评测一个生成视频，只需把生成视频替换 prediction 侧，但仍必须提供同 case 的 CYCLES GT adapter。
+
+### 3.4 数据生成代码
 
 主要脚本为：
 
@@ -217,3 +232,34 @@ git diff --check
 4. 不要覆盖 `samples/` 原始数据和已有 v1/v2 真值目录；
 5. 任何新结果使用独立的 `evaluations/<protocol>/<model>/` 目录，并把协议写入 JSON/README。
 
+## 10. Strict CYCLES benchmark build
+
+The formal maintained package is:
+
+`/data/gaoya/AAA_test_video/physv_v2v_0819_strict`
+
+Build command (GPU0, tmux session `physv_strict_build_gpu0`):
+
+```bash
+cd /home/gaoya/Code_Video/Dataset_physv_v2v_0819
+CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1 /usr/bin/python3 \
+  scripts/build_physv_v2v_0819_strict.py \
+  --source-root /data/gaoya/AAA_test_video/physv_v2v_0819 \
+  --output-root /data/gaoya/AAA_test_video/physv_v2v_0819_strict \
+  --gpu 0 \
+  --blender /data/gaoya/agent-data/tools/blender-3.6.23-linux-x64/blender \
+  --ffmpeg /home/gaoya/.local/lib/python3.10/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2 \
+  --resume
+```
+
+The build log is:
+
+`/data/gaoya/agent-data/outputs/physv_v2v_0819_strict_build_gpu0.log`
+
+The package protocol is native CYCLES `896x512 / 30 FPS / 90 frames`; ten
+source cases that were `640x360` are re-rendered. The package retains CYCLES
+RGB/context, captions, simulator provenance, contacts, physics supervision,
+and `raw/masks.npz`/`raw/trajectories.npz` required to regenerate aligned
+truth. It excludes original non-CYCLES MP4s and model-specific caches. The
+final package is valid only when `manifest.json` reports `status=complete` and
+`reports/integrity_report.json` contains 70 passing records.

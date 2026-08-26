@@ -243,6 +243,24 @@ CYCLES/RigidBench 真值页面前台启动命令：
 
 F12 斜面长度组保持斜面最高点/支撑高度不变，长度变化会使倾角随之变化；V2V 06 跷跷板保持 2.70 m 板长，载荷从中心向一侧均匀外移。摆锤撞立柜组固定摆长 `1.10 m` 和释放角 `18°`，只改变悬点高度，因此相对摆动能量和撞击速度保持一致，撞击位置随高度变化。
 
+## Strict CYCLES benchmark package
+
+The formal maintained benchmark package is built at:
+
+`/data/gaoya/AAA_test_video/physv_v2v_0819_strict`
+
+It contains only the 70 CYCLES cases and reproducibility metadata. All
+reference videos use native CYCLES rendering at `896x512`, `30 FPS`, and `90`
+frames; the ten legacy `640x360` cases are re-rendered before packaging. The
+package excludes the original non-CYCLES MP4s and model-specific training
+caches. CYCLES-aligned pixel truth is under `truth/cases/<case_id>/`, and the
+RigidBench-compatible per-case adapter is under
+`truth/rigidbench_dataset/samples/<case_id>/`.
+
+The package manifest and integrity report are generated only after all 70
+truth cases pass validation. Until then, use the build log and do not treat
+the strict directory as complete.
+
 ## Cycles 输入列表
 
 全部 70 个 Cycles 视频已整理为：

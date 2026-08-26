@@ -53,18 +53,36 @@ def run_checked(command: list[str], *, env: dict[str, str] | None = None) -> Non
     subprocess.run(command, check=True, env=env)
 
 
-def video_info(path: Path, ffprobe: Path) -> dict:
-    result = subprocess.run(
-        [
-            str(ffprobe), "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,avg_frame_rate,nb_frames,duration",
-            "-of", "json", str(path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return json.loads(result.stdout)["streams"][0]
+def video_info(path: Path, ffprobe: Path | None) -> dict:
+    if ffprobe is not None and ffprobe.is_file():
+        result = subprocess.run(
+            [
+                str(ffprobe), "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,avg_frame_rate,nb_frames,duration",
+                "-of", "json", str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(result.stdout)["streams"][0]
+    capture = cv2.VideoCapture(str(path))
+    try:
+        if not capture.isOpened():
+            raise RuntimeError(f"could not open video for probing: {path}")
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        return {
+            "width": width,
+            "height": height,
+            "avg_frame_rate": f"{fps:.6f}",
+            "nb_frames": str(frame_count),
+            "duration": frame_count / fps if fps > 0 else 0.0,
+        }
+    finally:
+        capture.release()
 
 
 def export_trajectory_json(source: Path, target: Path) -> int:
@@ -112,8 +130,11 @@ def main() -> None:
     dataset_root = args.dataset_root.resolve()
     cache_root = args.cache_root.resolve()
     ffprobe = args.ffprobe or args.ffmpeg.with_name("ffprobe")
-    if not args.ffmpeg.is_file() or not ffprobe.is_file():
-        raise FileNotFoundError(f"ffmpeg/ffprobe not found beside {args.ffmpeg}")
+    if not args.ffmpeg.is_file():
+        raise FileNotFoundError(f"ffmpeg not found: {args.ffmpeg}")
+    if not ffprobe.is_file():
+        print(f"[cycles-preview] ffprobe not found beside {args.ffmpeg}; using OpenCV probe", flush=True)
+        ffprobe = None
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     for case_id in args.case_ids:

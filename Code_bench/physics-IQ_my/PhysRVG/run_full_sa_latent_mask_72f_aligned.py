@@ -391,12 +391,9 @@ def main() -> None:
     )
     all_names = set(all_names_list)
     selected_names = {payload["generated_video_name"] for _, _, payload in selected}
-    check_submission_directory(
-        submission_root,
-        selected_names,
-        all_names,
-        require_complete=args.shard_count == 1 and args.limit is None,
-    )
+    # A fresh submission directory is intentionally incomplete here.  The
+    # complete-set check belongs after generation, below; per-case resume
+    # validation is handled inside the loop.
 
     loader_args = build_loader_args(args)
     print(
@@ -563,6 +560,16 @@ def main() -> None:
             "shard_count": args.shard_count,
             "num_cases_selected": len(selected),
             "num_cases_total": EXPECTED_CASES,
+            "model": {
+                "model_id": str(model_id),
+                "dit_checkpoint": str(dit_checkpoint),
+                "dit_strict": bool(physrvg_dit["strict"]),
+                "dit_source_tensors": int(physrvg_dit["source_tensors"]),
+                "lora_checkpoint": str(lora_checkpoint),
+                "loaded_lora_target_modules": int(loaded_lora_targets),
+                "loader": "/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/inference/infer_full_sa_lora_json_list.py",
+                "pipeline": "/home/gaoya/code_V2V_baselines/PhysRVG-main/fastvideo/models/wan_v2v/pipeline_wan_v2v.py",
+            },
             "condition": {"frames": EXPECTED_CONDITION_FRAMES, "fps": EXPECTED_CONDITION_FPS},
             "raw": {"frames": EXPECTED_RAW_FRAMES, "fps": EXPECTED_FPS},
             "submission": {

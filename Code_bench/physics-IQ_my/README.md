@@ -5,6 +5,12 @@
 - `physiq/run_physics_iq.py`：逐次运行评测。
 - `physiq/aggregate_runs_from_csvs.py --score-type verified`：聚合 1 至 4 次运行。
 
+新建严格可比的 P0 方案应优先使用统一入口和说明：
+
+- 入口：`run_physicsiq_p0.py`
+- 使用说明：`P0_UNIFIED_RUNNER.md`
+- 模型差异通过 `adapters/` 下的 adapter 注入；输入、输出、校验和官方评分由统一入口固定。
+
 官方仓库：`/home/gaoya/Code_Video/Code_bench/physics-IQ-benchmark-main`
 
 Verified 数据集：`/data/gaoya/dataset/Anates-Labs-Research-Physics-IQ-Verified`
@@ -36,6 +42,10 @@ uv sync
 系统还必须提供 `ffprobe`，它随 `ffmpeg` 安装。当前非交互 shell 中尚未发现 `uv` 和 `ffprobe`；安装后再运行评测。
 
 ## 3. 生成视频目录
+
+新建严格可比的 P0 运行不要手动用下面的 ffmpeg 示例裁剪；请使用
+`P0_UNIFIED_RUNNER.md` 中的统一 runner 和 adapter。下面的转换命令只保留给
+历史结果整理或非 P0 诊断，不能用来声明新的严格可比结果。
 
 每个独立 run 放一个目录，推荐命名：
 

@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Copy this file for a new model. The generic launcher exports:
+# Copy this file for a new model. The canonical P0 runner exports:
 #   PHYSIQ_WORKSPACE, PHYSIQ_DATASET, PHYSIQ_PROMPT_SETTING,
 #   PHYSIQ_INPUT_MODE, PHYSIQ_RUN_INDEX, PHYSIQ_RUN_TAG,
-#   PHYSIQ_SEED, PHYSIQ_MODEL_NAME, PHYSIQ_RESULT_FILE, and (for new P0
-#   bpp/v2v runs) PHYSIQ_NEGATIVE_PROMPT plus its version/digest.
+#   PHYSIQ_SEED, PHYSIQ_MODEL_NAME, PHYSIQ_INPUT_LIST,
+#   PHYSIQ_RAW_ROOT, PHYSIQ_SUBMISSION_ROOT, PHYSIQ_RESULT_FILE,
+#   PHYSIQ_NEGATIVE_PROMPT plus its version/digest, and all fixed P0 frame/
+#   resolution/sampling values.
 
 : "${PHYSIQ_RESULT_FILE:?launcher must set PHYSIQ_RESULT_FILE}"
-: "${PHYSIQ_WORKSPACE:?launcher must set PHYSIQ_WORKSPACE}"
-: "${PHYSIQ_RUN_TAG:?launcher must set PHYSIQ_RUN_TAG}"
-: "${PHYSIQ_MODEL_NAME:?set PHYSIQ_MODEL_NAME for this adapter}"
+: "${PHYSIQ_SUBMISSION_ROOT:?runner must set PHYSIQ_SUBMISSION_ROOT}"
+: "${PHYSIQ_RAW_ROOT:?runner must set PHYSIQ_RAW_ROOT}"
 
-RUN_FOLDER="$PHYSIQ_WORKSPACE/generated_videos_5s/${PHYSIQ_MODEL_NAME}-${PHYSIQ_PROMPT_SETTING}-${PHYSIQ_RUN_TAG}"
-mkdir -p "$RUN_FOLDER"
+RUN_FOLDER="$PHYSIQ_SUBMISSION_ROOT"
+mkdir -p "$PHYSIQ_RAW_ROOT" "$RUN_FOLDER"
 
 cat >&2 <<EOF
 Implement this adapter's model inference here.
@@ -24,5 +25,5 @@ EOF
 exit 2
 
 # After successful inference, leave only the canonical MP4 files in RUN_FOLDER,
-# then publish the result to the generic launcher:
+# keep any 189-frame raw MP4s under PHYSIQ_RAW_ROOT, then publish the result:
 # printf '%s\n' "$RUN_FOLDER" > "$PHYSIQ_RESULT_FILE"

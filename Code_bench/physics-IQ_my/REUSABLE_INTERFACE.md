@@ -1,5 +1,11 @@
 # Reusable Physics-IQ Verified Interface
 
+> **Canonical P0 entry point:** use
+> `run_physicsiq_p0.py` with the procedures in `P0_UNIFIED_RUNNER.md` for new
+> strict comparisons. The launcher documented below remains a compatibility
+> interface for older adapters; it does not replace the P0-specific frame and
+> resolution checks in the canonical runner.
+
 The reusable layer separates model-specific generation from official scoring.
 It does not modify the official benchmark repository.
 
@@ -89,7 +95,8 @@ The adapter receives stable `PHYSIQ_*` environment variables and must write the 
 - `PHYSIQ_INPUT_MODE`: normally `v2v` or `i2v`.
 - `PHYSIQ_RUN_INDEX`: `1` through `4`.
 - `PHYSIQ_RUN_TAG`: normalized `run_01` through `run_04`.
-- `PHYSIQ_SEED`: default mapping `42` through `45`.
+- `PHYSIQ_SEED`: the compatibility launcher maps run indices to `42` through `45`;
+  the canonical new P0 runner fixes the strict comparison seed to `42`.
 - `PHYSIQ_NEGATIVE_PROMPT`: canonical long prompt for new P0 adapters.
 - `PHYSIQ_NEGATIVE_PROMPT_VERSION`: prompt version supplied by the launcher.
 - `PHYSIQ_NEGATIVE_PROMPT_SHA256`: prompt digest supplied by the launcher.

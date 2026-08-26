@@ -27,6 +27,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--tracker-eval-dir",
+        type=Path,
+        help="Optional cycles_gt_native_sam2_cotracker3_vda output directory to visualize.",
+    )
     return parser.parse_args()
 
 
@@ -139,11 +144,206 @@ def depth_colormap(depth: np.ndarray, low: float, high: float) -> np.ndarray:
     return output
 
 
+def tracker_mask_overlay(
+    frame: np.ndarray,
+    gt_masks: np.ndarray,
+    predicted_masks: np.ndarray,
+    predicted_centers: np.ndarray,
+) -> np.ndarray:
+    """Show GT contours and SAM2 masks in one frame."""
+    output = frame.copy()
+    for index, gt_mask in enumerate(gt_masks):
+        color = np.asarray(PALETTE[index % len(PALETTE)], dtype=np.uint8)
+        if gt_mask.any():
+            contours, _ = cv2.findContours(
+                gt_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            cv2.drawContours(output, contours, -1, tuple(int(value) for value in color), 2, cv2.LINE_AA)
+        if index >= len(predicted_masks) or not predicted_masks[index].any():
+            continue
+        pred_mask = predicted_masks[index]
+        color_layer = np.broadcast_to(np.asarray((55, 80, 255), dtype=np.uint8), output.shape)
+        output[pred_mask] = (
+            output[pred_mask].astype(np.float32) * 0.52
+            + color_layer[pred_mask].astype(np.float32) * 0.48
+        ).astype(np.uint8)
+        contours, _ = cv2.findContours(
+            pred_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        cv2.drawContours(output, contours, -1, (55, 80, 255), 2, cv2.LINE_AA)
+        if index < len(predicted_centers):
+            x, y = predicted_centers[index]
+            if np.isfinite(x) and np.isfinite(y):
+                cv2.drawMarker(
+                    output,
+                    (int(round(x)), int(round(y))),
+                    (55, 80, 255),
+                    cv2.MARKER_CROSS,
+                    20,
+                    2,
+                    cv2.LINE_AA,
+                )
+    return output
+
+
+def tracker_tracks_overlay(
+    frame: np.ndarray,
+    predicted_tracks: np.ndarray,
+    gt_tracks: np.ndarray,
+    predicted_visibility: np.ndarray,
+    gt_visibility: np.ndarray,
+) -> np.ndarray:
+    """Draw the CoTracker prediction and GT query trajectories."""
+    output = frame.copy()
+    for point_index in range(min(len(predicted_tracks), len(gt_tracks))):
+        if predicted_visibility[point_index]:
+            x, y = predicted_tracks[point_index]
+            if np.isfinite(x) and np.isfinite(y):
+                cv2.drawMarker(
+                    output,
+                    (int(round(x)), int(round(y))),
+                    (55, 80, 255),
+                    cv2.MARKER_CROSS,
+                    14,
+                    1,
+                    cv2.LINE_AA,
+                )
+        if gt_visibility[point_index]:
+            x, y = gt_tracks[point_index]
+            if np.isfinite(x) and np.isfinite(y):
+                cv2.circle(output, (int(round(x)), int(round(y))), 3, (74, 214, 190), -1, cv2.LINE_AA)
+    return output
+
+
+def build_tracker_assets(
+    tracker_eval_dir: Path,
+    sample_id: str,
+    source_video: Path,
+    assets: Path,
+    gt_masks: np.ndarray,
+    fps: float,
+    width: int,
+    height: int,
+) -> dict:
+    """Render learned tracker outputs into browser-compatible H.264 assets."""
+    mask_path = tracker_eval_dir / "masks" / sample_id / "mask.npz"
+    tracks_path = tracker_eval_dir / "tracks" / sample_id / "tracks.npz"
+    gt_tracks_path = tracker_eval_dir / "tracks" / sample_id / "gt_tracks.npz"
+    depth_path = tracker_eval_dir / "depth" / sample_id / "depth.npz"
+    results_path = tracker_eval_dir / "results.json"
+    required = (mask_path, tracks_path, gt_tracks_path, depth_path, results_path)
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise FileNotFoundError("Missing tracker evaluation files: " + ", ".join(missing))
+
+    predicted_masks = np.load(mask_path)["masks"].astype(bool)
+    tracks_data = np.load(tracks_path)
+    gt_tracks_data = np.load(gt_tracks_path)
+    predicted_tracks = tracks_data["tracks"]
+    gt_tracks = gt_tracks_data["tracks"]
+    predicted_visibility = tracks_data["visibility"]
+    gt_visibility = gt_tracks_data["visibility"]
+    predicted_depth = np.load(depth_path)["depth"].astype(np.float32)
+    if predicted_masks.shape != gt_masks.shape:
+        raise ValueError(f"Tracker mask shape {predicted_masks.shape} != GT shape {gt_masks.shape}")
+    if predicted_depth.shape != (gt_masks.shape[0], height, width):
+        raise ValueError(f"Tracker depth shape {predicted_depth.shape} != {(gt_masks.shape[0], height, width)}")
+
+    depth_values = predicted_depth[np.isfinite(predicted_depth) & (predicted_depth > 0.0)]
+    low, high = np.percentile(depth_values, [1.0, 99.0]).tolist()
+    capture = cv2.VideoCapture(str(source_video))
+    writers = {
+        "mask": H264Writer(assets / "tracker_mask_h264.mp4", width, height, fps),
+        "tracks": H264Writer(assets / "tracker_tracks_h264.mp4", width, height, fps),
+        "depth": H264Writer(assets / "tracker_depth_h264.mp4", width, height, fps),
+        "composite": H264Writer(assets / "tracker_composite_h264.mp4", width * 3, height, fps),
+    }
+    frame_index = 0
+    try:
+        while frame_index < gt_masks.shape[0]:
+            ok, frame = capture.read()
+            if not ok:
+                raise RuntimeError(f"RGB video ended at tracker frame {frame_index}")
+            centers = np.zeros((predicted_masks.shape[1], 2), dtype=np.float32)
+            for object_index, mask in enumerate(predicted_masks[frame_index]):
+                ys, xs = np.where(mask)
+                if len(xs):
+                    centers[object_index] = (float(xs.mean()), float(ys.mean()))
+                else:
+                    centers[object_index] = (np.nan, np.nan)
+            mask_frame = label(
+                tracker_mask_overlay(frame, gt_masks[frame_index], predicted_masks[frame_index], centers),
+                "SAM2 | GT OUTLINE + PREDICTED MASK",
+                (255, 150, 120),
+            )
+            track_frame = label(
+                tracker_tracks_overlay(
+                    frame,
+                    predicted_tracks[:, frame_index],
+                    gt_tracks[:, frame_index],
+                    predicted_visibility[:, frame_index],
+                    gt_visibility[:, frame_index],
+                ),
+                "COTRACKER | PRED RED + GT MINT",
+                (255, 150, 120),
+            )
+            depth_frame = label(
+                depth_colormap(predicted_depth[frame_index], low, high),
+                f"VDA | PREDICTED DEPTH  {low:.2f}..{high:.2f}",
+                (242, 183, 102),
+            )
+            writers["mask"].write(mask_frame)
+            writers["tracks"].write(track_frame)
+            writers["depth"].write(depth_frame)
+            writers["composite"].write(np.concatenate([mask_frame, track_frame, depth_frame], axis=1))
+            frame_index += 1
+    finally:
+        capture.release()
+        for writer in writers.values():
+            writer.release()
+
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    return {
+        "model": results.get("model", tracker_eval_dir.parent.name),
+        "results": results,
+        "assets": {
+            "composite": "assets/tracker_composite_h264.mp4",
+            "mask": "assets/tracker_mask_h264.mp4",
+            "tracks": "assets/tracker_tracks_h264.mp4",
+            "depth": "assets/tracker_depth_h264.mp4",
+        },
+    }
+
+
 def html_page(summary: dict) -> str:
     payload = json.dumps(summary, ensure_ascii=False).replace("</", "<\\/")
     sample_id = html.escape(summary["sample_id"])
     prompt = html.escape(summary.get("prompt", ""))
     object_names = html.escape(", ".join(summary["dynamic_objects"]))
+    tracker = summary.get("tracker_eval")
+    tracker_section = ""
+    if tracker:
+        tracker_results = tracker.get("results", {})
+        aggregate = tracker_results.get("aggregated", tracker_results)
+        metrics = aggregate.get("by_task", {}).get("table_rolloff", aggregate)
+        metric_order = ("iou", "l2", "chamfer", "ate", "si_mse", "lpips", "ssim", "ate3d", "iddrift", "bgdrift")
+        metric_cards = "".join(
+            f'<div class="metric mini"><span>{html.escape(name)}</span><strong>{float(metrics[name]):.6g}</strong></div>'
+            for name in metric_order
+            if name in metrics
+        )
+        tracker_section = f'''<section class="tracker-panel">
+  <div class="section-kicker">LEARNED RE-ESTIMATION / SAME CYCLES VIDEO</div>
+  <h2>SAM2 · CoTracker3 · VDA</h2>
+  <p class="section-dek">输入仍是同一份 CYCLES RGB；彩色叠加显示模型重新估计的 mask、tracks、depth 与 adapter GT 的差异。红色为预测，薄荷色为 GT。</p>
+  <div class="tracker-metrics">{metric_cards}</div>
+  <div class="tracker-hero"><video class="sync" controls muted playsinline preload="metadata" src="{html.escape(tracker["assets"]["composite"])}"></video></div>
+  <div class="views tracker-views">
+    <article class="view"><h3>01 · SAM2 MASK</h3><video class="sync" controls muted playsinline preload="metadata" src="{html.escape(tracker["assets"]["mask"])}"></video><p>薄荷色轮廓是 GT，红色填充/轮廓是 SAM2 传播结果。</p></article>
+    <article class="view"><h3>02 · COTRACKER TRACKS</h3><video class="sync" controls muted playsinline preload="metadata" src="{html.escape(tracker["assets"]["tracks"])}"></video><p>红色十字是 CoTracker 预测点，薄荷色点是 GT 轨迹点。</p></article>
+    <article class="view"><h3>03 · VDA DEPTH</h3><video class="sync" controls muted playsinline preload="metadata" src="{html.escape(tracker["assets"]["depth"])}"></video><p>Video Depth Anything 重新估计的 disparity/depth 伪彩。</p></article>
+  </div>
+</section>'''
     return f'''<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -170,8 +370,9 @@ button.primary{{border-color:var(--mint);color:#081311;background:#6fe0c5}}butto
 input[type=range]{{flex:1;min-width:180px;accent-color:var(--mint)}}#frame-label{{min-width:120px;color:var(--amber);font:700 12px ui-monospace,SFMono-Regular,monospace;text-align:right}}
 .views{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:18px}}
 .view{{min-width:0;padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px}}.view h3{{margin:0 0 8px;color:var(--mint);font:700 12px ui-monospace,SFMono-Regular,monospace;letter-spacing:.07em}}.view p{{margin:8px 2px 0;color:var(--muted);font-size:12px}}
+.tracker-panel{{margin-top:26px;padding:18px;background:linear-gradient(145deg,#1d242d,#11171d);border:1px solid #695247;border-radius:16px;box-shadow:0 20px 60px #0005}}.section-kicker{{color:#ff987e;font:700 11px/1.2 ui-monospace,SFMono-Regular,monospace;letter-spacing:.16em}}.tracker-panel h2{{margin:8px 0 5px;font-size:20px}}.section-dek{{margin:0;max-width:920px;color:var(--muted);font-size:13px}}.tracker-metrics{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:16px 0}}.metric.mini{{border-top-color:#ff987e;padding:10px 12px}}.metric.mini strong{{font-size:15px}}.tracker-hero{{padding:10px;background:#0b1114;border:1px solid #4c3e3a;border-radius:12px}}.tracker-views{{margin-top:12px}}
 .note{{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}}.note section{{padding:16px;background:#101a1e;border:1px solid var(--line);border-radius:12px}}.note h2{{margin:0 0 8px;color:var(--amber);font-size:13px}}.note p{{margin:0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}}code{{color:var(--mint);font-family:ui-monospace,SFMono-Regular,monospace}}
-@media(max-width:880px){{.meta{{grid-template-columns:repeat(2,minmax(0,1fr))}}.views,.note{{grid-template-columns:1fr}}}}
+@media(max-width:880px){{.meta{{grid-template-columns:repeat(2,minmax(0,1fr))}}.views,.note{{grid-template-columns:1fr}}.tracker-metrics{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 @media(max-width:500px){{.meta{{grid-template-columns:1fr 1fr}}h1{{font-size:38px}}}}
 @media(prefers-reduced-motion:reduce){{*{{scroll-behavior:auto!important}}}}
 </style></head>
@@ -194,6 +395,7 @@ input[type=range]{{flex:1;min-width:180px;accent-color:var(--mint)}}#frame-label
   <article class="view"><h3>02 · INDEXOB MASK</h3><video class="sync" controls muted playsinline preload="metadata" src="assets/mask_overlay_h264.mp4"></video><p>动态 actor GT mask；红色十字为 `trajectory_pixels.npz` 中心投影。</p></article>
   <article class="view"><h3>03 · DEPTH / Z PASS</h3><video class="sync" controls muted playsinline preload="metadata" src="assets/depth_colormap_h264.mp4"></video><p>同一 CYCLES 相机的 Depth/Z pass 伪彩，近处偏暖，背景/无效值为黑。</p></article>
 </section>
+{tracker_section}
 <section class="note"><section><h2>Caption</h2><p>{prompt}</p></section><section><h2>Files</h2><p><code>cycles_depth.npz</code> · <code>dynamic_masks.npz</code> · <code>trajectory_pixels.npz</code> · <code>rigidbench/</code></p></section></section>
 </main>
 <script>
@@ -299,6 +501,17 @@ def main() -> None:
         "source_rgb_cycles": str(source_video),
         "truth_case": str(case_dir),
     }
+    if args.tracker_eval_dir:
+        summary["tracker_eval"] = build_tracker_assets(
+            args.tracker_eval_dir.expanduser().resolve(),
+            str(metadata["sample_id"]),
+            source_video,
+            assets,
+            masks.transpose(1, 0, 2, 3),
+            fps,
+            width,
+            height,
+        )
     (output_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

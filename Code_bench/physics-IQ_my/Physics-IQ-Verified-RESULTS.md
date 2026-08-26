@@ -52,8 +52,29 @@
 `common/physicsiq_p0_prompt.env` 读取上述长版 negative prompt，并在推理
 元数据或运行日志中记录其版本。该约定与 `PhysRVG-72f-adapted` 一致，
 用于后续严格横向比较；官方 evaluator 本身并不规定这一项目级 prompt。
+当前待运行的 latent-mask runner 通过 SHA256 guard 校验共享推理模块中的
+prompt 常量与该 canonical value 一致，并把版本/hash 写入 metadata；因此记录的是
+同一 prompt 值，源码实现上不等同于运行时重新 source 该 env 文件。
 已完成的两组 xSSC P0 结果使用历史短版 prompt，历史配置和分数保持原样，
 不因本约定而重新标注或静默改写。
+
+### P0 新建 72f-aligned runner 的实现级固定项
+
+以下约定用于后续新建的 `PhysRVG-72f-aligned` 类 P0 runner；不追溯改写
+已有结果的历史实现或分数。
+
+| 项目 | 固定约定 |
+|---|---|
+| Per-case RNG | 每个 case 调用 `accelerate.set_seed(42)`；pipeline 不传显式 `torch.Generator` |
+| 条件 mask | 72 帧条件视频全部编码为有效条件 latent，采用 `dynamic_effective` 语义；189 帧输出删除前69帧条件前缀 |
+| 120帧编码 | 在同一次推理返回的内存帧上执行 `raw[69:189]`（等价于已确认长度为189时的 `raw[69:]`），直接 `export_to_video(..., macro_block_size=1)`；不得先编码189帧再解码/重编码120帧 |
+| Submission 目录 | 最终目录只允许198个官方命名的 `.mp4` 文件；metadata/manifest 放在目录外 |
+| 可比性边界 | 官方输入、帧数、FPS和提交目录契约一致可标记为 P0 严格可比；不同 LoRA、pipeline 源码或运行环境不宣称 bitwise identical |
+
+后续新建 P0 方案统一通过
+`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/run_physicsiq_p0.py`
+调用模型 adapter；接口和迁移步骤见
+`/home/gaoya/Code_Video/Code_bench/physics-IQ_my/P0_UNIFIED_RUNNER.md`。
 
 官方评测代码来源：
 
@@ -237,6 +258,7 @@ SSH 118上的结果产物：
 | 最近状态 | 模型与 Run | 协议 | 进度 | 分数 |
 |---|---|---:|---:|---|
 | 已中断，可续跑 | xSSC slot-dedup step-2000 | P0 | 73/198 raw | 暂无 |
+| 计划中 | PhysRVG Full-SA latent-mask step-001000 72f-aligned | P0 | 未开始 | 暂无 |
 | 未完成 | stage1b step-2500 | 非P0 | 11/198 | 暂无 |
 | 未完成 | stage1b step-2500 with negative prompt | 非P0 | 1/198 | 暂无 |
 | 未完成 | Wan2.2 BoN16 | P3衍生 | 仅有部分候选结果 | 暂无 |
@@ -365,6 +387,55 @@ Raw保存说明：
 - 页面：`http://10.176.42.45:8844/physicsiq-verified-standard/`
 - 页面源码：`/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub/physicsiq-verified-standard/index.html`
 - 增量同步：`/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub/physicsiq-verified-standard/sync_from_118.sh`
+
+## PhysRVG Full-SA latent-mask step-001000 72f-aligned P0（待运行）
+
+状态：已登记、尚未启动完整 GPU 推理；因此暂无分数，不计入上方“已完成”总表。
+本节记录的是与 `PhysRVG-72f-adapted` 对齐的独立 runner，不能把它与历史
+`PhysRVG Full-SA VJEPA step-000500` 的结果混为同一权重。
+
+Run ID：
+
+`physrvg-full-sa-latent-mask-step001000-bpp-run_01-72f-aligned`
+
+### 模型、权重与代码核查
+
+| 项目 | 本次 72f-aligned runner | `PhysRVG-72f-adapted` 历史 run | 核查结论 |
+|---|---|---|---|
+| Base model | `/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B-Diffusers` | 远端 `/mnt/data/gaoya/ckpt/HappyP4nda-PhysRVG/Wan2.2-TI2V-5B-Diffusers`（指向同一 Wan2.2 TI2V-5B 模型树） | 关键配置及组件文件清单/大小已核对一致 |
+| PhysRVG DiT | `/data/gaoya/agent-data/weights/physrvg-diffusers-d8caf2/dit/diffusion_pytorch_model.safetensors`；SHA256 `70c14c374fc9f33a29ed713f68cf7e5db4952ea62ecd1787e63a390ef94918d3` | 远端 PhysRVG DiT；同一 SHA256 | 权重一致，使用 `strict=True` 加载 |
+| LoRA | `/data/gaoya/agent-data/checkpoints/physrvg_full_sa_latent_mask/full-sa-pybullet-physrvg-latent-mask-b2-gacc2-20260818T052732Z/checkpoints/step-001000`；adapter SHA256 `973abe5bab0c3778f25f71a1330b5dbe6fbbe2ede22fe11fe90c550977b1bf64` | `/mnt/data/gaoya/ckpt/HappyP4nda-PhysRVG/lora/checkpoint`；历史 adapter SHA256 `3d6507c54984608b944be7ba765d038fff4a92593cb017bb2784235fc95eabee` | LoRA 不同；这是不同模型变体的 P0 横向比较，不是同 checkpoint 复现 |
+| 新 runner 入口 | `/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/run_full_sa_latent_mask_72f_aligned.py`；SHA256 `430579cef42ec5423acc6f82e6f2ae3ca5e914b0133180e3da2a250dfc1bd590` | `/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/generate_physrvg_verified.py` | 独立新脚本，不修改原 `run_full_sa_latent_mask_verified.sh` |
+| 共享加载器 | `/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/inference/infer_full_sa_lora_json_list.py`；SHA256 `2f6fb7f489c2befaa9b299acaf695110dad74a36b71c51d09d6af23568e65478` | 历史 run 的 `generate_physrvg_verified.py` | 都是 Wan2.2 base + strict PhysRVG DiT + PEFT LoRA，但入口实现不同 |
+| Pipeline | `/home/gaoya/code_V2V_baselines/PhysRVG-main/fastvideo/models/wan_v2v/pipeline_wan_v2v.py`；SHA256 `111fa62c6bfb8d142923048be3a7b4209ac8eef73f9db0bbe3d64b7440842c9e` | `/home/gaoya/Code_Video/Code_bench/physics-IQ_my/PhysRVG/pipeline_wan_v2v_72f.py`；SHA256 `b44caeb6c2ad1ded1be4d4ba5950c456eb08247ea0be7995a49f9d9032917473` | 源码不同；在72帧条件下均使全部条件 latent 生效，协议语义对齐但不宣称实现相同 |
+| Runtime | `/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python`（Python 3.10.20、torch 2.7.1+cu126、diffusers 0.35.1） | 远端 `wan22-physicsiq`（Python 3.12.12、torch 2.8.0+cu128、diffusers 0.37.0） | 环境版本不同，不作 bitwise identical 声明 |
+
+### 本次 runner 的固定 P0 参数
+
+| 配置项 | 固定值 |
+|---|---|
+| 输入集合 | 统一 `/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/inputs/bpp/verified_v2v_bpp_198.txt`，198 个官方 take-1 BPP case |
+| 条件输入 | 72 帧、24 FPS、3 秒 V2V；输入分辨率 512x896 |
+| 推理 | 189 帧、24 FPS；40 steps；guidance 5.0；`do_cfg=False` |
+| Prompt | case JSON 的 BPP `input_caption`；negative prompt 使用 `physrvg-72f-adapted-long-v1`，SHA256 `ce96e0324e4b54ce4b6e867f669ca520952e1a34cc116543516b1897f0d3c47e` |
+| 随机数 | 每个 case 调用 `accelerate.set_seed(42)`，不传显式 `torch.Generator`，即 `global_seed_per_case` |
+| 条件 mask | `dynamic_condition_mask=True`，72 帧条件编码得到的有效条件 latent 全部保留 |
+| 预测段 | 同一次推理返回的内存帧切片 `raw[69:189]`，得到后120帧纯预测视频 |
+| 编码 | raw 189 帧和 submission 120 帧分别直接调用 `export_to_video(..., macro_block_size=1)`；submission 不从已编码 raw 解码或重编码 |
+| 官方提交目录 | 只放198个官方命名的 `.mp4`；metadata/manifest 写在目录外，避免 evaluator 读入 sidecar 文件 |
+| 官方评分 | `physiq/run_physics_iq.py`，再用 `aggregate_runs_from_csvs.py --score-type verified` 聚合 |
+
+独立脚本默认产物路径：
+
+- Raw：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/raw/physrvg-full-sa-latent-mask-step001000-bpp-run_01-72f-aligned`
+- Submission：`/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/generated_videos_5s/physrvg-full-sa-latent-mask-step001000-bpp-run_01-72f-aligned`
+- Manifest：写在 submission 目录外，不进入官方 MP4 集合。
+
+严格可比性结论：该 runner 已按官方 Physics-IQ-Verified 的输入集合、72@24 条件、
+189→120 帧协议、随机数策略、negative prompt 和 MP4-only 提交契约登记；完整推理
+完成并通过198个文件校验后，才可登记为 P0“严格可比”。它与
+`PhysRVG-72f-adapted` 在评测协议和输出编码路径上对齐，但由于 LoRA、pipeline 源码
+和运行环境不同，结果只能解释为协议控制下的模型变体比较，不能解释为逐位相同的复现。
 
 ## xSSC slot-dedup step-2000 P0 运行
 
