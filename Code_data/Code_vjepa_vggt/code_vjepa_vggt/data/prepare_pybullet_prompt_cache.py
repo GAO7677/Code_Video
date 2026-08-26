@@ -95,7 +95,7 @@ def _sample_prompt_roles(record) -> dict[str, str | list[str]]:
 def _append_prompt_suffix(prompt: str, suffix: str) -> str:
     prompt = str(prompt).strip()
     suffix = str(suffix).strip()
-    if not suffix:
+    if not suffix or prompt.endswith(suffix):
         return prompt
     return f"{prompt} {suffix}"
 

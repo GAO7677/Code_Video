@@ -13,6 +13,7 @@
       <nav class="topnav" aria-label="主导航">
         <a href="#overview">协议说明</a>
         <a href="#truth">真值表</a>
+        <a href="#maintenance">维护边界</a>
         <a href="#families">类别</a>
         <a href="#cases">Case 索引</a>
       </nav>
@@ -61,8 +62,22 @@
 
       <section id="truth" class="truth-section section-pad">
         <div class="section-kicker"><span>01A</span><span>真值总表 / 文件、shape 与用途</span></div>
-        <div class="truth-intro">以下维度按 strict 包内实际文件整理。需要特别注意：<code>raw/masks.npz</code> 是原始 simulator 分辨率的溯源 mask；用于评测和像素对齐的 mask 是 <code>truth/cases/*/dynamic_masks.npz</code>，统一为 896×512。</div>
+        <div class="truth-intro">以下维度按 strict 包内实际文件整理。用于评测和像素对齐的动态物体 mask 是 <code>truth/cases/*/dynamic_masks.npz</code>，统一为 896×512；旧版非 CYCLES 分辨率的原始 mask 已移入 strict_archive。</div>
         <div id="truth-table" class="truth-table-wrap"></div>
+      </section>
+
+      <section id="maintenance" class="maintenance-section section-pad">
+        <div class="section-kicker"><span>01B</span><span>维护 / active 与 archive 边界</span></div>
+        <div class="maintenance-intro">
+          <div>
+            <h2>只把可解释的<br /><em>真值留在主包。</em></h2>
+            <p>strict 主包是可评测输入；重复 adapter、旧分辨率产物和渲染中间文件进入相邻 archive。归档采用移动而非删除，后续每次整理后重新运行维护脚本即可刷新本区块。</p>
+          </div>
+          <div class="maintenance-status"><span class="eyebrow">ARCHIVE STATUS</span><strong id="archive-updated">读取中…</strong><code id="archive-path"></code><a href="/strict-cycles-archive/README.md" target="_blank" rel="noopener">查看 archive 清单 ↗</a></div>
+        </div>
+        <div id="archive-cards" class="archive-cards"></div>
+        <div class="active-dependencies"><div class="eyebrow">ACTIVE INPUTS / 当前评测依赖</div><div id="active-dependencies-list"></div></div>
+        <div class="maintenance-command"><span>刷新数据、真值表和本区块：</span><code>cd /home/gaoya/Code_Video/Dataset_physv_v2v_0819 &amp;&amp; /usr/bin/python3 scripts/build_strict_dataset_visualization.py</code></div>
       </section>
 
       <section id="families" class="families section-pad">

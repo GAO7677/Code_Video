@@ -31,6 +31,16 @@
     document.querySelectorAll(".family-tile").forEach(button => button.addEventListener("click", () => { state.family = button.dataset.family; $("#family-filter").value = state.family; renderCases(); document.querySelectorAll(".family-tile").forEach(b => b.classList.toggle("active", b === button)); $("#cases").scrollIntoView({ behavior: "smooth" }); }));
   }
 
+  function renderMaintenance() {
+    const archive = state.data.archive || {};
+    const categories = archive.categories || [];
+    const updated = archive.updated_at ? new Date(archive.updated_at).toLocaleString() : "未记录";
+    $("#archive-updated").textContent = `${categories.reduce((n, row) => n + Number(row.count || 0), 0)} 项归档记录 · ${updated}`;
+    $("#archive-path").textContent = archive.directory || "archive 路径未记录";
+    $("#archive-cards").innerHTML = categories.map(row => `<article class="archive-card"><div class="archive-card-top"><span class="archive-count">${escapeHtml(row.count)}</span><span class="archive-label">${escapeHtml(row.label)}</span></div><code>${escapeHtml(row.path)}</code><p>${escapeHtml(row.reason)}</p></article>`).join("");
+    $("#active-dependencies-list").innerHTML = (archive.active_dependencies || []).map(item => `<span>${escapeHtml(item)}</span>`).join("");
+  }
+
   function matches(c) {
     if (state.family !== "all" && c.family_key !== state.family) return false;
     if (state.taxonomy !== "all" && c.taxonomy !== state.taxonomy) return false;
@@ -75,5 +85,5 @@
     $("#clear-filters").addEventListener("click", () => { state.search = ""; state.family = "all"; state.taxonomy = "all"; $("#search").value = ""; $("#family-filter").value = "all"; $("#taxonomy-filter").value = "all"; document.querySelectorAll(".family-tile").forEach(b => b.classList.remove("active")); renderCases(); });
   }
 
-  fetch("data.json").then(r => r.json()).then(data => { state.data = data; renderOverview(); renderFamilies(); wireControls(); renderCases(); }).catch(error => { $("#case-groups").innerHTML = `<div class="empty-state">无法加载 data.json。请通过 HTTP 服务访问此页面，而不是直接双击 HTML。<br />${escapeHtml(error)}</div>`; });
+  fetch("data.json").then(r => r.json()).then(data => { state.data = data; renderOverview(); renderMaintenance(); renderFamilies(); wireControls(); renderCases(); }).catch(error => { $("#case-groups").innerHTML = `<div class="empty-state">无法加载 data.json。请通过 HTTP 服务访问此页面，而不是直接双击 HTML。<br />${escapeHtml(error)}</div>`; });
 })();

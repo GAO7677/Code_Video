@@ -7,6 +7,7 @@ import argparse
 import json
 import shutil
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -82,13 +83,6 @@ TRUTH_TABLE = [
         "use": "记录运动相关接触、碰撞对、接触点和法向力，适合碰撞事件分析和加权监督。",
     },
     {
-        "category": "原始 simulator mask",
-        "file": "samples/*/raw/masks.npz → masks",
-        "shape": "(90, N_obj, 720, 1280)",
-        "dtype": "bool",
-        "use": "原始 simulator 渲染分辨率的物体 mask，仅作溯源保留；评测对齐 mask 使用上面的 896×512 truth。",
-    },
-    {
         "category": "RigidBench-style adapter",
         "file": "truth/cases/*/rigidbench/{masks,depth,trajectories}.npz",
         "shape": "mask (90,N,512,896)；depth (90,512,896)；state 见轨迹表",
@@ -133,6 +127,67 @@ def contact_summary(path: Path) -> dict[str, Any]:
         "last_contact_frame": frames[-1] if frames else None,
         "peak_normal_force_n": max(forces) if forces else 0.0,
         "top_pairs": [{"pair": pair, "count": count} for pair, count in pairs.most_common(3)],
+    }
+
+
+def archive_summary(root: Path) -> dict[str, Any]:
+    archive = root.parent / f"{root.name}_archive"
+    sample_root = archive / "samples"
+    truth_root = archive / "truth"
+    return {
+        "directory": str(archive),
+        "manifest": f"{archive.name}/README.md",
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "categories": [
+            {
+                "path": "truth/rigidbench_dataset/",
+                "label": "重复 RigidBench adapter",
+                "count": len(list((truth_root / "rigidbench_dataset").glob("samples/*"))) if (truth_root / "rigidbench_dataset").is_dir() else 0,
+                "reason": "旧 adapter 的 video/depth 与 truth/cases/*/rigidbench 重复；当前评测使用后者。",
+            },
+            {
+                "path": "truth/logs/",
+                "label": "旧渲染日志",
+                "count": len(list((truth_root / "logs").glob("*.log"))) if (truth_root / "logs").is_dir() else 0,
+                "reason": "仅用于 provenance，不是训练或评测输入。",
+            },
+            {
+                "path": "samples/*/raw/masks.npz",
+                "label": "旧版原始 mask",
+                "count": len(list(sample_root.glob("*/raw/masks.npz"))) if sample_root.is_dir() else 0,
+                "reason": "旧 shape 为 90×N×720×1280，与 strict 原生 896×512 不一致。",
+            },
+            {
+                "path": "samples/*/raw/simulator_render_metadata.json",
+                "label": "旧渲染元数据",
+                "count": len(list(sample_root.glob("*/raw/simulator_render_metadata.json"))) if sample_root.is_dir() else 0,
+                "reason": "记录旧版非 strict 分辨率和路径，不作为 active benchmark 输入。",
+            },
+            {
+                "path": "samples/*/meta.json",
+                "label": "冗余 case 元数据",
+                "count": len(list(sample_root.glob("*/meta.json"))) if sample_root.is_dir() else 0,
+                "reason": "active 可视化和评测使用 metadata.json 与 truth/cases 下的 canonical metadata。",
+            },
+            {
+                "path": "truth/cases/*/_depth_pass、_index_pass/",
+                "label": "空中间目录",
+                "count": sum(
+                    1
+                    for case_dir in (truth_root / "cases").glob("*")
+                    for name in ("_depth_pass", "_index_pass")
+                    if (case_dir / name).is_dir()
+                ) if (truth_root / "cases").is_dir() else 0,
+                "reason": "渲染过程残留的空目录，不参与任何输入。",
+            },
+        ],
+        "active_dependencies": [
+            "samples/*/videos/rgb_cycles.mp4",
+            "samples/*/context/context8_cycles.mp4 与 context16_cycles.mp4",
+            "samples/*/contacts.json、physics_supervision.*、raw/trajectories.npz",
+            "truth/cases/*/dynamic_masks.npz、cycles_depth.npz、trajectory_pixels.npz",
+            "truth/cases/*/rigidbench/（当前 RigidBench-style evaluator）",
+        ],
     }
 
 
@@ -249,6 +304,7 @@ def build_data(root: Path) -> dict[str, Any]:
         },
         "families": list(families.values()),
         "cases": cases,
+        "archive": archive_summary(root),
     }
 
 
