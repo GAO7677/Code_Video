@@ -8,6 +8,7 @@ under ``physv_eval.single_case_rigidbench`` only receive metric inputs.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import subprocess
@@ -32,6 +33,14 @@ sys.path.insert(0, str(RIGIDBENCH_ROOT / "src"))
 sys.path.insert(0, str(RIGIDBENCH_ROOT / "vendor" / "Video-Depth-Anything"))
 
 from physv_eval.single_case_rigidbench.common import load_npz_array, load_video_rgb
+from physv_eval.single_case_rigidbench.prediction import (
+    active_actor_indices,
+    concatenate_gt_tracks,
+    load_cotracker_model,
+    load_dinov2_model,
+    load_sam2_model,
+    load_vda_model,
+)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -100,22 +109,23 @@ def metric_is_missing(path: Path, metric: str) -> bool:
     return value is None or (isinstance(value, float) and not np.isfinite(value))
 
 
-def metric_inputs_ready(task: Path, sample_id: str, metric: str) -> bool:
+def metric_inputs_ready(task: Path, sample_id: str, metric: str, strict_root: Path) -> bool:
     generated = task / "generated" / sample_id
     frames = bool(list(generated.glob("*.jpg")) or list(generated.glob("*.png")))
-    mask = (task / "masks" / sample_id / "mask.npz").is_file()
-    tracks = (task / "tracks" / sample_id / "tracks.npz").is_file() and (task / "tracks" / sample_id / "gt_tracks.npz").is_file()
-    depth = (task / "depth" / sample_id / "depth.npz").is_file()
+    case = sample_dir(strict_root, sample_id)
+    mask = (case / "masks.npz").is_file() and (case / "metadata.json").is_file()
+    tracks = mask and (case / "depth.npz").is_file() and (case / "trajectories.npz").is_file()
+    depth = (case / "depth.npz").is_file()
     if metric in {"iou", "l2", "chamfer"}:
-        return mask
+        return frames and mask
     if metric == "ate":
-        return tracks
+        return frames and tracks
     if metric == "si_mse":
-        return depth
+        return frames and depth
     if metric in {"ssim", "lpips"}:
         return frames
     if metric == "ate3d":
-        return tracks and depth
+        return frames and tracks
     if metric == "iddrift":
         return frames and tracks
     if metric == "bgdrift":
@@ -127,51 +137,16 @@ def sample_dir(strict_root: Path, sample_id: str) -> Path:
     return strict_root / "truth" / "cases" / sample_id / "rigidbench"
 
 
-def load_tracks(task: Path, sample_id: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    pred_path = task / "tracks" / sample_id / "tracks.npz"
-    gt_path = task / "tracks" / sample_id / "gt_tracks.npz"
-    with np.load(pred_path, allow_pickle=False) as pred, np.load(gt_path, allow_pickle=False) as gt:
-        pred_tracks = pred["tracks"]
-        gt_tracks = gt["tracks"]
-        pred_vis = pred["visibility"] if "visibility" in pred.files else np.ones(pred_tracks.shape[:2], dtype=bool)
-        gt_vis = gt["visibility"] if "visibility" in gt.files else np.ones(gt_tracks.shape[:2], dtype=bool)
-        offsets = pred["actor_offsets"]
-    T = min(gt_tracks.shape[1], pred_tracks.shape[1])
-    return gt_tracks[:, :T], pred_tracks[:, :T], pred_vis[:, :T] & gt_vis[:, :T], offsets
+def load_gt_track_bundle(strict_root: Path, sample_id: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
+    case = sample_dir(strict_root, sample_id)
+    metadata = read_json(case / "metadata.json")
+    return concatenate_gt_tracks(case, metadata)
 
 
 def load_frames(task: Path, sample_id: str, strict_root: Path) -> tuple[np.ndarray, np.ndarray]:
     gt = load_video_rgb(sample_dir(strict_root, sample_id) / "video.mp4")
-    pred = generated_frames(task / "generated" / sample_id)
+    pred = load_video_rgb(task / "generated" / sample_id)
     return gt[: min(len(gt), len(pred))], pred[: min(len(gt), len(pred))]
-
-
-def load_ate3d_inputs(task: Path, sample_id: str, strict_root: Path):
-    from rigidbench.eval.score.depth import affine_align_disparity
-    from rigidbench.eval.score.trajectory import quat_wxyz_to_rotmat, reconstruct_centroids
-
-    case = sample_dir(strict_root, sample_id)
-    metadata = read_json(case / "metadata.json")
-    gt_tracks, pred_tracks, visibility, offsets = load_tracks(task, sample_id)
-    gt_depth = load_npz_array(case / "depth.npz", "depth")
-    pred_depth = load_npz_array(task / "depth" / sample_id / "depth.npz", "depth")
-    T = min(len(gt_depth), len(pred_depth), pred_tracks.shape[1])
-    gt_depth, pred_depth = gt_depth[:T], pred_depth[:T]
-    aligned, _, _ = affine_align_disparity(pred_depth, gt_depth)
-    camera = metadata["camera"]
-    intrinsics = camera["intrinsics"]
-    extrinsics = camera["extrinsics"]
-    pred_centroids = reconstruct_centroids(
-        pred_tracks[:, :T], visibility[:, :T], aligned,
-        intrinsics,
-        np.asarray(extrinsics["location"], dtype=np.float64),
-        quat_wxyz_to_rotmat(np.asarray(extrinsics["rotation"], dtype=np.float64)),
-        offsets,
-    )
-    with np.load(case / "trajectories.npz", allow_pickle=False) as data:
-        gt_trajectories = {key: data[key] for key in data.files}
-    actors = [name for name, info in metadata.get("actors", {}).items() if info.get("role") == "active"]
-    return pred_centroids, gt_trajectories, actors
 
 
 def load_shared_model(metric: str, device: str):
@@ -179,14 +154,18 @@ def load_shared_model(metric: str, device: str):
         import lpips as lpips_pkg
 
         return lpips_pkg.LPIPS(net="alex").to(device).eval()
+    if metric in {"iou", "l2", "chamfer"}:
+        return load_sam2_model(device)
+    if metric == "ate":
+        return load_cotracker_model(device)
+    if metric == "si_mse":
+        return load_vda_model(device)
+    if metric == "ate3d":
+        return {"vda": load_vda_model(device), "cotracker": load_cotracker_model(device)}
     if metric == "iddrift":
-        import torch
-
-        return torch.hub.load("facebookresearch/dinov2", "dinov2_vitl14").to(device).eval()
+        return {"dino": load_dinov2_model(device), "cotracker": load_cotracker_model(device)}
     if metric == "bgdrift":
-        import torch
-
-        return torch.hub.load("facebookresearch/co-tracker", "cotracker3_offline").to(device)
+        return {"sam2": load_sam2_model(device), "cotracker": load_cotracker_model(device)}
     return None
 
 
@@ -196,29 +175,25 @@ def compute(metric: str, task: Path, sample_id: str, strict_root: Path, shared_m
         from physv_eval.single_case_rigidbench import chamfer, iou, l2
 
         gt = load_npz_array(case / "masks.npz", "masks", "mask")
-        pred = load_npz_array(task / "masks" / sample_id / "mask.npz", "masks", "mask")
-        T = min(len(gt), len(pred))
-        gt, pred = gt[:T], pred[:T]
+        metadata = read_json(case / "metadata.json")
+        active = active_actor_indices(case / "masks.npz", metadata)
+        pred_video = task / "generated" / sample_id
         if metric == "iou":
-            return iou.score_case(gt, pred)
+            return iou.score_case(gt, pred_video, shared_model, active)
         if metric == "l2":
-            return l2.score_case(gt, pred)
-        return chamfer.score_case(gt, pred)
+            return l2.score_case(gt, pred_video, shared_model, active)
+        return chamfer.score_case(gt, pred_video, shared_model, active)
     if metric == "ate":
         from physv_eval.single_case_rigidbench import ate
 
-        gt, pred, visibility, _ = load_tracks(task, sample_id)
+        gt, visibility, _offsets, _actors = load_gt_track_bundle(strict_root, sample_id)
         height = int(read_json(case / "metadata.json")["camera"]["intrinsics"]["height"])
-        return ate.score_case(gt, pred, height, visibility)
+        return ate.score_case(gt, task / "generated" / sample_id, height, shared_model, visibility)
     if metric == "si_mse":
         from physv_eval.single_case_rigidbench import si_mse
 
         gt = load_npz_array(case / "depth.npz", "depth")
-        pred = load_npz_array(task / "depth" / sample_id / "depth.npz", "depth")
-        T = min(len(gt), len(pred))
-        return si_mse.score_case(
-            gt[:T], pred[:T],
-        )
+        return si_mse.score_case(gt, task / "generated" / sample_id, shared_model, device)
     if metric in {"ssim", "lpips"}:
         from physv_eval.single_case_rigidbench import lpips, ssim
 
@@ -229,43 +204,81 @@ def compute(metric: str, task: Path, sample_id: str, strict_root: Path, shared_m
     if metric == "ate3d":
         from physv_eval.single_case_rigidbench import ate3d
 
-        return ate3d.score_case(*load_ate3d_inputs(task, sample_id, strict_root))
+        metadata = read_json(case / "metadata.json")
+        gt_tracks, _visibility, offsets, actors = load_gt_track_bundle(strict_root, sample_id)
+        gt_depth = load_npz_array(case / "depth.npz", "depth")
+        with np.load(case / "trajectories.npz", allow_pickle=False) as data:
+            gt_trajectories = {key: data[key] for key in data.files}
+        return ate3d.score_case(
+            task / "generated" / sample_id,
+            gt_tracks,
+            gt_depth,
+            gt_trajectories,
+            actors,
+            metadata["camera"],
+            offsets,
+            shared_model["vda"],
+            shared_model["cotracker"],
+            device,
+        )
     if metric == "iddrift":
         from physv_eval.single_case_rigidbench import iddrift
 
-        gt_frames, pred_frames = load_frames(task, sample_id, strict_root)
-        gt_tracks, pred_tracks, visibility, offsets = load_tracks(task, sample_id)
-        return iddrift.score_case(gt_frames, pred_frames, gt_tracks, pred_tracks, visibility, offsets, shared_model, device)
+        gt_frames, _pred_frames = load_frames(task, sample_id, strict_root)
+        gt_tracks, visibility, offsets, _actors = load_gt_track_bundle(strict_root, sample_id)
+        return iddrift.score_case(
+            gt_frames,
+            task / "generated" / sample_id,
+            gt_tracks,
+            visibility,
+            offsets,
+            shared_model["dino"],
+            shared_model["cotracker"],
+            device,
+        )
     if metric == "bgdrift":
         from physv_eval.single_case_rigidbench import bgdrift
 
-        pred_frames = generated_frames(task / "generated" / sample_id)
-        pred_mask = load_npz_array(task / "masks" / sample_id / "mask.npz", "masks", "mask")
-        return bgdrift.score_case(pred_frames, pred_mask, shared_model, device)
+        gt_mask = load_npz_array(case / "masks.npz", "masks", "mask")
+        metadata = read_json(case / "metadata.json")
+        active = active_actor_indices(case / "masks.npz", metadata)
+        return bgdrift.score_case(
+            task / "generated" / sample_id,
+            gt_mask,
+            shared_model["sam2"],
+            shared_model["cotracker"],
+            active,
+            device,
+        )
     raise KeyError(metric)
 
 
 def update_case(task: Path, sample_id: str, result: dict) -> None:
     path = task_sample_json(task, sample_id)
-    payload = read_json(path)
-    payload.setdefault("sample_id", sample_id)
-    for key, value in result.items():
-        if key == "per_frame" or isinstance(value, (np.ndarray, list, dict)):
-            continue
-        if isinstance(value, np.generic):
-            value = value.item()
-        payload[key] = value
-    atomic_json(path, payload)
-    per_frame = result.get("per_frame")
-    if per_frame is not None:
-        frame_path = task / "metrics_per_frame" / f"{sample_id}.npz"
-        existing: dict[str, np.ndarray] = {}
-        if frame_path.is_file():
-            with np.load(frame_path, allow_pickle=False) as data:
-                existing = {key: data[key] for key in data.files}
-        metric_key = next(key for key in result if key != "per_frame")
-        existing[metric_key] = np.asarray(per_frame)
-        atomic_npz(frame_path, existing)
+    lock_path = task / "metrics" / ".locks" / f"{sample_id}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        payload = read_json(path)
+        payload.setdefault("sample_id", sample_id)
+        for key, value in result.items():
+            if key == "per_frame" or isinstance(value, (np.ndarray, list, dict)):
+                continue
+            if isinstance(value, np.generic):
+                value = value.item()
+            payload[key] = value
+        atomic_json(path, payload)
+        per_frame = result.get("per_frame")
+        if per_frame is not None:
+            frame_path = task / "metrics_per_frame" / f"{sample_id}.npz"
+            existing: dict[str, np.ndarray] = {}
+            if frame_path.is_file():
+                with np.load(frame_path, allow_pickle=False) as data:
+                    existing = {key: data[key] for key in data.files}
+            metric_key = next(key for key in result if key != "per_frame")
+            existing[metric_key] = np.asarray(per_frame)
+            atomic_npz(frame_path, existing)
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def build_snapshot() -> None:
@@ -280,11 +293,12 @@ def main() -> int:
     parser.add_argument("--exclude-task-id", action="append", default=[], help="Exclude task directory names, e.g. active generation tasks")
     parser.add_argument("--case-id", action="append", help="Restrict to one or more case IDs; useful for disjoint workers")
     parser.add_argument("--metrics", default=",".join(METRICS))
+    parser.add_argument("--metric", choices=METRICS, help="Run exactly one metric in this process")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-build", action="store_true")
     args = parser.parse_args()
-    metrics = [name.strip() for name in args.metrics.split(",") if name.strip()]
+    metrics = [args.metric] if args.metric else [name.strip() for name in args.metrics.split(",") if name.strip()]
     unknown = sorted(set(metrics) - set(METRICS))
     if unknown:
         raise SystemExit(f"Unknown metrics: {unknown}; choose from {METRICS}")
@@ -305,7 +319,7 @@ def main() -> int:
             for task in tasks
             for sample_id in ids
             if metric_is_missing(task_sample_json(task, sample_id), metric)
-            and metric_inputs_ready(task, sample_id, metric)
+            and metric_inputs_ready(task, sample_id, metric, args.strict_root)
         ]
         print(f"[backfill] metric={metric} pending={len(pending)}", flush=True)
         if args.dry_run or not pending:

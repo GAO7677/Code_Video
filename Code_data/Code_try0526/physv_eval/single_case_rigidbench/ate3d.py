@@ -1,23 +1,59 @@
 from __future__ import annotations
 
 import argparse
+import numpy as np
 
+from rigidbench.eval.score.depth import affine_align_disparity
 from rigidbench.eval.score.trajectory import compute_ate3d
+from rigidbench.eval.score.trajectory import quat_wxyz_to_rotmat, reconstruct_centroids
 
-from .common import cli_print
+from .common import as_depth, as_tracks, cli_print, load_video_rgb
+from .prediction import extract_disparity, extract_tracks
 
 
-def score_case(pred_centroids, gt_trajectories: dict, actors: list[str]) -> dict:
-    """Return ATE-3D from reconstructed centroids and GT trajectories.
+def score_case(
+    pred_video,
+    gt_tracks,
+    gt_depth,
+    gt_trajectories: dict,
+    actors: list[str],
+    camera: dict,
+    actor_offsets,
+    vda_model,
+    cotracker_model,
+    device: str = "cuda",
+) -> dict:
+    """Return ATE-3D from GT inputs and a generated video.
 
-    ``pred_centroids`` is a list of N arrays shaped (T,3), in world meters.
-    ``gt_trajectories`` maps ``<actor>_positions`` to (T,3) world-meter arrays.
-    ``actors`` is the ordered active-actor name list; it is not a case ID.
+    VDA predicts disparity and CoTracker predicts 2D tracks internally.  The
+    camera and GT trajectory data are used only for the 3D reconstruction and
+    GT comparison.
     """
+    gt_tr = as_tracks(gt_tracks, "gt_tracks")
+    gt_d = as_depth(gt_depth, "gt_depth")
+    pred_tr, pred_vis = extract_tracks(pred_video, gt_tr, cotracker_model)
+    pred_disp = as_depth(extract_disparity(pred_video, vda_model, device), "pred_disparity")
+    T = min(gt_tr.shape[1], gt_d.shape[0], pred_tr.shape[1], pred_disp.shape[0])
+    gt_tr = gt_tr[:, :T]
+    gt_d = gt_d[:T]
+    pred_tr = pred_tr[:, :T]
+    pred_vis = pred_vis[:, :T]
+    aligned, _, _ = affine_align_disparity(pred_disp[:T], gt_d)
+    intrinsics = camera["intrinsics"]
+    extrinsics = camera["extrinsics"]
+    pred_centroids = reconstruct_centroids(
+        pred_tr,
+        pred_vis,
+        aligned,
+        intrinsics,
+        np.asarray(extrinsics["location"], dtype=np.float64),
+        quat_wxyz_to_rotmat(np.asarray(extrinsics["rotation"], dtype=np.float64)),
+        np.asarray(actor_offsets, dtype=np.int64),
+    )
     if len(pred_centroids) != len(actors):
-        raise ValueError("pred_centroids and actors must have the same length")
+        raise ValueError("actor_offsets/gt_tracks and actors disagree")
     return compute_ate3d(pred_centroids, gt_trajectories, actors)
 
 
 if __name__ == "__main__":
-    raise SystemExit("Use score_case(pred_centroids, gt_trajectories, actors) from Python; this metric requires reconstructed 3D inputs.")
+    raise SystemExit("Use score_case(...) from Python; this metric requires GT camera/trajectory inputs and a generated video.")

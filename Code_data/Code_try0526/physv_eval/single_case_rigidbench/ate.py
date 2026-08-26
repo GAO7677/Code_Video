@@ -1,21 +1,32 @@
 from __future__ import annotations
 
 import argparse
+import numpy as np
 
 from rigidbench.eval.score.track import ate_per_frame, compute_ate_scalar
 
 from .common import as_tracks, as_visibility, cli_print, load_npz_array
+from .prediction import extract_tracks, load_cotracker_model
 
 
-def score_case(gt_tracks, pred_tracks, image_height: int, visibility=None) -> dict:
-    """Return ATE/ATE-std from pixel tracks shaped (N,T,2), normalized by H."""
+def score_case(gt_tracks, pred_video, image_height: int, cotracker_model, visibility=None) -> dict:
+    """Return ATE from GT tracks and a generated video.
+
+    CoTracker is run internally using GT first-frame query points.
+    """
     gt = as_tracks(gt_tracks, "gt_tracks")
+    pred_tracks, pred_visibility = extract_tracks(pred_video, gt, cotracker_model)
     pred = as_tracks(pred_tracks, "pred_tracks")
-    if gt.shape != pred.shape:
-        raise ValueError(f"gt_tracks and pred_tracks must have the same shape, got {gt.shape} vs {pred.shape}")
+    T = min(gt.shape[1], pred.shape[1])
+    gt, pred = gt[:, :T], pred[:, :T]
     if image_height <= 0:
         raise ValueError("image_height must be positive")
-    vis = as_visibility(visibility, gt.shape[:2])
+    if visibility is None:
+        vis = np.ones(gt.shape[:2], dtype=bool)
+    else:
+        visibility = np.asarray(visibility)[:, :T]
+        vis = as_visibility(visibility, (gt.shape[0], T))
+    vis = vis & pred_visibility[:, :T]
     result = compute_ate_scalar(gt, pred, int(image_height), vis)
     result["per_frame"] = ate_per_frame(gt, pred, int(image_height), vis)
     return result
@@ -24,9 +35,12 @@ def score_case(gt_tracks, pred_tracks, image_height: int, visibility=None) -> di
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Score one case's normalized 2D ATE")
     parser.add_argument("--gt-tracks", required=True)
-    parser.add_argument("--pred-tracks", required=True)
+    parser.add_argument("--pred-video", required=True)
     parser.add_argument("--image-height", required=True, type=int)
+    parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
-    gt = load_npz_array(args.gt_tracks, "tracks")
-    pred = load_npz_array(args.pred_tracks, "tracks")
-    cli_print(score_case(gt, pred, args.image_height))
+    with np.load(args.gt_tracks, allow_pickle=False) as data:
+        gt = data["tracks"]
+        visibility = data["visibility"] if "visibility" in data.files else None
+    model = load_cotracker_model(args.device)
+    cli_print(score_case(gt, args.pred_video, args.image_height, model, visibility))

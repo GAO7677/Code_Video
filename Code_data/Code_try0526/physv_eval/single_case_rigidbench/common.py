@@ -17,7 +17,15 @@ def load_npz_array(path: str | Path, *keys: str) -> np.ndarray:
 
 
 def load_video_rgb(path: str | Path) -> np.ndarray:
-    """Decode a video as uint8 RGB frames with shape (T, H, W, 3)."""
+    """Decode a video/frame directory as uint8 RGB ``(T,H,W,3)`` frames."""
+    path = Path(path)
+    if path.is_dir():
+        files = sorted(path.glob("*.jpg")) or sorted(path.glob("*.png"))
+        if not files:
+            raise ValueError(f"No jpg/png frames found under {path}")
+        from PIL import Image
+
+        return np.stack([np.asarray(Image.open(file).convert("RGB"), dtype=np.uint8) for file in files])
     capture = cv2.VideoCapture(str(path))
     frames: list[np.ndarray] = []
     try:

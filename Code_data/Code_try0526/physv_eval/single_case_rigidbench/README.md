@@ -1,89 +1,120 @@
 # `single_case_rigidbench`
 
-这里的模块只接收“指标计算所需的实际输入”，不接收 task ID、case ID，也不负责扫描目录或修改结果 JSON。test70 的目录扫描和增量回填由：
+这里的模块只接收“一个指标计算所需的 GT 信息”和“生成视频”。预测侧的
+mask、tracks、disparity/depth 不再作为输入缓存传入，而是在指标函数内部从
+生成视频提取。模型对象由外层指标 worker 传入，worker 对一个指标的全部
+case 只加载一次模型。
+
+目录扫描、GT case 组织、指标 JSON 回填由：
 
 ```text
 /home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/run_test70_rigidbench_metric_backfill.py
 ```
 
-或一键脚本：
+## 输入约定
 
-```bash
-/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/run_test70_rigidbench_metric_backfill.sh
+| 输入 | shape / 类型 | 说明 |
+|---|---|---|
+| GT video | `(T,H,W,3)`，RGB `uint8` `[0,255]` | strict CYCLES reference video |
+| GT mask | `(T,N,H,W)`，`bool` | active-object 的真值由 `metadata.json` 的 `role=active` 选择 |
+| GT tracks | `(N,T,2)` | 像素坐标 `(x,y)`，不归一化；按官方 projector 从 strict truth 得到 |
+| GT visibility | `(N,T)`，`bool` | GT track 可见性 |
+| GT depth | `(T,H,W)`，正浮点，米 | CYCLES metric depth |
+| camera | `intrinsics + extrinsics` | 用于 ATE-3D 的世界坐标重建 |
+| GT trajectory | `<actor>_positions: (T,3)` | 世界坐标、米，用于 ATE-3D |
+| generated video | `(T,H,W,3)`，RGB | 预测侧唯一输入；兼容当前 test70 的 jpg/png frame directory |
+
+mask 的空间尺寸必须与 GT 第一帧一致；tracks 的最后一维必须是 `(x,y)` 像素坐标；
+depth/disparity 不要预先归一化。时间长度按 RigidBench 当前协议截取到共同窗口。
+
+## 预测侧提取协议
+
+预测侧严格复用 RigidBench 官方 tracker 逻辑：
+
+| 预测中间结果 | 内部模型 / 初始化 | 使用它的指标 |
+|---|---|---|
+| predicted mask | SAM2；用 GT 第一帧 active-object mask 初始化，再在 generated video 上传播 | IoU、L2、Chamfer、BG-Drift |
+| predicted tracks | CoTracker3；用 GT tracks 的首帧点作为 query points | ATE、ID-Drift、ATE-3D |
+| predicted disparity | Video-Depth-Anything-Large，`target_fps=24` 和官方 `DEPTH_INPUT_SIZE` | SI-MSE、ATE-3D |
+| DINO features | DINOv2 ViT-L/14 | ID-Drift |
+| LPIPS features | AlexNet-LPIPS | LPIPS |
+| background tracks | CoTracker3；从 SAM2 预测的首帧 foreground mask 排除前景后检测背景角点 | BG-Drift |
+
+因此，SAM2/CoTracker/VDA 不使用生成侧已有的 `mask.npz`、`tracks.npz` 或
+`depth.npz`；这些文件不再是新指标接口的前置条件。它们仍可作为旧结果回归
+对照，但不会被新 runner 读取。
+
+## Python 接口
+
+```python
+from physv_eval.single_case_rigidbench import iou, ate, si_mse
+from physv_eval.single_case_rigidbench.prediction import (
+    load_sam2_model, load_cotracker_model, load_vda_model,
+)
+
+sam2 = load_sam2_model("cuda")
+result_iou = iou.score_case(
+    gt_mask, generated_video, sam2, active_actor_indices=[0],
+)
+
+cotracker = load_cotracker_model("cuda")
+result_ate = ate.score_case(
+    gt_tracks, generated_video, image_height, cotracker, gt_visibility,
+)
+
+vda = load_vda_model("cuda")
+result_si_mse = si_mse.score_case(
+    gt_depth, generated_video, vda, "cuda",
+)
 ```
 
-## 输入规范总表
+各指标接口如下：
 
-| 输入 | shape | dtype / 数值约定 |
-|---|---:|---|
-| mask | `(T,N,H,W)`，也接受单 actor `(T,H,W)` | `bool`；整数只允许 `0/1` 或 `0/255`；浮点只允许 `[0,1]`，阈值为 `0.5` |
-| RGB frames | `(T,H,W,3)` | `uint8` `[0,255]`；浮点可为 `[0,1]` 或 `[0,255]`，模块会转为 `uint8`；通道顺序 RGB |
-| 2D tracks | `(N,T,2)` | 有限浮点像素坐标，最后一维为 `(x,y)`，不归一化 |
-| visibility | `(N,T)` | `bool`；只在轨迹相关指标中使用 |
-| actor offsets | `(A+1,)` | `int64`，首值 `0`、末值为轨迹点数 `N` |
-| depth | `(T,H,W)` | 有限正浮点；GT 是 CYCLES metric depth（米） |
-| predicted disparity | `(T,H,W)` | 有限正浮点；是预测逆深度/视差，不要预先归一化，官方函数会按视频做 affine alignment |
-| 3D centroid | list of `N` arrays `(T,3)` | 世界坐标、米；不做额外归一化 |
-
-时间维 `T` 必须对应同一段评测窗口；test70 当前窗口为 49 帧，native CYCLES 为 30 FPS、`896×512`。mask 的空间 shape 必须完全一致；深度预测空间分辨率可以不同，官方 SI-MSE 会 resize 到 GT 分辨率。
-
-## 模块接口
-
-| 文件 | Python 接口 | 必需输入 |
+| 文件 | 接口核心参数 | 内部提取 |
 |---|---|---|
-| `iou.py` | `score_case(gt_mask, pred_mask)` | `(T,N,H,W)` mask |
-| `l2.py` | `score_case(gt_mask, pred_mask)` | `(T,N,H,W)` mask；输出质心距离 `/ H` |
-| `chamfer.py` | `score_case(gt_mask, pred_mask)` | `(T,N,H,W)` mask；输出边界点距离 `/ H` |
-| `ate.py` | `score_case(gt_tracks, pred_tracks, image_height, visibility)` | `(N,T,2)` tracks、`(N,T)` visibility |
-| `si_mse.py` | `score_case(gt_depth, pred_disparity)` | GT depth 和预测 disparity |
-| `ssim.py` | `score_case(gt_frames, pred_frames, device)` | RGB uint8 frames |
-| `lpips.py` | `score_case(gt_frames, pred_frames, model, device)` | RGB uint8 frames、已加载 LPIPS 模型 |
-| `ate3d.py` | `score_case(pred_centroids, gt_trajectories, actors)` | 世界坐标 3D centroid、GT trajectory dict |
-| `iddrift.py` | `score_case(gt_frames, pred_frames, gt_tracks, pred_tracks, visibility, actor_offsets, dinov2_model, device)` | RGB、2D tracks、visibility、DINOv2 |
-| `bgdrift.py` | `score_case(pred_frames, foreground_mask, cotracker_model, device)` | 生成 RGB、前景 mask、CoTracker |
+| `iou.py` | `gt_mask, pred_video, sam2_model` | SAM2 mask |
+| `l2.py` | `gt_mask, pred_video, sam2_model` | SAM2 mask |
+| `chamfer.py` | `gt_mask, pred_video, sam2_model` | SAM2 mask |
+| `ate.py` | `gt_tracks, pred_video, image_height, cotracker_model, visibility` | CoTracker tracks |
+| `si_mse.py` | `gt_depth, pred_video, vda_model` | VDA disparity |
+| `ssim.py` | GT frames, generated frames | 无模型 |
+| `lpips.py` | GT frames, generated frames, LPIPS model | LPIPS |
+| `ate3d.py` | GT tracks/depth/camera/trajectory + generated video + VDA/CoTracker | disparity + tracks |
+| `iddrift.py` | GT frames/tracks/visibility/offsets + generated video + DINO/CoTracker | tracks + DINO features |
+| `bgdrift.py` | GT mask + generated video + SAM2/CoTracker | foreground mask + background tracks |
 
-每个返回值至少包含对应的标量字段；有逐帧定义的指标还返回 `per_frame`。例如 `iou.py` 返回 `{"iou": float, "per_frame": (T,)}`。
-
-## 命令行示例
-
-命令行同样传真实指标输入路径，不传 case ID：
+## 单指标命令行示例
 
 ```bash
 export PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_try0526:/home/gaoya/Code_Video/Dataset_physv_v2v_0819/RigidBench/src
+
 python -m physv_eval.single_case_rigidbench.iou \
-  --gt-mask /path/to/gt/masks.npz \
-  --pred-mask /path/to/pred/mask.npz
+  --gt-mask /path/to/strict/rigidbench/masks.npz \
+  --pred-video /path/to/generated/video-or-frame-dir \
+  --device cuda
+
+python -m physv_eval.single_case_rigidbench.ate \
+  --gt-tracks /path/to/gt_tracks.npz \
+  --pred-video /path/to/generated/video-or-frame-dir \
+  --image-height 512 --device cuda
 
 python -m physv_eval.single_case_rigidbench.si_mse \
-  --gt-depth /path/to/gt/depth.npz \
-  --pred-disparity /path/to/pred/depth.npz
-
-python -m physv_eval.single_case_rigidbench.ssim \
-  --gt-video /path/to/gt/video.mp4 \
-  --pred-video /path/to/pred/video.mp4
+  --gt-depth /path/to/strict/rigidbench/depth.npz \
+  --pred-video /path/to/generated/video-or-frame-dir \
+  --device cuda
 ```
 
-## test70 补测逻辑
+## test70 回填
 
-一键脚本按指标外层循环：先收集所有 task 的所有缺失 `iou` case 并逐个执行，再处理 `l2`，依次到 `bgdrift`。每完成一个 case：
-
-1. 只向 `metrics/<sample>.json` 增加当前指标字段，不覆盖其他字段；
-2. 有逐帧输出时，只向对应 `metrics_per_frame/<sample>.npz` 增加当前指标数组；
-3. 使用临时文件原子替换，避免中途退出留下半个 JSON/NPZ；
-4. 当前指标批次结束后刷新 test70 汇总快照。
-
-缺少生成视频、预测 mask、tracks、depth 或 GT 文件时，该 case 会保留为 pending 并记录失败原因；本脚本不自动重新生成 tracker 中间结果。
-
-预览待测项而不执行：
+批处理 runner 现在按指标外层循环，并在每个指标进程中只加载一次该指标所需
+模型；它只要求生成目录存在和 strict GT 文件齐全，不检查生成侧的 mask、tracks、
+depth 缓存：
 
 ```bash
 /home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/run_test70_rigidbench_metric_backfill.sh \
-  --dry-run
+  --metric bgdrift --no-build
 ```
 
-只补一个指标：
-
-```bash
-/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/run_test70_rigidbench_metric_backfill.sh \
-  --metrics lpips
-```
+每个 case 完成后，runner 只增量更新对应指标 JSON 字段和逐帧 NPZ，并使用 case
+锁、临时文件和原子替换。已有旧结果不会因为回归测试被覆盖；只有正式补测流程
+才会回填 pending 指标。

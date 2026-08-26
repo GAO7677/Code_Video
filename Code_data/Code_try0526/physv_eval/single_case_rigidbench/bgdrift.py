@@ -2,18 +2,25 @@ from __future__ import annotations
 
 from rigidbench.eval.score.background import compute_bgdrift, detect_bg_corners, track_points_cotracker3
 
-from .common import as_frames, as_masks
+from .common import as_frames, as_masks, load_video_rgb
+from .prediction import extract_masks
 
 
-def score_case(pred_frames, foreground_mask, cotracker_model, device: str = "cuda") -> dict:
-    """Return BG-Drift from RGB frames and a foreground mask.
+def score_case(
+    pred_video,
+    gt_mask,
+    sam2_model,
+    cotracker_model,
+    active_actor_indices=None,
+    device: str = "cuda",
+) -> dict:
+    """Return BG-Drift from GT mask supervision and a generated video.
 
-    Frames are uint8 RGB (T,H,W,3). ``foreground_mask`` is bool (H,W), or a
-    bool mask batch (T,1,H,W)/(T,H,W); only frame 0 is used to select the
-    static background, matching the current RigidBench pipeline.
+    SAM2 obtains the generated-video foreground mask internally from the GT
+    first-frame active masks.  CoTracker then tracks background corners.
     """
-    frames = as_frames(pred_frames, "pred_frames")
-    masks = as_masks(foreground_mask, "foreground_mask")
+    frames = as_frames(load_video_rgb(pred_video), "pred_frames")
+    masks = as_masks(extract_masks(pred_video, gt_mask, sam2_model, active_actor_indices), "pred_mask")
     if masks.shape[0] > 1:
         fg = masks[0].any(axis=0)
     else:

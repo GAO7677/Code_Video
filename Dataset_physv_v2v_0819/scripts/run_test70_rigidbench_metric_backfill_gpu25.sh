@@ -4,12 +4,12 @@ set -euo pipefail
 RUNNER="/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/run_test70_rigidbench_metric_backfill.sh"
 BUILDER="/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/build_test70_rigidbench_metrics.py"
 PYTHON="${PYTHON:-/home/gaoya/miniconda3/envs/sam/bin/python}"
-LOG_ROOT="/data/gaoya/agent-data/outputs/physv_v2v_0819_rigidbench_strict_test70/logs/metric_backfill_gpu01"
+LOG_ROOT="/data/gaoya/agent-data/outputs/physv_v2v_0819_rigidbench_strict_test70/logs/metric_backfill_gpu25"
 export PYTHONNOUSERSITE=1
 mkdir -p "$LOG_ROOT"
 
-# These three task directories are still being generated and are deliberately
-# excluded. All other tasks are scanned by every metric-specific worker.
+# Tasks that are not currently being generated.  The runner itself still
+# checks every case's generated frames and strict GT prerequisites.
 SAFE_TASKS=(
   full_sa_physrvg_dit_gpu56__step-000500
   full_sa_physrvg_latent_mask_loss__step-000500
@@ -41,31 +41,24 @@ run_metric() {
   } >"$log" 2>&1
 }
 
-# Exactly one process per metric. The two heavy feature metrics are separated
-# across GPUs; each process loads its own model once and reuses it for all cases.
-run_metric 0 iou & pid_iou=$!
-run_metric 0 ate & pid_ate=$!
-run_metric 0 lpips & pid_lpips=$!
-run_metric 0 ate3d & pid_ate3d=$!
-run_metric 0 bgdrift & pid_bgdrift=$!
+# Exactly one process per metric; each process loads its prediction models once.
+run_metric 2 iou & pid_iou=$!
+run_metric 2 ate & pid_ate=$!
+run_metric 2 lpips & pid_lpips=$!
+run_metric 2 ate3d & pid_ate3d=$!
+run_metric 2 bgdrift & pid_bgdrift=$!
 
-run_metric 1 l2 & pid_l2=$!
-run_metric 1 chamfer & pid_chamfer=$!
-run_metric 1 si_mse & pid_si_mse=$!
-run_metric 1 ssim & pid_ssim=$!
-run_metric 1 iddrift & pid_iddrift=$!
+run_metric 5 l2 & pid_l2=$!
+run_metric 5 chamfer & pid_chamfer=$!
+run_metric 5 si_mse & pid_si_mse=$!
+run_metric 5 ssim & pid_ssim=$!
+run_metric 5 iddrift & pid_iddrift=$!
 
 status=0
-wait "$pid_iou" || status=1
-wait "$pid_ate" || status=1
-wait "$pid_lpips" || status=1
-wait "$pid_ate3d" || status=1
-wait "$pid_bgdrift" || status=1
-wait "$pid_l2" || status=1
-wait "$pid_chamfer" || status=1
-wait "$pid_si_mse" || status=1
-wait "$pid_ssim" || status=1
-wait "$pid_iddrift" || status=1
+for pid in "$pid_iou" "$pid_ate" "$pid_lpips" "$pid_ate3d" "$pid_bgdrift" \
+           "$pid_l2" "$pid_chamfer" "$pid_si_mse" "$pid_ssim" "$pid_iddrift"; do
+  wait "$pid" || status=1
+done
 
 if [[ "$status" -eq 0 ]]; then
   "$PYTHON" "$BUILDER"
