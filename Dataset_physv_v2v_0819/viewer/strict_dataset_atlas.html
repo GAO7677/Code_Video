@@ -1,19 +1,20 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PhysV V2V 0819 · Strict CYCLES Atlas</title>
+  <title>PhysV V2V 0819 · 严格 CYCLES 数据集图谱</title>
   <link rel="stylesheet" href="strict_dataset_atlas.css" />
 </head>
 <body>
   <div class="page-shell">
     <header class="topbar">
       <a class="brand" href="#top"><span class="brand-mark">PV</span><span>PHYSV / V2V 0819</span></a>
-      <nav class="topnav" aria-label="Primary navigation">
-        <a href="#overview">Protocol</a>
-        <a href="#families">Families</a>
-        <a href="#cases">Case index</a>
+      <nav class="topnav" aria-label="主导航">
+        <a href="#overview">协议说明</a>
+        <a href="#truth">真值表</a>
+        <a href="#families">类别</a>
+        <a href="#cases">Case 索引</a>
       </nav>
       <div class="top-status"><span class="status-dot"></span><span>STRICT CYCLES</span></div>
     </header>
@@ -21,61 +22,67 @@
     <main id="top">
       <section class="hero section-pad">
         <div class="hero-copy">
-          <div class="eyebrow">DATASET ATLAS / NATIVE RENDERING</div>
-          <h1>Motion under<br /><em>constraint.</em></h1>
-          <p class="hero-lede">A maintained, 70-case benchmark for physics-aware video continuation. Every scene is rendered in CYCLES, paired with simulator provenance and pixel-aligned ground truth.</p>
-          <div class="hero-ruler" aria-label="90 frame protocol">
-            <span>FRAME 00</span><div class="ruler-line"><i></i></div><span>FRAME 89</span>
+          <div class="eyebrow">数据集图谱 / 原生 CYCLES 渲染</div>
+          <h1>受约束的<br /><em>物理运动。</em></h1>
+          <p class="hero-lede">一个可维护的 70-case 物理感知视频续接 benchmark。所有场景均使用 CYCLES 重渲染，并配套模拟器溯源、像素对齐真值和逐 case 评测适配数据。</p>
+          <div class="hero-ruler" aria-label="90 帧协议">
+            <span>第 00 帧</span><div class="ruler-line"><i></i></div><span>第 89 帧</span>
           </div>
         </div>
         <div class="hero-aside">
-          <div class="hero-aside-label">THE BRIEF</div>
+          <div class="hero-aside-label">数据摘要</div>
           <p id="dataset-description">Loading dataset description…</p>
-          <a class="text-link" href="#cases">Browse all cases <span>↘</span></a>
+          <a class="text-link" href="#cases">浏览全部 case <span>↘</span></a>
         </div>
       </section>
 
       <section id="overview" class="overview section-pad">
-        <div class="section-kicker"><span>01</span><span>PROTOCOL / WHAT IS IN THE BOX</span></div>
+        <div class="section-kicker"><span>01</span><span>协议 / 数据包包含什么</span></div>
         <div class="stat-grid" id="stat-grid"></div>
         <div class="overview-grid">
           <article class="manifest-note">
-            <div class="eyebrow">REFERENCE CONTRACT</div>
-            <h2>One reference,<br /><span>four layers of truth.</span></h2>
-            <p>The RGB reference is <code>rgb_cycles.mp4</code>. Context videos expose the first 8 or 16 frames. The strict package keeps the physical source beside its aligned masks, depth, projected trajectories, contact records and RigidBench adapter.</p>
+            <div class="eyebrow">REFERENCE 约定</div>
+            <h2>一个 reference，<br /><span>四层真值。</span></h2>
+            <p>RGB reference 是 <code>rgb_cycles.mp4</code>；context 视频提供前 8 帧或前 16 帧。strict 包同时保留物理源数据、对齐 mask、depth、投影轨迹、接触记录和 RigidBench-style adapter。</p>
             <div class="layer-list">
-              <div><b>RGB</b><span>CYCLES reference / H.264 MP4</span></div>
-              <div><b>SIM</b><span>PyBullet state, contacts and captions</span></div>
-              <div><b>PIX</b><span>dynamic mask · depth · 2D trajectory</span></div>
-              <div><b>RB</b><span>RigidBench-style per-case adapter</span></div>
+              <div><b>RGB</b><span>CYCLES reference / 视频</span></div>
+              <div><b>SIM</b><span>PyBullet 状态、接触和 captions</span></div>
+              <div><b>PIX</b><span>动态 mask · depth · 2D 轨迹</span></div>
+              <div><b>RB</b><span>RigidBench-style 逐 case adapter</span></div>
             </div>
           </article>
           <article class="taxonomy-panel">
-            <div class="eyebrow">TAXONOMY / CONTROL AXIS</div>
+            <div class="eyebrow">TAXONOMY / 控制变量轴</div>
             <div id="taxonomy-list" class="taxonomy-list"></div>
             <div class="source-footnote"><span class="mini-rule"></span><span id="source-summary">Loading source groups…</span></div>
           </article>
         </div>
       </section>
 
+      <section id="truth" class="truth-section section-pad">
+        <div class="section-kicker"><span>01A</span><span>真值总表 / 文件、shape 与用途</span></div>
+        <div class="truth-intro">以下维度按 strict 包内实际文件整理。需要特别注意：<code>raw/masks.npz</code> 是原始 simulator 分辨率的溯源 mask；用于评测和像素对齐的 mask 是 <code>truth/cases/*/dynamic_masks.npz</code>，统一为 896×512。</div>
+        <div id="truth-table" class="truth-table-wrap"></div>
+      </section>
+
       <section id="families" class="families section-pad">
-        <div class="section-kicker"><span>02</span><span>FAMILY MAP / 14 CONTROLLED SERIES</span></div>
+        <div class="section-kicker"><span>02</span><span>类别地图 / 14 个受控系列</span></div>
         <div id="family-strip" class="family-strip"></div>
       </section>
 
       <section id="cases" class="explorer section-pad">
         <div class="explorer-heading">
           <div>
-            <div class="section-kicker"><span>03</span><span>CASE INDEX / PLAYABLE REFERENCE</span></div>
-            <h2>Every case, its<br /><em>physical question.</em></h2>
+            <div class="section-kicker"><span>03</span><span>CASE 索引 / 可播放 reference</span></div>
+            <h2>每一个 case，<br /><em>对应一个物理问题。</em></h2>
           </div>
-          <p class="explorer-note">Use the filters to isolate a control family or taxonomy. Videos are loaded on demand; each card links directly to context, metadata and aligned GT.</p>
+          <p class="explorer-note">可按控制变量类别或 taxonomy 筛选。视频按需加载；每张卡片都直接链接到 context、metadata 和对齐 GT。</p>
         </div>
         <div class="controls" role="search">
-          <label class="search-box"><span>⌕</span><input id="search" type="search" placeholder="Search case, object, caption…" /></label>
-          <label class="select-box"><span>FAMILY</span><select id="family-filter"><option value="all">All families</option></select></label>
-          <label class="select-box"><span>TAXONOMY</span><select id="taxonomy-filter"><option value="all">All axes</option><option value="Scene">Scene</option><option value="Object">Object</option><option value="Relation">Relation</option></select></label>
-          <button id="clear-filters" class="clear-button" type="button">Clear filters ×</button>
+          <label class="search-box"><span>⌕</span><input id="search" type="search" placeholder="搜索 case、物体、caption…" /></label>
+          <label class="select-box"><span>类别</span><select id="family-filter"><option value="all">全部类别</option></select></label>
+          <label class="select-box"><span>TAXONOMY</span><select id="taxonomy-filter"><option value="all">全部轴</option><option value="Scene">Scene / 场景</option><option value="Object">Object / 物体</option><option value="Relation">Relation / 关系</option></select></label>
+          <button id="clear-filters" class="clear-button" type="button">清除筛选 ×</button>
         </div>
         <div id="result-summary" class="result-summary"></div>
         <div id="case-groups"></div>

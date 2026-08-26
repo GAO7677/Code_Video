@@ -15,21 +15,87 @@ ROOT = Path("/data/gaoya/AAA_test_video/physv_v2v_0819_strict")
 TEMPLATE_ROOT = Path(__file__).resolve().parents[1] / "viewer"
 
 FAMILY_LABELS = {
-    "F11": "Table height",
-    "F12": "Incline angle",
-    "F12_RAMP_LENGTH": "Ramp length",
-    "SCENE_DOOR_FRAME_BALL": "Ball · door frame",
-    "SCENE_DOOR_FRAME": "Crate · door frame",
-    "SCENE_PUCK_BARRIER": "Puck · barrier",
-    "V2V_BOWL": "Bowl descent",
-    "V2V_DOMINO": "Domino chain",
-    "V2V_GAP": "Gap roll-off",
-    "V2V_OBSTACLE_SIZE": "Obstacle size",
-    "V2V_OBSTACLE": "Obstacle collision",
-    "V2V_PENDULUM_CABINET": "Pendulum · cabinet",
-    "V2V_PENDULUM": "Pendulum swing",
-    "V2V_SEESAW": "Seesaw load",
+    "F11": "桌面高度",
+    "F12": "斜面倾角",
+    "F12_RAMP_LENGTH": "斜面长度",
+    "SCENE_DOOR_FRAME_BALL": "球体 · 门框",
+    "SCENE_DOOR_FRAME": "木箱 · 门框",
+    "SCENE_PUCK_BARRIER": "圆盘 · 障碍物",
+    "V2V_BOWL": "碗形曲面下落",
+    "V2V_DOMINO": "多米诺骨牌",
+    "V2V_GAP": "间隙滚落",
+    "V2V_OBSTACLE_SIZE": "障碍物尺寸",
+    "V2V_OBSTACLE": "障碍物碰撞",
+    "V2V_PENDULUM_CABINET": "摆锤 · 柜体",
+    "V2V_PENDULUM": "摆锤运动",
+    "V2V_SEESAW": "跷跷板载荷",
 }
+
+TRUTH_TABLE = [
+    {
+        "category": "CYCLES RGB reference",
+        "file": "samples/*/videos/rgb_cycles.mp4",
+        "shape": "90 × 512 × 896 × 3（解码后）",
+        "dtype": "uint8 / MP4",
+        "use": "原生 reference 视频；每个 case 90 帧、30 FPS、896×512。",
+    },
+    {
+        "category": "Context 视频",
+        "file": "samples/*/context/context8_cycles.mp4；context16_cycles.mp4",
+        "shape": "8/16 × 512 × 896 × 3（解码后）",
+        "dtype": "uint8 / MP4",
+        "use": "分别提供前 8 帧和前 16 帧上下文，目标视频仍是 CYCLES reference。",
+    },
+    {
+        "category": "动态物体 mask（对齐 GT）",
+        "file": "truth/cases/*/dynamic_masks.npz → masks_thw / union_thw",
+        "shape": "(N_dyn, 90, 512, 896)；(90, 512, 896)",
+        "dtype": "bool",
+        "use": "动态物体实例 mask 及其 union；N_dyn 通常为 1。",
+    },
+    {
+        "category": "Depth（对齐 GT）",
+        "file": "truth/cases/*/cycles_depth.npz → depth",
+        "shape": "(90, 512, 896)",
+        "dtype": "float32",
+        "use": "CYCLES compositor Depth/Z pass；单位为场景深度，背景为 0。",
+    },
+    {
+        "category": "2D 轨迹（对齐 GT）",
+        "file": "truth/cases/*/trajectory_pixels.npz → centers_tnc",
+        "shape": "(90, N_dyn, 3)",
+        "dtype": "float32",
+        "use": "逐帧动态物体中心轨迹；像素坐标原点在左上角，第三维按 convention 记录深度/可见性信息。",
+    },
+    {
+        "category": "PyBullet 状态轨迹",
+        "file": "samples/*/raw/trajectories.npz",
+        "shape": "time (90,)；position (90,3)；rotation (90,4)；velocity (90,3)",
+        "dtype": "float32",
+        "use": "逐帧世界坐标位置、四元数姿态、线速度和角速度；z 轴向上，单位为米。",
+    },
+    {
+        "category": "接触 / 碰撞真值",
+        "file": "samples/*/contacts.json",
+        "shape": "90 帧索引；contacts 为变长列表",
+        "dtype": "JSON / float",
+        "use": "记录运动相关接触、碰撞对、接触点和法向力，适合碰撞事件分析和加权监督。",
+    },
+    {
+        "category": "原始 simulator mask",
+        "file": "samples/*/raw/masks.npz → masks",
+        "shape": "(90, N_obj, 720, 1280)",
+        "dtype": "bool",
+        "use": "原始 simulator 渲染分辨率的物体 mask，仅作溯源保留；评测对齐 mask 使用上面的 896×512 truth。",
+    },
+    {
+        "category": "RigidBench-style adapter",
+        "file": "truth/cases/*/rigidbench/{masks,depth,trajectories}.npz",
+        "shape": "mask (90,N,512,896)；depth (90,512,896)；state 见轨迹表",
+        "dtype": "bool / float32",
+        "use": "按 RigidBench 风格组织的逐 case 适配数据；当前 strict 包标记为 official_rigidbench=false。",
+    },
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -167,7 +233,7 @@ def build_data(root: Path) -> dict[str, Any]:
         "dataset": {
             "name": meta.get("dataset"),
             "schema_version": meta.get("schema_version"),
-            "description": meta.get("description"),
+            "description": "PhysV V2V 0819 Strict 是一个确定性的刚体视频续接 benchmark，共 70 个 CYCLES case。数据按单一物理变量组成 14 个受控系列，并同时提供 RGB reference、上下文视频、模拟器状态、接触记录和像素对齐真值。",
             "source_selection": meta.get("source_selection"),
             "coordinate_system": meta.get("coordinate_system"),
             "mask_policy": meta.get("mask_policy"),
@@ -179,6 +245,7 @@ def build_data(root: Path) -> dict[str, Any]:
             "taxonomy_counts": dict(taxonomy_counts),
             "source_counts": dict(source_counts),
             "official_rigidbench": False,
+            "truth_table": TRUTH_TABLE,
         },
         "families": list(families.values()),
         "cases": cases,
@@ -210,6 +277,8 @@ cd /data/gaoya/AAA_test_video/physv_v2v_0819_strict
 ```
 
 然后打开 <http://localhost:8861/visualization/>。页面数据索引为 `data.json`；重新生成数据索引和静态资源：
+
+在 8844 总览页中，入口位于 `PHYRVG-Full-SA · test70 · no-event-timing · 40-step` 板块，访问路径为 `/physv-v2v-0819-strict-cycles-atlas/`。
 
 ```bash
 cd /home/gaoya/Code_Video/Dataset_physv_v2v_0819

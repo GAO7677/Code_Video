@@ -66,6 +66,15 @@ code { color: var(--cyan); font-size: .88em; }
 .taxonomy-row strong { color: var(--cyan); text-align: right; font: 16px "IBM Plex Mono", monospace; }
 .taxonomy-bar { grid-column: 1 / -1; height: 3px; background: #24343a; } .taxonomy-bar i { display: block; height: 100%; background: var(--cyan); }
 .source-footnote { display: flex; gap: 12px; margin-top: 34px; color: var(--dim); font: 10px/1.5 "IBM Plex Mono", monospace; }
+.truth-section { padding-top: 16px; padding-bottom: 84px; }
+.truth-intro { max-width: 980px; margin: 18px 0 22px; color: var(--muted); font-size: 13px; line-height: 1.75; }
+.truth-table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--panel); }
+.truth-table-wrap table { width: 100%; min-width: 1040px; border-collapse: collapse; table-layout: fixed; }
+.truth-table-wrap th { padding: 12px 14px; color: var(--amber); background: #111719; border-bottom: 1px solid var(--line); text-align: left; font: 9px "IBM Plex Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.truth-table-wrap th:nth-child(1) { width: 15%; }.truth-table-wrap th:nth-child(2) { width: 25%; }.truth-table-wrap th:nth-child(3) { width: 20%; }.truth-table-wrap th:nth-child(4) { width: 10%; }.truth-table-wrap th:nth-child(5) { width: 30%; }
+.truth-table-wrap td { padding: 13px 14px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.55; vertical-align: top; overflow-wrap: anywhere; }
+.truth-table-wrap tbody tr:last-child td { border-bottom: 0; }.truth-table-wrap tbody tr:hover td { background: rgba(115,229,212,.035); }
+.truth-table-wrap td strong { color: var(--ink); font-weight: 650; }.truth-table-wrap td code { color: var(--cyan); font-size: 9px; }
 .mini-rule { width: 28px; height: 1px; background: var(--amber); margin-top: 7px; flex: 0 0 auto; }
 .families { padding-top: 68px; padding-bottom: 90px; border-top: 1px solid var(--line); background: #0c161b; }
 .family-strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-top: 32px; }
