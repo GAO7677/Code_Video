@@ -103,6 +103,28 @@ def metric_path(output_root: Path, task_id: str, case_id: str) -> Path:
     return output_root / "methods" / task_id / "metrics" / f"{case_id}.json"
 
 
+def prediction_ready(path: str | Path) -> bool:
+    """Return whether a prediction file is plausibly complete.
+
+    The test70 dashboard can expose a path while inference is still writing it
+    (or after a failed encode).  Treating ``Path.is_file()`` as completion lets
+    one truncated MP4 abort a whole metric-family worker.  A cheap size check
+    avoids opening thousands of videos during worker startup; the metric
+    implementation performs the real decode when it evaluates a case.
+    """
+    path = Path(path)
+    if not path.exists():
+        return False
+    if path.is_dir():
+        return any(path.glob("*.jpg")) or any(path.glob("*.png"))
+    try:
+        if path.stat().st_size < 1024:
+            return False
+    except OSError:
+        return False
+    return True
+
+
 def load_registry(
     dashboard_path: Path,
     strict_root: Path,
@@ -116,7 +138,7 @@ def load_registry(
         # only this cheap existence bit so --resume can pick them up later.
         for model in registry.get("models", []):
             for case in model.get("cases", []):
-                case["prediction_exists"] = Path(case["video_path"]).is_file()
+                case["prediction_exists"] = prediction_ready(case["video_path"])
         return registry
 
     dashboard = read_json(dashboard_path)
@@ -158,7 +180,7 @@ def load_registry(
                     "family_key": record.get("family_key"),
                     "video_path": str(video_path),
                     "video_url": video_url,
-                    "prediction_exists": video_path.is_file(),
+                    "prediction_exists": prediction_ready(video_path),
                     "gt_video": str(gt_video),
                 }
             )
@@ -229,7 +251,13 @@ def compute_mask(case: dict[str, Any], needed: set[str], models, strict_root: Pa
     metadata = read_json(gt_case / "metadata.json")
     active = active_actor_indices(gt_case / "masks.npz", metadata)
     pred_mask = extract_masks(case["video_path"], gt_mask, models["sam2"], active, frames=pred_frames)
-    gt_active = gt_mask[:, active] if active else gt_mask
+    # The test70 predictions are 49 frames at the same 30 FPS as strict GT,
+    # while strict CYCLES stores the complete 90-frame rollout. Match the
+    # official evaluator's common-prefix behavior before calling the low-level
+    # mask functions, which intentionally require identical shapes.
+    T = min(gt_mask.shape[0], pred_mask.shape[0])
+    gt_active = gt_mask[:T, active] if active else gt_mask[:T]
+    pred_mask = pred_mask[:T]
     functions = {"iou": iou_per_frame, "l2": l2_per_frame, "chamfer": chamfer_per_frame}
     result: dict[str, Any] = {}
     per_frame: dict[str, np.ndarray] = {}
@@ -448,7 +476,7 @@ def main() -> int:
     targets = []
     for model in models:
         for case in model["cases"]:
-            if not case.get("prediction_exists", Path(case["video_path"]).is_file()):
+            if not case.get("prediction_exists"):
                 continue
             payload = read_json(metric_path(args.output_root, model["task_id"], case["case_id"]))
             needed = {

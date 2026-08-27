@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import tempfile
 from datetime import datetime, timezone
@@ -61,7 +62,7 @@ def finite(value: Any) -> bool:
         return False
 
 
-def main() -> int:
+def build_snapshot() -> int:
     registry = read_json(OUTPUT_ROOT / "registry.json")
     models_out = []
     total_metric_cells = 0
@@ -84,7 +85,10 @@ def main() -> int:
                     metric_counts[metric] += 1
             if all(metric in values for metric in METRICS):
                 complete_cases += 1
-            if case.get("prediction_exists", False):
+            # The registry is initialized before inference/metric workers run,
+            # so its cached existence bit can be stale.  The snapshot must
+            # reflect the filesystem at build time.
+            if Path(case["video_path"]).is_file():
                 generated_case_count += 1
             case_rows.append(
                 {
@@ -150,6 +154,20 @@ def main() -> int:
     atomic_json(PAGE_ROOT / "data.json", payload)
     print(json.dumps({"output": str(PAGE_ROOT / "data.json"), "models": len(models_out), "cases": len(payload["case_ids"]), "completed_metric_cells": completed_metric_cells, "total_metric_cells": total_metric_cells}, ensure_ascii=False))
     return 0
+
+
+def main() -> int:
+    """Build one snapshot while serializing refresh/background builders.
+
+    Both the HTTP refresh endpoint and the long-running RigidBench launcher
+    may rebuild this file.  Serializing the complete read/aggregate/replace
+    cycle prevents an older, slower snapshot from replacing a newer one.
+    """
+    lock_path = OUTPUT_ROOT / ".builder.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        return build_snapshot()
 
 
 if __name__ == "__main__":
