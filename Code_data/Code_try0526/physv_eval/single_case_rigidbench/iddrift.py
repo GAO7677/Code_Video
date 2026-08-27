@@ -17,6 +17,7 @@ def score_case(
     dinov2_model,
     cotracker_model,
     device: str = "cuda",
+    pred_frames=None,
 ) -> dict:
     """Return DINO identity drift from GT inputs and a generated video.
 
@@ -25,8 +26,38 @@ def score_case(
     """
     gt_f = as_frames(gt_frames, "gt_frames")
     gt_t = as_tracks(gt_tracks, "gt_tracks")
-    pred_f = as_frames(load_video_rgb(pred_video), "pred_frames")
-    pred_tracks, pred_visibility = extract_tracks(pred_video, gt_t, cotracker_model)
+    if pred_frames is None:
+        pred_frames = load_video_rgb(pred_video)
+    pred_f = as_frames(pred_frames, "pred_frames")
+    pred_tracks, pred_visibility = extract_tracks(pred_video, gt_t, cotracker_model, frames=pred_f)
+    return score_from_predictions(
+        gt_f,
+        pred_f,
+        gt_t,
+        pred_tracks,
+        pred_visibility,
+        visibility,
+        actor_offsets,
+        dinov2_model,
+        device,
+    )
+
+
+def score_from_predictions(
+    gt_frames,
+    pred_frames,
+    gt_tracks,
+    pred_tracks,
+    pred_visibility,
+    visibility,
+    actor_offsets,
+    dinov2_model,
+    device: str = "cuda",
+) -> dict:
+    """Compute ID-Drift from preloaded frames and extracted tracks."""
+    gt_f = as_frames(gt_frames, "gt_frames")
+    pred_f = as_frames(pred_frames, "pred_frames")
+    gt_t = as_tracks(gt_tracks, "gt_tracks")
     pred_t = as_tracks(pred_tracks, "pred_tracks")
     T = min(len(gt_f), len(pred_f), gt_t.shape[1], pred_t.shape[1])
     gt_f, pred_f = gt_f[:T], pred_f[:T]

@@ -9,13 +9,32 @@ from .common import as_tracks, as_visibility, cli_print, load_npz_array
 from .prediction import extract_tracks, load_cotracker_model
 
 
-def score_case(gt_tracks, pred_video, image_height: int, cotracker_model, visibility=None) -> dict:
+def score_case(
+    gt_tracks,
+    pred_video,
+    image_height: int,
+    cotracker_model,
+    visibility=None,
+    frames: np.ndarray | None = None,
+) -> dict:
     """Return ATE from GT tracks and a generated video.
 
     CoTracker is run internally using GT first-frame query points.
     """
     gt = as_tracks(gt_tracks, "gt_tracks")
-    pred_tracks, pred_visibility = extract_tracks(pred_video, gt, cotracker_model)
+    pred_tracks, pred_visibility = extract_tracks(pred_video, gt, cotracker_model, frames=frames)
+    return score_from_predictions(gt, pred_tracks, pred_visibility, image_height, visibility)
+
+
+def score_from_predictions(
+    gt_tracks,
+    pred_tracks,
+    pred_visibility,
+    image_height: int,
+    visibility=None,
+) -> dict:
+    """Compute ATE from already extracted GT-query tracks."""
+    gt = as_tracks(gt_tracks, "gt_tracks")
     pred = as_tracks(pred_tracks, "pred_tracks")
     T = min(gt.shape[1], pred.shape[1])
     gt, pred = gt[:, :T], pred[:, :T]

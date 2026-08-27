@@ -133,10 +133,13 @@ def extract_masks(
     gt_mask: np.ndarray,
     sam2_model,
     active_actor_indices: list[int] | tuple[int, ...] | None = None,
+    frames: np.ndarray | None = None,
 ) -> np.ndarray:
     """Propagate GT first-frame active masks through the generated video."""
     first_frame_masks = _active_mask(gt_mask, active_actor_indices)[0]
-    frames = load_video_rgb(pred_video)
+    if frames is None:
+        frames = load_video_rgb(pred_video)
+    frames = as_frames(frames, "pred_frames")
     with frame_directory(pred_video, frames) as frames_dir:
         state = sam2_model.init_state(video_path=str(frames_dir))
         sam2_model.reset_state(state)
@@ -168,11 +171,14 @@ def extract_tracks(
     pred_video: str | Path,
     gt_tracks: np.ndarray,
     cotracker_model,
+    frames: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Track GT first-frame query points through the generated video."""
     import torch
 
-    frames = as_frames(load_video_rgb(pred_video), "pred_frames")
+    if frames is None:
+        frames = load_video_rgb(pred_video)
+    frames = as_frames(frames, "pred_frames")
     gt = as_tracks(gt_tracks, "gt_tracks")
     queries = np.zeros((1, gt.shape[0], 3), dtype=np.float32)
     queries[0, :, 1:] = gt[:, 0]
@@ -185,12 +191,19 @@ def extract_tracks(
     return tracks, visibility
 
 
-def extract_disparity(pred_video: str | Path, vda_model, device: str) -> np.ndarray:
+def extract_disparity(
+    pred_video: str | Path,
+    vda_model,
+    device: str,
+    frames: np.ndarray | None = None,
+) -> np.ndarray:
     """Run the official Video-Depth-Anything configuration on the video."""
     import torch
     from rigidbench.core.constants import DEPTH_INPUT_SIZE
 
-    frames = as_frames(load_video_rgb(pred_video), "pred_frames")
+    if frames is None:
+        frames = load_video_rgb(pred_video)
+    frames = as_frames(frames, "pred_frames")
     with torch.no_grad():
         disparity, _ = vda_model.infer_video_depth(
             frames,

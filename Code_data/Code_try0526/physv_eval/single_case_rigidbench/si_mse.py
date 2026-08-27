@@ -16,6 +16,12 @@ def score_case(gt_depth, pred_video, vda_model, device: str = "cuda") -> dict:
     """
     gt = as_depth(gt_depth, "gt_depth")
     pred_disparity = extract_disparity(pred_video, vda_model, device)
+    return score_from_disparity(gt, pred_disparity)
+
+
+def score_from_disparity(gt_depth, pred_disparity) -> dict:
+    """Compute SI-MSE from an already extracted disparity sequence."""
+    gt = as_depth(gt_depth, "gt_depth")
     pred = as_depth(pred_disparity, "pred_disparity")
     T = min(gt.shape[0], pred.shape[0])
     gt, pred = gt[:T], pred[:T]

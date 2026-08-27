@@ -23,6 +23,7 @@ def score_case(
     vda_model,
     cotracker_model,
     device: str = "cuda",
+    frames: np.ndarray | None = None,
 ) -> dict:
     """Return ATE-3D from GT inputs and a generated video.
 
@@ -35,8 +36,45 @@ def score_case(
     if gt_vis is None:
         raise ValueError("gt_visibility is required for official RigidBench ATE-3D semantics")
     gt_d = as_depth(gt_depth, "gt_depth")
-    pred_tr, pred_vis = extract_tracks(pred_video, gt_tr, cotracker_model)
-    pred_disp = as_depth(extract_disparity(pred_video, vda_model, device), "pred_disparity")
+    pred_tr, pred_vis = extract_tracks(pred_video, gt_tr, cotracker_model, frames=frames)
+    pred_disp = extract_disparity(pred_video, vda_model, device, frames=frames)
+    return score_from_predictions(
+        gt_tracks,
+        gt_visibility,
+        gt_depth,
+        gt_trajectories,
+        actors,
+        camera,
+        actor_offsets,
+        pred_tr,
+        pred_vis,
+        pred_disp,
+    )
+
+
+def score_from_predictions(
+    gt_tracks,
+    gt_visibility,
+    gt_depth,
+    gt_trajectories: dict,
+    actors: list[str],
+    camera: dict,
+    actor_offsets,
+    pred_tracks,
+    pred_visibility,
+    pred_disparity,
+) -> dict:
+    """Compute ATE-3D from already extracted prediction tracks/disparity."""
+    gt_tr = as_tracks(gt_tracks, "gt_tracks")
+    gt_vis = as_visibility(gt_visibility, gt_tr.shape[:2])
+    if gt_vis is None:
+        raise ValueError("gt_visibility is required for official RigidBench ATE-3D semantics")
+    gt_d = as_depth(gt_depth, "gt_depth")
+    pred_tr = as_tracks(pred_tracks, "pred_tracks")
+    pred_vis = as_visibility(pred_visibility, pred_tr.shape[:2])
+    if pred_vis is None:
+        raise ValueError("pred_visibility is required for ATE-3D")
+    pred_disp = as_depth(pred_disparity, "pred_disparity")
     T = min(gt_tr.shape[1], gt_d.shape[0], pred_tr.shape[1], pred_disp.shape[0])
     gt_tr = gt_tr[:, :T]
     gt_d = gt_d[:T]
