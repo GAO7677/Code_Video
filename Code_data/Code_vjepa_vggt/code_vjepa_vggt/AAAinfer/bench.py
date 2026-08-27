@@ -273,6 +273,15 @@ def resolve_input_json_path(result_payload: dict[str, Any], result_json_path: Pa
         raise ValueError(f"input_json must be an absolute path in {result_json_path}: {input_json}")
     if candidate.is_file():
         return candidate
+    # Some remote inference jobs recorded a legacy shared input directory
+    # that is not present on the metric host.  The active metric queue can
+    # provide the task's canonical input directory explicitly; resolve only
+    # by basename there, preserving the original result metadata untouched.
+    fallback_root = os.environ.get("PHYSV_BENCH_INPUT_ROOT", "").strip()
+    if fallback_root:
+        fallback = Path(fallback_root).expanduser() / Path(input_json).name
+        if fallback.is_file():
+            return fallback.resolve()
     raise FileNotFoundError(f"Cannot resolve input_json for {result_json_path}: {input_json}")
 
 
@@ -949,6 +958,9 @@ def write_summary(
             "to": remap_to,
             "scope": "metric-worker-only",
         }
+    fallback_root = os.environ.get("PHYSV_BENCH_INPUT_ROOT", "").strip()
+    if fallback_root:
+        summary_payload["input_json_fallback_root"] = fallback_root
     if not dry_run:
         write_json(summary_path, summary_payload)
     print(json.dumps(summary_payload, ensure_ascii=False, indent=2))
