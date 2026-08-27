@@ -205,13 +205,14 @@ def compute(metric: str, task: Path, sample_id: str, strict_root: Path, shared_m
         from physv_eval.single_case_rigidbench import ate3d
 
         metadata = read_json(case / "metadata.json")
-        gt_tracks, _visibility, offsets, actors = load_gt_track_bundle(strict_root, sample_id)
+        gt_tracks, gt_visibility, offsets, actors = load_gt_track_bundle(strict_root, sample_id)
         gt_depth = load_npz_array(case / "depth.npz", "depth")
         with np.load(case / "trajectories.npz", allow_pickle=False) as data:
             gt_trajectories = {key: data[key] for key in data.files}
         return ate3d.score_case(
             task / "generated" / sample_id,
             gt_tracks,
+            gt_visibility,
             gt_depth,
             gt_trajectories,
             actors,

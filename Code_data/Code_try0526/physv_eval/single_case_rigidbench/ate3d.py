@@ -7,13 +7,14 @@ from rigidbench.eval.score.depth import affine_align_disparity
 from rigidbench.eval.score.trajectory import compute_ate3d
 from rigidbench.eval.score.trajectory import quat_wxyz_to_rotmat, reconstruct_centroids
 
-from .common import as_depth, as_tracks, cli_print, load_video_rgb
+from .common import as_depth, as_tracks, as_visibility, cli_print, load_video_rgb
 from .prediction import extract_disparity, extract_tracks
 
 
 def score_case(
     pred_video,
     gt_tracks,
+    gt_visibility,
     gt_depth,
     gt_trajectories: dict,
     actors: list[str],
@@ -30,6 +31,9 @@ def score_case(
     GT comparison.
     """
     gt_tr = as_tracks(gt_tracks, "gt_tracks")
+    gt_vis = as_visibility(gt_visibility, gt_tr.shape[:2])
+    if gt_vis is None:
+        raise ValueError("gt_visibility is required for official RigidBench ATE-3D semantics")
     gt_d = as_depth(gt_depth, "gt_depth")
     pred_tr, pred_vis = extract_tracks(pred_video, gt_tr, cotracker_model)
     pred_disp = as_depth(extract_disparity(pred_video, vda_model, device), "pred_disparity")
@@ -38,12 +42,14 @@ def score_case(
     gt_d = gt_d[:T]
     pred_tr = pred_tr[:, :T]
     pred_vis = pred_vis[:, :T]
+    gt_vis = gt_vis[:, :T]
+    visibility = pred_vis & gt_vis
     aligned, _, _ = affine_align_disparity(pred_disp[:T], gt_d)
     intrinsics = camera["intrinsics"]
     extrinsics = camera["extrinsics"]
     pred_centroids = reconstruct_centroids(
         pred_tr,
-        pred_vis,
+        visibility,
         aligned,
         intrinsics,
         np.asarray(extrinsics["location"], dtype=np.float64),
