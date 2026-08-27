@@ -113,9 +113,10 @@ class VideoDepthAnything(nn.Module):
         for frame_id in tqdm(range(0, org_video_len, frame_step)):
             cur_list = []
             for i in range(INFER_LEN):
-                # cur_list.append(torch.from_numpy(transform({'image': frame_list[frame_id+i].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0))
                 cur_list.append(
-                    torch.from_numpy(transform({"image": frame_list[frame_id + i].astype(np.float32)})["image"])
+                    torch.from_numpy(
+                        transform({"image": frame_list[frame_id + i].astype(np.float32) / 255.0})["image"]
+                    )
                     .unsqueeze(0)
                     .unsqueeze(0)
                 )
