@@ -40,6 +40,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--engine", choices=("CYCLES", "BLENDER_EEVEE"), default="CYCLES")
     parser.add_argument("--device", choices=("CUDA", "CPU"), default="CUDA")
     parser.add_argument("--output-format", choices=("PNG", "OPEN_EXR"), default="PNG")
+    parser.add_argument(
+        "--material-overrides-json",
+        type=Path,
+        default=None,
+        help="JSON object mapping actor names to material-library keys.",
+    )
+    parser.add_argument(
+        "--basketball-texture",
+        type=Path,
+        default=None,
+        help="UV texture used by the optional basketball material.",
+    )
     return parser.parse_args(argv)
 
 
@@ -232,7 +244,41 @@ def procedural_material(
     return material
 
 
-def material_library() -> dict[str, bpy.types.Material]:
+def basketball_material(name: str, texture_path: Path) -> bpy.types.Material:
+    """Build a UV-mapped basketball material without changing object geometry."""
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+    output = nodes.new("ShaderNodeOutputMaterial")
+    shader = nodes.new("ShaderNodeBsdfPrincipled")
+    shader.inputs["Roughness"].default_value = 0.78
+    if "Specular" in shader.inputs:
+        shader.inputs["Specular"].default_value = 0.28
+    links.new(shader.outputs["BSDF"], output.inputs["Surface"])
+
+    texcoord = nodes.new("ShaderNodeTexCoord")
+    mapping = nodes.new("ShaderNodeMapping")
+    links.new(texcoord.outputs["UV"], mapping.inputs["Vector"])
+    albedo = image_node(nodes, texture_path)
+    albedo.extension = "REPEAT"
+    links.new(mapping.outputs["Vector"], albedo.inputs["Vector"])
+    links.new(albedo.outputs["Color"], shader.inputs["Base Color"])
+
+    # The downloaded map contains the leather dimples and seams. A restrained
+    # bump keeps that detail visible while leaving the sphere mesh unchanged.
+    to_bw = nodes.new("ShaderNodeRGBToBW")
+    bump = nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = 0.12
+    bump.inputs["Distance"].default_value = 0.012
+    links.new(albedo.outputs["Color"], to_bw.inputs["Color"])
+    links.new(to_bw.outputs["Val"], bump.inputs["Height"])
+    links.new(bump.outputs["Normal"], shader.inputs["Normal"])
+    return material
+
+
+def material_library(basketball_texture: Path | None = None) -> dict[str, bpy.types.Material]:
     wood_names = {
         "albedo": "wood_floor_diff_2k.jpg",
         "normal": "wood_floor_nor_gl_2k.jpg",
@@ -296,7 +342,7 @@ def material_library() -> dict[str, bpy.types.Material]:
         "roughness": "denim_fabric_04_rough_2k.jpg",
         "ao": "denim_fabric_04_ao_2k.jpg",
     }
-    return {
+    materials = {
         "floor": pbr_material("PBR_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, roughness=0.48, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
         "floor_cool": pbr_material("PBR_Cool_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(0.62, 0.78, 0.92), tint_strength=0.76, roughness=0.52, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
         "floor_dark_wood": pbr_material("PBR_Dark_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(0.12, 0.16, 0.22), tint_strength=0.78, roughness=0.58, uv_scale=3.0, normal_strength=0.60, detail_bump_strength=0.018, detail_bump_scale=14.0),
@@ -331,6 +377,11 @@ def material_library() -> dict[str, bpy.types.Material]:
         "fabric_coral": pbr_material("PBR_Coral_Fabric", texture_dir=EXTRA_TEXTURE_ROOT / "denim_fabric_04", texture_names=denim_names, tint=(1.38, 0.28, 0.12), tint_strength=0.78, roughness=0.94, metallic=0.0, uv_scale=5.0, normal_strength=0.60, detail_bump_strength=0.012, detail_bump_scale=28.0),
         "rope_fabric": pbr_material("PBR_Rope_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.52, 0.25, 0.08), roughness=0.92, metallic=0.0, uv_scale=18.0, normal_strength=0.72, detail_bump_strength=0.022, detail_bump_scale=34.0),
     }
+    if basketball_texture is not None:
+        if not basketball_texture.is_file():
+            raise FileNotFoundError(f"basketball texture not found: {basketball_texture}")
+        materials["basketball"] = basketball_material("PBR_Basketball", basketball_texture)
+    return materials
 
 
 def add_cube(name: str, location, half_extents, material, *, bevel: float = 0.025):
@@ -951,7 +1002,13 @@ def camera_diagnostics(scene: bpy.types.Scene, camera: bpy.types.Object, object_
     return result
 
 
-def animate_objects(metadata: dict, trajectories, materials, frame_limit: int) -> tuple[list[str], int, dict[str, str]]:
+def animate_objects(
+    metadata: dict,
+    trajectories,
+    materials,
+    frame_limit: int,
+    material_overrides: dict[str, str] | None = None,
+) -> tuple[list[str], int, dict[str, str]]:
     family = metadata["family_key"]
     names = trajectories["object_names"]
     available_frames = len(trajectories["frame_times_s"])
@@ -959,7 +1016,9 @@ def animate_objects(metadata: dict, trajectories, materials, frame_limit: int) -
     material_assignments = {}
     for name in names:
         actor = metadata["actors"][name]
-        material_key = actor_material_key(name, actor, family)
+        material_key = (material_overrides or {}).get(name, actor_material_key(name, actor, family))
+        if material_key not in materials:
+            raise KeyError(f"material override {material_key!r} for {name!r} is not in material library")
         material_assignments[name] = material_key
         material = materials[material_key]
         obj = add_actor(name, actor, material)
@@ -986,6 +1045,12 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     metadata = json.loads((args.sample_dir / "metadata.json").read_text(encoding="utf-8"))
     trajectories = json.loads(args.trajectory_json.read_text(encoding="utf-8"))
+    material_overrides = {}
+    if args.material_overrides_json is not None:
+        material_overrides = json.loads(args.material_overrides_json.read_text(encoding="utf-8"))
+        if not isinstance(material_overrides, dict):
+            raise TypeError("--material-overrides-json must contain a JSON object")
+        material_overrides = {str(key): str(value) for key, value in material_overrides.items()}
     fps = int(metadata["simulation"]["fps"])
     render_family = "F12" if metadata["family_key"] == "F12_RAMP_LENGTH" else metadata["family_key"]
     if render_family == "SCENE_DOOR_FRAME_BALL":
@@ -996,12 +1061,18 @@ def main() -> None:
     clear_scene()
     scene = bpy.context.scene
     enabled_devices = configure_cycles(scene, args, fps)
-    materials = material_library()
+    materials = material_library(args.basketball_texture)
     room_scene = add_room(materials, render_family)
     hdri_path = set_world_hdri(scene, render_family)
     lighting_preset = add_lighting(render_family)
     camera = add_camera(render_metadata)
-    object_names, frame_count, material_assignments = animate_objects(render_metadata, trajectories, materials, args.frame_limit)
+    object_names, frame_count, material_assignments = animate_objects(
+        render_metadata,
+        trajectories,
+        materials,
+        args.frame_limit,
+        material_overrides,
+    )
     camera_report = camera_diagnostics(scene, camera, object_names)
 
     scene.frame_start = 1
@@ -1038,6 +1109,8 @@ def main() -> None:
         "lighting_preset": lighting_preset,
         "object_names": object_names,
         "material_assignments": material_assignments,
+        "material_overrides": material_overrides,
+        "basketball_texture": str(args.basketball_texture) if args.basketball_texture else None,
         "camera": camera_report,
         "render_seconds": elapsed,
         "seconds_per_frame": elapsed / max(frame_count, 1),
