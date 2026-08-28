@@ -19,6 +19,7 @@ FAMILY_LABELS = {
     "F11": "桌面高度",
     "F12": "斜面倾角",
     "F12_RAMP_LENGTH": "斜面长度",
+    "V2V_RAMP_PLATFORM": "斜面—水平平台长度",
     "SCENE_DOOR_FRAME_BALL": "球体 · 门框",
     "SCENE_DOOR_FRAME": "木箱 · 门框",
     "SCENE_PUCK_BARRIER": "圆盘 · 障碍物",
@@ -288,7 +289,7 @@ def build_data(root: Path) -> dict[str, Any]:
         "dataset": {
             "name": meta.get("dataset"),
             "schema_version": meta.get("schema_version"),
-            "description": "PhysV V2V 0819 Strict 是一个确定性的刚体视频续接 benchmark，共 70 个 CYCLES case。数据按单一物理变量组成 14 个受控系列，并同时提供 RGB reference、上下文视频、模拟器状态、接触记录和像素对齐真值。",
+            "description": "PhysV V2V 0819 Strict 是一个确定性的刚体视频续接 benchmark。数据按单一物理变量组成多个受控系列，并同时提供 RGB reference、上下文视频、模拟器状态、接触记录和像素对齐真值；case/family 数量由当前 active 样本自动统计。",
             "source_selection": meta.get("source_selection"),
             "coordinate_system": meta.get("coordinate_system"),
             "mask_policy": meta.get("mask_policy"),
@@ -321,7 +322,7 @@ def main() -> None:
     (output / "README.md").write_text(
         """# PhysV V2V 0819 · Strict CYCLES 可视化
 
-这是严格 benchmark 包的离线可视化入口，展示 70 个 CYCLES case、14 个控制变量 family、RGB reference video，以及每个 case 对应的 context、mask、depth、2D trajectory、接触记录和 RigidBench adapter。
+这是严格 benchmark 包的离线可视化入口，展示当前 active CYCLES case、各控制变量 family、RGB reference video，以及每个 case 对应的 context、mask、depth、2D trajectory、接触记录和 RigidBench adapter。
 
 ## 查看
 

@@ -222,6 +222,93 @@ def _derive_ramp(
     return _base_observation(metadata, frame_times, outcome, event_frame, end_state, details)
 
 
+def _derive_ramp_platform(
+    metadata: Mapping[str, object],
+    frame_times: np.ndarray,
+    positions: np.ndarray,
+    velocities: np.ndarray,
+    speeds: np.ndarray,
+    names: Sequence[str],
+    dynamic_mask: np.ndarray,
+    contacts: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Extract support-departure and landing events for the ramp-platform family."""
+    index = _dynamic_index(names, dynamic_mask, "block_0")
+    actor = names[index]
+    scenario = metadata.get("scenario_spec", {})
+    scenario = scenario if isinstance(scenario, Mapping) else {}
+
+    ramp_frames = _pair_frames(contacts, actor, "incline_board_0")
+    platform_frames = _pair_frames(contacts, actor, "horizontal_platform_0")
+    ground_frames = _pair_frames(contacts, actor, "ground")
+    ramp_exit_x = _float(scenario.get("ramp_exit_x_m"), 0.0)
+    platform_edge_x = _float(scenario.get("platform_edge_x_m"), 0.0)
+    block_half_x = _float(scenario.get("block_half_x_m"), 0.16)
+
+    ramp_candidates = np.flatnonzero(positions[:, index, 0] >= ramp_exit_x)
+    ramp_exit_frame = int(ramp_candidates[0]) if len(ramp_candidates) else None
+    if ramp_exit_frame is None and ramp_frames:
+        ramp_exit_frame = min(ramp_frames[-1] + 1, len(frame_times) - 1)
+
+    departure_candidates = np.flatnonzero(
+        positions[:, index, 0] > platform_edge_x + block_half_x
+    )
+    platform_departure_frame = int(departure_candidates[0]) if len(departure_candidates) else None
+    if platform_departure_frame is None and platform_frames:
+        platform_departure_frame = min(platform_frames[-1] + 1, len(frame_times) - 1)
+
+    landing_candidates = [
+        frame for frame in ground_frames
+        if platform_departure_frame is None or frame >= platform_departure_frame
+    ]
+    landing_frame = landing_candidates[0] if landing_candidates else None
+    if landing_frame is not None:
+        outcome = "ramp_platform_lands_on_ground"
+        end_state = "moving_on_ground" if speeds[-1, index] > MOTION_THRESHOLD_MPS else "stopped_on_ground"
+    elif platform_departure_frame is not None:
+        outcome = "ramp_platform_departure_observed"
+        end_state = "airborne_after_platform"
+    elif ramp_exit_frame is not None:
+        outcome = "ramp_platform_on_horizontal_platform"
+        end_state = "moving_on_platform"
+    else:
+        outcome = "ramp_platform_remains_on_ramp"
+        end_state = "moving_on_ramp"
+
+    event_frame = ramp_exit_frame
+    details = _common_motion_details(positions, velocities, speeds, index)
+    landing_point = (
+        [_round(value, 5) for value in positions[landing_frame, index]]
+        if landing_frame is not None
+        else None
+    )
+    details.update(
+        {
+            "actor": actor,
+            "ramp_contact_first_frame": ramp_frames[0] if ramp_frames else None,
+            "ramp_contact_last_frame": ramp_frames[-1] if ramp_frames else None,
+            "platform_contact_first_frame": platform_frames[0] if platform_frames else None,
+            "platform_contact_last_frame": platform_frames[-1] if platform_frames else None,
+            "ground_contact_first_frame": ground_frames[0] if ground_frames else None,
+            "ground_contact_last_frame": ground_frames[-1] if ground_frames else None,
+            "ramp_exit_frame": ramp_exit_frame,
+            "ramp_exit_time_s": _frame_time(ramp_exit_frame, frame_times),
+            "platform_departure_frame": platform_departure_frame,
+            "platform_departure_time_s": _frame_time(platform_departure_frame, frame_times),
+            "landing_frame": landing_frame,
+            "landing_time_s": _frame_time(landing_frame, frame_times),
+            "landing_point_m": landing_point,
+            "ramp_angle_deg": _round(scenario.get("ramp_angle_deg"), 2),
+            "ramp_length_m": _round(scenario.get("ramp_length_m"), 3),
+            "horizontal_platform_length_m": _round(scenario.get("horizontal_platform_length_m"), 3),
+            "table_height_m": _round(scenario.get("table_height_m"), 3),
+            "ramp_exit_x_m": _round(ramp_exit_x, 4),
+            "platform_edge_x_m": _round(platform_edge_x, 4),
+        }
+    )
+    return _base_observation(metadata, frame_times, outcome, event_frame, end_state, details)
+
+
 def _derive_gap(
     metadata: Mapping[str, object],
     frame_times: np.ndarray,
@@ -716,6 +803,8 @@ def derive_caption_observations_from_arrays(
         return _derive_f11(metadata, frame_times, positions, velocities, speeds, names, dynamic_mask, contacts)
     if family in {"F12", "F12_RAMP_LENGTH"} or task_type in {"incline_release", "incline_length_release"}:
         return _derive_ramp(metadata, frame_times, positions, velocities, speeds, names, dynamic_mask, contacts)
+    if family == "V2V_RAMP_PLATFORM" or task_type == "incline_to_platform":
+        return _derive_ramp_platform(metadata, frame_times, positions, velocities, speeds, names, dynamic_mask, contacts)
     if family == "V2V_GAP" or task_type == "gap_rolloff":
         return _derive_gap(metadata, frame_times, positions, velocities, speeds, names, dynamic_mask, contacts)
     if family == "V2V_OBSTACLE_SIZE":

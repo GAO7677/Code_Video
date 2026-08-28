@@ -60,6 +60,31 @@ def build_contact_contract(blueprint: ScenarioBlueprint) -> dict[str, object]:
             for name in ("incline_board_0", "incline_riser_0", "incline_riser_1")
             if name in names
         ]
+    elif family == "V2V_RAMP_PLATFORM":
+        touching_pairs = _pairs(
+            names,
+            [
+                ("table_top_0", "table_leg_left_0"),
+                ("table_top_0", "table_leg_left_1"),
+                ("horizontal_platform_0", "table_leg_right_0"),
+                ("horizontal_platform_0", "table_leg_right_1"),
+                ("incline_board_0", "ramp_support_0"),
+                ("incline_board_0", "ramp_support_1"),
+                ("table_top_0", "horizontal_platform_0"),
+                ("incline_board_0", "horizontal_platform_0"),
+                ("block_0", "incline_board_0"),
+            ],
+        )
+        touching_ground = [
+            name
+            for name in (
+                "table_leg_left_0",
+                "table_leg_left_1",
+                "table_leg_right_0",
+                "table_leg_right_1",
+            )
+            if name in names
+        ]
     elif family == "V2V_GAP":
         touching_pairs = _pairs(
             names,

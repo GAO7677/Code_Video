@@ -106,6 +106,42 @@ def _ramp_caption(metadata: Mapping[str, object], specific: bool) -> str:
     return opening + " It leaves the ramp, lands on the floor, and comes to rest by the end."
 
 
+def _ramp_platform_caption(metadata: Mapping[str, object], specific: bool) -> str:
+    details = _details(metadata)
+    outcome = _outcome(metadata)
+    angle = _number_text(details.get("ramp_angle_deg"), "the configured")
+    length = _number_text(
+        details.get("horizontal_platform_length_m"),
+        _value_label(metadata) if specific else "a controlled",
+    )
+    if specific:
+        opening = (
+            f"A wooden block is released from rest on a {angle} degree incline, "
+            f"then crosses a {length} m horizontal platform."
+        )
+    else:
+        opening = "A wooden block slides from an incline onto a horizontal platform."
+    ramp_exit = _number_text(details.get("ramp_exit_time_s"), "an observed")
+    platform_exit = _number_text(details.get("platform_departure_time_s"), "an observed")
+    landing_point = details.get("landing_point_m")
+    landing_x = (
+        _number_text(landing_point[0], "an observed")
+        if isinstance(landing_point, list) and landing_point
+        else "an observed"
+    )
+    if outcome == "ramp_platform_lands_on_ground":
+        return (
+            opening
+            + f" It leaves the incline at {ramp_exit} s, leaves the platform at {platform_exit} s, "
+            + f"and lands at x={landing_x} m."
+        )
+    if outcome == "ramp_platform_departure_observed":
+        return opening + f" It leaves the incline at {ramp_exit} s and the platform at {platform_exit} s."
+    if outcome == "ramp_platform_on_horizontal_platform":
+        return opening + f" It leaves the incline at {ramp_exit} s and is still on the platform at the end."
+    return opening + " It remains on the incline during the observed clip."
+
+
 def _gap_caption(metadata: Mapping[str, object], specific: bool) -> str:
     value = _value_label(metadata) if specific else ""
     outcome = _outcome(metadata)
@@ -275,6 +311,8 @@ def _specific_caption(metadata: Mapping[str, object]) -> str:
         return _ramp_caption(metadata, True)
     if family_key == "F12" or task_type == "incline_release":
         return _ramp_caption(metadata, True)
+    if family_key == "V2V_RAMP_PLATFORM" or task_type == "incline_to_platform":
+        return _ramp_platform_caption(metadata, True)
     if family_key == "V2V_GAP" or task_type == "gap_rolloff":
         return _gap_caption(metadata, True)
     if family_key == "V2V_OBSTACLE_SIZE":
@@ -308,6 +346,8 @@ def _abstract_caption(metadata: Mapping[str, object]) -> str:
         return _f11_caption(metadata, False)
     if family_key in {"F12", "F12_RAMP_LENGTH"} or task_type in {"incline_release", "incline_length_release"}:
         return _ramp_caption(metadata, False)
+    if family_key == "V2V_RAMP_PLATFORM" or task_type == "incline_to_platform":
+        return _ramp_platform_caption(metadata, False)
     if family_key == "V2V_GAP" or task_type == "gap_rolloff":
         return _gap_caption(metadata, False)
     if family_key == "V2V_OBSTACLE_SIZE":

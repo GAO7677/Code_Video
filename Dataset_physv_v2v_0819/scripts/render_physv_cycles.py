@@ -502,6 +502,17 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
         return "dark_metal"
     if family == "F12" and lower == "block_0":
         return "red_wood"
+    if family == "V2V_RAMP_PLATFORM":
+        if lower == "block_0":
+            return "red_wood"
+        if lower == "incline_board_0":
+            return "wood"
+        if lower.startswith("ramp_support"):
+            return "concrete"
+        if lower in {"table_top_0", "horizontal_platform_0"}:
+            return "wood"
+        if lower.startswith("table_leg"):
+            return "dark_metal"
     if family == "V2V_BOWL" and lower == "bowl_ball":
         return "blue_rubber"
     if family == "V2V_BOWL" and (lower == "bowl_base" or lower == "bowl_surface"):
@@ -592,6 +603,13 @@ ROOM_SCENES = {
         "trim": "wood",
     },
     "F12": {
+        "name": "cool_workshop",
+        "layout": "workshop",
+        "floor": "floor_dark_wood",
+        "wall": "wall_gray",
+        "trim": "dark_metal",
+    },
+    "V2V_RAMP_PLATFORM": {
         "name": "cool_workshop",
         "layout": "workshop",
         "floor": "floor_dark_wood",
@@ -840,6 +858,7 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
     hdri_by_family = {
         "F11": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
         "F12": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
+        "V2V_RAMP_PLATFORM": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
         "V2V_BOWL": HDRI_ROOT / "brown_photostudio_02" / "brown_photostudio_02_4k.hdr",
         "V2V_DOMINO": HDRI_ROOT / "old_hall" / "old_hall_4k.hdr",
         "V2V_GAP": HDRI_ROOT / "poly_haven_studio" / "poly_haven_studio_4k.hdr",
@@ -854,6 +873,7 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
     rotation_by_family = {
         "F11": 22.0,
         "F12": -18.0,
+        "V2V_RAMP_PLATFORM": -18.0,
         "V2V_BOWL": 22.0,
         "V2V_DOMINO": 58.0,
         "V2V_GAP": 35.0,
@@ -877,6 +897,7 @@ def set_world_hdri(scene: bpy.types.Scene, family: str) -> Path:
     strength_by_family = {
         "F11": 0.26,
         "F12": 0.24,
+        "V2V_RAMP_PLATFORM": 0.24,
         "V2V_BOWL": 0.30,
         "V2V_DOMINO": 0.28,
         "V2V_GAP": 0.21,
@@ -920,6 +941,7 @@ def add_lighting(family: str) -> str:
     presets = {
         "F11": ("warm_window", (-2.6, -2.2, 3.5), 650.0, (1.0, 0.84, 0.70), (3.0, -1.0, 2.8), 350.0, (0.76, 0.88, 1.0), 250.0),
         "F12": ("cool_workshop", (3.0, -2.4, 3.7), 610.0, (0.86, 0.93, 1.0), (-2.8, -1.2, 2.8), 390.0, (1.0, 0.82, 0.68), 290.0),
+        "V2V_RAMP_PLATFORM": ("cool_workshop", (3.0, -2.4, 3.7), 610.0, (0.86, 0.93, 1.0), (-2.8, -1.2, 2.8), 390.0, (1.0, 0.82, 0.68), 290.0),
         "V2V_BOWL": ("gallery_soft", (-1.8, -2.3, 3.8), 700.0, (1.0, 0.91, 0.82), (3.1, -1.0, 2.9), 340.0, (0.80, 0.90, 1.0), 320.0),
         "V2V_DOMINO": ("library_warm", (-3.0, -2.0, 3.4), 620.0, (1.0, 0.80, 0.64), (2.8, -1.2, 2.7), 410.0, (0.76, 0.88, 1.0), 270.0),
         "V2V_GAP": ("loft_directional", (3.2, -2.1, 3.7), 720.0, (0.78, 0.88, 1.0), (-2.6, -0.8, 2.5), 300.0, (1.0, 0.76, 0.60), 210.0),
@@ -944,6 +966,7 @@ CAMERA_FRAMING_PRESETS = {
     # trajectories, so framing cannot leak the controlled variable.
     "F11": {"target": (1.088, 0.0, 0.604), "yfov_deg": 42.0},
     "F12": {"target": (1.930, 0.0, 0.620), "yfov_deg": 38.5},
+    "V2V_RAMP_PLATFORM": {"target": (0.45, 0.0, 0.86), "yfov_deg": 45.0},
     "V2V_BOWL": {"target": (0.005, 0.0, 0.600), "yfov_deg": 34.5},
     "V2V_DOMINO": {"target": (-0.147, 0.0, 0.480), "yfov_deg": 25.0},
     "V2V_GAP": {"target": (0.288, 0.0, 0.620), "yfov_deg": 35.0},

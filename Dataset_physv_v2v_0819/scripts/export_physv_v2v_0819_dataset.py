@@ -753,6 +753,9 @@ def _derive_event_frame(case: ExportCase, positions: np.ndarray, quats: np.ndarr
         theta = math.radians(float(case.blueprint.metadata["ramp_angle_deg"]))
         ramp_edge = 0.5 * float(case.blueprint.metadata["ramp_length_m"]) * math.cos(theta)
         frames = np.flatnonzero(positions[:, index["block_0"], 0] > ramp_edge - 0.02)
+    elif case.family_key == "V2V_RAMP_PLATFORM":
+        ramp_exit_x = float(case.blueprint.metadata.get("ramp_exit_x_m", 0.0))
+        frames = np.flatnonzero(positions[:, index["block_0"], 0] >= ramp_exit_x)
     else:
         # V2V rendering already computes this rule in its simulator metadata.
         return -1

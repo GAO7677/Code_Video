@@ -107,6 +107,7 @@ MOTION_TAG_PROMPT_NAMES = {
     "fall_off": "falls off the edge after approaching it",
     "boundary_slide": "slides near a boundary with fall-off risk",
     "table_rolloff": "rolls across a table and falls off the edge",
+    "ramp_platform": "slides down an incline, crosses a horizontal platform, and leaves its edge",
 }
 
 
@@ -234,6 +235,16 @@ def _family_event_sentence(blueprint: ScenarioBlueprint) -> str:
         if isinstance(ramp_angle, (int, float)):
             return f"{_object_prompt_phrase(mover)} is released from rest on a {float(ramp_angle):.0f} degree incline."
         return f"{_object_prompt_phrase(mover)} is released from rest on a visible incline."
+    if blueprint.family_key == "V2V_RAMP_PLATFORM":
+        mover = role_map.get("block_0", blueprint.objects[0])
+        angle = blueprint.metadata.get("ramp_angle_deg")
+        platform_length = blueprint.metadata.get("horizontal_platform_length_m")
+        if isinstance(angle, (int, float)) and isinstance(platform_length, (int, float)):
+            return (
+                f"{_object_prompt_phrase(mover)} is released from rest on a {float(angle):.0f} degree incline, "
+                f"crosses a {float(platform_length):.2f} m horizontal platform, and leaves its edge."
+            )
+        return f"{_object_prompt_phrase(mover)} {motion_text}."
     return "Rigid objects move through a realistic indoor physics scene."
 
 

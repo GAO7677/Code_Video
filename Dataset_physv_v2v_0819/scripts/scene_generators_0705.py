@@ -375,6 +375,29 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             spin_range=(0.0, 0.0),
             angle_range_deg=(8.0, 32.0),
         ),
+        ScenarioFamilySpec(
+            key="V2V_RAMP_PLATFORM",
+            title="Incline-to-Platform Length Control",
+            description=(
+                "A wooden block leaves a fixed incline, crosses a horizontal platform, "
+                "and then falls; only the horizontal platform length changes."
+            ),
+            family_slug="V2V_ramp_platform_length",
+            min_dynamic_objects=1,
+            max_dynamic_objects=1,
+            min_total_objects=9,
+            max_total_objects=9,
+            supports_occlusion=False,
+            supports_support_objects=True,
+            target_event_types=("release", "ramp_exit", "platform_exit", "land"),
+            preferred_surface_keys=("residential_wood_floor", "studio_wood_floor", "dark_wood_floor"),
+            preferred_camera_keys=("cam_10",),
+            motion_modes=("ramp_platform",),
+            speed_range=(0.0, 0.0),
+            spin_range=(0.0, 0.0),
+            angle_range_deg=(25.0, 25.0),
+            notes="Formal strict-CYCLES control family; horizontal platform length is the only scene variable.",
+        ),
     ]
     return {family.key: family for family in families}
 

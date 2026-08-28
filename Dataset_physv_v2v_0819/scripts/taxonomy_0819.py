@@ -14,6 +14,7 @@ FAMILY_TAXONOMY = {
     "F11": "Scene",
     "F12": "Scene",
     "F12_RAMP_LENGTH": "Scene",
+    "V2V_RAMP_PLATFORM": "Scene",
     "V2V_GAP": "Scene",
     "V2V_BOWL": "Scene",
     "V2V_DOMINO": "Relation",
