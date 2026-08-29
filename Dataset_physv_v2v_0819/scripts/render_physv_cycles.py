@@ -61,6 +61,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="UV texture used by the optional basketball material.",
     )
+    parser.add_argument(
+        "--edge-clarity",
+        action="store_true",
+        help=(
+            "Add a small render-only bevel, weighted normals and restrained "
+            "grazing-angle highlight to non-sphere actors."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -502,9 +510,16 @@ def material_library(basketball_texture: Path | None = None) -> dict[str, bpy.ty
     materials["natural_black_rubber"] = pbr_material(
         "PBR_Natural_Black_Rubber",
         texture_dir=REALISM_TEXTURE_ROOT / "rubberized_track",
-        texture_names=natural_rubber_names,
-        tint=(0.12, 0.13, 0.15),
-        tint_strength=0.60,
+        # Do not use the reddish albedo of the running-track asset for the
+        # puck. Keep only its micro normal/roughness maps over a neutral dark
+        # polymer base, which is the usual appearance of a hockey/air-hockey
+        # puck and avoids a misleading brick-red disk.
+        texture_names={
+            "normal": natural_rubber_names["normal"],
+            "roughness": natural_rubber_names["roughness"],
+        },
+        tint=(0.035, 0.045, 0.055),
+        tint_strength=0.0,
         roughness=0.88,
         uv_scale=3.5,
         normal_strength=0.24,
@@ -560,6 +575,83 @@ def add_cube(name: str, location, half_extents, material, *, bevel: float = 0.02
     return obj
 
 
+def add_edge_clarity_geometry(obj: bpy.types.Object, shape: str, size: dict) -> None:
+    """Sharpen hard-object silhouettes without changing collision geometry."""
+    if shape == "box":
+        half_extents = [float(size[key]) for key in ("hx", "hy", "hz")]
+        width = min(min(half_extents) * 0.22, 0.036)
+    elif shape in {"cylinder", "puck"}:
+        width = min(float(size["radius"]) * 0.16, 0.030)
+    else:
+        return
+    if width <= 0.0:
+        return
+
+    bevel = next((modifier for modifier in obj.modifiers if modifier.type == "BEVEL"), None)
+    if bevel is None:
+        bevel = obj.modifiers.new("Edge clarity bevel", "BEVEL")
+        bevel.limit_method = "ANGLE"
+        try:
+            bevel.affect = "EDGES"
+        except AttributeError:
+            pass
+    bevel.width = max(float(bevel.width), width)
+    bevel.segments = max(int(bevel.segments), 3)
+    try:
+        bevel.harden_normals = True
+    except AttributeError:
+        pass
+
+    try:
+        obj.data.use_auto_smooth = True
+    except AttributeError:
+        pass
+    weighted = obj.modifiers.new("Edge clarity weighted normals", "WEIGHTED_NORMAL")
+    weighted.keep_sharp = True
+    weighted.weight = 50
+
+
+def edge_clarity_material(material: bpy.types.Material, actor_name: str) -> bpy.types.Material:
+    """Make a per-actor copy with a restrained grazing-angle edge highlight."""
+    enhanced = material.copy()
+    enhanced.name = f"{material.name}__edge_clarity__{actor_name}"
+    if not enhanced.use_nodes:
+        return enhanced
+    nodes = enhanced.node_tree.nodes
+    links = enhanced.node_tree.links
+    shader = nodes.get("Principled BSDF")
+    if shader is None:
+        return enhanced
+    base_input = shader.inputs.get("Base Color")
+    if base_input is None:
+        return enhanced
+    source_socket = base_input.links[0].from_socket if base_input.links else None
+    default_color = tuple(base_input.default_value)
+    for link in list(base_input.links):
+        links.remove(link)
+
+    fresnel = nodes.new("ShaderNodeFresnel")
+    fresnel.inputs["IOR"].default_value = 1.45
+    fresnel.label = "Restrained edge highlight"
+    ramp = nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.elements[0].position = 0.18
+    ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
+    ramp.color_ramp.elements[1].position = 0.72
+    ramp.color_ramp.elements[1].color = (0.30, 0.30, 0.30, 1.0)
+    mix = nodes.new("ShaderNodeMixRGB")
+    mix.blend_type = "SCREEN"
+    mix.inputs[2].default_value = (0.82, 0.82, 0.82, 1.0)
+    mix.label = "Soft silhouette highlight"
+    if source_socket is not None:
+        links.new(source_socket, mix.inputs[1])
+    else:
+        mix.inputs[1].default_value = default_color
+    links.new(fresnel.outputs["Fac"], ramp.inputs["Fac"])
+    links.new(ramp.outputs["Color"], mix.inputs["Fac"])
+    links.new(mix.outputs["Color"], base_input)
+    return enhanced
+
+
 def bowl_curve_geometry(size: dict) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
     """Build the same continuous bowl shell used by the PyBullet renderer."""
     radius = float(size["radius"])
@@ -612,7 +704,7 @@ def bowl_curve_geometry(size: dict) -> tuple[list[tuple[float, float, float]], l
     return vertices, faces
 
 
-def add_actor(name: str, actor: dict, material) -> bpy.types.Object:
+def add_actor(name: str, actor: dict, material, *, edge_clarity: bool = False) -> bpy.types.Object:
     shape = actor["shape"]
     size = actor["size_m"]
     position = actor["initial_position_m"]
@@ -625,6 +717,8 @@ def add_actor(name: str, actor: dict, material) -> bpy.types.Object:
         bevel.render_levels = 1
     elif shape == "box":
         obj = add_cube(name, position, (float(size["hx"]), float(size["hy"]), float(size["hz"])), material, bevel=0.018)
+        if edge_clarity:
+            add_edge_clarity_geometry(obj, shape, size)
         return obj
     elif shape in {"cylinder", "puck"}:
         bpy.ops.mesh.primitive_cylinder_add(vertices=64, radius=float(size["radius"]), depth=float(size["height"]), location=position)
@@ -647,6 +741,8 @@ def add_actor(name: str, actor: dict, material) -> bpy.types.Object:
         raise ValueError(f"unsupported shape {shape!r} for {name}")
     obj.name = name
     obj.data.materials.append(material)
+    if edge_clarity:
+        add_edge_clarity_geometry(obj, shape, size)
     return obj
 
 
@@ -1192,6 +1288,7 @@ def animate_objects(
     materials,
     frame_limit: int,
     material_overrides: dict[str, str] | None = None,
+    edge_clarity: bool = False,
 ) -> tuple[list[str], int, dict[str, str]]:
     family = metadata["family_key"]
     names = trajectories["object_names"]
@@ -1205,7 +1302,9 @@ def animate_objects(
             raise KeyError(f"material override {material_key!r} for {name!r} is not in material library")
         material_assignments[name] = material_key
         material = materials[material_key]
-        obj = add_actor(name, actor, material)
+        if edge_clarity and actor.get("shape") != "sphere":
+            material = edge_clarity_material(material, name)
+        obj = add_actor(name, actor, material, edge_clarity=edge_clarity)
         obj.rotation_mode = "QUATERNION"
         positions = trajectories[f"{name}_positions"]
         rotations = trajectories[f"{name}_rotations"]
@@ -1256,6 +1355,7 @@ def main() -> None:
         materials,
         args.frame_limit,
         material_overrides,
+        edge_clarity=args.edge_clarity,
     )
     camera_report = camera_diagnostics(scene, camera, object_names)
 
@@ -1324,6 +1424,14 @@ def main() -> None:
         "material_assignments": material_assignments,
         "material_overrides": material_overrides,
         "basketball_texture": str(args.basketball_texture) if args.basketball_texture else None,
+        "edge_clarity": bool(args.edge_clarity),
+        "edge_clarity_config": {
+            "scope": "non-sphere actors only",
+            "bevel": "render-only small bevel, max 0.036 m for boxes and 0.030 m for cylinders/pucks",
+            "normals": "weighted normals with keep_sharp",
+            "highlight": "restrained Fresnel grazing-angle base-color highlight",
+            "collision_and_gt_changed": False,
+        },
         "camera": camera_report,
         "render_seconds": elapsed,
         "seconds_per_frame": elapsed / max(frame_count, 1),

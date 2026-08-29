@@ -594,6 +594,8 @@ def render_one(case_id: str, args: argparse.Namespace) -> dict[str, Any]:
     ]
     if args.basketball_texture is not None:
         blender_command.extend(["--basketball-texture", str(args.basketball_texture)])
+    if args.edge_clarity:
+        blender_command.append("--edge-clarity")
     run_checked(blender_command, env=env)
 
     rendered_frames = sorted(frames_dir.glob("frame_*.png"))
@@ -620,7 +622,12 @@ def render_one(case_id: str, args: argparse.Namespace) -> dict[str, Any]:
         "refine_schema_version": "physv_cycles_refine_texture_batch_v1",
         "experiment_id": args.experiment_root.name,
         "parent_case": case_id,
-        "change_scope": "RGB dynamic-object material only; geometry, physics, camera, trajectory and strict GT unchanged",
+        "change_scope": (
+            "RGB dynamic-object material plus render-only edge clarity; "
+            "collision geometry, physics, camera, trajectory and strict GT unchanged"
+            if args.edge_clarity else
+            "RGB dynamic-object material only; geometry, physics, camera, trajectory and strict GT unchanged"
+        ),
         "selection": selection["selected"],
         "strict_protocol": {
             "width": 896, "height": 512, "fps": fps, "frame_count": expected_frames,
@@ -630,6 +637,7 @@ def render_one(case_id: str, args: argparse.Namespace) -> dict[str, Any]:
         "output_video": str(output_video),
         "video": video_info(output_video, args.ffmpeg),
         "context_videos": context_videos,
+        "edge_clarity": bool(args.edge_clarity),
     })
     json_dump(report_path, output_metadata)
     if not args.keep_frames:
@@ -831,6 +839,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional UV basketball map used by natural_basketball material overrides.",
+    )
+    render_parser.add_argument(
+        "--edge-clarity",
+        action="store_true",
+        help="Add render-only bevel/weighted normals/highlight to non-sphere actors.",
     )
     render_parser.add_argument("--force", action="store_true")
     render_parser.add_argument("--keep-frames", action="store_true")

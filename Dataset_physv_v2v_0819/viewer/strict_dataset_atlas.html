@@ -79,8 +79,20 @@
         <div class="active-dependencies"><div class="eyebrow">ACTIVE INPUTS / 当前评测依赖</div><div id="active-dependencies-list"></div></div>
         <div class="maintenance-command"><span>刷新数据、真值表和本区块：</span><code>cd /home/gaoya/Code_Video/Dataset_physv_v2v_0819 &amp;&amp; /usr/bin/python3 scripts/build_strict_dataset_visualization.py</code></div>
         <div class="refine-entry">
-          <div><div class="eyebrow">R002 / TEXTURE REFINEMENT</div><strong>同组双行对照</strong><p>原 strict case 与动态物体纹理变体按同一 case 分组，每组固定显示两行；尚未完成的 refine 视频保留 pending。</p></div>
+          <div><div class="eyebrow">R002 / OFFICIAL REFINE</div><strong>正式 refine 版本</strong><p>R002 作为当前正式 refine；保留 visible texture v3，并对指定 F11 case 使用 R003 篮球纹理，其余 case 不变。</p></div>
           <a class="text-link" href="../refine/R002_all_cases_distinct_texture_20260829/" target="_blank" rel="noopener">打开 R002 对比页 <span>↗</span></a>
+        </div>
+        <div class="refine-entry">
+          <div><div class="eyebrow">R003 / NATURAL MATERIALS / REFERENCE</div><strong>自然常见材质（参考）</strong><p>R003 作为自然常见材质参考实验保留；同一 family 使用一致的篮球、木纹或深灰橡胶材质。</p></div>
+          <a class="text-link" href="../refine/R003_natural_common_textures_20260829/" target="_blank" rel="noopener">打开 R003 对比页 <span>↗</span></a>
+        </div>
+        <div class="refine-entry">
+          <div><div class="eyebrow">R004 / EDGE CLARITY / STOPPED</div><strong>非球体清晰边缘（已停止）</strong><p>R004 的 smoke 已保留，但正式全量渲染未启动；当前使用版本回到 R003，R004 仅作为可追溯实验保留。</p></div>
+          <a class="text-link" href="../refine/R004_natural_texture_edge_clarity_20260829/" target="_blank" rel="noopener">打开 R004 对比页 <span>↗</span></a>
+        </div>
+        <div class="refine-entry">
+          <div><div class="eyebrow">VERSION COMPARISON</div><strong>原始 / R002 / R003</strong><p>每行同一个 source case，三列分别播放最初 strict、R002 当前版本和 R003 当前版本；页面手动刷新。</p></div>
+          <a class="text-link" href="../refine/comparisons/original_r002_r003_20260829/" target="_blank" rel="noopener">打开三版本对比页 <span>↗</span></a>
         </div>
       </section>
 
