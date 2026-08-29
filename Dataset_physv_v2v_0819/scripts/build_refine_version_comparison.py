@@ -83,9 +83,9 @@ def build() -> None:
             "<div class='comparison-grid'>"
             f"<article><div class='method original'><b>最初版本</b><span>strict CYCLES</span></div>"
             f"<p class='material'>{html.escape(row['original_material'])}</p><video controls preload='metadata' src='{html.escape(row['original'])}'></video></article>"
-            f"<article><div class='method r002'><b>R002</b><span>visible texture v3 / family-consistent</span></div>"
+            f"<article><div class='method r002'><b>R002</b><span>official refine / visible texture v3</span></div>"
             f"<p class='material'>{html.escape(row['r002_material'])}</p><video controls preload='metadata' src='{html.escape(row['r002'])}'></video></article>"
-            f"<article><div class='method r003'><b>R003</b><span>natural semantic texture</span></div>"
+            f"<article><div class='method r003'><b>R003</b><span>natural semantic texture / reference</span></div>"
             f"<p class='material'>{html.escape(row['r003_material'])}</p><video controls preload='metadata' src='{html.escape(row['r003'])}'></video></article>"
             "</div></section>"
         )
@@ -112,8 +112,8 @@ footer{{color:var(--muted);font-size:12px;margin-top:30px}} code{{font:inherit;c
 <header><div class="eyebrow">STRICT CYCLES / VERSION COMPARISON</div>
 <h1>最初版本、R002、R003 的同 case 对比</h1>
 <p>每一行固定为同一个 source case，三列使用相同的 90 帧、896×512、30 FPS CYCLES 轨迹渲染。三者只比较 RGB 外观，不改变相机、几何物理、轨迹或 GT。</p>
-<div class="legend"><span class="original">最初版本 · strict CYCLES</span><span class="r002">R002 · visible texture v3 / family-consistent</span><span class="r003">R003 · natural semantic texture / 当前使用</span></div></header>
-<div class="note">当前共有 <b>{len(rows)}</b> 个 case 三个版本均已有完整视频。R002 的老版本仍保留在其目录内；R004 清晰边缘实验已停止，不纳入当前版本对比。</div>
+<div class="legend"><span class="original">最初版本 · strict CYCLES</span><span class="r002">R002 · official refine / visible texture v3</span><span class="r003">R003 · natural semantic texture / reference</span></div></header>
+<div class="note">当前共有 <b>{len(rows)}</b> 个 case 三个版本均已有完整视频。R002 是当前正式 refine 版本；其中 <code>difficulty_l2_f11_h030_sr048</code> 按指定采用 R003 的篮球纹理，其余 R002 case 保持不变。R002 的老版本仍保留在其目录内；R004 清晰边缘实验已停止，不纳入当前版本对比。</div>
 {"".join(cards)}
 <footer>生成脚本：<code>scripts/build_refine_version_comparison.py</code> · 页面为手动刷新静态页。</footer>
 </main></body></html>"""
@@ -124,8 +124,8 @@ footer{{color:var(--muted);font-size:12px;margin-top:30px}} code{{font:inherit;c
 当前页面展示 {len(rows)} 个同时具备三种完整 90 帧视频的相同 source case。视频不复制，页面使用原目录相对路径引用。
 
 - 最初版本：strict samples/*/videos/rgb_cycles.mp4
-- R002：visible_texture_v3_family_consistent 的当前 full 输出
-- R003：自然常见材质版本；当前使用版本
+- R002：当前正式 refine 版本；主体为 visible_texture_v3_family_consistent，F11/h030 case 使用指定的 R003 篮球纹理
+- R003：自然常见材质版本；参考版本
 
 重新生成：`python3 scripts/build_refine_version_comparison.py`。
 """,
