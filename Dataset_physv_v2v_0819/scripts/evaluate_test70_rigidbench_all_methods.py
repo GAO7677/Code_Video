@@ -205,8 +205,15 @@ def load_registry(
     if len(models) != len(dashboard.get("models", [])):
         raise ValueError("Registry model count does not match dashboard")
     case_ids = sorted({case["case_id"] for model in models for case in model["cases"]})
-    if len(models) != 61 or len(case_ids) != 70:
-        raise ValueError(f"Expected 61 models × 70 cases, got {len(models)} × {len(case_ids)}")
+    expected_model_count = len(dashboard.get("models", []))
+    expected_case_count = int(dashboard.get("case_count", 70))
+    if expected_model_count <= 0:
+        raise ValueError("Dashboard has no models")
+    if len(models) != expected_model_count or len(case_ids) != expected_case_count:
+        raise ValueError(
+            f"Expected {expected_model_count} models × {expected_case_count} cases, "
+            f"got {len(models)} × {len(case_ids)}"
+        )
     registry = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_dashboard": str(dashboard_path),

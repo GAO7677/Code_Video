@@ -23,6 +23,12 @@ from mathutils import Vector
 ASSET_ROOT = Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1")
 TEXTURE_ROOT = ASSET_ROOT / "textures"
 EXTRA_TEXTURE_ROOT = Path("/data/gaoya/agent-data/assets/polyhaven_textures_20260820")
+RAMP_BLOCK_TEXTURE_ROOT = Path(
+    "/data/gaoya/agent-data/assets/polyhaven_textures_20260829/wood_peeling_paint_weathered"
+)
+RAMP_FLOOR_TEXTURE_ROOT = Path(
+    "/data/gaoya/agent-data/assets/polyhaven_textures_20260829/pavement_01"
+)
 HDRI_ROOT = ASSET_ROOT / "hdris"
 
 
@@ -135,6 +141,7 @@ def pbr_material(
     roughness: float = 0.55,
     metallic: float = 0.0,
     uv_scale: float = 1.0,
+    texture_coordinate: str = "Generated",
     normal_strength: float = 0.42,
     detail_bump_strength: float = 0.0,
     detail_bump_scale: float = 24.0,
@@ -154,7 +161,9 @@ def pbr_material(
     texcoord = nodes.new("ShaderNodeTexCoord")
     mapping = nodes.new("ShaderNodeMapping")
     mapping.inputs["Scale"].default_value = (uv_scale, uv_scale, uv_scale)
-    links.new(texcoord.outputs["Generated"], mapping.inputs["Vector"])
+    if texture_coordinate not in {"Generated", "UV"}:
+        raise ValueError(f"unsupported texture coordinate mode: {texture_coordinate!r}")
+    links.new(texcoord.outputs[texture_coordinate], mapping.inputs["Vector"])
 
     names = texture_names or {}
     albedo_path = texture_dir / names["albedo"] if texture_dir and names.get("albedo") else None
@@ -285,6 +294,18 @@ def material_library(basketball_texture: Path | None = None) -> dict[str, bpy.ty
         "roughness": "wood_floor_rough_2k.jpg",
         "ao": "wood_floor_ao_2k.jpg",
     }
+    peeling_paint_wood_names = {
+        "albedo": "wood_peeling_paint_weathered_diff_2k.jpg",
+        "normal": "wood_peeling_paint_weathered_nor_gl_2k.jpg",
+        "roughness": "wood_peeling_paint_weathered_rough_2k.jpg",
+        "ao": "wood_peeling_paint_weathered_ao_2k.jpg",
+    }
+    pavement_01_names = {
+        "albedo": "pavement_01_diff_2k.jpg",
+        "normal": "pavement_01_nor_gl_2k.jpg",
+        "roughness": "pavement_01_rough_2k.jpg",
+        "ao": "pavement_01_ao_2k.jpg",
+    }
     wall_names = {
         "albedo": "beige_wall_001_diff_2k.jpg",
         "normal": "beige_wall_001_nor_gl_2k.jpg",
@@ -351,6 +372,8 @@ def material_library(basketball_texture: Path | None = None) -> dict[str, bpy.ty
         "floor_slate": pbr_material("PBR_Slate_Floor", texture_dir=TEXTURE_ROOT / "painted_concrete", texture_names=concrete_surface_names, tint=(0.055, 0.075, 0.11), roughness=0.88, uv_scale=2.2, normal_strength=0.54, detail_bump_strength=0.016, detail_bump_scale=18.0),
         "wood": pbr_material("PBR_Wood", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, roughness=0.50, uv_scale=2.0, normal_strength=0.62, detail_bump_strength=0.015, detail_bump_scale=12.0),
         "red_wood": pbr_material("PBR_Red_Wood", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(1.15, 0.30, 0.23), tint_strength=0.72, roughness=0.52, uv_scale=2.4, normal_strength=0.62, detail_bump_strength=0.016, detail_bump_scale=12.0),
+        "wood_peeling_paint": pbr_material("PBR_Wood_Peeling_Paint_Weathered", texture_dir=RAMP_BLOCK_TEXTURE_ROOT, texture_names=peeling_paint_wood_names, roughness=0.72, uv_scale=2.0, texture_coordinate="UV", normal_strength=0.55, detail_bump_strength=0.012, detail_bump_scale=18.0),
+        "floor_stone_pavement": pbr_material("PBR_Stone_Pavement_01", texture_dir=RAMP_FLOOR_TEXTURE_ROOT, texture_names=pavement_01_names, roughness=0.86, uv_scale=5.0, normal_strength=0.62, detail_bump_strength=0.012, detail_bump_scale=20.0),
         "wall": pbr_material("PBR_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, roughness=0.82, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
         "wall_cool": pbr_material("PBR_Cool_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, tint=(0.66, 0.82, 1.02), tint_strength=0.68, roughness=0.84, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
         "wall_green": pbr_material("PBR_Sage_Wall", texture_dir=TEXTURE_ROOT / "beige_wall_001", texture_names=wall_names, tint=(0.42, 0.64, 0.48), tint_strength=0.72, roughness=0.85, uv_scale=2.2, normal_strength=0.48, detail_bump_strength=0.010, detail_bump_scale=18.0),
@@ -504,7 +527,7 @@ def actor_material_key(name: str, actor: dict, family: str) -> str:
         return "red_wood"
     if family == "V2V_RAMP_PLATFORM":
         if lower == "block_0":
-            return "red_wood"
+            return "wood_peeling_paint"
         if lower == "incline_board_0":
             return "wood"
         if lower.startswith("ramp_support"):
@@ -612,7 +635,7 @@ ROOM_SCENES = {
     "V2V_RAMP_PLATFORM": {
         "name": "cool_workshop",
         "layout": "workshop",
-        "floor": "floor_dark_wood",
+        "floor": "floor_stone_pavement",
         "wall": "wall_gray",
         "trim": "dark_metal",
     },
@@ -1123,9 +1146,19 @@ def main() -> None:
                 "metal_plate",
                 "concrete_floor_worn_001",
                 "denim_fabric_04",
+                "wood_peeling_paint_weathered",
+                "pavement_01",
             ],
             "license": "CC0",
             "local_root": str(EXTRA_TEXTURE_ROOT),
+            "custom_material_roots": {
+                "wood_peeling_paint": str(RAMP_BLOCK_TEXTURE_ROOT),
+                "floor_stone_pavement": str(RAMP_FLOOR_TEXTURE_ROOT),
+            },
+        },
+        "texture_coordinates": {
+            "wood_peeling_paint": "UV",
+            "floor_stone_pavement": "Generated",
         },
         "hdri": str(hdri_path),
         "room_scene": room_scene,

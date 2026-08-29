@@ -83,6 +83,55 @@ def link_or_copy_video(source: Path, destination: Path) -> None:
     destination.symlink_to(source)
 
 
+def normalize_metric_metadata(report_dir: Path, evaluated: list[str]) -> int:
+    """Repair legacy per-case JSONs before RigidBench aggregation.
+
+    Some earlier local runs wrote all scalar metrics but omitted ``task_type``.
+    The evaluator's Result loader requires that field; strict GT metadata is
+    the authoritative source and measured values are left unchanged.
+    """
+    metric_dir = report_dir / "metrics"
+    if not metric_dir.is_dir():
+        return 0
+    expected = set(evaluated)
+    changed = 0
+    unresolved: list[str] = []
+    for path in sorted(metric_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        sample_id = str(payload.get("sample_id") or path.stem)
+        if sample_id not in expected:
+            continue
+        if payload.get("task_type"):
+            continue
+        metadata_path = STRICT_ROOT / "truth" / "cases" / sample_id / "rigidbench" / "metadata.json"
+        try:
+            metadata = json.loads(metadata_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            metadata = {}
+        task_type = metadata.get("task_type") if isinstance(metadata, dict) else None
+        if not task_type:
+            unresolved.append(sample_id)
+            continue
+        payload.setdefault("sample_id", sample_id)
+        payload["task_type"] = str(task_type)
+        temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        os.replace(temporary, path)
+        changed += 1
+    if unresolved:
+        raise RuntimeError(
+            f"Cannot infer task_type for {report_dir.name}: {', '.join(sorted(set(unresolved))[:10])}"
+        )
+    if changed:
+        print(f"[strict] normalized legacy metadata task={report_dir.name} files={changed}", flush=True)
+    return changed
+
+
 def write_metadata(report_dir: Path, task_id: str, evaluated: list[str], missing: list[str], aggregate: dict) -> None:
     strict_ids = set(strict_case_ids())
     re_rendered = sorted(strict_ids & {
@@ -134,6 +183,8 @@ def evaluate(args: argparse.Namespace) -> int:
         evaluated = evaluated[: args.max_samples]
     if not evaluated:
         raise RuntimeError(f"No generated videos found for {args.task_id} under {RESULT_ROOT / args.task_id}")
+
+    normalize_metric_metadata(report_dir, evaluated)
 
     # The tracker/scorer implementation is imported only after the adapter is ready.
     sys.path.insert(0, str(RIGIDBENCH_ROOT / "src"))

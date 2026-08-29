@@ -22,6 +22,92 @@ BUILDER = Path("/home/gaoya/Code_Video/Dataset_physv_v2v_0819/scripts/build_test
 FPS = 30
 
 
+def atomic_write_json(path: Path, payload: dict) -> None:
+    """Write a small metadata repair atomically so a worker crash cannot truncate it."""
+    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    os.replace(temporary, path)
+
+
+def normalize_metric_metadata(task: str, expected_ids: list[str]) -> int:
+    """Backfill task_type in legacy per-case metric JSONs.
+
+    Early strict runs wrote the complete metric set but omitted ``task_type``.
+    RigidBench's Result loader requires that field even though the metric
+    values themselves are otherwise valid.  The authoritative task type is
+    the strict GT metadata for the same sample ID, so repair only that missing
+    field and leave all measured values untouched.
+    """
+    metric_dir = RUNS / task / "metrics"
+    if not metric_dir.is_dir():
+        return 0
+    expected = set(expected_ids)
+    changed = 0
+    unresolved: list[str] = []
+    for path in sorted(metric_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        sample_id = str(payload.get("sample_id") or path.stem)
+        if sample_id not in expected:
+            continue
+        updates = False
+        if payload.get("sample_id") != sample_id:
+            payload["sample_id"] = sample_id
+            updates = True
+        if not payload.get("task_type"):
+            metadata_paths = (
+                DATASET / "samples" / sample_id / "metadata.json",
+                Path("/data/gaoya/AAA_test_video/physv_v2v_0819_strict")
+                / "truth" / "cases" / sample_id / "rigidbench" / "metadata.json",
+            )
+            task_type = None
+            for metadata_path in metadata_paths:
+                try:
+                    metadata = json.loads(metadata_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(metadata, dict) and metadata.get("task_type"):
+                    task_type = str(metadata["task_type"])
+                    break
+            if task_type is None:
+                unresolved.append(sample_id)
+                continue
+            payload["task_type"] = task_type
+            updates = True
+        if updates:
+            atomic_write_json(path, payload)
+            changed += 1
+    if unresolved:
+        raise RuntimeError(
+            f"Cannot infer task_type for {task} samples: {', '.join(sorted(set(unresolved))[:10])}"
+        )
+    if changed:
+        print(f"[metric-only] normalized legacy metadata task={task} files={changed}", flush=True)
+    return changed
+
+
+def metric_sample_ids(task: str, case_ids: list[str]) -> list[str]:
+    """Return valid expected sample IDs already represented by metric files."""
+    metric_dir = RUNS / task / "metrics"
+    expected = set(case_ids)
+    found: set[str] = set()
+    for path in metric_dir.glob("*.json") if metric_dir.is_dir() else ():
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        sample_id = str(payload.get("sample_id") or path.stem)
+        if sample_id in expected:
+            found.add(sample_id)
+    return sorted(found)
+
+
 def load_strict_module():
     spec = importlib.util.spec_from_file_location("strict_test70_adapter", STRICT_SCRIPT)
     if spec is None or spec.loader is None:
@@ -65,15 +151,49 @@ def metrics_count(task: str) -> int:
 
 def score_task(task: str, case_ids: list[str], force: bool = False) -> bool:
     strict = load_strict_module()
-    ids = ready_ids(task, case_ids)
+    ready = ready_ids(task, case_ids)
+    metric_ids = metric_sample_ids(task, case_ids)
+    # A few historical runs contain a complete 70-case metric set but lack
+    # the tracker intermediates needed to recompute it.  Aggregate those
+    # measured values directly instead of treating the task as unprocessable.
+    ids = metric_ids if len(metric_ids) >= 70 and not force else ready
     if not ids:
         return False
+    normalize_metric_metadata(task, ids)
     if metrics_count(task) >= len(ids) and not force:
-        return False
+        # Older runs may already contain every per-case JSON but have never
+        # written the task-level aggregate report.  In that situation there
+        # is no scoring work left; build the report directly instead of
+        # returning to the outer queue, which would select the same task
+        # forever because the global case list can be larger than ``ids``.
+        report_path = RUNS / task / "strict_cycles_test70.json"
+        if report_path.is_file():
+            return False
+        sys.path.insert(0, str(strict.RIGIDBENCH_ROOT / "src"))
+        sys.path.insert(0, str(strict.RIGIDBENCH_ROOT / "vendor" / "Video-Depth-Anything"))
+        import rigidbench.eval.score.context as score_context
+        from rigidbench.eval.score.aggregate import aggregate_metrics
+
+        score_context.GT_FPS = FPS
+        aggregate = aggregate_metrics(task, str(RUNS), expected_sample_ids=ids, official=False)
+        strict.write_metadata(
+            RUNS / task,
+            task,
+            ids,
+            sorted(set(case_ids) - set(ids)),
+            aggregate,
+        )
+        subprocess_result = os.system(f"/usr/bin/python3 {BUILDER}")
+        print(
+            f"[metric-only] aggregated task={task} cases={len(ids)} "
+            f"aggregate_rc={subprocess_result}",
+            flush=True,
+        )
+        return True
 
     sys.path.insert(0, str(strict.RIGIDBENCH_ROOT / "src"))
     sys.path.insert(0, str(strict.RIGIDBENCH_ROOT / "vendor" / "Video-Depth-Anything"))
-    strict.patch_local_trackers()
+    strict.load_single_runner().patch_local_trackers()
     import rigidbench.eval.score.context as score_context
     from rigidbench.eval.pipeline import EvalPipeline
     from rigidbench.eval.samples import load_samples
@@ -106,9 +226,17 @@ def main() -> int:
     while True:
         active = active_full_tasks()
         for task in dashboard_tasks():
-            if task in active or metrics_count(task) >= len(case_ids):
+            if task in active:
                 continue
-            if not ready_ids(task, case_ids):
+            ready = ready_ids(task, case_ids)
+            report_path = RUNS / task / "strict_cycles_test70.json"
+            if metrics_count(task) >= len(ready) and report_path.is_file():
+                continue
+            if len(metric_sample_ids(task, case_ids)) >= 70 or ready:
+                # score_task chooses direct aggregation for complete legacy
+                # metric sets and the metric-only pipeline for ready cases.
+                pass
+            else:
                 continue
             lock_path = LOCKS / f"{task}.lock"
             with lock_path.open("w") as lock_file:
