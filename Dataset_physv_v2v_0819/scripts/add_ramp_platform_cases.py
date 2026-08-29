@@ -53,16 +53,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BLENDER = Path("/data/gaoya/agent-data/tools/blender-3.6.23-linux-x64/blender")
 FFMPEG = Path(shutil.which("ffmpeg") or "/usr/bin/ffmpeg")
 CYCLES_CACHE = Path(
-    "/data/gaoya/agent-data/cache/physv_ramp_platform_cycles_ground_stone_mu030_20260829"
+    "/data/gaoya/agent-data/cache/physv_ramp_platform_cycles_ground_stone_mu250_20260829"
 )
 SMOKE_OUTPUT = Path(
-    "/data/gaoya/agent-data/outputs/physv_ramp_platform_smoke_ground_stone_mu030"
+    "/data/gaoya/agent-data/outputs/physv_ramp_platform_smoke_ground_stone_mu250"
 )
 FAMILY_KEY = "V2V_RAMP_PLATFORM"
 PLATFORM_LENGTHS_M = (0.40, 0.80, 1.20, 1.60)
 BASE_SEED = 2026082800
 HORIZONTAL_SURFACE_FRICTION = 1.00
-GROUND_FLOOR_FRICTION = 0.30
+GROUND_FLOOR_FRICTION = 2.50
 
 
 def parse_args() -> argparse.Namespace:
@@ -267,7 +267,7 @@ def build_export_case(platform_length_m: float, index: int) -> ExportCase:
             "block_friction": 0.10,
             "incline_friction": 0.82,
             "ground_floor_friction": GROUND_FLOOR_FRICTION,
-            "ground_floor_friction_source": "dry clean wood-stone representative value; published range 0.2-0.4",
+            "ground_floor_friction_source": "user-requested override; not a material-table estimate",
         },
         "block_visual_texture": {
             "asset": "wood_peeling_paint_weathered",
@@ -275,6 +275,8 @@ def build_export_case(platform_length_m: float, index: int) -> ExportCase:
             "license": "CC0",
             "maps": ["diffuse", "normal_gl", "roughness", "ao"],
             "resolution": "2K JPG",
+            "color_tint": "warm orange-brown",
+            "texture_coordinate": "UV",
         },
         "ground_visual_texture": {
             "asset": "pavement_01",
