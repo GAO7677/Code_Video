@@ -583,7 +583,7 @@ def render_one(case_id: str, args: argparse.Namespace) -> dict[str, Any]:
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-    run_checked([
+    blender_command = [
         str(args.blender), "-b", "--python", str(BLENDER_SCRIPT), "--",
         "--sample-dir", str(sample_dir), "--trajectory-json", str(trajectory_json),
         "--output-dir", str(frames_dir), "--width", "896", "--height", "512",
@@ -591,7 +591,10 @@ def render_one(case_id: str, args: argparse.Namespace) -> dict[str, Any]:
         "3" if args.mode == "smoke" else "0", "--engine", "CYCLES",
         "--device", "CUDA", "--output-format", "PNG", "--material-overrides-json",
         str(case_root / "material_overrides.json"),
-    ], env=env)
+    ]
+    if args.basketball_texture is not None:
+        blender_command.extend(["--basketball-texture", str(args.basketball_texture)])
+    run_checked(blender_command, env=env)
 
     rendered_frames = sorted(frames_dir.glob("frame_*.png"))
     blender_report = frames_dir / "render_metadata.json"
@@ -615,7 +618,7 @@ def render_one(case_id: str, args: argparse.Namespace) -> dict[str, Any]:
     output_metadata = dict(blender_metadata)
     output_metadata.update({
         "refine_schema_version": "physv_cycles_refine_texture_batch_v1",
-        "experiment_id": EXPERIMENT_NAME,
+        "experiment_id": args.experiment_root.name,
         "parent_case": case_id,
         "change_scope": "RGB dynamic-object material only; geometry, physics, camera, trajectory and strict GT unchanged",
         "selection": selection["selected"],
@@ -691,6 +694,26 @@ def build_index(args: argparse.Namespace) -> None:
     manifest_path = args.experiment_root / "case_selection.jsonl"
     if not manifest_path.is_file():
         raise FileNotFoundError(manifest_path)
+    experiment_path = args.experiment_root / "experiment.json"
+    experiment = load_json(experiment_path) if experiment_path.is_file() else {}
+    display_title = str(
+        experiment.get("display_title", "R002 · strict CYCLES 可见纹理变体")
+    )
+    variant_label = str(
+        experiment.get("variant_label", "R002 refine · family-consistent texture")
+    )
+    display_description = str(
+        experiment.get(
+            "display_description",
+            "每个 case 固定显示原 strict case 与 refine case；当前版本仅替换动态物体 RGB 材质。",
+        )
+    )
+    display_protocol = str(
+        experiment.get(
+            "display_protocol",
+            "896×512 / 30 FPS / 90 frames / CYCLES / 32 samples。",
+        )
+    )
     selections = [
         json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
@@ -736,7 +759,7 @@ def build_index(args: argparse.Namespace) -> None:
             f'<td><video controls preload="metadata" src="{html.escape(parent_rel)}"></video></td>'
             '</tr>'
             '<tr class="refine-row">'
-            '<td><span class="variant-label refine-label">R002 refine</span></td>'
+            f'<td><span class="variant-label refine-label">{html.escape(variant_label)}</span></td>'
             f'<td><b>{html.escape(material)}</b><br><small>{html.escape(", ".join(dynamic_names))}</small></td>'
             f'<td><span class="state {"done-state" if status == "completed" else "pending-state"}">{html.escape(status)}</span></td>'
             f'<td>{variant_cell}</td>'
@@ -744,8 +767,6 @@ def build_index(args: argparse.Namespace) -> None:
         )
     pending = len(selections) - completed - failed
     state = "completed" if completed == len(selections) else ("partial" if completed else "planned")
-    experiment_path = args.experiment_root / "experiment.json"
-    experiment = load_json(experiment_path) if experiment_path.is_file() else {}
     experiment["status"] = state
     experiment["progress"] = {
         "completed": completed, "failed": failed, "pending": pending, "total": len(selections),
@@ -756,20 +777,23 @@ def build_index(args: argparse.Namespace) -> None:
     json_dump(experiment_path, experiment)
 
     body = """<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>R002 CYCLES distinct texture variants</title>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>__TITLE__</title>
 <style>
 body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:24px;background:#f5f7f8;color:#172027}
 h1{margin-bottom:6px}.meta{color:#52616b;margin-bottom:18px}.summary{padding:12px 16px;background:#e7f1f4;border-left:4px solid #197278;margin-bottom:18px}
 table{border-collapse:separate;border-spacing:0;width:100%;background:white;box-shadow:0 1px 6px #0001}th,td{border-bottom:1px solid #dce3e6;padding:9px;vertical-align:top;text-align:left}th{position:sticky;top:0;background:#234e52;color:white}.case-group tr.group-start td{border-top:3px solid #c5d5d8}.case-group-cell{width:220px;background:#edf5f6}.case-group-cell code{display:block}.case-group-cell small{display:block;margin-top:6px;color:#52616b}.refine-row{background:#fffaf0}.variant-label{display:inline-block;padding:4px 7px;border-radius:3px;font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap}.parent-label{background:#e5eef0;color:#28545b}.refine-label{background:#f7e4b6;color:#76501a}.state{font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace}.parent-state{color:#42656a}.done-state{color:#267044}.pending-state{color:#9b5b00}.pending{color:#9b5b00;font-weight:600}code{font-size:12px}
 </style></head><body>
-<h1>R002 · strict CYCLES 动态物体纹理变体</h1>
-<div class="meta">每个 case 固定显示两行：同组的原 strict case 与 R002 refine case。仅替换 role=dynamic 的 RGB 材质；几何、轨迹、相机、物理和 strict GT 不变。</div>
-<div class="summary">状态：<b>__STATE__</b>　已完成 <b>__COMPLETED__ / __TOTAL__</b>　失败 <b>__FAILED__</b>　待处理 <b>__PENDING__</b><br>协议：896×512 / 30 FPS / 90 frames / CYCLES / 32 samples。刷新本页即可查看已完成 case。</div>
+<h1>__TITLE__</h1>
+<div class="meta">__DESCRIPTION__</div>
+<div class="summary">状态：<b>__STATE__</b>　已完成 <b>__COMPLETED__ / __TOTAL__</b>　失败 <b>__FAILED__</b>　待处理 <b>__PENDING__</b><br>协议：__PROTOCOL__ 刷新本页即可查看已完成 case。</div>
 <table><thead><tr><th>Case 分组</th><th>版本</th><th>动态物体材质</th><th>状态</th><th>视频</th></tr></thead>__ROWS__</table>
 </body></html>
 """
     body = (
-        body.replace("__STATE__", html.escape(state))
+        body.replace("__TITLE__", html.escape(display_title))
+        .replace("__DESCRIPTION__", html.escape(display_description))
+        .replace("__PROTOCOL__", html.escape(display_protocol))
+        .replace("__STATE__", html.escape(state))
         .replace("__COMPLETED__", str(completed))
         .replace("__TOTAL__", str(len(selections)))
         .replace("__FAILED__", str(failed))
@@ -802,6 +826,12 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--samples", type=int, default=32)
     render_parser.add_argument("--blender", type=Path, default=DEFAULT_BLENDER)
     render_parser.add_argument("--ffmpeg", type=Path, default=DEFAULT_FFMPEG)
+    render_parser.add_argument(
+        "--basketball-texture",
+        type=Path,
+        default=None,
+        help="Optional UV basketball map used by natural_basketball material overrides.",
+    )
     render_parser.add_argument("--force", action="store_true")
     render_parser.add_argument("--keep-frames", action="store_true")
     render_parser.set_defaults(func=render)

@@ -23,6 +23,9 @@ from mathutils import Vector
 ASSET_ROOT = Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1")
 TEXTURE_ROOT = ASSET_ROOT / "textures"
 EXTRA_TEXTURE_ROOT = Path("/data/gaoya/agent-data/assets/polyhaven_textures_20260820")
+REALISM_TEXTURE_ROOT = Path(
+    "/data/gaoya/agent-data/assets/texture_realism_backgrounds_20260825/textures"
+)
 RAMP_BLOCK_TEXTURE_ROOT = Path(
     "/data/gaoya/agent-data/assets/polyhaven_textures_20260829/wood_peeling_paint_weathered"
 )
@@ -287,6 +290,59 @@ def basketball_material(name: str, texture_path: Path) -> bpy.types.Material:
     return material
 
 
+def colorized_texture_material(
+    name: str,
+    *,
+    texture_dir: Path,
+    texture_names: dict[str, str],
+    color: tuple[float, float, float],
+    roughness: float = 0.62,
+    uv_scale: float = 2.4,
+    normal_strength: float = 0.58,
+) -> bpy.types.Material:
+    """Keep a high-contrast image texture while changing its hue.
+
+    The regular palette materials intentionally use strong flat tints.  That
+    is useful for the base benchmark, but it can hide low-contrast albedo maps
+    on small dynamic actors.  Refine variants use the COLOR blend mode: a
+    high-contrast wood albedo supplies luminance/detail and ``color`` supplies
+    hue and saturation, so the grain remains visible instead of being
+    multiplied away.
+    """
+    material = pbr_material(
+        name,
+        texture_dir=texture_dir,
+        texture_names=texture_names,
+        roughness=roughness,
+        uv_scale=uv_scale,
+        normal_strength=normal_strength,
+        detail_bump_strength=0.018,
+        detail_bump_scale=18.0,
+    )
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    shader = nodes.get("Principled BSDF")
+    if shader is None:
+        raise RuntimeError(f"{name}: Principled BSDF node missing")
+    base_link = next(
+        (link for link in links if link.to_node == shader and link.to_socket.name == "Base Color"),
+        None,
+    )
+    if base_link is None:
+        raise RuntimeError(f"{name}: textured Base Color link missing")
+    source_socket = base_link.from_socket
+    links.remove(base_link)
+    colorize = nodes.new("ShaderNodeMixRGB")
+    colorize.name = "Visible texture colorization"
+    colorize.label = "Wood albedo + visible hue"
+    colorize.blend_type = "COLOR"
+    colorize.inputs["Fac"].default_value = 0.72
+    colorize.inputs[2].default_value = (*color, 1.0)
+    links.new(source_socket, colorize.inputs[1])
+    links.new(colorize.outputs["Color"], shader.inputs["Base Color"])
+    return material
+
+
 def material_library(basketball_texture: Path | None = None) -> dict[str, bpy.types.Material]:
     wood_names = {
         "albedo": "wood_floor_diff_2k.jpg",
@@ -363,6 +419,24 @@ def material_library(basketball_texture: Path | None = None) -> dict[str, bpy.ty
         "roughness": "denim_fabric_04_rough_2k.jpg",
         "ao": "denim_fabric_04_ao_2k.jpg",
     }
+    natural_oak_names = {
+        "albedo": "oak_wood_planks_diff_2k.jpg",
+        "normal": "oak_wood_planks_nor_gl_2k.jpg",
+        "roughness": "oak_wood_planks_rough_2k.jpg",
+        "ao": "oak_wood_planks_ao_2k.jpg",
+    }
+    natural_dark_wood_names = {
+        "albedo": "dark_wood_diff_2k.jpg",
+        "normal": "dark_wood_nor_gl_2k.jpg",
+        "roughness": "dark_wood_rough_2k.jpg",
+        "ao": "dark_wood_ao_2k.jpg",
+    }
+    natural_rubber_names = {
+        "albedo": "rubberized_track_diff_2k.jpg",
+        "normal": "rubberized_track_nor_gl_2k.jpg",
+        "roughness": "rubberized_track_rough_2k.jpg",
+        "ao": "rubberized_track_ao_2k.jpg",
+    }
     materials = {
         "floor": pbr_material("PBR_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, roughness=0.48, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
         "floor_cool": pbr_material("PBR_Cool_Wood_Floor", texture_dir=TEXTURE_ROOT / "wood_floor", texture_names=wood_names, tint=(0.62, 0.78, 0.92), tint_strength=0.76, roughness=0.52, uv_scale=3.0, normal_strength=0.58, detail_bump_strength=0.018, detail_bump_scale=14.0),
@@ -400,10 +474,74 @@ def material_library(basketball_texture: Path | None = None) -> dict[str, bpy.ty
         "fabric_coral": pbr_material("PBR_Coral_Fabric", texture_dir=EXTRA_TEXTURE_ROOT / "denim_fabric_04", texture_names=denim_names, tint=(1.38, 0.28, 0.12), tint_strength=0.78, roughness=0.94, metallic=0.0, uv_scale=5.0, normal_strength=0.60, detail_bump_strength=0.012, detail_bump_scale=28.0),
         "rope_fabric": pbr_material("PBR_Rope_Fabric", texture_dir=TEXTURE_ROOT / "fabric_pattern_07", texture_names=fabric_names, tint=(0.52, 0.25, 0.08), roughness=0.92, metallic=0.0, uv_scale=18.0, normal_strength=0.72, detail_bump_strength=0.022, detail_bump_scale=34.0),
     }
+    # Natural-material variants for refine experiments. They use the original
+    # image-backed maps without artificial high-saturation tinting, so a ball,
+    # wood block, or rubber puck keeps a familiar everyday appearance.
+    materials["natural_oak_wood"] = pbr_material(
+        "PBR_Natural_Oak_Wood",
+        texture_dir=REALISM_TEXTURE_ROOT / "oak_wood_planks",
+        texture_names=natural_oak_names,
+        roughness=0.56,
+        uv_scale=1.20,
+        texture_coordinate="UV",
+        normal_strength=0.42,
+        detail_bump_strength=0.008,
+        detail_bump_scale=18.0,
+    )
+    materials["natural_dark_wood"] = pbr_material(
+        "PBR_Natural_Dark_Wood",
+        texture_dir=REALISM_TEXTURE_ROOT / "dark_wood",
+        texture_names=natural_dark_wood_names,
+        roughness=0.58,
+        uv_scale=1.35,
+        texture_coordinate="UV",
+        normal_strength=0.44,
+        detail_bump_strength=0.008,
+        detail_bump_scale=18.0,
+    )
+    materials["natural_black_rubber"] = pbr_material(
+        "PBR_Natural_Black_Rubber",
+        texture_dir=REALISM_TEXTURE_ROOT / "rubberized_track",
+        texture_names=natural_rubber_names,
+        tint=(0.12, 0.13, 0.15),
+        tint_strength=0.60,
+        roughness=0.88,
+        uv_scale=3.5,
+        normal_strength=0.24,
+        detail_bump_strength=0.006,
+        detail_bump_scale=30.0,
+    )
+    # Refine-only variants use the clearly visible wood-floor albedo and a
+    # COLOR blend for hue.  They are separate keys so the original benchmark
+    # palette above remains unchanged.
+    refine_palette = {
+        "refine_blue_texture": (0.10, 0.32, 1.00),
+        "refine_green_texture": (0.10, 0.84, 0.28),
+        "refine_teal_texture": (0.05, 0.76, 0.76),
+        "refine_yellow_texture": (1.00, 0.72, 0.08),
+        "refine_coral_texture": (1.00, 0.20, 0.10),
+        "refine_red_texture": (0.95, 0.07, 0.04),
+        "refine_charcoal_texture": (0.06, 0.09, 0.14),
+        "refine_purple_texture": (0.48, 0.12, 0.90),
+        "refine_orange_texture": (1.00, 0.34, 0.05),
+    }
+    for key, color in refine_palette.items():
+        materials[key] = colorized_texture_material(
+            f"PBR_{key.title().replace('_', '')}",
+            texture_dir=RAMP_BLOCK_TEXTURE_ROOT,
+            texture_names=peeling_paint_wood_names,
+            color=color,
+            roughness=0.62,
+            uv_scale=1.0,
+            normal_strength=0.58,
+        )
     if basketball_texture is not None:
         if not basketball_texture.is_file():
             raise FileNotFoundError(f"basketball texture not found: {basketball_texture}")
         materials["basketball"] = basketball_material("PBR_Basketball", basketball_texture)
+        materials["natural_basketball"] = basketball_material(
+            "PBR_Natural_Basketball", basketball_texture
+        )
     return materials
 
 
@@ -1159,6 +1297,25 @@ def main() -> None:
         "texture_coordinates": {
             "wood_peeling_paint": "UV",
             "floor_stone_pavement": "Generated",
+            "refine_*_texture": "Generated",
+        },
+        "visible_refine_texture": {
+            "root": str(RAMP_BLOCK_TEXTURE_ROOT),
+            "maps": {
+                "albedo": "wood_peeling_paint_weathered_diff_2k.jpg",
+                "normal": "wood_peeling_paint_weathered_nor_gl_2k.jpg",
+                "roughness": "wood_peeling_paint_weathered_rough_2k.jpg",
+                "ao": "wood_peeling_paint_weathered_ao_2k.jpg",
+            },
+            "blend_mode": "COLOR",
+            "blend_factor": 0.72,
+            "uv_scale": 1.0,
+        },
+        "natural_texture_assets": {
+            "basketball": str(args.basketball_texture) if args.basketball_texture else None,
+            "oak_wood": str(REALISM_TEXTURE_ROOT / "oak_wood_planks"),
+            "dark_wood": str(REALISM_TEXTURE_ROOT / "dark_wood"),
+            "rubber": str(REALISM_TEXTURE_ROOT / "rubberized_track"),
         },
         "hdri": str(hdri_path),
         "room_scene": room_scene,
