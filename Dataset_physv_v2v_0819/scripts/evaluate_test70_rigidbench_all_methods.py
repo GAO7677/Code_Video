@@ -479,6 +479,17 @@ def main() -> int:
     parser.add_argument("--gpu-label", default="unknown")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--model-key",
+        action="append",
+        default=[],
+        help="Evaluate only these exact dashboard model keys; repeat as needed.",
+    )
+    parser.add_argument(
+        "--require-complete-model",
+        action="store_true",
+        help="Skip a model until all registry cases have complete prediction videos.",
+    )
     args = parser.parse_args()
     if args.shard_index < 0 or args.shard_index >= args.shard_count:
         raise SystemExit("--shard-index must be in [0, --shard-count)")
@@ -490,7 +501,27 @@ def main() -> int:
     if args.group is None:
         raise SystemExit("--group is required unless only --initialize is requested")
 
-    models = registry["models"][args.shard_index :: args.shard_count]
+    selected_keys = set(args.model_key)
+    selected_models = [
+        model
+        for model in registry["models"]
+        if not selected_keys or str(model.get("model_key")) in selected_keys
+    ]
+    if selected_keys:
+        found_keys = {str(model.get("model_key")) for model in selected_models}
+        missing_keys = selected_keys - found_keys
+        if missing_keys:
+            raise KeyError(
+                f"requested model keys are absent from registry: {sorted(missing_keys)}"
+            )
+    if args.require_complete_model:
+        selected_models = [
+            model
+            for model in selected_models
+            if model.get("cases")
+            and all(bool(case.get("prediction_exists")) for case in model["cases"])
+        ]
+    models = selected_models[args.shard_index :: args.shard_count]
     metrics = GROUP_METRICS[args.group]
     progress_dir = args.output_root / "logs" / "progress"
     progress_dir.mkdir(parents=True, exist_ok=True)
