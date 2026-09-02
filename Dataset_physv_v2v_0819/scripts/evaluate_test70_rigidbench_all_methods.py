@@ -134,11 +134,36 @@ def load_registry(
     registry_path = output_root / "registry.json"
     if registry_path.is_file() and not write:
         registry = read_json(registry_path)
-        # A running inference job may add videos after initialization. Refresh
-        # only this cheap existence bit so --resume can pick them up later.
+        # A running inference job may add videos after initialization.  Some
+        # dashboard records initially contain no video URL, so the persisted
+        # path can literally end in ``None``.  Re-probe the canonical result
+        # locations as well as the stored path, otherwise late videos remain
+        # permanently invisible to --resume.
+        source_page_root_value = registry.get("source_page_root")
+        source_page_root = Path(str(source_page_root_value)) if source_page_root_value else None
+        changed = False
         for model in registry.get("models", []):
+            task_id = str(model.get("task_id", ""))
+            result_root_value = model.get("result_root")
+            result_root = Path(str(result_root_value)) if result_root_value else None
             for case in model.get("cases", []):
-                case["prediction_exists"] = prediction_ready(case["video_path"])
+                case_id = str(case.get("case_id", ""))
+                candidates = [Path(str(case.get("video_path", "")))]
+                if result_root is not None and case_id:
+                    candidates.append(result_root / f"{case_id}.mp4")
+                if source_page_root is not None and task_id and case_id:
+                    candidates.append(source_page_root / "results" / task_id / f"{case_id}.mp4")
+                resolved = next((path for path in candidates if prediction_ready(path)), None)
+                prediction_exists = resolved is not None
+                if resolved is not None and str(case.get("video_path", "")) != str(resolved):
+                    case["video_path"] = str(resolved)
+                    case["video_url"] = f"results/{task_id}/{case_id}.mp4"
+                    changed = True
+                if bool(case.get("prediction_exists")) != prediction_exists:
+                    case["prediction_exists"] = prediction_exists
+                    changed = True
+        if changed:
+            atomic_json(registry_path, registry)
         return registry
 
     dashboard = read_json(dashboard_path)
