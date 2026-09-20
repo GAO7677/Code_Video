@@ -1,0 +1,40 @@
+{
+  "schema": "future_query_predictor_experiment_v1",
+  "status": "diagnostic_cpu_only_not_formal_training",
+  "protocol": {
+    "observed_rgb_indices": [0, 1, 2, 3, 4, 5, 6, 7],
+    "future_rgb_indices": [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
+    "fps": 30,
+    "direct_inputs": ["motion", "object_mask", "last_position", "last_velocity", "future_dt", "scene_xyz", "scene_features", "scene_mask"],
+    "output": "future_position [B,K,41,3]",
+    "scope": "six door train sphere samples; development fit only"
+  },
+  "data": {
+    "physics_root": "small_trial_120",
+    "scene_estimated": "small_trial_120/scene_features",
+    "scene_oracle": "validation_20260919_v3/oracle_partial_visible_geometry_door6_v2",
+    "oracle_name": "oracle_partial_visible_geometry",
+    "future_labels": "supervision/evaluation only",
+    "split_role": "train samples used for diagnostic fitting; no held-out claim"
+  },
+  "training": {
+    "optimizer": "AdamW",
+    "learning_rate": 0.0003,
+    "weight_decay": 0.01,
+    "gradient_clip_norm": 1.0,
+    "loss": "SmoothL1(position) + 0.2 * SmoothL1(interval_velocity)",
+    "effective_batch": 2,
+    "max_steps": 200,
+    "seed": 20260919,
+    "threads": 2,
+    "dit": false,
+    "formal_training": false
+  },
+  "variants": ["analytic_cv", "motion_only", "geometry_only_estimated", "geometry_only_oracle_partial"],
+  "experimental_switches_default": {
+    "reference_mode": "legacy",
+    "relative_motion_features": false,
+    "unit_normalized_loss": false,
+    "two_pass_future_query": false
+  }
+}

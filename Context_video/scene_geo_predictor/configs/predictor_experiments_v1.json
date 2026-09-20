@@ -1,0 +1,93 @@
+{
+  "schema": "future_query_predictor_experiment_v1",
+  "status": "configuration_only_formal_training_not_run",
+  "protocol": {
+    "observed_rgb_indices": [0, 1, 2, 3, 4, 5, 6, 7],
+    "future_rgb_indices": [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
+    "fps": 30,
+    "future_dt_definition": "[1/30,...,41/30] seconds after RGB7",
+    "direct_inputs": ["motion", "object_mask", "last_position", "last_velocity", "future_dt", "scene_xyz", "scene_features", "scene_mask"],
+    "output": "future_position [B,K,41,3]",
+    "scope": "single sphere or validated upright puck, fixed camera/physical properties, static environment"
+  },
+  "data": {
+    "physics_manifest": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/original_pipeline_experiment_20260917/data/manifest.json",
+    "group_split_keys": ["lineage_cell", "context_hash", "motion_hash", "episode_id"],
+    "appearance_split_keys": ["appearance_id", "appearance_hash", "render_style_id", "texture_id", "hdri_id"],
+    "appearance_status": "BLOCKED_UNTIL_RENDER_MANIFEST_ADDS_DISJOINT_APPEARANCE_IDS",
+    "scene_cache_policy": "require observed_utonia_tokens_v2 for formal runs; legacy caches are audit-only",
+    "future_labels": "supervision/evaluation only"
+  },
+  "frozen_frontend": ["VGGT", "SAM2", "observed camera/scale alignment", "Utonia"],
+  "training": {
+    "optimizer": "AdamW",
+    "learning_rate": 0.0003,
+    "weight_decay": 0.01,
+    "gradient_clip_norm": 1.0,
+    "loss": "SmoothL1(position) + 0.2 * SmoothL1(interval_velocity)",
+    "strict_future_grid": true,
+    "require_versioned_scene_cache": true,
+    "effective_batch": 30,
+    "max_steps": 2000,
+    "seeds": [42, 43, 44],
+    "dit": false,
+    "formal_training": false
+  },
+  "variants": [
+    {
+      "name": "analytic_cv",
+      "kind": "deterministic",
+      "predictor_scene_mode": null,
+      "scene_source": null,
+      "purpose": "task difficulty lower bound"
+    },
+    {
+      "name": "motion_only",
+      "kind": "predictor",
+      "predictor_scene_mode": "motion_only",
+      "scene_source": "ignored",
+      "purpose": "whether observed motion alone explains the future"
+    },
+    {
+      "name": "constant_legacy",
+      "kind": "predictor",
+      "predictor_scene_mode": "constant",
+      "scene_source": "zeroed_scene_control",
+      "purpose": "legacy matched-capacity scene-blind control"
+    },
+    {
+      "name": "geometry_only",
+      "kind": "predictor",
+      "predictor_scene_mode": "geometry_only",
+      "scene_source": "observed_scene_xyz_and_mask",
+      "purpose": "geometry path without Utonia semantics"
+    },
+    {
+      "name": "geometry_utonia",
+      "kind": "predictor",
+      "predictor_scene_mode": "visual",
+      "scene_source": "observed_scene_xyz_mask_and_utonia",
+      "purpose": "current visual route"
+    },
+    {
+      "name": "oracle_visible_geometry",
+      "kind": "predictor",
+      "predictor_scene_mode": "geometry_only",
+      "scene_source": "same_observed_pixels_and_masks_with_visible_gt_depth",
+      "purpose": "upper bound for geometry estimation only; no backfaces/full mesh"
+    }
+  ],
+  "evaluation": {
+    "core": ["ADE_m", "FDE_m", "interval_velocity_MAE_mps"],
+    "event": ["contact_onset_accuracy", "time_to_contact_error_s", "post_contact_velocity_angle_deg", "penetration_rate"],
+    "event_policy": "N/A when reliable evaluation geometry/event labels are unavailable; do not fill with zero",
+    "counterfactual": ["same_motion_different_scene", "same_scene_different_motion", "same_physics_different_appearance"],
+    "seeds": 3
+  },
+  "experimental_switches_default": {
+    "reference_mode": "legacy",
+    "relative_motion_features": false,
+    "unit_normalized_loss": false,
+    "two_pass_future_query": false
+  }
+}
