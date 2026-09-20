@@ -5,6 +5,10 @@ Object Query ablation set: one no-intervention baseline, 24 Fixed Top100
 ablations and 24 Tube Top100 ablations. The dashboard table is a strict macro
 mean over seeds `13248 32466 35075 47326 68613 90094`.
 
+The cross-experiment code/output/provenance map is maintained next to the Wan
+capture code at
+[`HISTORICAL_EXPERIMENT_REPRODUCIBILITY.md`](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/HISTORICAL_EXPERIMENT_REPRODUCIBILITY.md).
+
 The complete definition/formula/code-path index for every implemented metric is
 [`METRICS_IMPLEMENTATION_INDEX.md`](METRICS_IMPLEMENTATION_INDEX.md).
 

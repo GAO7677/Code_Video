@@ -3,6 +3,12 @@
 This directory contains runtime-only DiT ablation scripts. Existing Wan,
 DiffSynth, LoRA, xSSC training, and inference source files are not modified.
 
+For the historical attention/object-query experiments, see
+[`HISTORICAL_EXPERIMENT_REPRODUCIBILITY.md`](HISTORICAL_EXPERIMENT_REPRODUCIBILITY.md).
+It maps launchers and configs to input data, checkpoints, manifests, generated
+outputs, metric reports and downstream dependencies, and marks which runs are
+replayable versus audit-only.
+
 ## Analysis
 
 The canonical cross-model S-head analysis is
