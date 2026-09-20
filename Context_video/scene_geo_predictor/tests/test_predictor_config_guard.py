@@ -7,7 +7,7 @@ from predictor_config_guard import validate
 
 
 ROOT = Path(__file__).resolve().parent
-CONFIG = ROOT / "configs/predictor_experiments_v1.json"
+CONFIG = ROOT.parent / "configs/predictor_experiments_v1.json"
 
 
 class PredictorConfigGuardTest(unittest.TestCase):

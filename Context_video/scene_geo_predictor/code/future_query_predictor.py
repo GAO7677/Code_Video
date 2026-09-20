@@ -7,7 +7,9 @@ from pathlib import Path
 import torch
 from torch import nn
 
-BASE = Path(__file__).resolve().parents[1]/'p4_v2_sg_o_revised_20260916/round1/scripts/model.py'
+BASE = Path(__file__).with_name('legacy_common_model.py')
+if not BASE.exists():
+    BASE = Path(__file__).resolve().parents[1]/'p4_v2_sg_o_revised_20260916/round1/scripts/model.py'
 spec = importlib.util.spec_from_file_location('_visual_scene_common', BASE)
 common = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(common)

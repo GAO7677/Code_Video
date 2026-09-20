@@ -10,7 +10,7 @@ from predictor_scene_adapter import load_visual_scene, make_model_inputs
 
 
 ROOT = Path(__file__).resolve().parent
-MODEL_PATH = ROOT.parent / "p4_v2_sg_o_revised_20260916/round1/scripts/model.py"
+MODEL_PATH = ROOT.parent / "code/legacy_common_model.py"
 SPEC = importlib.util.spec_from_file_location("_visual_input_pilot_model", MODEL_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)

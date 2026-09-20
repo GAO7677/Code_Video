@@ -1,456 +1,472 @@
 {
   "schema": "scene_geo_predictor_code_snapshot_v1",
   "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918",
+  "note": "Code and lightweight documentation only; experiment outputs remain under /data/gaoya/agent-data.",
   "items": [
     {
+      "path": "README.md",
+      "bytes": 1455,
+      "sha256": "f2d2a3e275631432ffa5e8514fbeba8296667c43a9f64789eff13f3615a3d618"
+    },
+    {
       "path": "code/align_observed_depth.py",
-      "sha256": "859c4b3f0c8f3519bb02ad8791ceb498ed80c9580432086254d241849288600e",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 19945,
+      "sha256": "859c4b3f0c8f3519bb02ad8791ceb498ed80c9580432086254d241849288600e"
     },
     {
       "path": "code/align_trial_review.py",
-      "sha256": "090cf3850b8e63c7f30e746f47be62c69dceec90710fc33cdd473a407790780a",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 2631,
+      "sha256": "090cf3850b8e63c7f30e746f47be62c69dceec90710fc33cdd473a407790780a"
     },
     {
       "path": "code/alignment_compare.py",
-      "sha256": "4b2f4e010decfcf34efcaf55fc2dbbd31f17cf96b5fe678dd33ffd1a2c513dc3",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 22240,
+      "sha256": "4b2f4e010decfcf34efcaf55fc2dbbd31f17cf96b5fe678dd33ffd1a2c513dc3"
     },
     {
       "path": "code/audit_door_pilot_protocol.py",
-      "sha256": "d34444ebd5bd4a069b90f4227e73af4db7a81530d96706d4b4b83ec14803bea2",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3777,
+      "sha256": "d34444ebd5bd4a069b90f4227e73af4db7a81530d96706d4b4b83ec14803bea2"
     },
     {
       "path": "code/audit_padding_semantics.py",
-      "sha256": "8e6c7bbd93bc02ce755fd8dcd904828d287960706c0eeef643255075aa814032",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 7421,
+      "sha256": "8e6c7bbd93bc02ce755fd8dcd904828d287960706c0eeef643255075aa814032"
     },
     {
       "path": "code/audit_predictor_split.py",
-      "sha256": "d34feb11250f43f0f93aa32b263f1a5a0bafb193d4141d2b422ef30ef0779d7f",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3104,
+      "sha256": "d34feb11250f43f0f93aa32b263f1a5a0bafb193d4141d2b422ef30ef0779d7f"
     },
     {
       "path": "code/audit_real_data_admission.py",
-      "sha256": "6ca00c5c4b3202902a15af3412f80c556d3f597130eff593dba705c55a651a35",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 13592,
+      "sha256": "6ca00c5c4b3202902a15af3412f80c556d3f597130eff593dba705c55a651a35"
     },
     {
       "path": "code/audit_scene_geometry.py",
-      "sha256": "39c63fef27b3181e628084b7bddffa2fb5508c062a35f7de29723f51754a9ce0",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 15430,
+      "sha256": "39c63fef27b3181e628084b7bddffa2fb5508c062a35f7de29723f51754a9ce0"
     },
     {
       "path": "code/bind_round_evaluation.py",
-      "sha256": "9f0af6646857926b7f56e00f4564b9e44fa4685079b0f661b1404f96d631a0f0",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 1159,
+      "sha256": "9f0af6646857926b7f56e00f4564b9e44fa4685079b0f661b1404f96d631a0f0"
     },
     {
       "path": "code/build_bank4200_view.py",
-      "sha256": "d1e8c5ecb74c5de79603de68a9c59cc9b36ef51d7b284fe61f4520185c4f7dc7",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 9039,
+      "sha256": "d1e8c5ecb74c5de79603de68a9c59cc9b36ef51d7b284fe61f4520185c4f7dc7"
     },
     {
       "path": "code/build_data_samples_page.py",
-      "sha256": "26c8dab28ceccc575c21a9f2168dd43072ad565cc5494fca83972bf77aeb7311",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5309,
+      "sha256": "26c8dab28ceccc575c21a9f2168dd43072ad565cc5494fca83972bf77aeb7311"
     },
     {
       "path": "code/build_geometry_cache_variants.py",
-      "sha256": "5c0381cf9f622a85715c85053f3198037a9e326e30a50cab5954c0f3b413c284",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 9525,
+      "sha256": "5c0381cf9f622a85715c85053f3198037a9e326e30a50cab5954c0f3b413c284"
     },
     {
       "path": "code/build_matched_geometry_caches.py",
-      "sha256": "ad026b2d0769209cc08fa645542f20870cdb4f59c959a260448fc915ee213eaf",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 6200,
+      "sha256": "ad026b2d0769209cc08fa645542f20870cdb4f59c959a260448fc915ee213eaf"
     },
     {
       "path": "code/build_pair_overlay.py",
-      "sha256": "a06c510a21fd696d249eda02fc7629814f0ee308cd34e1c0e5aa1c4c508b27cf",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 6375,
+      "sha256": "a06c510a21fd696d249eda02fc7629814f0ee308cd34e1c0e5aa1c4c508b27cf"
     },
     {
       "path": "code/build_resampling_overlay.py",
-      "sha256": "a3c86c1a5edee79bf4ca7ffd4a77499b05bbb8118d99df5e2b215b7025fb9df6",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 14116,
+      "sha256": "a3c86c1a5edee79bf4ca7ffd4a77499b05bbb8118d99df5e2b215b7025fb9df6"
     },
     {
       "path": "code/build_task_geometry_caches.py",
-      "sha256": "43f97207db8fcfd61b4cc0f995bf7417dac2ababe238cdb3f546c122ee29f284",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 12141,
+      "sha256": "43f97207db8fcfd61b4cc0f995bf7417dac2ababe238cdb3f546c122ee29f284"
     },
     {
       "path": "code/camera_geometry_tests.py",
-      "sha256": "74403a5e50bd2a4af249e31fdbb21823e49ef4b8b9f96b4a2854168a487390b8",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5830,
+      "sha256": "74403a5e50bd2a4af249e31fdbb21823e49ef4b8b9f96b4a2854168a487390b8"
     },
     {
       "path": "code/check_bank4200_page.py",
-      "sha256": "78ee318f56e44e3b11d8f174a25a6b1693c993c893030aa339317fbc9084cf92",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3039,
+      "sha256": "78ee318f56e44e3b11d8f174a25a6b1693c993c893030aa339317fbc9084cf92"
     },
     {
       "path": "code/check_data_samples_page.py",
-      "sha256": "f5bf52408ac8a6d4a748b783971623d8448bcbf022617a7473c283dd388dda09",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3843,
+      "sha256": "f5bf52408ac8a6d4a748b783971623d8448bcbf022617a7473c283dd388dda09"
     },
     {
       "path": "code/check_release_page.py",
-      "sha256": "a16601b3dc3745420f3f885fc0e54b73f15d6f9468197131b3a8534aeaa1ad94",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 1628,
+      "sha256": "a16601b3dc3745420f3f885fc0e54b73f15d6f9468197131b3a8534aeaa1ad94"
     },
     {
       "path": "code/compose_pair_overlay.py",
-      "sha256": "6a3927113a61cb96da469ed433199ecacf8f998d6b6f36a07571e8ef56854b6c",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 11190,
+      "sha256": "6a3927113a61cb96da469ed433199ecacf8f998d6b6f36a07571e8ef56854b6c"
     },
     {
       "path": "code/context_geometry.py",
-      "sha256": "335ea2f53d85ecc600dab8eff64f2b377371ce186914bf8485ffd4cb9f7f3494",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 6775,
+      "sha256": "335ea2f53d85ecc600dab8eff64f2b377371ce186914bf8485ffd4cb9f7f3494"
     },
     {
       "path": "code/controlled_scene_eval.py",
-      "sha256": "0ef28322dab8794ba107710a0f9431f196a889b74b54e7cdd67f936b92d8d192",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 7651,
+      "sha256": "0ef28322dab8794ba107710a0f9431f196a889b74b54e7cdd67f936b92d8d192"
     },
     {
       "path": "code/diagnostic_cpu_fit.py",
-      "sha256": "8f3f0af3514aa050f5f4dd23cfe7751fed1db9263bb030a1dc83d8d413c0a6c3",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 15693,
+      "sha256": "8f3f0af3514aa050f5f4dd23cfe7751fed1db9263bb030a1dc83d8d413c0a6c3"
     },
     {
       "path": "code/evaluate_controlled_scene.py",
-      "sha256": "e1cf986819c8f361b0b03518c31c5a388bb03e45e14c820d6c8f203610f3d047",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 7224,
+      "sha256": "e1cf986819c8f361b0b03518c31c5a388bb03e45e14c820d6c8f203610f3d047"
     },
     {
       "path": "code/evaluate_small_trial.py",
-      "sha256": "ccb8e595afcef7a7db87366b7bdb46828c4d2029bd16bfb8d7e276622879b8c3",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 6703,
+      "sha256": "ccb8e595afcef7a7db87366b7bdb46828c4d2029bd16bfb8d7e276622879b8c3"
     },
     {
       "path": "code/export_paired_fit_tables.py",
-      "sha256": "1dbf68e9098d3a8833347908afa4a163acf7e0ea5ac4d332cc60e0fa8c34b636",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 2697,
+      "sha256": "1dbf68e9098d3a8833347908afa4a163acf7e0ea5ac4d332cc60e0fa8c34b636"
     },
     {
       "path": "code/extract_small_trial.py",
-      "sha256": "8a8f69fbf0a59dc555054f135fe8b3428bd861414644e28a658ebdfbcabd407a",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 10147,
+      "sha256": "8a8f69fbf0a59dc555054f135fe8b3428bd861414644e28a658ebdfbcabd407a"
     },
     {
       "path": "code/finalize_paired_history_manifest.py",
-      "sha256": "cebe7398d0555fc27ff3da867731e69995d252b6ee2c82613734d861e253595d",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 7957,
+      "sha256": "cebe7398d0555fc27ff3da867731e69995d252b6ee2c82613734d861e253595d"
     },
     {
       "path": "code/future_query_predictor.py",
-      "sha256": "c884e6e44743a5726ffff1fbf3d7e828302c5fe2107dbc2894d7ed35e9909b0e",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 9584,
+      "sha256": "efb5a39c65994aefe11a7d64d598305a406a513138dfd914da9ccef60e659016"
+    },
+    {
+      "path": "code/legacy_common_model.py",
+      "bytes": 13710,
+      "sha256": "d1b9a7e962fbe2ab2520f2c6fc56f580b59176124024dac847bed1422edfbcca"
     },
     {
       "path": "code/make_trial_review.py",
-      "sha256": "6cc0150982409e413886bc233c01defda439a467ff44917d3ef890f6563283f5",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3138,
+      "sha256": "6cc0150982409e413886bc233c01defda439a467ff44917d3ef890f6563283f5"
     },
     {
       "path": "code/motion_token_selection.py",
-      "sha256": "bbf248c6787fb90d2156ecd0aabb570f834eb6dd33df1e9a1f739f632926e582",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 2370,
+      "sha256": "bbf248c6787fb90d2156ecd0aabb570f834eb6dd33df1e9a1f739f632926e582"
     },
     {
       "path": "code/observed_masks.py",
-      "sha256": "f62b99c76ae34d988476ea1abf53e7736b10d4dc1d9ca69d99bb1858eead61cc",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 15014,
+      "sha256": "f62b99c76ae34d988476ea1abf53e7736b10d4dc1d9ca69d99bb1858eead61cc"
     },
     {
       "path": "code/observed_surface_scale.py",
-      "sha256": "5ac57a6dc14a7b0cd52a8d0e88707e5f6d45612ce512ac3ab931adf04f8b3f62",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3557,
+      "sha256": "5ac57a6dc14a7b0cd52a8d0e88707e5f6d45612ce512ac3ab931adf04f8b3f62"
     },
     {
       "path": "code/package_predictor_release.py",
-      "sha256": "fc5e9208b9dad41de074a9e3f6eecad6d0b702702b2f5a90004526f2aa9ba4dc",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5769,
+      "sha256": "fc5e9208b9dad41de074a9e3f6eecad6d0b702702b2f5a90004526f2aa9ba4dc"
     },
     {
       "path": "code/paired_control_probe.py",
-      "sha256": "32cb5c6432fedf85113bb4dabd75c87482c0c104feb015ae45246a00e7e7498b",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 11638,
+      "sha256": "32cb5c6432fedf85113bb4dabd75c87482c0c104feb015ae45246a00e7e7498b"
     },
     {
       "path": "code/paired_probe_all_pairs.py",
-      "sha256": "5d9576d4b505d689ea59de5be952380e2c78324b9608b0f61df25ee6c8e9b801",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 7984,
+      "sha256": "5d9576d4b505d689ea59de5be952380e2c78324b9608b0f61df25ee6c8e9b801"
     },
     {
       "path": "code/penetration_decomposition.py",
-      "sha256": "dca778553a98818dc0fcdde97b3de62f26435501aa782dac80bf2bf0664cfd06",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 11301,
+      "sha256": "dca778553a98818dc0fcdde97b3de62f26435501aa782dac80bf2bf0664cfd06"
     },
     {
       "path": "code/plot_controlled_scene.py",
-      "sha256": "f9799bff05c22500a4a033cb682e8cd40afbfdb0b65eba9a488249678c008bcb",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5798,
+      "sha256": "f9799bff05c22500a4a033cb682e8cd40afbfdb0b65eba9a488249678c008bcb"
     },
     {
       "path": "code/plot_small_trial.py",
-      "sha256": "69d21d88a7e1b6c27a558e643c26577d142b7f1dcf1a9fcb332018f684d93a85",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5528,
+      "sha256": "69d21d88a7e1b6c27a558e643c26577d142b7f1dcf1a9fcb332018f684d93a85"
     },
     {
       "path": "code/predict_observation.py",
-      "sha256": "1384fb3844fde5d54983e1910c1b9e252281faf291633158b309eb892e5cf3c8",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 4315,
+      "sha256": "1384fb3844fde5d54983e1910c1b9e252281faf291633158b309eb892e5cf3c8"
     },
     {
       "path": "code/predictor_config_guard.py",
-      "sha256": "ee71f3abd84ca0c5245ab318ae9ba0a3f709494b5f6a1ce2157700d91438113e",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5346,
+      "sha256": "ee71f3abd84ca0c5245ab318ae9ba0a3f709494b5f6a1ce2157700d91438113e"
     },
     {
       "path": "code/predictor_pilot.py",
-      "sha256": "d0eaf60228dc947d0390309742171dde8ba5853488d68da41146c70b0d172105",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 11554,
+      "sha256": "d0eaf60228dc947d0390309742171dde8ba5853488d68da41146c70b0d172105"
     },
     {
       "path": "code/predictor_scene_adapter.py",
-      "sha256": "fa277fac9d200122c83b1a89747240cb28bfda5d014b357835d1eb4c070168e0",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 7483,
+      "sha256": "fa277fac9d200122c83b1a89747240cb28bfda5d014b357835d1eb4c070168e0"
     },
     {
       "path": "code/prepare_context.py",
-      "sha256": "40c349370ccb13cd1a9c8dd8c1dded3c08823cb38913d8110eb278a8ee001286",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5789,
+      "sha256": "40c349370ccb13cd1a9c8dd8c1dded3c08823cb38913d8110eb278a8ee001286"
     },
     {
       "path": "code/prepare_independent_physics_pairs.py",
-      "sha256": "98e6a1d9dfcdef3e93848e02d6da4441a4cb55500c41198fda5eb7d33731b913",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 12628,
+      "sha256": "98e6a1d9dfcdef3e93848e02d6da4441a4cb55500c41198fda5eb7d33731b913"
     },
     {
       "path": "code/prepare_round2.py",
-      "sha256": "e693ff447e8d11a3b9e686ac4e43d7edad2fdfdefb55b82e2e1438abff047b87",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 893,
+      "sha256": "e693ff447e8d11a3b9e686ac4e43d7edad2fdfdefb55b82e2e1438abff047b87"
     },
     {
       "path": "code/prepare_small_trial.py",
-      "sha256": "314f7fac3195a9edc113dc4e39c2aa1feaff9ca96a3aae1813f7a6c9d6984334",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 9103,
+      "sha256": "314f7fac3195a9edc113dc4e39c2aa1feaff9ca96a3aae1813f7a6c9d6984334"
     },
     {
       "path": "code/prepare_two_rounds.py",
-      "sha256": "d3d4a7d1e5914c6b8a05850cd604400b072e300e1da41073b4b10be439f755f2",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3976,
+      "sha256": "d3d4a7d1e5914c6b8a05850cd604400b072e300e1da41073b4b10be439f755f2"
     },
     {
       "path": "code/probe_vggt.py",
-      "sha256": "1f538c0e6fb862f034c38333b506456f7a5e14128cc0e02e59717b3e061ae2ee",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 6978,
+      "sha256": "1f538c0e6fb862f034c38333b506456f7a5e14128cc0e02e59717b3e061ae2ee"
     },
     {
       "path": "code/render_bank20_full.py",
-      "sha256": "41aa1b931da68b939363114b24709cf7778aac0646c4f7b24da4eac016d48193",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 22075,
+      "sha256": "41aa1b931da68b939363114b24709cf7778aac0646c4f7b24da4eac016d48193"
     },
     {
       "path": "code/render_small_trial.py",
-      "sha256": "c014c89e1688252455287aa26bdf1923d504b014e82e4e43cf1a60bd4cd64c08",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5108,
+      "sha256": "c014c89e1688252455287aa26bdf1923d504b014e82e4e43cf1a60bd4cd64c08"
     },
     {
       "path": "code/resampling_train_compare.py",
-      "sha256": "ca5066dd70eb997a01afb722888b99f9ef61ab061f1e75511e7b15bf357dab1c",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 20843,
+      "sha256": "ca5066dd70eb997a01afb722888b99f9ef61ab061f1e75511e7b15bf357dab1c"
     },
     {
       "path": "code/sampling_checks.py",
-      "sha256": "9246a99769165b5cc89686e48ef9d971441e3f211c259219da7cc4c40e2e6439",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 14344,
+      "sha256": "9246a99769165b5cc89686e48ef9d971441e3f211c259219da7cc4c40e2e6439"
     },
     {
       "path": "code/sampling_checks_resampling.py",
-      "sha256": "d4796183a692d556224b8e2147e051cdbd10c143437851c3b2a73d779ae3d6f1",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5898,
+      "sha256": "d4796183a692d556224b8e2147e051cdbd10c143437851c3b2a73d779ae3d6f1"
     },
     {
       "path": "code/scene_token_cache.py",
-      "sha256": "e3067527423c5e62777660c63cc18d0829ecb0b399f0ca88381662f22971a647",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 13376,
+      "sha256": "e3067527423c5e62777660c63cc18d0829ecb0b399f0ca88381662f22971a647"
     },
     {
       "path": "code/summarize_two_rounds.py",
-      "sha256": "383150a15696bf5938a4319386c3e1760e865f83b74346542d6cccd33caad9e6",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 8294,
+      "sha256": "383150a15696bf5938a4319386c3e1760e865f83b74346542d6cccd33caad9e6"
     },
     {
       "path": "code/toy_future_query_smoke.py",
-      "sha256": "0b827348a38d83cc5f456cfd848fb5ce84e8514cf9586e197d6f47d15bfe046b",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3955,
+      "sha256": "0b827348a38d83cc5f456cfd848fb5ce84e8514cf9586e197d6f47d15bfe046b"
     },
     {
       "path": "code/train_independent_history_holdout.py",
-      "sha256": "3eff3a82741f7f845d436ed81d847c41f863d615c04a7d8b5e5ebb10799f398f",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 29530,
+      "sha256": "3eff3a82741f7f845d436ed81d847c41f863d615c04a7d8b5e5ebb10799f398f"
     },
     {
       "path": "code/train_leaveout_geometry.py",
-      "sha256": "70fbb6e2fdad7f1cef2ee5738899697631c4542baf344a5550e5ac42e155ee1b",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 13083,
+      "sha256": "70fbb6e2fdad7f1cef2ee5738899697631c4542baf344a5550e5ac42e155ee1b"
     },
     {
       "path": "code/train_paired_task.py",
-      "sha256": "63ad47d378ff9f0e0200ff2b7d177c93ab2d3b7547dbf6b0f5f91230ec35aeff",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 13369,
+      "sha256": "63ad47d378ff9f0e0200ff2b7d177c93ab2d3b7547dbf6b0f5f91230ec35aeff"
     },
     {
       "path": "code/train_small_trial.py",
-      "sha256": "395de6f549f5466016763e7386e406fb3e13e40d779d6eab7544d2053f80fdce",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 12361,
+      "sha256": "395de6f549f5466016763e7386e406fb3e13e40d779d6eab7544d2053f80fdce"
     },
     {
       "path": "code/trial_metrics.py",
-      "sha256": "ce78160e00d400c8b74cec7fd871dd6a718d1259e4b343bc110abb7e04df6321",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3627,
+      "sha256": "ce78160e00d400c8b74cec7fd871dd6a718d1259e4b343bc110abb7e04df6321"
     },
     {
       "path": "code/validate_scene_cache.py",
-      "sha256": "282e6f262970ceb80cb6ddcc1f39bcc7bc4520214ad0eb8dbf63e7583e24901b",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 5763,
+      "sha256": "282e6f262970ceb80cb6ddcc1f39bcc7bc4520214ad0eb8dbf63e7583e24901b"
     },
     {
       "path": "code/verify_predictor_pilot.py",
-      "sha256": "a1ec6eece3ffc916c3b0f14f69e4ca2359fee5d4549a0986305c3d8b0a56d661",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3788,
+      "sha256": "a1ec6eece3ffc916c3b0f14f69e4ca2359fee5d4549a0986305c3d8b0a56d661"
     },
     {
       "path": "code/visible_oracle_geometry.py",
-      "sha256": "f8c44bf6e851d72619f4acefddcd20b0b6f62ecd10c7a481480552886d0c963e",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_align_observed_depth.py",
-      "sha256": "7adddcc7c21a7e68e601ba764faabf4ce73a43197d7519625d450193decbcc45",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_audit_scene_geometry.py",
-      "sha256": "3ff46d288a623351677bb1ba41a0902424c4159bc6c854643fc562fb5137b5d5",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_camera_geometry.py",
-      "sha256": "62e72ac1a3d92e7832aa80a45ae9c6095b81559bd3d7722f41aece641504fd37",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_context_geometry.py",
-      "sha256": "377f122f5fc6411f92b11cd8d115af596a46c70137dda8686ee47454127872e2",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_controlled_scene_eval.py",
-      "sha256": "a0a2d823403a1b32800d212531a0617861dfdacf31f8c0403587a97f0c4b7ae2",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_future_query_validation.py",
-      "sha256": "783293b3c2e0f435a74e9532963791ebcda3202392f5ae1cb831c68154217883",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_future_replacement_cpu.py",
-      "sha256": "37713974f2f734edbc98324c727d42a6445c1bbcd539a84c6f1c001d36a551bf",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_motion_token_selection.py",
-      "sha256": "b696ce49d140d8d8cd1b49add724add64cb5cb617a5182e2d0885544bca805ca",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_observed_masks.py",
-      "sha256": "a9f5cadd52a02d82b2def01dfdfc8c4142ab529ec685d35692ad00f93a60281c",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_predict_observation.py",
-      "sha256": "3805821c49c2b1a8252d941a22cc3d42e1dfe651e5bc49a0345f31899bc37007",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_predictor_config_guard.py",
-      "sha256": "775ff9e967c5e6e5b8d718677d8d6521b0bd2d58a0496bdf00e19e2c63222e63",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_predictor_interface.py",
-      "sha256": "009a8a16b430cec1f59255cefa83e5b40482818159d781cf40b8bd2d3a279812",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_predictor_scene_adapter.py",
-      "sha256": "b1ffc0e95431516de79ceb9eb8c237b1be5973e35e9ac16864cb33662e092c88",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_predictor_scene_integration.py",
-      "sha256": "44e3be519b2234c358262d04d36c69b64bc97a23c183e569edd163d7532ff925",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_prepare_context.py",
-      "sha256": "0790e86b59fe5658246344cee03afd0086c09bc6267ce976514a17c6cf32576f",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_probe_vggt.py",
-      "sha256": "7111ea7e349396238c099d19b714ff26fc1c930567394bed618e54cef4da3320",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_small_trial.py",
-      "sha256": "df69ffdf87a3bbaa83e4fb4d438423359a30ef421fe031d8992616a3c4f93159",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_surface_scale.py",
-      "sha256": "e27e84145bd6ccff0b764f0692be58c4f0fea5b94c1a9f378b738c059e3d3988",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_training_runtime.py",
-      "sha256": "ae9b06f528ba388de70a78c9f5a026576b01292338b44a6b4d4dc1d8595db946",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
-    },
-    {
-      "path": "tests/test_visible_oracle.py",
-      "sha256": "8a4c3457d58638fe3864576b6225147d3c978844bbdf5e162a41e7e6299fe9e1",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 14993,
+      "sha256": "f8c44bf6e851d72619f4acefddcd20b0b6f62ecd10c7a481480552886d0c963e"
     },
     {
       "path": "configs/predictor_diagnostic_door6_v1.json",
-      "sha256": "2d5ea2ec65e43e56f6fdd4edde49d213d184e3b8d0286c0d1c53fad32e656525",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 1654,
+      "sha256": "2d5ea2ec65e43e56f6fdd4edde49d213d184e3b8d0286c0d1c53fad32e656525"
     },
     {
       "path": "configs/predictor_experiments_v1.json",
-      "sha256": "c46ade2380c89aea60c51eb01cc320b463d259ff215ac5d8c3dbac83e4ac11e4",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 3863,
+      "sha256": "c46ade2380c89aea60c51eb01cc320b463d259ff215ac5d8c3dbac83e4ac11e4"
+    },
+    {
+      "path": "docs/EXPERIMENT_REPORT_20260920.md",
+      "bytes": 11614,
+      "sha256": "89009153a70dfdcfb9bec9262d743bcc8f0384e4d465596499ebf9a6e03b2adf"
     },
     {
       "path": "docs/source_cleanup_20260920.md",
-      "sha256": "221537218e9f0c92e3f6607ab030cd0a0d3d5337f88b0754df4d8dfc3c2e9968",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 1649,
+      "sha256": "221537218e9f0c92e3f6607ab030cd0a0d3d5337f88b0754df4d8dfc3c2e9968"
     },
     {
       "path": "docs/source_predictor_pilot.md",
-      "sha256": "c2be4251bf1aa11ca51a16c264cda20d15a5fb19b4737cd7ca411b81df3e57e7",
-      "source_root": "/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/visual_scene_context8_20260918"
+      "bytes": 9651,
+      "sha256": "c2be4251bf1aa11ca51a16c264cda20d15a5fb19b4737cd7ca411b81df3e57e7"
+    },
+    {
+      "path": "tests/test_align_observed_depth.py",
+      "bytes": 8793,
+      "sha256": "7adddcc7c21a7e68e601ba764faabf4ce73a43197d7519625d450193decbcc45"
+    },
+    {
+      "path": "tests/test_audit_scene_geometry.py",
+      "bytes": 1731,
+      "sha256": "3ff46d288a623351677bb1ba41a0902424c4159bc6c854643fc562fb5137b5d5"
+    },
+    {
+      "path": "tests/test_camera_geometry.py",
+      "bytes": 344,
+      "sha256": "62e72ac1a3d92e7832aa80a45ae9c6095b81559bd3d7722f41aece641504fd37"
+    },
+    {
+      "path": "tests/test_context_geometry.py",
+      "bytes": 3969,
+      "sha256": "377f122f5fc6411f92b11cd8d115af596a46c70137dda8686ee47454127872e2"
+    },
+    {
+      "path": "tests/test_controlled_scene_eval.py",
+      "bytes": 2294,
+      "sha256": "a0a2d823403a1b32800d212531a0617861dfdacf31f8c0403587a97f0c4b7ae2"
+    },
+    {
+      "path": "tests/test_future_query_validation.py",
+      "bytes": 5961,
+      "sha256": "783293b3c2e0f435a74e9532963791ebcda3202392f5ae1cb831c68154217883"
+    },
+    {
+      "path": "tests/test_future_replacement_cpu.py",
+      "bytes": 6460,
+      "sha256": "37713974f2f734edbc98324c727d42a6445c1bbcd539a84c6f1c001d36a551bf"
+    },
+    {
+      "path": "tests/test_motion_token_selection.py",
+      "bytes": 1189,
+      "sha256": "b696ce49d140d8d8cd1b49add724add64cb5cb617a5182e2d0885544bca805ca"
+    },
+    {
+      "path": "tests/test_observed_masks.py",
+      "bytes": 5612,
+      "sha256": "a9f5cadd52a02d82b2def01dfdfc8c4142ab529ec685d35692ad00f93a60281c"
+    },
+    {
+      "path": "tests/test_predict_observation.py",
+      "bytes": 1583,
+      "sha256": "3805821c49c2b1a8252d941a22cc3d42e1dfe651e5bc49a0345f31899bc37007"
+    },
+    {
+      "path": "tests/test_predictor_config_guard.py",
+      "bytes": 2518,
+      "sha256": "31dcb6d59ca678639e91fd341b1ccb199640ddd18b93a767810e2afaef5f0b49"
+    },
+    {
+      "path": "tests/test_predictor_interface.py",
+      "bytes": 7098,
+      "sha256": "009a8a16b430cec1f59255cefa83e5b40482818159d781cf40b8bd2d3a279812"
+    },
+    {
+      "path": "tests/test_predictor_scene_adapter.py",
+      "bytes": 10434,
+      "sha256": "b1ffc0e95431516de79ceb9eb8c237b1be5973e35e9ac16864cb33662e092c88"
+    },
+    {
+      "path": "tests/test_predictor_scene_integration.py",
+      "bytes": 5265,
+      "sha256": "e63f175c6be8a28d107d268a298bae6dc23c02644542e49ef8c9f231b3bb7208"
+    },
+    {
+      "path": "tests/test_prepare_context.py",
+      "bytes": 3576,
+      "sha256": "0790e86b59fe5658246344cee03afd0086c09bc6267ce976514a17c6cf32576f"
+    },
+    {
+      "path": "tests/test_probe_vggt.py",
+      "bytes": 2732,
+      "sha256": "7111ea7e349396238c099d19b714ff26fc1c930567394bed618e54cef4da3320"
+    },
+    {
+      "path": "tests/test_small_trial.py",
+      "bytes": 5004,
+      "sha256": "df69ffdf87a3bbaa83e4fb4d438423359a30ef421fe031d8992616a3c4f93159"
+    },
+    {
+      "path": "tests/test_surface_scale.py",
+      "bytes": 1558,
+      "sha256": "e27e84145bd6ccff0b764f0692be58c4f0fea5b94c1a9f378b738c059e3d3988"
+    },
+    {
+      "path": "tests/test_training_runtime.py",
+      "bytes": 2732,
+      "sha256": "ae9b06f528ba388de70a78c9f5a026576b01292338b44a6b4d4dc1d8595db946"
+    },
+    {
+      "path": "tests/test_visible_oracle.py",
+      "bytes": 302,
+      "sha256": "8a4c3457d58638fe3864576b6225147d3c978844bbdf5e162a41e7e6299fe9e1"
     }
   ]
 }
