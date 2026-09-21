@@ -270,7 +270,7 @@ def run(args: argparse.Namespace) -> dict:
         output_root / "input_contract.json",
         {
             "status": "EXECUTED",
-            "estimator_allowed": vision_manifest["records"][0].keys() if False else [
+            "estimator_allowed": [
                 "manifest case_id/family/input_dir/input_json",
                 "per-case RGB0-RGB7",
                 "timestamps",
