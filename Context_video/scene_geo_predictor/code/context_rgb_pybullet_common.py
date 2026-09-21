@@ -206,6 +206,157 @@ def rgb_motion_circle_prompt(frames: np.ndarray) -> tuple[np.ndarray, dict[str, 
     }
 
 
+def regularize_sphere_masks(
+    rgb: np.ndarray,
+    sam_masks: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Fit one RGB edge circle inside each tracked SAM2 region.
+
+    SAM2 is used for identity and localization.  The fixed sphere prior then
+    removes cast shadows and other non-spherical mask appendages before metric
+    depth is inferred.  No state, future frame, or scene blueprint is read.
+    """
+    import cv2
+
+    rgb = np.asarray(rgb)
+    sam_masks = np.asarray(sam_masks)
+    if rgb.dtype != np.uint8 or rgb.ndim != 4 or rgb.shape[0] != OBSERVED_FRAMES or rgb.shape[-1] != 3:
+        raise ValueError("expected uint8 RGB frames [8,H,W,3]")
+    if sam_masks.dtype != np.bool_ or sam_masks.shape != rgb.shape[:3]:
+        raise ValueError("SAM2 masks must be boolean [8,H,W]")
+    height, width = rgb.shape[1:3]
+    angles = np.linspace(0.0, 2.0 * np.pi, 180, endpoint=False)
+    cosines, sines = np.cos(angles), np.sin(angles)
+    circles = []
+    masks = []
+    frame_reports = []
+    grid_y, grid_x = np.ogrid[:height, :width]
+    for frame_index, (image, sam_mask) in enumerate(zip(rgb, sam_masks)):
+        if int(sam_mask.sum()) < 20:
+            raise ValueError(f"RGB{frame_index} SAM2 mask is too small")
+        distance = cv2.distanceTransform(sam_mask.astype(np.uint8), cv2.DIST_L2, 5)
+        seed_y, seed_x = np.unravel_index(int(np.argmax(distance)), distance.shape)
+        seed_radius = float(distance[seed_y, seed_x])
+        if seed_radius < 3.0:
+            raise ValueError(f"RGB{frame_index} has no stable inscribed-circle seed")
+
+        lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB).astype(np.float64)
+        gradient_sq = np.zeros((height, width), dtype=np.float64)
+        for channel in range(3):
+            grad_x = cv2.Sobel(lab[:, :, channel], cv2.CV_64F, 1, 0, ksize=3)
+            grad_y = cv2.Sobel(lab[:, :, channel], cv2.CV_64F, 0, 1, ksize=3)
+            gradient_sq += grad_x * grad_x + grad_y * grad_y
+        gradient = np.sqrt(gradient_sq)
+        radius_low = max(4.5, 0.55 * seed_radius)
+        radius_high = min(25.0, 1.30 * seed_radius)
+        candidates = []
+        for center_y in np.arange(seed_y - 3.0, seed_y + 3.01, 1.0):
+            for center_x in np.arange(seed_x - 3.0, seed_x + 3.01, 1.0):
+                for radius in np.arange(radius_low, radius_high + 0.01, 0.25):
+                    xs = np.clip(np.rint(center_x + radius * cosines).astype(np.int64), 0, width - 1)
+                    ys = np.clip(np.rint(center_y + radius * sines).astype(np.int64), 0, height - 1)
+                    values = gradient[ys, xs]
+                    edge_strength = float(np.quantile(values, 0.55) + 0.35 * np.mean(values))
+                    seed_penalty = 0.12 * ((center_x - seed_x) ** 2 + (center_y - seed_y) ** 2)
+                    score = edge_strength - seed_penalty
+                    candidates.append((score, center_x, center_y, radius, edge_strength))
+        if not candidates:
+            raise ValueError(f"RGB{frame_index} sphere boundary search is empty")
+        candidates.sort(reverse=True)
+        score, center_x, center_y, radius, edge_strength = candidates[0]
+        circle_mask = (grid_x - center_x) ** 2 + (grid_y - center_y) ** 2 <= radius * radius
+        overlap = float(np.sum(circle_mask & sam_mask) / max(int(circle_mask.sum()), 1))
+        if overlap < 0.65:
+            raise ValueError(f"RGB{frame_index} fitted circle/SAM2 overlap is only {overlap:.3f}")
+        circles.append([center_x, center_y, radius])
+        masks.append(circle_mask)
+        frame_reports.append(
+            {
+                "frame": frame_index,
+                "sam2_area_pixels": int(sam_mask.sum()),
+                "inscribed_seed_xyr": [float(seed_x), float(seed_y), seed_radius],
+                "circle_xyr": [float(center_x), float(center_y), float(radius)],
+                "circle_area_pixels": int(circle_mask.sum()),
+                "circle_inside_sam2_ratio": overlap,
+                "edge_score": float(score),
+                "edge_strength": edge_strength,
+                "runner_up_score": float(candidates[1][0]) if len(candidates) > 1 else None,
+                "radius_search_range_pixels": [radius_low, radius_high],
+            }
+        )
+    return np.asarray(circles, dtype=np.float64), np.asarray(masks, dtype=bool), {
+        "method": "SAM2_identity_plus_Lab_edge_sphere_fit_v1",
+        "known_shape": "sphere",
+        "frames": frame_reports,
+        "future_or_gt_used": False,
+    }
+
+
+def metric_centers_from_sphere_circles(
+    circles_xyr: np.ndarray,
+    intrinsic: np.ndarray,
+    world_to_camera: np.ndarray,
+    *,
+    radius_m: float = BALL_RADIUS_M,
+    horizontal_support_regularization: bool = True,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Recover metric centers from calibrated rays and a known sphere radius."""
+    circles = np.asarray(circles_xyr, dtype=np.float64)
+    intrinsic = np.asarray(intrinsic, dtype=np.float64)
+    world_to_camera = np.asarray(world_to_camera, dtype=np.float64)
+    if circles.shape != (OBSERVED_FRAMES, 3):
+        raise ValueError("sphere circles must have shape [8,3]")
+    if intrinsic.shape != (3, 3) or world_to_camera.shape != (3, 4):
+        raise ValueError("invalid camera calibration")
+    if not np.isfinite(circles).all() or np.any(circles[:, 2] <= 0) or radius_m <= 0:
+        raise ValueError("invalid circle values or sphere radius")
+    inverse_k = np.linalg.inv(intrinsic)
+    rotation = world_to_camera[:, :3]
+    translation = world_to_camera[:, 3]
+    camera_center_world = -rotation.T @ translation
+    focal = math.sqrt(float(intrinsic[0, 0] * intrinsic[1, 1]))
+    rays_camera = []
+    raw_centers_world = []
+    for center_x, center_y, radius_px in circles:
+        ray_camera = inverse_k @ np.asarray([center_x, center_y, 1.0], dtype=np.float64)
+        ray_camera /= ray_camera[2]
+        center_z = focal * float(radius_m) / float(radius_px)
+        center_camera = ray_camera * center_z
+        center_world = rotation.T @ (center_camera - translation)
+        rays_camera.append(ray_camera)
+        raw_centers_world.append(center_world)
+    raw_centers = np.asarray(raw_centers_world, dtype=np.float64)
+
+    if horizontal_support_regularization:
+        support_z = float(np.median(raw_centers[:, 2]))
+        regularized = []
+        for ray_camera in rays_camera:
+            ray_world = rotation.T @ ray_camera
+            if abs(float(ray_world[2])) < 1e-8:
+                raise ValueError("camera ray is parallel to estimated support plane")
+            distance = (support_z - camera_center_world[2]) / ray_world[2]
+            if distance <= 0:
+                raise ValueError("estimated support plane lies behind the camera")
+            regularized.append(camera_center_world + distance * ray_world)
+        centers = np.asarray(regularized, dtype=np.float64)
+        method = "known_sphere_silhouette_then_horizontal_support_plane_median_z"
+    else:
+        support_z = None
+        centers = raw_centers.copy()
+        method = "known_sphere_silhouette_per_frame"
+    return centers, {
+        "method": method,
+        "known_radius_m": float(radius_m),
+        "horizontal_support_regularization": bool(horizontal_support_regularization),
+        "estimated_support_center_z_m": support_z,
+        "raw_silhouette_centers_world_m": raw_centers.tolist(),
+        "regularized_centers_world_m": centers.tolist(),
+        "raw_center_z_median": float(np.median(raw_centers[:, 2])),
+        "raw_center_z_mad": float(np.median(np.abs(raw_centers[:, 2] - np.median(raw_centers[:, 2])))),
+        "future_or_gt_used": False,
+    }
+
+
 def estimate_metric_centers(
     depth: np.ndarray,
     masks: np.ndarray,

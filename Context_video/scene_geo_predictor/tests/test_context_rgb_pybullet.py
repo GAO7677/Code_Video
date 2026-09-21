@@ -5,7 +5,9 @@ import numpy as np
 
 from context_rgb_pybullet_common import (
     estimate_metric_centers,
+    metric_centers_from_sphere_circles,
     rgb_motion_circle_prompt,
+    regularize_sphere_masks,
     robust_terminal_velocity,
 )
 from fit_context_collision_primitives import (
@@ -72,6 +74,40 @@ class ContextRgbPybulletTests(unittest.TestCase):
         np.testing.assert_allclose(center, [67, 75], atol=3.0)
         self.assertGreaterEqual(report["candidate_count"], 1)
         self.assertFalse(report["gt_or_future_used"])
+
+    def test_sphere_regularization_removes_tracked_shadow(self):
+        frames = np.full((8, 128, 128, 3), 110, dtype=np.uint8)
+        sam_masks = np.zeros((8, 128, 128), dtype=bool)
+        for index in range(8):
+            center = (30 + 5 * index, 70)
+            cv2.circle(frames[index], center, 11, (190, 70, 55), -1)
+            cv2.ellipse(frames[index], (center[0] + 7, 82), (17, 5), 0, 0, 360, (55, 55, 55), -1)
+            cv2.circle(sam_masks[index].view(np.uint8), center, 12, 1, -1)
+            cv2.ellipse(sam_masks[index].view(np.uint8), (center[0] + 7, 82), (17, 5), 0, 0, 360, 1, -1)
+
+        circles, regularized, report = regularize_sphere_masks(frames, sam_masks)
+
+        np.testing.assert_allclose(circles[:, 0], 30 + 5 * np.arange(8), atol=2.0)
+        np.testing.assert_allclose(circles[:, 1], 70, atol=2.0)
+        np.testing.assert_allclose(circles[:, 2], 11, atol=2.0)
+        self.assertTrue(np.all(regularized.sum(axis=(1, 2)) < sam_masks.sum(axis=(1, 2))))
+        self.assertFalse(report["future_or_gt_used"])
+
+    def test_metric_circle_centers_use_horizontal_support_estimated_from_context(self):
+        intrinsic = np.array([[200.0, 0, 64.0], [0, 200.0, 64.0], [0, 0, 1.0]])
+        world_to_camera = np.column_stack((np.eye(3), np.zeros(3)))
+        x = np.linspace(-0.2, 0.3, 8)
+        z = 2.0
+        circles = np.column_stack((64 + 200 * x / z, np.full(8, 74.0), np.full(8, 11.0)))
+
+        centers, report = metric_centers_from_sphere_circles(
+            circles, intrinsic, world_to_camera, radius_m=0.11
+        )
+
+        np.testing.assert_allclose(centers[:, 0], x, atol=1e-8)
+        np.testing.assert_allclose(centers[:, 2], z, atol=1e-8)
+        self.assertTrue(report["horizontal_support_regularization"])
+        self.assertFalse(report["future_or_gt_used"])
 
     def test_deflector_primitive_from_colored_points(self):
         rng = np.random.default_rng(3)
