@@ -410,6 +410,11 @@ def quaternion_angle_deg(left: np.ndarray, right: np.ndarray) -> float:
     return float(np.degrees(2.0 * np.arccos(np.clip(abs(float(np.dot(left, right))), 0.0, 1.0))))
 
 
+def box_orientation_error_deg(left_yaw_deg: float, right_yaw_deg: float) -> float:
+    """Orientation error for a rectangular box, modulo its 180-degree symmetry."""
+    return abs(float((left_yaw_deg - right_yaw_deg + 90.0) % 180.0 - 90.0))
+
+
 def canonical_gt_primitives(blueprint) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     objects = {obj.name: obj for obj in blueprint.objects}
     family = blueprint.metadata["pilot_family"]
@@ -513,7 +518,10 @@ def geometry_errors(blueprint, estimated_payload: dict[str, Any]) -> dict[str, A
         half_est = np.asarray(row["size"]["half_extents_m"], dtype=np.float64)
         half_gt = np.asarray(gt["half_extents_m"], dtype=np.float64)
         size_error = float(np.linalg.norm(2.0 * (half_est - half_gt)))
-        orientation_error = quaternion_angle_deg(row["orientation_xyzw"], gt["orientation_xyzw"])
+        orientation_error = box_orientation_error_deg(
+            float(row.get("orientation_yaw_deg", 0.0)),
+            float(2.0 * math.degrees(math.atan2(gt["orientation_xyzw"][2], gt["orientation_xyzw"][3]))),
+        )
         rows.append({
             "name": gt["name"],
             "center_error_m": center_error,
