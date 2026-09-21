@@ -59,17 +59,40 @@ def box_primitive(
     }
 
 
-def fit_ground(points: np.ndarray, estimated_p7: np.ndarray) -> tuple[dict[str, Any], dict[str, Any]]:
+def fit_ground(
+    points: np.ndarray,
+    estimated_p7: np.ndarray,
+    *,
+    observed_ball_support: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     z = points[:, 2]
     candidates = z[(z > -0.8) & (z < min(float(estimated_p7[2]) + 0.08, 0.7))]
-    ground_z, mode_report = histogram_mode(candidates, 0.015)
+    depth_ground_z, mode_report = histogram_mode(candidates, 0.015)
+    ground_z = (
+        float(estimated_p7[2] - BALL_RADIUS_M)
+        if observed_ball_support
+        else depth_ground_z
+    )
+    source = (
+        "RGB7_observed_sphere_ground_contact_known_radius"
+        if observed_ball_support
+        else "dominant_low_horizontal_depth_mode"
+    )
     primitive = box_primitive(
         "estimated_ground",
         [0.0, 0.0, ground_z - 0.05],
         [6.0, 6.0, 0.05],
-        source="dominant_low_horizontal_depth_mode",
+        source=source,
     )
-    return primitive, {"ground_top_z_m": ground_z, "mode": mode_report}
+    primitive["material"]["restitution"] = 0.02
+    primitive["material"]["source"] = "fixed_pilot_floor_protocol_not_visually_estimated"
+    return primitive, {
+        "ground_top_z_m": ground_z,
+        "raw_depth_ground_top_z_m": depth_ground_z,
+        "contact_alignment_delta_m": ground_z - depth_ground_z,
+        "observed_ball_support_constraint": observed_ball_support,
+        "mode": mode_report,
+    }
 
 
 def fit_deflector(points: np.ndarray, colors: np.ndarray) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -196,8 +219,8 @@ def fit_support_edge(
         & (x > float(estimated_p7[0]) - 1.0)
         & (x < float(estimated_p7[0]) + 4.0)
     )
-    top_z, top_mode = histogram_mode(z[plausible], 0.012)
-    top = plausible & (np.abs(z - top_z) < 0.035)
+    depth_top_z, top_mode = histogram_mode(z[plausible], 0.012)
+    top = plausible & (np.abs(z - depth_top_z) < 0.035)
     top_points = points[top]
     if len(top_points) < 250:
         raise ValueError(f"only {len(top_points)} platform-top points")
@@ -211,12 +234,20 @@ def fit_support_edge(
     footprint = (
         (x >= x_low) & (x <= x_high)
         & (y >= y_low) & (y <= y_high)
-        & (z > ground_z + 0.08) & (z <= top_z + 0.04)
+        & (z > ground_z + 0.08) & (z <= depth_top_z + 0.04)
     )
-    lower_surface = float(np.quantile(z[footprint], 0.10)) if int(footprint.sum()) >= 100 else top_z - 0.12
-    full_thickness_raw = top_z - lower_surface
+    lower_surface = (
+        float(np.quantile(z[footprint], 0.10))
+        if int(footprint.sum()) >= 100
+        else depth_top_z - 0.12
+    )
+    full_thickness_raw = depth_top_z - lower_surface
     full_thickness = float(np.clip(full_thickness_raw, 0.04, 0.30))
     half_z = 0.5 * full_thickness
+    # RGB0--RGB7 show the sphere continuously supported by the left platform.
+    # Enforce that observable contact using the known sphere radius.  The raw
+    # VGGT top mode still determines footprint/thickness and remains reported.
+    top_z = float(estimated_p7[2] - BALL_RADIUS_M)
     center_z = top_z - half_z
     half_y = max(0.05, 0.5 * float(y_high - y_low))
     left_half_x = 0.5 * float(gap["low"] - x_low)
@@ -228,17 +259,20 @@ def fit_support_edge(
             "estimated_left_platform",
             [0.5 * (x_low + gap["low"]), 0.5 * (y_low + y_high), center_z],
             [left_half_x, half_y, half_z],
-            source="elevated_horizontal_mode_left_of_depth_gap",
+            source="depth_top_footprint_left_of_gap_contact_aligned_to_sphere",
         ),
         box_primitive(
             "estimated_right_platform",
             [0.5 * (gap["high"] + x_high), 0.5 * (y_low + y_high), center_z],
             [right_half_x, half_y, half_z],
-            source="elevated_horizontal_mode_right_of_depth_gap",
+            source="depth_top_footprint_right_of_gap_contact_aligned_to_sphere",
         ),
     ]
     report = {
         "top_z_m": top_z,
+        "raw_depth_top_z_m": depth_top_z,
+        "contact_alignment_delta_m": top_z - depth_top_z,
+        "contact_alignment_prior": "RGB7 sphere is supported by left platform; top_z=estimated_p7_z-known_radius",
         "top_mode": top_mode,
         "top_point_count": int(len(top_points)),
         "x_outer_edges_m": [float(x_low), float(x_high)],
@@ -360,7 +394,11 @@ def fit_case(vision_output: Path, record: dict[str, Any], output: Path) -> dict[
         raise ValueError(f"invalid point/color arrays for {case_id}")
     if len(points) < 1000 or not np.isfinite(points).all():
         raise ValueError(f"invalid static cloud for {case_id}")
-    ground, ground_report = fit_ground(points, estimated_p7)
+    ground, ground_report = fit_ground(
+        points,
+        estimated_p7,
+        observed_ball_support=family in {"aperture", "deflector"},
+    )
     ground_z = float(ground_report["ground_top_z_m"])
     if family == "aperture":
         structures, family_report = fit_aperture(points, estimated_p7, ground_z)

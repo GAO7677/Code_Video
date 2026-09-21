@@ -476,6 +476,7 @@ def static_point_cloud(
     metric_scale: float,
     *,
     max_points: int = 80000,
+    confidence_quantile: float = 0.01,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
     """Fuse eight fixed-camera depth maps into a bounded static point sample."""
     import cv2
@@ -490,7 +491,11 @@ def static_point_cloud(
         raise ValueError("static fusion arrays must share [8,H,W]")
     if processed_rgb.shape != (*depth.shape, 3):
         raise ValueError("processed RGB must have shape [8,H,W,3]")
-    if dynamic_masks.dtype != np.bool_ or metric_scale <= 0:
+    if (
+        dynamic_masks.dtype != np.bool_
+        or metric_scale <= 0
+        or not 0.0 <= confidence_quantile < 1.0
+    ):
         raise ValueError("invalid dynamic masks or metric scale")
     height, width = depth.shape[1:]
     excluded = np.zeros((height, width), dtype=bool)
@@ -500,7 +505,10 @@ def static_point_cloud(
     median_depth = np.median(depth, axis=0) * float(metric_scale)
     median_confidence = np.median(confidence, axis=0)
     median_rgb = np.median(processed_rgb.astype(np.float32), axis=0).astype(np.uint8)
-    confidence_threshold = float(np.quantile(median_confidence[~excluded], 0.20))
+    # Thin finite surfaces can be less confident than the floor/background.
+    # Keep all but the bottom one percent and retain confidence per point so
+    # downstream family-specific fits can remain robust without erasing them.
+    confidence_threshold = float(np.quantile(median_confidence[~excluded], confidence_quantile))
     valid = (
         ~excluded
         & np.isfinite(median_depth)
@@ -525,8 +533,8 @@ def static_point_cloud(
             world_points[indices], colors[indices], point_confidence[indices]
         )
     report = {
-        "method": "median_8_frame_VGGT_depth_dynamic_mask_excluded",
-        "confidence_quantile": 0.20,
+        "method": "median_8_frame_VGGT_depth_dynamic_mask_excluded_low_tail_only",
+        "confidence_quantile": float(confidence_quantile),
         "confidence_threshold": confidence_threshold,
         "excluded_dynamic_pixels": int(excluded.sum()),
         "valid_static_pixels": int(valid.sum()),

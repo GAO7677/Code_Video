@@ -9,10 +9,12 @@ from context_rgb_pybullet_common import (
     rgb_motion_circle_prompt,
     regularize_sphere_masks,
     robust_terminal_velocity,
+    static_point_cloud,
 )
 from fit_context_collision_primitives import (
     fit_aperture,
     fit_deflector,
+    fit_ground,
     fit_support_edge,
 )
 
@@ -151,6 +153,45 @@ class ContextRgbPybulletTests(unittest.TestCase):
         self.assertEqual(len(primitives), 2)
         self.assertAlmostEqual(report["gap_width_m"], 0.16, delta=0.05)
         self.assertAlmostEqual(report["top_z_m"], 0.48, delta=0.02)
+        self.assertAlmostEqual(report["raw_depth_top_z_m"], 0.48, delta=0.02)
+
+    def test_static_cloud_keeps_low_confidence_finite_surface(self):
+        frame_count, height, width = 8, 20, 30
+        depth = np.full((frame_count, height, width), 2.0, dtype=np.float64)
+        confidence = np.full_like(depth, 20.0)
+        confidence[:, 6:14, 10:20] = 10.0
+        confidence[:, :1, :] = 1.0
+        rgb = np.full((frame_count, height, width, 3), 128, dtype=np.uint8)
+        masks = np.zeros((frame_count, height, width), dtype=bool)
+        intrinsic = np.array([[20.0, 0, 14.5], [0, 20.0, 9.5], [0, 0, 1.0]])
+        world_to_camera = np.column_stack((np.eye(3), np.zeros(3)))
+
+        points, _, point_confidence, report = static_point_cloud(
+            depth, confidence, rgb, masks, intrinsic, world_to_camera, 1.0,
+            max_points=1000,
+        )
+
+        self.assertEqual(report["confidence_quantile"], 0.01)
+        self.assertGreater(len(points), 500)
+        self.assertTrue(np.any(point_confidence == 10.0))
+
+    def test_ground_uses_observed_sphere_contact_without_gt(self):
+        rng = np.random.default_rng(9)
+        points = np.column_stack((
+            rng.uniform(-2, 2, 2000),
+            rng.uniform(-2, 2, 2000),
+            rng.normal(0.18, 0.005, 2000),
+        ))
+        estimated_p7 = np.array([-0.8, 0.1, 0.15])
+
+        primitive, report = fit_ground(
+            points, estimated_p7, observed_ball_support=True
+        )
+
+        self.assertAlmostEqual(report["ground_top_z_m"], 0.04, places=8)
+        self.assertAlmostEqual(report["raw_depth_ground_top_z_m"], 0.18, delta=0.02)
+        self.assertAlmostEqual(primitive["position_m"][2], -0.01, places=8)
+        self.assertTrue(report["observed_ball_support_constraint"])
 
     def test_aperture_primitives_from_front_plane(self):
         rng = np.random.default_rng(5)

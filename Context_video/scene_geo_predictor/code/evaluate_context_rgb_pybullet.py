@@ -27,6 +27,7 @@ from pybullet_context_rollout import _collision_shape_for_client
 PROJECT = Path(__file__).resolve().parent
 DEFAULT_DATA = Path("/data/gaoya/agent-data/outputs/physvideo_next_experiment_20260921_phase1_v5")
 STEPS_PER_OUTPUT = SIM_HZ // FPS
+MAX_VALID_INITIAL_PENETRATION_M = 0.001
 OMEGA_POLICIES = ("gt_observed", "zero", "pure_rolling_hypothesis")
 COMBINATIONS = {
     "A_gt_state_gt_geometry": ("gt", "gt"),
@@ -225,8 +226,20 @@ def event_summary(
         for sample in contact_samples for row in sample
     })
     first_by_semantic: dict[str, float] = {}
-    max_penetration = 0.0
-    max_non_ground_penetration = 0.0
+    initial_penetration = max(
+        [max(0.0, -float(row["distance_m"])) for row in initial_contacts],
+        default=0.0,
+    )
+    initial_non_ground_penetration = max(
+        [
+            max(0.0, -float(row["distance_m"]))
+            for row in initial_contacts
+            if semantic_body(row["body"], family) != "ground"
+        ],
+        default=0.0,
+    )
+    max_penetration = initial_penetration
+    max_non_ground_penetration = initial_non_ground_penetration
     for api_index, sample in enumerate(contact_samples, start=1):
         for row in sample:
             semantic = semantic_body(row["body"], family)
@@ -251,7 +264,10 @@ def event_summary(
         if support_loss_time is not None:
             candidates.append(support_loss_time)
         interaction_time = min(candidates, default=None)
-        if "right_platform" in all_semantics:
+        if "left_platform" not in initial_semantics:
+            outcome = "missing_initial_left_support_contact"
+            interaction_time = 0.0
+        elif "right_platform" in all_semantics:
             outcome = "right_platform_contact"
         elif "ground" in all_semantics and "ground" not in initial_semantics:
             outcome = "fell_to_ground"
@@ -274,6 +290,8 @@ def event_summary(
         "first_support_loss_time_after_rgb7_s": support_loss_time,
         "max_penetration_m": max_penetration,
         "max_non_ground_penetration_m": max_non_ground_penetration,
+        "initial_penetration_m": initial_penetration,
+        "initial_non_ground_penetration_m": initial_non_ground_penetration,
         "contact_log_resolution_s": 1.0 / SIM_HZ,
         "hidden_engine_substeps_observed": False,
     }
@@ -570,6 +588,12 @@ def geometry_errors(blueprint, estimated_payload: dict[str, Any]) -> dict[str, A
 def trajectory_metrics(predicted: dict[str, Any], target_position: np.ndarray, target_velocity: np.ndarray) -> dict[str, Any]:
     position_error = np.linalg.norm(predicted["positions"] - target_position, axis=1)
     velocity_error = np.linalg.norm(predicted["linear_velocities"] - target_velocity, axis=1)
+    max_initial_penetration = float(predicted["event"]["initial_penetration_m"])
+    validity = (
+        "PASS"
+        if max_initial_penetration <= MAX_VALID_INITIAL_PENETRATION_M
+        else "INVALID_INITIAL_OVERLAP"
+    )
     return {
         "ADE_m": float(np.mean(position_error)),
         "FDE_m": float(position_error[-1]),
@@ -578,6 +602,9 @@ def trajectory_metrics(predicted: dict[str, Any], target_position: np.ndarray, t
         "velocity_error_by_future_frame_mps": velocity_error.tolist(),
         "mean_velocity_error_mps": float(np.mean(velocity_error)),
         "event": predicted["event"],
+        "trajectory_metric_status": validity,
+        "initial_penetration_validity_threshold_m": MAX_VALID_INITIAL_PENETRATION_M,
+        "included_in_valid_aggregate": validity == "PASS",
         "api_step_calls": predicted["api_step_calls"],
         "wall_seconds": predicted["elapsed_seconds"],
     }
@@ -725,11 +752,16 @@ def aggregate(cases: list[dict[str, Any]]) -> dict[str, Any]:
     modes = {}
     for mode_name in mode_names:
         rows = [case["modes"][mode_name] for case in cases]
+        valid_rows = [row for row in rows if row["included_in_valid_aggregate"]]
         modes[mode_name] = {
-            "ADE_mean_m": float(np.mean([row["ADE_m"] for row in rows])),
-            "ADE_median_m": float(np.median([row["ADE_m"] for row in rows])),
-            "FDE_mean_m": float(np.mean([row["FDE_m"] for row in rows])),
-            "max_error_mean_m": float(np.mean([row["max_error_m"] for row in rows])),
+            "valid_case_count": len(valid_rows),
+            "invalid_initial_overlap_case_count": len(rows) - len(valid_rows),
+            "ADE_mean_m": float(np.mean([row["ADE_m"] for row in valid_rows])) if valid_rows else None,
+            "ADE_median_m": float(np.median([row["ADE_m"] for row in valid_rows])) if valid_rows else None,
+            "FDE_mean_m": float(np.mean([row["FDE_m"] for row in valid_rows])) if valid_rows else None,
+            "max_error_mean_m": float(np.mean([row["max_error_m"] for row in valid_rows])) if valid_rows else None,
+            "raw_ADE_mean_including_invalid_m": float(np.mean([row["ADE_m"] for row in rows])),
+            "raw_FDE_mean_including_invalid_m": float(np.mean([row["FDE_m"] for row in rows])),
             "contact_outcome_accuracy_vs_oracle": float(np.mean([row["contact_outcome_match_oracle"] for row in rows])),
         }
     state = {
@@ -750,15 +782,25 @@ def aggregate(cases: list[dict[str, Any]]) -> dict[str, Any]:
     by_family = {}
     for family in ("aperture", "deflector", "support_edge"):
         subset = [case for case in cases if case["family"] == family]
+        def mode_summary(name: str) -> dict[str, Any]:
+            rows = [row["modes"][name] for row in subset]
+            valid = [row for row in rows if row["included_in_valid_aggregate"]]
+            return {
+                "valid_case_count": len(valid),
+                "invalid_initial_overlap_case_count": len(rows) - len(valid),
+                "ADE_mean_valid_m": float(np.mean([row["ADE_m"] for row in valid])) if valid else None,
+                "ADE_mean_raw_m": float(np.mean([row["ADE_m"] for row in rows])),
+                "FDE_mean_valid_m": float(np.mean([row["FDE_m"] for row in valid])) if valid else None,
+            }
         by_family[family] = {
             "case_count": len(subset),
             "state_position_error_mean_m": float(np.mean([row["state_evaluation"]["position_error_m"] for row in subset])),
             "state_velocity_error_mean_mps": float(np.mean([row["state_evaluation"]["vector_error_mps"] for row in subset])),
             "geometry_center_error_mean_m": float(np.mean([row["geometry_evaluation"]["mean_center_error_m"] for row in subset])),
-            "A_ADE_mean_m": float(np.mean([row["modes"]["A_gt_state_gt_geometry__omega_gt_observed"]["ADE_m"] for row in subset])),
-            "B_ADE_mean_m": float(np.mean([row["modes"]["B_estimated_state_gt_geometry__omega_gt_observed"]["ADE_m"] for row in subset])),
-            "C_ADE_mean_m": float(np.mean([row["modes"]["C_gt_state_estimated_geometry__omega_gt_observed"]["ADE_m"] for row in subset])),
-            "D_ADE_mean_m": float(np.mean([row["modes"]["D_estimated_state_estimated_geometry__omega_gt_observed"]["ADE_m"] for row in subset])),
+            "A": mode_summary("A_gt_state_gt_geometry__omega_gt_observed"),
+            "B": mode_summary("B_estimated_state_gt_geometry__omega_gt_observed"),
+            "C": mode_summary("C_gt_state_estimated_geometry__omega_gt_observed"),
+            "D": mode_summary("D_estimated_state_estimated_geometry__omega_gt_observed"),
         }
     return {"state": state, "geometry": geometry, "modes": modes, "by_family": by_family}
 
@@ -807,6 +849,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "engine_internal_substeps_not_exposed_in_contact_log": True,
             "gt_q7_policy": "used in all modes because the dynamic body is a rotationally symmetric sphere",
             "pure_rolling_is_grounded_hypothesis_not_truth": True,
+            "max_valid_initial_penetration_m": MAX_VALID_INITIAL_PENETRATION_M,
+            "invalid_rollouts_keep_raw_metrics_but_are_excluded_from_valid_aggregates": True,
             "cpu_only": True,
             "threads": 2,
         },
