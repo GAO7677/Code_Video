@@ -233,7 +233,9 @@ def trajectory_metrics(record: dict, prediction: np.ndarray, target: np.ndarray,
         near = float(np.mean(values["near"])) if values["near"] else None
         after = float(np.mean(values["after"])) if values["after"] else None
     row = {"key": record["key"], "family": record["family"], "split": record["split"],
-           "group_id": record["group_id"], "arm": arm, "eval_seed": eval_seed,
+           "group_id": record["group_id"], "history_index": record["history_index"],
+           "parent_history_id": f"parent_h{int(record['history_index']):02d}",
+           "arm": arm, "eval_seed": eval_seed,
            "ADE_m": float(np.mean(diff)), "FDE_m": float(diff[-1]),
            "ADE_over_radius": float(np.mean(diff) / BALL_RADIUS_M),
            "interval_velocity_MAE_mps": float(np.mean(np.abs(pred_v - true_v))),
@@ -244,7 +246,9 @@ def trajectory_metrics(record: dict, prediction: np.ndarray, target: np.ndarray,
            "error_before_event_m": before, "error_near_event_m": near,
            "error_after_event_m": after, **pen}
     event_row = {"key": record["key"], "family": record["family"], "split": record["split"],
-                 "group_id": record["group_id"], "arm": arm, "eval_seed": eval_seed,
+                 "group_id": record["group_id"], "history_index": record["history_index"],
+                 "parent_history_id": f"parent_h{int(record['history_index']):02d}",
+                 "arm": arm, "eval_seed": eval_seed,
                  "event_kind": gt_event["kind"], "gt_event_index": gt_index,
                  "pred_event_index": pred_index, "event_time_error_s": event_error,
                  "missing": bool(gt_index is not None and pred_index is None),
@@ -417,6 +421,7 @@ def gt_selftest(manifest: dict, records: list[dict], output: Path) -> None:
         pen, details = penetration_summary(record, target, obbs)
         event = event_for_trajectory(record, target, obbs)
         rows.append({"key": record["key"], "family": record["family"], "split": record["split"],
+                     "history_index": record["history_index"], "parent_history_id": f"parent_h{int(record['history_index']):02d}",
                      "ADE_m": 0.0, "FDE_m": 0.0, "interval_velocity_MAE_mps": 0.0,
                      "gt_mean_penetration_m": pen["mean_penetration_m"], "gt_max_penetration_m": pen["max_penetration_m"],
                      "gt_p95_penetration_m": pen["p95_penetration_m"], "gt_event_kind": event["kind"],
@@ -437,6 +442,7 @@ def gt_selftest(manifest: dict, records: list[dict], output: Path) -> None:
                           "response_layer": response_label(pair["response_layer"]), "D_gt_m": pair["D_gt_m"], "D_pred_gt_m": delta,
                           "E_delta_m": abs(delta - float(pair["D_gt_m"])),
                           "R_delta": None if float(pair["D_gt_m"]) <= 1e-6 else delta / float(pair["D_gt_m"]),
+                          "R_error": None if float(pair["D_gt_m"]) <= 1e-6 else abs(delta - float(pair["D_gt_m"])) / float(pair["D_gt_m"]),
                           "equal_future_absolute_prediction_delta_m": delta if float(pair["D_gt_m"]) <= 1e-6 else None})
     write_csv(output / "gt_pair_selftest.csv", pair_rows)
     write_json(output / "evaluator_selftest.json", {"status": "EXECUTED", "finite_geometry": finite_geometry_selftest(),
@@ -447,12 +453,14 @@ def gt_selftest(manifest: dict, records: list[dict], output: Path) -> None:
                                                      "gt_penetration_policy": "report solver geometry proxy; do not force GT to zero"})
 
 
-def analytic_report(records: list[dict], output: Path) -> None:
+def analytic_report(records: list[dict], output: Path, manifest: dict | None = None) -> None:
     rows = []
+    predictions = {}
     for record in records:
         if record["split"] not in EVAL_SPLITS:
             continue
         prediction = analytic_prediction(record)
+        predictions[record["key"]] = prediction
         target = record["target"].astype(np.float32)
         diff = np.linalg.norm(prediction - target, axis=-1)
         vel_error = np.mean(np.abs(velocity_from_positions(prediction, record["positions"][7]) - velocity_from_positions(target, record["positions"][7])))
@@ -460,6 +468,27 @@ def analytic_report(records: list[dict], output: Path) -> None:
                      "ADE_m": float(diff.mean()), "FDE_m": float(diff[-1]), "ADE_over_radius": float(diff.mean() / BALL_RADIUS_M),
                      "interval_velocity_MAE_mps": float(vel_error)})
     write_csv(output / "analytic_cv_train_dev.csv", rows)
+    if manifest is not None:
+        pair_rows = []
+        by_group = {}
+        for record in records:
+            if record["split"] in EVAL_SPLITS:
+                by_group.setdefault(record["group_id"], []).append(record)
+        for pair in manifest["pair_rows"]:
+            if pair["split"] not in EVAL_SPLITS:
+                continue
+            group = by_group[pair["group_id"]]
+            left = next(row for row in group if float(row["geometry_value"]) == float(pair["geometry_a"]))
+            right = next(row for row in group if float(row["geometry_value"]) == float(pair["geometry_b"]))
+            delta = float(np.linalg.norm(predictions[left["key"]] - predictions[right["key"]], axis=-1).mean())
+            dgt = float(pair["D_gt_m"])
+            pair_rows.append({"family": pair["family"], "split": pair["split"], "group_id": pair["group_id"],
+                              "response_layer": response_label(pair["response_layer"]), "D_gt_m": dgt,
+                              "D_pred_m": delta, "E_delta_m": abs(delta - dgt),
+                              "R_delta": None if dgt <= 1e-6 else delta / dgt,
+                              "R_error": None if dgt <= 1e-6 else abs(delta - dgt) / dgt,
+                              "equal_future_absolute_prediction_delta_m": delta if dgt <= 1e-6 else None})
+        write_csv(output / "analytic_cv_pairs.csv", pair_rows)
 
 
 def load_checkpoint_model(training_root: Path, arm: str, epoch: int, mean: torch.Tensor, std: torch.Tensor):
@@ -489,7 +518,10 @@ def aggregate_family(rows: list[dict], pair_rows: list[dict], event_rows: list[d
         result.append({"arm": arm, "family": family, "split": split, "eval_seed": seed, "episodes": len(subset), "pairs": len(pairs),
                        "ADE_m": avg(subset, "ADE_m"), "FDE_m": avg(subset, "FDE_m"), "ADE_over_radius": avg(subset, "ADE_over_radius"),
                        "interval_velocity_MAE_mps": avg(subset, "interval_velocity_MAE_mps"),
-                       "strong_R_delta": avg(strong, "R_delta"), "strong_R_pass_rate": float(np.mean([float(x["R_delta"]) <= 0.25 for x in strong])) if strong else None,
+                       "strong_R_delta": avg(strong, "R_delta"),
+                       "strong_R_error": avg(strong, "R_error"),
+                       "strong_R_delta_le_0p25_rate": float(np.mean([float(x["R_delta"]) <= 0.25 for x in strong])) if strong else None,
+                       "strong_response_error_le_0p25_rate": float(np.mean([float(x["R_error"]) <= 0.25 for x in strong])) if strong else None,
                        "weak_E_delta_m": avg(weak, "E_delta_m"), "equal_D_pred_m": avg(equal, "D_pred_m"),
                        "equal_absolute_delta_m": avg(equal, "D_pred_m"),
                        "mean_penetration_m": avg(subset, "mean_penetration_m"), "max_penetration_m": max((float(x["max_penetration_m"]) for x in subset), default=None),
@@ -518,9 +550,12 @@ def pair_evaluation(manifest: dict, records: list[dict], predictions: dict[tuple
                 delta = float(np.linalg.norm(predictions[(arm, seed, left["key"])] - predictions[(arm, seed, right["key"])], axis=-1).mean())
                 dgt = float(pair["D_gt_m"])
                 rows.append({"family": pair["family"], "split": pair["split"], "group_id": pair["group_id"], "arm": arm, "eval_seed": seed,
+                             "history_index": left["history_index"], "parent_history_id": f"parent_h{int(left['history_index']):02d}",
                              "geometry_a": pair["geometry_a"], "geometry_b": pair["geometry_b"], "response_layer": response_label(pair["response_layer"]),
                              "D_gt_m": dgt, "D_pred_m": delta, "E_delta_m": abs(delta - dgt),
                              "R_delta": None if dgt <= 1e-6 else delta / dgt,
+                             "R_error": None if dgt <= 1e-6 else abs(delta - dgt) / dgt,
+                             "response_recovery": None if dgt <= 1e-6 else delta / dgt,
                              "equal_future_absolute_prediction_delta_m": delta if dgt <= 1e-6 else None})
     write_csv(output / "per_pair_seed.csv", rows)
     return rows
@@ -562,7 +597,7 @@ def permutation_report(model, records: list[dict], mean: torch.Tensor, std: torc
     write_csv(output / "finite_surface_permutation.csv", rows)
 
 
-def checkpoint_curves(records: list[dict], mean: torch.Tensor, std: torch.Tensor, training_root: Path, output: Path) -> None:
+def checkpoint_curves(manifest: dict, records: list[dict], mean: torch.Tensor, std: torch.Tensor, training_root: Path, output: Path) -> None:
     rows = []
     for epoch in (50, 100, 200):
         for arm in ARMS:
@@ -580,20 +615,24 @@ def checkpoint_curves(records: list[dict], mean: torch.Tensor, std: torch.Tensor
             for split in EVAL_SPLITS:
                 for family in CONTROL_FAMILIES:
                     subset = [(r, d) for r, d in episode_rows if r["split"] == split and r["family"] == family]
-                    pair_subset = [p for p in records if p["split"] == split and p["family"] == family]
-                    pair_deltas = []
-                    for group_id in sorted({r["group_id"] for r in pair_subset}):
-                        variants = sorted([r for r in pair_subset if r["group_id"] == group_id], key=lambda r: r["geometry_value"])
-                        if len(variants) != 3:
+                    pair_subset = [r for r in records if r["split"] == split and r["family"] == family]
+                    pair_deltas, response_errors = [], []
+                    for pair in manifest["pair_rows"]:
+                        if pair["family"] != family or pair["split"] != split:
                             continue
-                        dgt = float(np.linalg.norm(variants[0]["target"] - variants[2]["target"], axis=-1).mean())
-                        dpred = float(np.linalg.norm(predictions[variants[0]["key"]] - predictions[variants[2]["key"]], axis=-1).mean())
-                        if dgt > 1e-6:
+                        variants = [r for r in pair_subset if r["group_id"] == pair["group_id"]]
+                        left = next(r for r in variants if float(r["geometry_value"]) == float(pair["geometry_a"]))
+                        right = next(r for r in variants if float(r["geometry_value"]) == float(pair["geometry_b"]))
+                        dgt = float(pair["D_gt_m"])
+                        dpred = float(np.linalg.norm(predictions[left["key"]] - predictions[right["key"]], axis=-1).mean())
+                        if dgt > 1e-6 and response_label(pair["response_layer"]) == "strong":
                             pair_deltas.append(dpred / dgt)
+                            response_errors.append(abs(dpred - dgt) / dgt)
                     rows.append({"epoch": epoch, "arm": arm, "split": split, "family": family, "episodes": len(subset),
                                  "ADE_m": float(np.mean([d.mean() for _, d in subset])),
                                  "FDE_m": float(np.mean([d[-1] for _, d in subset])),
-                                 "strong_R_delta": float(np.mean(pair_deltas)) if pair_deltas else None})
+                                 "strong_R_delta": float(np.mean(pair_deltas)) if pair_deltas else None,
+                                 "strong_R_error": float(np.mean(response_errors)) if response_errors else None})
     write_csv(output / "checkpoint_curves.csv", rows)
 
 
@@ -622,6 +661,9 @@ def predictions(manifest: dict, records: list[dict], training_root: Path, output
                 prediction_map[(arm, seed, record["key"])] = prediction
                 metric, penetration_rows, event_row = trajectory_metrics(record, prediction, record["target"].astype(np.float32), mean, std, arm, seed, build_obbs(record))
                 all_rows.append(metric)
+                for penetration_row in penetration_rows:
+                    penetration_row["arm"] = arm
+                    penetration_row["eval_seed"] = seed
                 all_penetration_rows.extend(penetration_rows)
                 all_event_rows.append(event_row)
     write_csv(output / "per_episode_seed.csv", all_rows)
@@ -631,7 +673,7 @@ def predictions(manifest: dict, records: list[dict], training_root: Path, output
     aggregate_family(all_rows, pairs, all_event_rows, output)
     sampling_report([row for row in records if row["split"] in EVAL_SPLITS], prediction_map, output)
     permutation_report(models["finite_surface_geometry"], [row for row in records if row["split"] in EVAL_SPLITS], mean, std, output)
-    checkpoint_curves(records, mean, std, training_root, output)
+    checkpoint_curves(manifest, records, mean, std, training_root, output)
     write_json(output / "evaluation_status.json", {"status": "EXECUTED", "checkpoint_epoch": 200, "seed": 42,
                                                    "arms": list(ARMS), "checkpoint_sha256": checkpoint_hashes,
                                                    "train_records": sum(row["split"] == "train" for row in records),
@@ -660,7 +702,7 @@ def main() -> None:
     if args.mode == "admission":
         admission(manifest, records, args.data_root, args.controls_json, args.output)
         gt_selftest(manifest, records, args.output)
-        analytic_report(records, args.output)
+        analytic_report(records, args.output, manifest)
         command = ("CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 "
                    f"/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B {Path(__file__).resolve()} "
                    f"--mode admission --data-root {args.data_root.resolve()} --controls-json {args.controls_json.resolve()} --output {args.output.resolve()}\n")
