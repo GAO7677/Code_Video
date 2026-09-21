@@ -57,8 +57,8 @@ def rss_bytes() -> int:
 
 def load_records(data_root: Path):
     manifest = json.loads((data_root / "pilot_manifest.json").read_text())
-    if manifest.get("status") != "EXECUTED" or manifest.get("episodes_total") != 36:
-        raise ValueError("profile requires an EXECUTED 36-episode pilot manifest")
+    if manifest.get("status") != "EXECUTED" or int(manifest.get("episodes_total", 0)) < 36:
+        raise ValueError("profile/training requires an EXECUTED manifest with at least the 36-episode pilot")
     records = []
     for item in manifest["records"]:
         sample = Path(item["sample_dir"])
@@ -159,14 +159,14 @@ def analytic_cv(batch):
     return batch["last_position"][:, :, None] + batch["last_velocity"][:, :, None] * batch["future_dt"][:, None, :, None]
 
 
-def make_models(mean: torch.Tensor, std: torch.Tensor):
-    base = Predictor(mean, std, scene_mode="geometry_only", seed=SEED)
+def make_models(mean: torch.Tensor, std: torch.Tensor, seed: int = SEED):
+    base = Predictor(mean, std, scene_mode="geometry_only", seed=seed)
     base_state = base.state_dict()
-    motion_only = Predictor(mean, std, scene_mode="motion_only", seed=SEED)
-    point = Predictor(mean, std, scene_mode="geometry_only", seed=SEED)
+    motion_only = Predictor(mean, std, scene_mode="motion_only", seed=seed)
+    point = Predictor(mean, std, scene_mode="geometry_only", seed=seed)
     motion_only.load_state_dict(base_state)
     point.load_state_dict(base_state)
-    finite = FiniteSurfacePredictor(mean, std, seed=SEED)
+    finite = FiniteSurfacePredictor(mean, std, seed=seed)
     for name in ("motion_encoder", "time_encoder", "position"):
         getattr(finite, name).load_state_dict(getattr(base, name).state_dict())
     shared = {name: tensor.detach().cpu() for name, tensor in base_state.items()

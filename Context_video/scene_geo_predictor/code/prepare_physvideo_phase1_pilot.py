@@ -21,8 +21,8 @@ import numpy as np
 PROJECT = Path(__file__).resolve().parent
 ENGINE_ROOT = Path("/home/gaoya/Code_Video/Dataset_physv_v2v_0819")
 AUDIT_ROOT = Path("/data/gaoya/agent-data/outputs/a3_training_redesign_20260908/original_pipeline_audit_20260917")
-DEFAULT_OUTPUT = Path("/data/gaoya/agent-data/outputs/physvideo_next_experiment_20260921_phase1_v4")
-PROTOCOL_VERSION = "physvideo_next_experiment_protocol_20260921_phase1_v4"
+DEFAULT_OUTPUT = Path("/data/gaoya/agent-data/outputs/physvideo_next_experiment_20260921_phase1_v5")
+PROTOCOL_VERSION = "physvideo_next_experiment_protocol_20260921_phase1_v5"
 FPS = 30
 SIM_HZ = 240
 FRAME_COUNT = 49
@@ -75,9 +75,9 @@ HISTORY_CONTROLS = (
 FAMILY_HISTORY_CONTROLS = {
     "aperture": HISTORY_CONTROLS,
     "deflector": (
-        {"speed_mps": 2.20, "heading_deg": -3.0, "offset_y_m": 0.08, "start_x_m": -1.55},
-        {"speed_mps": 2.50, "heading_deg": 2.0, "offset_y_m": 0.14, "start_x_m": -1.55},
-        {"speed_mps": 2.80, "heading_deg": -2.0, "offset_y_m": -0.10, "start_x_m": -1.55},
+        {"speed_mps": 1.45, "heading_deg": -3.0, "offset_y_m": 0.08, "start_x_m": -1.55},
+        {"speed_mps": 1.70, "heading_deg": 2.0, "offset_y_m": 0.14, "start_x_m": -1.55},
+        {"speed_mps": 1.95, "heading_deg": -2.0, "offset_y_m": -0.10, "start_x_m": -1.55},
         {"speed_mps": 3.10, "heading_deg": 4.0, "offset_y_m": 0.18, "start_x_m": -1.55},
     ),
     "support_edge": (
@@ -364,7 +364,7 @@ def write_episode(output: Path, record, replay_audit, generator, point_seed: int
     target_hash = hashlib.sha256(target.tobytes()).hexdigest()
     metadata = {
         **record["case"].blueprint.metadata,
-        "sample_id": record["key"], "pair_group": record["group_id"], "split": "train_pilot",
+        "sample_id": record["key"], "pair_group": record["group_id"], "split": record.get("split", "train_pilot"),
         "family": record["family"], "geometry_value": record["geometry_value"],
         "simulation": {"fps": FPS, "sim_hz": SIM_HZ, "frame_count": FRAME_COUNT,
                         "pre_roll_s": float(record["case"].blueprint.pre_roll_s)},
@@ -460,7 +460,7 @@ def pair_rows(records):
                     layer = "strong_response"
                 rows.append({
                     "family": left["family"], "group_id": group_id,
-                    "split": "train_pilot", "geometry_a": left["geometry_value"],
+                    "split": left.get("split", "train_pilot"), "geometry_a": left["geometry_value"],
                     "geometry_b": right["geometry_value"], "D_gt_m": d_gt,
                     "response_layer": layer, "history_equal": left["history_hash"] == right["history_hash"],
                     "motion_equal": left["motion_hash"] == right["motion_hash"],
@@ -471,6 +471,8 @@ def pair_rows(records):
 
 
 def full_data_config():
+    history_count = len(FAMILY_HISTORY_CONTROLS["aperture"])
+    pilot_role = "train_side_pilot_only" if history_count == 4 else "full_protocol_generation_plan"
     return {
         "schema": "physvideo_next_experiment_full_data_config_v1",
         "status": "IMPLEMENTED_NOT_RUN",
@@ -479,7 +481,7 @@ def full_data_config():
         "histories_per_family": {"train": 32, "dev": 8, "locked_test": 8},
         "episodes_per_history": 3,
         "episodes": {"train": 288, "dev": 72, "locked_test": 72, "total": 432},
-        "pilot": {"histories_per_family": 4, "episodes": 36, "role": "train_side_pilot_only"},
+        "pilot": {"histories_per_family": history_count, "episodes": history_count * 3 * 3, "role": pilot_role},
         "geometry_values": {name: list(cfg["values"]) for name, cfg in FAMILY_CONFIG.items()},
         "group_split": "history_group_frozen_before_replay; all variants stay together",
         "response_layers": {"equal_future": f"D_gt <= {EPS_GT_M} m",
@@ -523,9 +525,13 @@ def main():
             group_records = []
             for value_index, value in enumerate(FAMILY_CONFIG[family]["values"]):
                 case = make_case(generator, family, group_index, value, SIM_SEED_BASE + family_index * 100 + group_index)
+                split_name = (
+                    "train_pilot" if len(FAMILY_HISTORY_CONTROLS[family]) == 4
+                    else ("train" if group_index < 32 else "dev" if group_index < 40 else "locked_test")
+                )
                 record = {
                     "key": case.case_id, "family": family, "group_id": group_id,
-                    "history_index": group_index, "geometry_index": value_index,
+                    "split": split_name, "history_index": group_index, "geometry_index": value_index,
                     "geometry_value": float(value), "geometry_units": FAMILY_CONFIG[family]["units"],
                     "simulation_seed": SIM_SEED_BASE + family_index * 100 + group_index,
                     "case": case,
@@ -550,8 +556,9 @@ def main():
     for row in records:
         manifest_records.append({key: value for key, value in row.items() if key not in {"case", "observed_motion"}})
     manifest = {
-        "schema": "physvideo_phase1_pilot_manifest_v1", "status": "EXECUTED",
-        "protocol_version": PROTOCOL_VERSION, "role": "train_side_pilot_only",
+        "schema": ("physvideo_phase1_pilot_manifest_v1" if len(FAMILY_HISTORY_CONTROLS["aperture"]) == 4 else "physvideo_phase1_full432_manifest_v1"),
+        "status": "EXECUTED",
+        "protocol_version": PROTOCOL_VERSION, "role": ("train_side_pilot_only" if len(FAMILY_HISTORY_CONTROLS["aperture"]) == 4 else "full_protocol_generation"),
         "families": list(FAMILY_CONFIG), "groups_total": len(groups),
         "episodes_total": len(records), "episodes_per_group": VARIANTS_PER_GROUP,
         "records": manifest_records, "pair_rows": rows, "response_layer_counts": layer_counts,
