@@ -9,9 +9,12 @@ keeps group order matched across the three arms, and writes checkpoints at
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
 import math
 import os
+import resource
 import time
 from pathlib import Path
 
@@ -32,6 +35,16 @@ ARMS = ("motion_only", "point_geometry_resample", "finite_surface_geometry")
 CHECKPOINT_EPOCHS = (50, 100, 200)
 
 
+def sha_state(value) -> str:
+    buffer = io.BytesIO()
+    torch.save(value, buffer)
+    return hashlib.sha256(buffer.getvalue()).hexdigest()
+
+
+def rss_bytes() -> int:
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024)
+
+
 def write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
@@ -42,6 +55,10 @@ def train_arm(name, model, groups, mean, std, epochs, group_batch, seed, output)
     optimizer = torch.optim.AdamW(active, lr=3e-4, weight_decay=0.01)
     updates_per_epoch = math.ceil(len(groups) / group_batch)
     history = []
+    initial_hash = sha_state(model.state_dict())
+    timing = {"data_seconds": 0.0, "forward_seconds": 0.0,
+              "backward_seconds": 0.0, "optimizer_seconds": 0.0,
+              "updates": 0, "peak_rss_bytes": rss_bytes()}
     started = time.perf_counter()
     for epoch in range(1, epochs + 1):
         order = np.arange(len(groups), dtype=np.int64)
@@ -52,16 +69,28 @@ def train_arm(name, model, groups, mean, std, epochs, group_batch, seed, output)
                         for j in range(group_batch)]
             optimizer.zero_grad(set_to_none=True)
             losses = []
+            update_start = time.perf_counter()
             for group in selected:
                 point_seeds = [int(row["point_seed"]) + seed * 1000003 + epoch * 1009 + update for row in group]
+                data_start = time.perf_counter()
                 batch, target = make_batch(group, name, mean, std, seeds=point_seeds)
-                loss = objective(model(batch), target, batch) / len(selected)
+                timing["data_seconds"] += time.perf_counter() - data_start
+                forward_start = time.perf_counter()
+                prediction = model(batch)
+                timing["forward_seconds"] += time.perf_counter() - forward_start
+                backward_start = time.perf_counter()
+                loss = objective(prediction, target, batch) / len(selected)
                 if not torch.isfinite(loss):
                     raise FloatingPointError(f"non-finite {name} loss at epoch {epoch}, update {update}")
                 loss.backward()
+                timing["backward_seconds"] += time.perf_counter() - backward_start
                 losses.append(float(loss.detach()))
+                timing["peak_rss_bytes"] = max(timing["peak_rss_bytes"], rss_bytes())
+            optimizer_start = time.perf_counter()
             torch.nn.utils.clip_grad_norm_(active, 1.0)
             optimizer.step()
+            timing["optimizer_seconds"] += time.perf_counter() - optimizer_start
+            timing["updates"] += 1
             epoch_losses.extend(losses)
         history.append({"epoch": epoch, "mean_group_loss": float(np.mean(epoch_losses)),
                         "updates": updates_per_epoch})
@@ -70,6 +99,16 @@ def train_arm(name, model, groups, mean, std, epochs, group_batch, seed, output)
                         "state_dict": model.state_dict()}, output / f"{name}_seed{seed}_epoch{epoch}.pt")
     return {"status": "EXECUTED", "epochs": epochs, "updates_per_epoch": updates_per_epoch,
             "optimizer_steps": epochs * updates_per_epoch, "seconds": time.perf_counter() - started,
+            "effective_batch": group_batch * 3, "microbatch": 3,
+            "gradient_accumulation_groups": group_batch,
+            "gradient_accumulation_scale": 1.0 / group_batch,
+            "exposure_per_epoch": len(groups) * 3,
+            "total_episode_exposures": epochs * len(groups) * 3,
+            "peak_rss_bytes": timing["peak_rss_bytes"],
+            "timing_seconds": timing,
+            "initial_parameter_sha256": initial_hash,
+            "final_parameter_sha256": sha_state(model.state_dict()),
+            "checkpoint_epochs": list(CHECKPOINT_EPOCHS),
             "history": history}
 
 
