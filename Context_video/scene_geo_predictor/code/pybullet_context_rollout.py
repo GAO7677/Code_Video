@@ -74,6 +74,96 @@ def rolling_angular_velocity(linear_velocity: np.ndarray, radius: float) -> np.n
     return np.asarray([vy / radius, -vx / radius, 0.0], dtype=np.float32)
 
 
+def _collision_shape_for_client(p, obj, client_id: int) -> int:
+    """Create pilot primitive collision shapes on an explicit Bullet client.
+
+    The original legacy helper uses PyBullet's implicit default client.  The
+    pilot bridge can be called while another DIRECT client exists, so the
+    small pilot shape vocabulary is created explicitly on this rollout's
+    client instead of silently writing to client 0.
+    """
+    size = obj.size
+    shape = str(obj.shape)
+    if shape in {"sphere", "ellipsoid"}:
+        radius = float(size["radius"] if "radius" in size else max(size["rx"], size["ry"], size["rz"]))
+        return int(p.createCollisionShape(p.GEOM_SPHERE, radius=radius, physicsClientId=client_id))
+    if shape in {"box", "rounded_box", "wedge"}:
+        return int(
+            p.createCollisionShape(
+                p.GEOM_BOX,
+                halfExtents=[float(size["hx"]), float(size["hy"]), float(size["hz"])],
+                physicsClientId=client_id,
+            )
+        )
+    raise ValueError(f"explicit-client pilot shape adapter does not support {shape!r}")
+
+
+def _step_v2v_simulation_for_client(p, body_ids: dict[str, int], blueprint, client_id: int):
+    """Run the original pilot step semantics on an explicit client.
+
+    Pilot families take the ordinary ``stepSimulation`` branch.  The puck
+    correction is copied here for completeness because the legacy generator's
+    implementation predates explicit client IDs.
+    """
+    if blueprint.family_key != "SCENE_PUCK_BARRIER":
+        p.stepSimulation(physicsClientId=client_id)
+        return None
+
+    puck_id = body_ids.get("puck")
+    barrier_id = body_ids.get("puck_barrier")
+    if puck_id is None or barrier_id is None:
+        p.stepSimulation(physicsClientId=client_id)
+        return None
+
+    previous_velocity = np.asarray(
+        p.getBaseVelocity(puck_id, physicsClientId=client_id)[0], dtype=np.float64
+    )
+    p.stepSimulation(physicsClientId=client_id)
+    contacts = p.getContactPoints(puck_id, barrier_id, physicsClientId=client_id)
+    if not contacts:
+        return None
+    contact = max(
+        contacts,
+        key=lambda point: math.hypot(float(point[7][0]), float(point[7][1])),
+    )
+    normal = np.asarray(contact[7], dtype=np.float64)
+    normal[2] = 0.0
+    normal_length = float(np.linalg.norm(normal))
+    if normal_length <= 1e-8:
+        return None
+    normal /= normal_length
+    current_velocity = np.asarray(
+        p.getBaseVelocity(puck_id, physicsClientId=client_id)[0], dtype=np.float64
+    )
+    incoming_normal_speed = float(np.dot(previous_velocity, normal))
+    solved_normal_speed = float(np.dot(current_velocity, normal))
+    objects = {obj.name: obj for obj in blueprint.objects}
+    effective_restitution = min(
+        float(objects["puck"].restitution),
+        float(objects["puck_barrier"].restitution),
+    )
+    if incoming_normal_speed >= -0.08 or solved_normal_speed >= 0.08:
+        return None
+    desired_normal_speed = -effective_restitution * incoming_normal_speed
+    correction = desired_normal_speed - solved_normal_speed
+    current_velocity += correction * normal
+    angular_velocity = p.getBaseVelocity(puck_id, physicsClientId=client_id)[1]
+    p.resetBaseVelocity(
+        puck_id,
+        linearVelocity=current_velocity.tolist(),
+        angularVelocity=angular_velocity,
+        physicsClientId=client_id,
+    )
+    return {
+        "incoming_normal_speed_mps": round(incoming_normal_speed, 6),
+        "solver_normal_speed_mps": round(solved_normal_speed, 6),
+        "outgoing_normal_speed_mps": round(desired_normal_speed, 6),
+        "effective_restitution": round(effective_restitution, 6),
+        "normal_xy": [round(float(value), 6) for value in normal[:2]],
+        "corrected_velocity_xy_mps": [round(float(value), 6) for value in current_velocity[:2]],
+    }
+
+
 def rollout_from_rgb7(pilot, generator, case, record: dict, sample_dir: Path):
     """Initialize static geometry plus the RGB7 state, then simulate 41 frames."""
     import pybullet as p
@@ -99,24 +189,23 @@ def rollout_from_rgb7(pilot, generator, case, record: dict, sample_dir: Path):
 
     g = generator
     b = case.blueprint
-    scenario = g.blueprint_to_legacy_scenario(b, seed=int(record["simulation_seed"]))
-    legacy_objects = {o.name: o for o in scenario.objects}
     objects = [o for o in b.objects if not o.metadata.get("visual_only")]
     client = p.connect(p.DIRECT)
     if client < 0:
         raise RuntimeError("PyBullet DIRECT connection failed")
     try:
-        p.setAdditionalSearchPath(g.pybullet_data.getDataPath())
-        p.resetSimulation()
-        p.setGravity(0.0, 0.0, -g.EARTH_GRAVITY)
+        p.setAdditionalSearchPath(g.pybullet_data.getDataPath(), physicsClientId=client)
+        p.resetSimulation(physicsClientId=client)
+        p.setGravity(0.0, 0.0, -g.EARTH_GRAVITY, physicsClientId=client)
         p.setPhysicsEngineParameter(
             fixedTimeStep=1.0 / SIM_HZ,
             numSolverIterations=g.legacy.PHYSICS_SOLVER_ITERATIONS,
             numSubSteps=int(b.metadata.get("physics_sub_steps", SUBSTEPS)),
             contactERP=g.legacy.PHYSICS_CONTACT_ERP,
             erp=g.legacy.PHYSICS_CONTACT_ERP,
+            physicsClientId=client,
         )
-        plane = p.loadURDF("plane.urdf")
+        plane = p.loadURDF("plane.urdf", physicsClientId=client)
         surface = g.build_surface_catalog()[b.surface_key]
         floor_mu = float(np.clip(
             b.metadata.get("floor_friction", surface.floor_friction_range.midpoint()),
@@ -131,6 +220,7 @@ def rollout_from_rgb7(pilot, generator, case, record: dict, sample_dir: Path):
             lateralFriction=floor_mu,
             restitution=0.02,
             activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING,
+            physicsClientId=client,
         )
         ids: dict[str, int] = {}
         for obj in objects:
@@ -142,9 +232,10 @@ def rollout_from_rgb7(pilot, generator, case, record: dict, sample_dir: Path):
                 base_orientation = g.legacy._quat_from_euler_deg(list(obj.orientation_euler_deg))
             body = p.createMultiBody(
                 baseMass=float(obj.mass) if obj.dynamic else 0.0,
-                baseCollisionShapeIndex=g.legacy._collision_shape(legacy_objects[obj.name]),
+                baseCollisionShapeIndex=_collision_shape_for_client(p, obj, client),
                 basePosition=list(base_position),
                 baseOrientation=list(base_orientation),
+                physicsClientId=client,
             )
             kwargs = dict(
                 restitution=float(obj.restitution),
@@ -160,19 +251,26 @@ def rollout_from_rgb7(pilot, generator, case, record: dict, sample_dir: Path):
                     ccdSweptSphereRadius=float(obj.metadata["ccd_swept_sphere_radius_m"]),
                     contactProcessingThreshold=0.0,
                 )
+            kwargs["physicsClientId"] = client
             p.changeDynamics(body, -1, **kwargs)
             if obj.dynamic:
-                p.resetBaseVelocity(body, linearVelocity=list(v7), angularVelocity=list(omega7))
+                p.resetBaseVelocity(
+                    body,
+                    linearVelocity=list(v7),
+                    angularVelocity=list(omega7),
+                    physicsClientId=client,
+                )
             ids[obj.name] = body
         for descriptor in b.metadata.get("constraints", []):
-            g._make_constraint(dict(descriptor), ids)
+            raise ValueError("explicit-client pilot bridge does not support blueprint constraints")
         for left, right in b.metadata.get("disable_collision_pairs", []):
-            p.setCollisionFilterPair(ids[str(left)], ids[str(right)], -1, -1, 0)
+            p.setCollisionFilterPair(ids[str(left)], ids[str(right)], -1, -1, 0, physicsClientId=client)
 
         dynamic_body = ids["pilot_ball"]
-        p.performCollisionDetection()
+        p.performCollisionDetection(physicsClientId=client)
         initial_nonfloor_contacts = [
-            int(point[2]) for point in p.getContactPoints(bodyA=dynamic_body)
+            int(point[2])
+            for point in p.getContactPoints(bodyA=dynamic_body, physicsClientId=client)
             if int(point[2]) != int(plane)
         ]
         rollout_positions, rollout_velocities, contact_frames = [], [], []
@@ -183,14 +281,14 @@ def rollout_from_rgb7(pilot, generator, case, record: dict, sample_dir: Path):
         corrections = 0
         for frame in range(FRAME_COUNT):
             for _ in range(SUBSTEPS):
-                corrections += bool(g._step_v2v_simulation(ids, b) is not None)
-            state = p.getBasePositionAndOrientation(dynamic_body)
-            velocity = p.getBaseVelocity(dynamic_body)
+                corrections += bool(_step_v2v_simulation_for_client(p, ids, b, client) is not None)
+            state = p.getBasePositionAndOrientation(dynamic_body, physicsClientId=client)
+            velocity = p.getBaseVelocity(dynamic_body, physicsClientId=client)
             rollout_positions.append(state[0])
             rollout_velocities.append(velocity[0])
             nonfloor = [
                 contact_body_names.get(int(point[2]), str(int(point[2])))
-                for point in p.getContactPoints(bodyA=dynamic_body)
+                for point in p.getContactPoints(bodyA=dynamic_body, physicsClientId=client)
                 if int(point[2]) != int(plane)
             ]
             contact_frames.append(nonfloor)
