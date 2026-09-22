@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Context → PyBullet Trace Viewer</title>
-  <link rel="stylesheet" href="styles.css?v=layer-reference-1">
+  <link rel="stylesheet" href="styles.css?v=contact-gate-1">
 </head>
 <body>
   <header class="topbar">
@@ -23,7 +23,9 @@
     <nav class="artifact-links" aria-label="交付文件">
       <a href="../delivery_v2/context_rgb_to_pybullet_report.md" target="_blank">报告</a>
       <a href="../delivery_v2/per_case_all_modes.csv" target="_blank">432 行明细</a>
-      <a href="../delivery_v2/failure_gallery.html" target="_blank">失败图集</a>
+      <a href="../delivery_v2/failure_gallery.html" target="_blank">旧版失败图集</a>
+      <a href="../overlay_viewer_v1/" target="_blank">旧版原始轨迹</a>
+      <a href="../contact_alignment_v1/report.json" target="_blank">接触修复审计</a>
     </nav>
   </header>
 
@@ -113,14 +115,14 @@
           <tbody>
             <tr><th scope="row"><i class="swatch swatch-a"></i>A · Oracle</th><td>GT 状态 + GT 几何</td><td>理想输入下的 PyBullet 参考轨迹</td></tr>
             <tr><th scope="row"><i class="swatch swatch-b"></i>B · State error</th><td>估计 p7/v7 + GT 几何</td><td>位置、速度估计误差对轨迹的影响</td></tr>
-            <tr><th scope="row"><i class="swatch swatch-c"></i>C · Geometry error</th><td>GT 状态 + 估计几何</td><td>碰撞几何估计误差对轨迹的影响</td></tr>
+            <tr><th scope="row"><i class="swatch swatch-c"></i>C · Geometry / aligned</th><td>GT 状态 + 估计几何；穿插时显式对齐支撑面</td><td>几何诊断；aligned 已改变 p7，不能混入严格 C 指标</td></tr>
             <tr><th scope="row"><i class="swatch swatch-d"></i>D · End-to-end</th><td>估计 p7/v7 + 估计几何</td><td>两类估计误差共同作用后的轨迹</td></tr>
             <tr><th scope="row"><i class="swatch swatch-est"></i>Estimated geometry</th><td>从 context 估计的碰撞盒线框</td><td>估计障碍物的位置、尺寸、朝向</td></tr>
             <tr><th scope="row"><i class="swatch swatch-gt"></i>GT geometry · eval only</th><td>真值碰撞几何线框</td><td>与紫色线框对比；仅供评测展示</td></tr>
           </tbody>
         </table>
         <p><strong>怎么看：</strong>A + D 看整体差距；A + B 看状态影响；A + C 看几何影响。紫色与绿色线框的偏差反映几何估计误差。</p>
-        <p><strong>限定：</strong>四组均使用 GT 角速度 omega，D 还不是完全由视频独立驱动的端到端结果。INVALID 表示初始穿插，不能当作有效结果比较优劣。</p>
+        <p><strong>限定：</strong>四组均使用 GT 角速度 omega，D 还不是完全由视频独立驱动的端到端结果。C aligned 表示已修正初始支撑穿插，位移见右侧；BLOCKED 表示超过 55 mm 对齐上限或无法安全对齐，未推进时间。严格 C 在穿插超过 1 mm 时直接拒绝。原始 INVALID 结果保留在旧版页面。</p>
       </section>
     </main>
 
@@ -135,7 +137,7 @@
         <h2>Overlay layers</h2>
         <label><input type="checkbox" data-layer="A" checked><i class="swatch swatch-a"></i>A · Oracle</label>
         <label><input type="checkbox" data-layer="B"><i class="swatch swatch-b"></i>B · State error</label>
-        <label><input type="checkbox" data-layer="C"><i class="swatch swatch-c"></i>C · Geometry error</label>
+        <label><input type="checkbox" data-layer="C" checked><i class="swatch swatch-c"></i>C · Geometry / aligned</label>
         <label><input type="checkbox" data-layer="D" checked><i class="swatch swatch-d"></i>D · End-to-end</label>
         <label><input type="checkbox" data-layer="estimatedGeometry" checked><i class="swatch swatch-est"></i>Estimated geometry</label>
         <label><input type="checkbox" data-layer="gtGeometry"><i class="swatch swatch-gt"></i>GT geometry · eval only</label>
@@ -153,7 +155,8 @@
     </aside>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=contact-gate-1"></script>
 </body>
 </html>
+
 

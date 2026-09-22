@@ -22,6 +22,7 @@ from context_rgb_pybullet_common import (
     velocity_errors,
 )
 from pybullet_context_rollout import _collision_shape_for_client
+from pybullet_initial_contact import InitialContactError, admit_initial_contact
 
 
 PROJECT = Path(__file__).resolve().parent
@@ -304,6 +305,9 @@ def rollout(
     geometry_source: str,
     primitives: list[dict[str, Any]],
     state: dict[str, np.ndarray],
+    *,
+    initialization_policy: str = "strict",
+    confirmed_support_names: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     import pybullet as p
 
@@ -325,7 +329,10 @@ def rollout(
         )
         ids["pilot_ball"] = ball
         body_names[ball] = "pilot_ball"
-        p.performCollisionDetection(physicsClientId=client)
+        initialization = admit_initial_contact(
+            p, client, ball, body_names, radius=BALL_RADIUS_M,
+            policy=initialization_policy, confirmed_support_names=confirmed_support_names,
+        )
         initial = contact_snapshot(p, client, ball, body_names)
         positions, velocities, angular_velocities = [], [], []
         contact_samples: list[list[dict[str, Any]]] = []
@@ -342,6 +349,7 @@ def rollout(
             "positions": np.asarray(positions, dtype=np.float64),
             "linear_velocities": np.asarray(velocities, dtype=np.float64),
             "angular_velocities": np.asarray(angular_velocities, dtype=np.float64),
+            "initialization": initialization,
             "initial_contacts": initial,
             "contact_samples": contact_samples,
             "event": event_summary(case.blueprint.metadata["pilot_family"], initial, contact_samples),
@@ -876,3 +884,4 @@ if __name__ == "__main__":
         "rollout_count": result["rollout_count"],
         "elapsed_seconds": result["elapsed_seconds"],
     }, indent=2))
+
