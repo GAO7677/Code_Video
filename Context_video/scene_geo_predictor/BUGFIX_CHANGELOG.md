@@ -62,3 +62,17 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - 失败定位：aperture_g01_v0460 SAM2下沿超出球投影，RGB7切线残差median +13.41 mm；p7旧0.02245→新0.43166 m。support_edge_g03_v0620旧0.26156→新0.30286 m。精确投影模型不足以消除轮廓偏差，未宣称深度误差已修复。
 - 输出 `sphere_state_gate_20260922_v1`（原大输出根目录内）；报告含命令。执行入口：`run_sphere_state_gate.py estimate/evaluate --output <新目录>`，evaluate另传phase1_v5的`--gt-root`；统一使用physrvg-full-sa Python、CUDA_VISIBLE_DEVICES为空及OMP/MKL/OPENBLAS=2。
 - 新页面由原8899服务提供，浏览器36例加载/零异常通过。旧结果、权重和求解器未变。P0全面旧几何逐例审计仍PARTIAL；P2–P6按用户P1失败停止条件NOT_RUN。新分支仅实验诊断，非默认精度修复上线。
+
+## 2026-09-22 — 六例匿名 RGB-only 通用输入实验（PARTIAL，未替换 v3）
+
+- 目标：分离旧pilot的已知半径、相机标定、family几何、默认支撑与GT状态依赖。新增独立分支，不改旧结果或动力学求解器。
+- 文件：`prepare_generic_six.py` 匿名context筛选/导出；`run_generic_six.py` 预声明六例、VGGT/SAM2推理和冻结；`generic_context_geometry.py` 运动候选、未知半径球面拟合、有限可见mesh和重力UNKNOWN；`generic_bullet_input.py` 无family/blueprint的输入适配；`evaluate_generic_six.py` 冻结后GT评测；`tests/test_generic_context_geometry.py` 合成恢复、运动歧义拒绝和Bullet时序测试。尺度配置已实际经协议快照读取，值5.819486884015457。
+- 六例固定ordinal 000/015/030/040/045/050，先从匿名RGB0筛单球/非关节布局，每布局取首例，推理前冻结，不按结果换样本。GPU6串行视觉推理，CPU两线程。
+- 实际结果：6/6视觉推理/可见mesh；1/6球状态内部拟合通过但p7误差0.2346 m、v7误差0.3337 m/s、半径误差0.02797 m；1个拟合候选FAIL，其余4个mask/球形支持检查失败；完整physics输入0/6，gravity UNKNOWN 6/6，rollout NOT_RUN。不能把文件生成当作精度或端到端成功。
+- 重要限制：重力仅提取unsigned法向轴，未实现可靠的axis/sign判别，不声称已完成通用重力恢复。mesh未知厚度不补齐，遮挡孔洞不填；静态几何碰撞等价性未验证。
+- fixed-scale跨case尚未成立：两个case的局部GT诊断尺度约6.50/6.35，固定5.819低估10.47%/8.34%；没有GT对齐补偿。5/6缺对应Cycles静态深度，明确BLOCKED而非使用另一相机depth。
+- 评测数据bug确认：v1 Cycles GT masks纵轴相反，六例原centroid投影差12–311 px，显式vertical flip后0.50–0.97 px。只转换新评测副本，未改原始文件；v2桌面mask已正确。修复空GT锚点导致NaN序列化失败，空集合记BLOCKED，不调整估计。
+- 初始碰撞只测获准状态1例：0/1重叠、contact=0、step=0、未移动位置；其余5例未检查，不能报0/6或支撑正确。
+- 验证：`CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 /data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B tests/test_generic_context_geometry.py`，3/3通过。时序测试328调用、首1/30秒、末41/30秒。完整执行命令与失败阶段见产物report.md。
+- 产物：`/data/gaoya/agent-data/outputs/context_generic_six_20260922_v1`；最终评测`evaluation_v3/report.json`，前两评测目录为失败尝试，不混报。估计freeze SHA256 `cd820a41a6353f2a046720f93c9832b2f38ca74ef5b72b30d3dc064ef07565f7`。
+- 启用状态：独立实验入口，非默认v3替换。本轮停止六例机制验证，不增加模型/场景/物体类别、不使用GT omega救活主结果。

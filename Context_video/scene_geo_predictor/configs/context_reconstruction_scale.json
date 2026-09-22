@@ -16,5 +16,5 @@
     "Do not apply to values already converted to meters.",
     "Does not set the target sphere radius to 0.11 m for new videos."
   ],
-  "integration_status": "configuration_only; existing v3 scripts and frozen results are unchanged"
+  "integration_status": "used via frozen protocol snapshot by code/run_generic_six.py; existing v3 scripts and frozen results are unchanged"
 }
