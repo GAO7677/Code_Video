@@ -50,9 +50,15 @@ def run(root):
     from vggt.utils.pose_enc import pose_encoding_to_extri_intri
     clips=sorted((root/'inputs').iterdir()); results={}
     out=root/'estimates';out.mkdir(exist_ok=False)
-    model=VGGT.from_pretrained('/data/gaoya/ckpt/facebook-VGGT-1B').to('cuda:0').eval().requires_grad_(False)
+    cached=protocol.get('reuse_frozen_anonymous_vggt',False)
+    model=None if cached else VGGT.from_pretrained('/data/gaoya/ckpt/facebook-VGGT-1B').to('cuda:0').eval().requires_grad_(False)
     for clip in clips:
         dst=out/clip.name;dst.mkdir();started=time.perf_counter()
+        if cached:
+            source=root/'vggt_cache'/f'{clip.name}.npz'
+            shutil.copyfile(source,dst/'vggt_raw.npz')
+            results[clip.name]={'vggt_status':'REUSED_RAW_OBSERVATION_ONLY','raw_sha256':sha256_file(source)}
+            continue
         images=load_and_preprocess_images([str(clip/f'rgb_{i:02d}.png') for i in range(8)]).to('cuda:0')
         with torch.inference_mode(),torch.autocast('cuda',dtype=torch.bfloat16):pred=model(images)
         e,k=pose_encoding_to_extri_intri(pred['pose_enc'],images.shape[-2:])

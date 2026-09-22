@@ -83,3 +83,19 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - 最大共识平面方案仅3/6在两帧都接近重力轴：clip_01/04/05约0.6–1.2°；clip_02/03稳定误选墙面约90°；clip_00主平面切换，首尾差89.8°。正确平面存在于候选不等于可以不用GT可靠选中。
 - 预设角度门限5°、首尾漂移3°。稳定性无法排除稳定墙面；向下符号没有独立观测证据。结论为验证FAIL，不启用prior，保持gravity UNKNOWN和原结果。
 - 产物`/data/gaoya/agent-data/outputs/context_generic_six_20260922_v1/gravity_check_v1/`；report.md含实际estimate/evaluate命令、逐例角度和限制。CPU两线程，GT仅冻结后评测，无GT择优、默认Z-up或位置对齐。
+
+## 2026-09-22 — 用户授权的下方平面重力prior（六例验证PASS，独立入口启用）
+
+- 新增`code/lower_plane_gravity.py`：图像底部35%静态点平面候选，显式正立相机/相机位于平面上方prior；最低35%共识、与图像下方向<=60°、首尾漂移<=3°。不增加GT/family/支撑对齐，solver不变。
+- 候选hash冻结后独立GT验证，有符号方向误差六例0.224–1.267°，均通过预设5°；首尾漂移0.007–0.126°。旧全图最大面导致墙面误选，此显式prior在当前六例消除了该问题，但不证明任意视频泛化。
+- 新独立实验分支实际应用：clip_00零omega续推41帧/328steps，ADE0.515493 m、FDE1.020542 m；其余五例原状态FAIL维持，0steps。不以重力通过冒称轨迹正确。
+- 产物`context_generic_six_20260922_v1/lower_plane_gravity_v1/`，report.md含命令、逐例误差、局限。旧v3和源冻结文件未改。CPU两线程，无GPU或模型重跑。
+
+## 2026-09-22 — 旧36例完整新链路重跑（全体状态准入FAIL，旧v3保留）
+
+- 新增`prepare_generic_pilot36.py`匿名导出36例RGB0–7/时间戳、核验原始VGGT缓存；`run_generic_six.py`增加显式匿名原始缓存复用；`lower_plane_gravity.py`缺跟踪时明确UNKNOWN；`finish_generic_pilot36.py`观测侧rollout冻结后GT评测与36例overlay。
+- GPU6重跑运动候选+SAM2；不读取旧状态、已知半径/标定、family几何或GT omega。固定scale、未知半径拟合、观测mesh、下方平面prior和zero omega均进入新分支。
+- 结果36/36状态FAIL：14 mask碎裂、17球形检查失败、2半径CV失败、3表面残差及半径CV失败；全部0 step，新轨迹/ADE/FDE/contact NOT_RUN。保持失败，不使用旧逻辑fallback。
+- 重力36/36观测侧接受，GT误差median0.473°/max5.403°，四个deflector v28000超过5°验证门限；未用GT择优或修正。
+- 可视化新mask与旧D/GT轨迹，旧D明确标GT omega；无新轨迹时不伪造。浏览器36例加载与详情检查PASS，完整命令/失败表见产物report.md。
+- 产物`/data/gaoya/agent-data/outputs/context_generic_pilot36_20260922_v1`；8899路径`generic_pilot36_v1/`。独立实验，不替换旧v3；模型权重/solver未修改。
