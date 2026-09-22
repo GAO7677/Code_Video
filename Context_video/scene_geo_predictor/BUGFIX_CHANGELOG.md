@@ -76,3 +76,10 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - 验证：`CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 /data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B tests/test_generic_context_geometry.py`，3/3通过。时序测试328调用、首1/30秒、末41/30秒。完整执行命令与失败阶段见产物report.md。
 - 产物：`/data/gaoya/agent-data/outputs/context_generic_six_20260922_v1`；最终评测`evaluation_v3/report.json`，前两评测目录为失败尝试，不混报。估计freeze SHA256 `cd820a41a6353f2a046720f93c9832b2f38ca74ef5b72b30d3dc064ef07565f7`。
 - 启用状态：独立实验入口，非默认v3替换。本轮停止六例机制验证，不增加模型/场景/物体类别、不使用GT omega救活主结果。
+
+## 2026-09-22 — 重力方向prior启用前验证（FAIL，未启用）
+
+- 用户授权先验证水平面法向，可靠才加入prior。新增`code/check_generic_gravity.py`，六例RGB0/7静态点RANSAC候选，冻结后独立GT重力评测；没有模型重跑或动力学改动。
+- 最大共识平面方案仅3/6在两帧都接近重力轴：clip_01/04/05约0.6–1.2°；clip_02/03稳定误选墙面约90°；clip_00主平面切换，首尾差89.8°。正确平面存在于候选不等于可以不用GT可靠选中。
+- 预设角度门限5°、首尾漂移3°。稳定性无法排除稳定墙面；向下符号没有独立观测证据。结论为验证FAIL，不启用prior，保持gravity UNKNOWN和原结果。
+- 产物`/data/gaoya/agent-data/outputs/context_generic_six_20260922_v1/gravity_check_v1/`；report.md含实际estimate/evaluate命令、逐例角度和限制。CPU两线程，GT仅冻结后评测，无GT择优、默认Z-up或位置对齐。
