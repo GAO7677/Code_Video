@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Context → PyBullet Trace Viewer</title>
+  <link rel="stylesheet" href="styles.css?v=layer-reference-1">
+</head>
+<body>
+  <header class="topbar">
+    <div class="identity">
+      <span class="identity-mark" aria-hidden="true"></span>
+      <div>
+        <div class="identity-name">Context → PyBullet</div>
+        <div class="identity-sub">TRACE VIEWER · 36 CASE PILOT</div>
+      </div>
+    </div>
+    <div class="run-summary" aria-label="实验总览">
+      <div><span id="summaryAde">—</span><small>D ADE</small></div>
+      <div><span id="summaryFde">—</span><small>D FDE</small></div>
+      <div><span id="summaryContact">—</span><small>CONTACT</small></div>
+    </div>
+    <nav class="artifact-links" aria-label="交付文件">
+      <a href="../delivery_v2/context_rgb_to_pybullet_report.md" target="_blank">报告</a>
+      <a href="../delivery_v2/per_case_all_modes.csv" target="_blank">432 行明细</a>
+      <a href="../delivery_v2/failure_gallery.html" target="_blank">失败图集</a>
+    </nav>
+  </header>
+
+  <div class="workspace">
+    <aside class="case-browser" aria-label="案例浏览器">
+      <div class="panel-heading">
+        <span>CASES</span>
+        <strong id="visibleCaseCount">36</strong>
+      </div>
+      <div class="family-tabs" role="tablist" aria-label="场景类别">
+        <button class="family-tab is-active" data-family="all" type="button">全部</button>
+        <button class="family-tab" data-family="aperture" type="button">门框</button>
+        <button class="family-tab" data-family="deflector" type="button">挡板</button>
+        <button class="family-tab" data-family="support_edge" type="button">平台</button>
+      </div>
+      <label class="search-box">
+        <span class="sr-only">搜索 case</span>
+        <input id="caseSearch" type="search" placeholder="搜索 case / group" autocomplete="off">
+      </label>
+      <div id="caseList" class="case-list" role="listbox" aria-label="Case 列表"></div>
+    </aside>
+
+    <main class="viewer">
+      <div class="viewer-status">
+        <div>
+          <span id="familyBadge" class="family-badge">—</span>
+          <strong id="caseTitle">加载中</strong>
+          <span id="variantText" class="variant-text"></span>
+        </div>
+        <div class="scope-badges">
+          <span id="scopeBadge" class="scope-badge estimator">ESTIMATOR</span>
+          <span id="frameBadge" class="frame-badge">RGB0</span>
+        </div>
+      </div>
+
+      <section class="canvas-stage" aria-label="Overlay 播放器">
+        <canvas id="overlayCanvas" width="640" height="360">
+          浏览器不支持 Canvas。
+        </canvas>
+        <div id="loadingOverlay" class="loading-overlay">读取冻结结果…</div>
+        <div class="canvas-key" id="canvasKey" aria-live="polite"></div>
+      </section>
+
+      <div class="transport" aria-label="播放控制">
+        <button id="previousFrame" class="icon-button" type="button" title="上一帧" aria-label="上一帧">‹</button>
+        <button id="playPause" class="icon-button play-button" type="button" title="播放" aria-label="播放">▶</button>
+        <button id="nextFrame" class="icon-button" type="button" title="下一帧" aria-label="下一帧">›</button>
+        <input id="timeline" class="timeline" type="range" min="0" max="7" value="0" step="1" aria-label="时间轴">
+        <output id="timeOutput" class="time-output">0.000 s</output>
+        <label class="speed-control">
+          <span>FPS</span>
+          <select id="playbackFps" aria-label="播放速度">
+            <option value="4">4</option>
+            <option value="8" selected>8</option>
+            <option value="15">15</option>
+            <option value="30">30</option>
+          </select>
+        </label>
+      </div>
+
+      <nav id="stageRail" class="stage-rail" aria-label="处理阶段">
+        <button type="button" class="stage-button is-active" data-stage="context">
+          <span>01</span><strong>Context RGB</strong><small>RGB0–RGB7</small>
+        </button>
+        <button type="button" class="stage-button" data-stage="mask">
+          <span>02</span><strong>Object mask</strong><small>SAM2 + sphere</small>
+        </button>
+        <button type="button" class="stage-button" data-stage="state">
+          <span>03</span><strong>State p7 / v7</strong><small>8-frame fit</small>
+        </button>
+        <button type="button" class="stage-button" data-stage="depth">
+          <span>04</span><strong>VGGT depth</strong><small>metric point map</small>
+        </button>
+        <button type="button" class="stage-button" data-stage="geometry">
+          <span>05</span><strong>Primitives</strong><small>finite collision</small>
+        </button>
+        <button type="button" class="stage-button" data-stage="rollout">
+          <span>06</span><strong>Bullet rollout</strong><small>RGB8–RGB48</small>
+        </button>
+      </nav>
+
+      <section class="layer-reference" aria-labelledby="layerReferenceTitle">
+        <h2 id="layerReferenceTitle">图层说明 · 常驻参考</h2>
+        <p>GT = 仿真真值；估计 = 从 RGB0–RGB7 恢复的结果。切换 case 或步骤时本表始终保留。</p>
+        <table>
+          <thead><tr><th scope="col">图层</th><th scope="col">使用什么</th><th scope="col">用来观察什么</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><i class="swatch swatch-a"></i>A · Oracle</th><td>GT 状态 + GT 几何</td><td>理想输入下的 PyBullet 参考轨迹</td></tr>
+            <tr><th scope="row"><i class="swatch swatch-b"></i>B · State error</th><td>估计 p7/v7 + GT 几何</td><td>位置、速度估计误差对轨迹的影响</td></tr>
+            <tr><th scope="row"><i class="swatch swatch-c"></i>C · Geometry error</th><td>GT 状态 + 估计几何</td><td>碰撞几何估计误差对轨迹的影响</td></tr>
+            <tr><th scope="row"><i class="swatch swatch-d"></i>D · End-to-end</th><td>估计 p7/v7 + 估计几何</td><td>两类估计误差共同作用后的轨迹</td></tr>
+            <tr><th scope="row"><i class="swatch swatch-est"></i>Estimated geometry</th><td>从 context 估计的碰撞盒线框</td><td>估计障碍物的位置、尺寸、朝向</td></tr>
+            <tr><th scope="row"><i class="swatch swatch-gt"></i>GT geometry · eval only</th><td>真值碰撞几何线框</td><td>与紫色线框对比；仅供评测展示</td></tr>
+          </tbody>
+        </table>
+        <p><strong>怎么看：</strong>A + D 看整体差距；A + B 看状态影响；A + C 看几何影响。紫色与绿色线框的偏差反映几何估计误差。</p>
+        <p><strong>限定：</strong>四组均使用 GT 角速度 omega，D 还不是完全由视频独立驱动的端到端结果。INVALID 表示初始穿插，不能当作有效结果比较优劣。</p>
+      </section>
+    </main>
+
+    <aside class="inspector" aria-label="阶段结果">
+      <div class="panel-heading">
+        <span id="inspectorStep">01 · CONTEXT RGB</span>
+        <strong id="stageStatus">READY</strong>
+      </div>
+      <div id="stageSummary" class="stage-summary"></div>
+
+      <section id="layerControls" class="layer-controls" hidden>
+        <h2>Overlay layers</h2>
+        <label><input type="checkbox" data-layer="A" checked><i class="swatch swatch-a"></i>A · Oracle</label>
+        <label><input type="checkbox" data-layer="B"><i class="swatch swatch-b"></i>B · State error</label>
+        <label><input type="checkbox" data-layer="C"><i class="swatch swatch-c"></i>C · Geometry error</label>
+        <label><input type="checkbox" data-layer="D" checked><i class="swatch swatch-d"></i>D · End-to-end</label>
+        <label><input type="checkbox" data-layer="estimatedGeometry" checked><i class="swatch swatch-est"></i>Estimated geometry</label>
+        <label><input type="checkbox" data-layer="gtGeometry"><i class="swatch swatch-gt"></i>GT geometry · eval only</label>
+      </section>
+
+      <section class="frame-readout">
+        <h2>Current frame</h2>
+        <div id="frameReadout" class="data-grid"></div>
+      </section>
+
+      <section class="boundary-note">
+        <h2>Data boundary</h2>
+        <p id="boundaryText">RGB0–RGB7 only</p>
+      </section>
+    </aside>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
