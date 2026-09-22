@@ -329,6 +329,10 @@ def rollout(
         )
         ids["pilot_ball"] = ball
         body_names[ball] = "pilot_ball"
+        if not confirmed_support_names and case.blueprint.metadata.get("pilot_family") == "support_edge":
+            # The fixed pilot context protocol observes continuous left support.
+            # This is a declared context precondition, not future-event evidence.
+            confirmed_support_names = tuple(name for name in body_names.values() if "left_platform" in name and "support" not in name)
         initialization = admit_initial_contact(
             p, client, ball, body_names, radius=BALL_RADIUS_M,
             policy=initialization_policy, confirmed_support_names=confirmed_support_names,
@@ -884,4 +888,5 @@ if __name__ == "__main__":
         "rollout_count": result["rollout_count"],
         "elapsed_seconds": result["elapsed_seconds"],
     }, indent=2))
+
 

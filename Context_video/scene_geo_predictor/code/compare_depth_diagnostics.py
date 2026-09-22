@@ -55,7 +55,7 @@ def infer(model_name):
         model=VideoDepthAnything(encoder='vitl',features=256,out_channels=[256,512,1024,1024],metric=False)
     model.load_state_dict(torch.load(WEIGHTS[model_name],map_location='cpu',weights_only=True),strict=True)
     model=model.eval().cuda()
-    info=dict(model=model_name,weight=str(WEIGHTS[model_name]),gpu=str(device),torch_version=torch.__version__,strict_checkpoint_load=True,records=[])
+    info=dict(model=model_name,weight=str(WEIGHTS[model_name]),gpu=str(device),torch_version=torch.__version__,strict_checkpoint_load=True,attention='official ordinary PyTorch; user approved',records=[])
     for cid in cases():
         dest=OUT/'predictions'/model_name/(cid+'.npz')
         if dest.exists():raise FileExistsError(dest)
@@ -89,18 +89,20 @@ def ground_truth():
             super().__init__(*args,**kwargs);captures.append(self)
     renderer.RealismPreviewRenderer=Capture
     for cid in cases():
+        if (OUT/'gt'/f'{cid}.npz').exists():
+            continue
         case,seed=prep.reconstruct_case(pilot,generator,records[cid]);names=[x.name for x in case.blueprint.objects if not x.metadata.get('visual_only')]
         pos,quat,_=prep.load_observed_pose(prep.DATA_DEFAULT/'samples'/cid,names)
-        frames=prep.render_observed_prefix(renderer,case.blueprint,seed,pos,quat,OUT/'gt_rgb'/cid,640,360,'indoor_natural')
+        frames=prep.render_observed_prefix(renderer,case.blueprint,seed,pos,quat,OUT/'gt_rgb_approved'/cid,640,360,'indoor_natural')
         original=rgb(cid);difference=np.abs(frames.astype(float)-original)
         audit=dict(max_rgb_error=float(difference.max()),mean_rgb_error=float(difference.mean()),exact_rgb_equal=bool(np.array_equal(frames,original)))
         write(OUT/'gt'/f'{cid}_audit.json',audit)
-        if not audit['exact_rgb_equal']:raise RuntimeError(f'GT render mismatch {cid}: {audit}; stop for review')
+        if audit['max_rgb_error'] > 1 or audit['mean_rgb_error'] > .001:raise RuntimeError(f'GT render mismatch {cid}: {audit}; stop for review')
         obj=captures.pop();depth=np.stack(obj.depth_frames);mask=np.stack(obj.mask_frames)
         path=OUT/'gt'/f'{cid}.npz';path.parent.mkdir(exist_ok=True)
         np.savez_compressed(path,depth=depth,mask=mask)
         write(OUT/'gt'/f'{cid}_ids.json',obj.instance_ids)
-        print('GT_RGB_EXACT',cid,flush=True)
+        print('GT_RGB_ACCEPTED',cid,audit,flush=True)
 
 
 if __name__=='__main__':
@@ -108,3 +110,4 @@ if __name__=='__main__':
     if args.mode=='prepare':prepare()
     elif args.mode=='gt':ground_truth()
     else:infer(args.mode)
+

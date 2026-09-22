@@ -38,6 +38,16 @@ def admit_initial_contact(p, client, ball, body_names, *, radius,
         raise InitialContactError(audit)
 
     if audit['before_penetration_m'] <= tolerance:
+        if confirmed_support_names:
+            support = [row for row in rows if body_names.get(row[2]) in confirmed_support_names
+                       and abs(float(row[8])) <= tolerance and float(row[7][2]) >= .99]
+            if not support:
+                reject('missing_confirmed_initial_support')
+            for row in support:
+                low, high = p.getAABB(row[2], physicsClientId=client)
+                if not all(low[i] <= position[i] <= high[i] for i in (0, 1)):
+                    reject('center_outside_support_footprint')
+            audit['support_bodies'] = sorted({body_names[row[2]] for row in support})
         return audit
     if policy == 'strict':
         reject('initial_overlap_exceeds_tolerance')
@@ -70,3 +80,4 @@ def admit_initial_contact(p, client, ball, body_names, *, radius,
         reject('alignment_lost_support_contact')
     audit['status'] = 'CONTACT_ALIGNED'
     return audit
+

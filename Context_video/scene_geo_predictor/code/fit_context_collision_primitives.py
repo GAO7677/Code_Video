@@ -210,6 +210,7 @@ def fit_support_edge(
     points: np.ndarray,
     estimated_p7: np.ndarray,
     ground_z: float,
+    camera_center: np.ndarray | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     x, y, z = points.T
     plausible = (
@@ -224,6 +225,21 @@ def fit_support_edge(
     top_points = points[top]
     if len(top_points) < 250:
         raise ValueError(f"only {len(top_points)} platform-top points")
+    ray_audit = None
+    if camera_center is not None:
+        camera_center = np.asarray(camera_center, dtype=np.float64)
+        target_z = float(estimated_p7[2] - BALL_RADIUS_M)
+        rays = top_points - camera_center
+        factors = (target_z - camera_center[2]) / rays[:, 2]
+        if not np.isfinite(factors).all() or np.any(factors <= 0):
+            raise ValueError("support plane is behind observed top rays")
+        projected = camera_center + factors[:, None] * rays
+        ray_audit = {"method": "observed_top_pixel_rays_intersect_contact_plane",
+                     "raw_y_edges_m": np.quantile(top_points[:, 1], [.01,.99]).tolist(),
+                     "target_top_z_m": target_z,
+                     "median_world_displacement_m": np.median(projected-top_points,axis=0).tolist(),
+                     "uses_GT": False}
+        top_points = projected
     x_low, x_high = np.quantile(top_points[:, 0], [0.005, 0.995])
     y_low, y_high = np.quantile(top_points[:, 1], [0.01, 0.99])
     runs, occupancy = low_occupancy_runs(top_points[:, 0], float(x_low), float(x_high), 0.015)
@@ -269,6 +285,7 @@ def fit_support_edge(
         ),
     ]
     report = {
+        "ray_plane_reconstruction": ray_audit,
         "top_z_m": top_z,
         "raw_depth_top_z_m": depth_top_z,
         "contact_alignment_delta_m": top_z - depth_top_z,
@@ -381,7 +398,7 @@ def fit_aperture(
     return primitives, report
 
 
-def fit_case(vision_output: Path, record: dict[str, Any], output: Path) -> dict[str, Any]:
+def fit_case(vision_output: Path, record: dict[str, Any], output: Path, *, support_ray_projection: bool = False) -> dict[str, Any]:
     case_id = str(record["case_id"])
     family = str(record["family"])
     estimate_path = vision_output / "estimates" / case_id / "estimate.npz"
@@ -390,6 +407,8 @@ def fit_case(vision_output: Path, record: dict[str, Any], output: Path) -> dict[
         colors = archive["static_colors"].astype(np.uint8)
         estimated_p7 = archive["estimated_p7"].astype(np.float64)
         estimated_v7 = archive["estimated_v7"].astype(np.float64)
+        extrinsic = archive["world_to_camera"].astype(np.float64)
+        camera_center = -extrinsic[:, :3].T @ extrinsic[:, 3]
     if points.ndim != 2 or points.shape[1] != 3 or colors.shape != points.shape:
         raise ValueError(f"invalid point/color arrays for {case_id}")
     if len(points) < 1000 or not np.isfinite(points).all():
@@ -405,7 +424,7 @@ def fit_case(vision_output: Path, record: dict[str, Any], output: Path) -> dict[
     elif family == "deflector":
         structures, family_report = fit_deflector(points, colors)
     elif family == "support_edge":
-        structures, family_report = fit_support_edge(points, estimated_p7, ground_z)
+        structures, family_report = fit_support_edge(points, estimated_p7, ground_z, camera_center=camera_center if support_ray_projection else None)
     else:
         raise ValueError(f"unsupported family: {family}")
     payload = {
@@ -480,3 +499,5 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     print(json.dumps(run(parse_args()), indent=2))
+
+

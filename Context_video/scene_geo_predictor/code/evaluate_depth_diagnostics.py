@@ -36,8 +36,9 @@ def run():
             maps[model]=np.load(OUT/'predictions'/model/(cid+'.npz'))['relative_inverse_depth']
         panels=[]
         frames=rgb(cid)
+        near,far=np.quantile(gt[valid],[.02,.98])
         def color(depth):
-            v=np.clip((1/np.maximum(depth,.2)-1/15)/(1/.2-1/15),0,1)
+            v=np.clip((1/np.maximum(depth,.2)-1/far)/(1/near-1/far),0,1)
             return cv2.applyColorMap((v*255).astype(np.uint8),cv2.COLORMAP_TURBO)
         for model,inv in maps.items():
             inv=inv.astype(float)
@@ -57,12 +58,28 @@ def run():
             if model=='vggt':
                 scale=read(ROOT/'vision_v3/estimates'/cid/'report.json')['vggt_depth_scale']['metric_scale']
                 row['existing_sphere_scaled_metrics']=metrics(vggt*scale,gt,test,np.zeros_like(test))
+            from scipy.stats import spearmanr
+            sample=np.flatnonzero(test.ravel())[::40]
+            row['inverse_depth_spearman']=float(spearmanr(inv.ravel()[sample],(1/np.maximum(gt,.2)).ravel()[sample]).statistic)
+            row['display_depth_range_m']=[float(near),float(far)]
+            if 'support_edge' in cid:
+                cal=read(ROOT/'vision_inputs'/cid/'calibration.json')
+                K=np.asarray(cal['intrinsic_K']);E=np.asarray(cal['world_to_camera_3x4'])
+                rays=np.stack([xx,yy,np.ones_like(xx)],axis=-1)@np.linalg.inv(K).T
+                gt_world=(rays[None]*gt[...,None]-E[:,3])@E[:,:3]
+                pred_world=(rays[None]*pred[...,None]-E[:,3])@E[:,:3]
+                tops=test&np.isin(seg,[ids['left_platform'],ids['right_platform']])&(np.abs(gt_world[...,2]-.48)<.008)
+                if tops.any():
+                    error_xyz=pred_world[tops]-gt_world[tops]
+                    row['platform_top_diagnostic']=dict(pixel_count=int(tops.sum()),median_xyz_bias_m=np.median(error_xyz,axis=0).tolist(),mean_3d_error_m=float(np.linalg.norm(error_xyz,axis=1).mean()))
             all_rows.append(row)
             target=assets/cid;target.mkdir(exist_ok=True)
             for f in range(8):
-                colored=color(pred[f]);overlay=cv2.addWeighted(cv2.cvtColor(frames[f],cv2.COLOR_RGB2BGR),.35,colored,.65,0)
+                colored=color(pred[f]);colored[~valid[f]]=0
+                cv2.imwrite(str(target/f'{model}_depth_{f}.webp'),colored)
+                overlay=cv2.addWeighted(cv2.cvtColor(frames[f],cv2.COLOR_RGB2BGR),.35,colored,.65,0)
                 cv2.imwrite(str(target/f'{model}_{f}.webp'),overlay)
-            error=np.clip(np.abs(pred[7]-gt[7])/gt[7],0,1)
+            error=np.clip(np.abs(pred[7]-gt[7])/np.maximum(gt[7],.2)/.5,0,1);error[~valid[7]]=0
             cv2.imwrite(str(target/f'{model}_error7.webp'),cv2.applyColorMap((error*255).astype(np.uint8),cv2.COLORMAP_INFERNO))
         for f in range(8):
             target=assets/cid
@@ -79,3 +96,5 @@ def run():
 
 
 if __name__=='__main__':run()
+
+

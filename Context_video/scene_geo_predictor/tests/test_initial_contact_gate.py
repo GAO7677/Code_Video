@@ -22,6 +22,14 @@ class ContactGateTest(unittest.TestCase):
     def gate(self,policy='strict',confirmed=True):
         return admit_initial_contact(p,self.client,self.ball,{self.floor:'ground'},radius=.11,policy=policy,confirmed_support_names={'ground'} if confirmed else set())
 
+    def test_missing_support_rejected_without_pose_change(self):
+        p.resetBasePositionAndOrientation(self.ball,[3,0,.117751768],[0,0,0,1],physicsClientId=self.client)
+        with self.assertRaises(InitialContactError) as err:
+            self.gate()
+        self.assertEqual(err.exception.audit['reason'],'missing_confirmed_initial_support')
+        self.assertEqual(err.exception.audit['api_step_calls_before_decision'],0)
+        self.assertEqual(p.getBasePositionAndOrientation(self.ball,physicsClientId=self.client)[0],(3.,0.,.117751768))
+
     def test_strict_rejects_without_time_advance_or_pose_change(self):
         before=p.getBasePositionAndOrientation(self.ball,physicsClientId=self.client)
         with self.assertRaises(InitialContactError) as err:
@@ -71,3 +79,4 @@ class ContactGateTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
