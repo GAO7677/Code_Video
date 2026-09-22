@@ -1,0 +1,20 @@
+{
+  "schema": "context_reconstruction_scale_v1",
+  "meters_per_reconstruction_unit": 5.819486884015457,
+  "scale_source": "fixed_pilot_median",
+  "provenance": {
+    "date": "2026-09-22",
+    "source_directory": "/data/gaoya/agent-data/outputs/physvideo_context_rgb_to_pybullet_20260921_v1/vision_v3/estimates",
+    "source_field": "vggt_depth_scale.metric_scale",
+    "aggregation": "median across 36 episode estimates",
+    "episode_count": 36,
+    "known_radius_used_in_source_estimates_m": 0.11
+  },
+  "conversion": "metric_length_m = raw_reconstruction_length * meters_per_reconstruction_unit",
+  "limitations": [
+    "Fixed assumption derived from known-radius pilot estimates, not a universal metric calibration.",
+    "Do not apply to values already converted to meters.",
+    "Does not set the target sphere radius to 0.11 m for new videos."
+  ],
+  "integration_status": "configuration_only; existing v3 scripts and frozen results are unchanged"
+}
