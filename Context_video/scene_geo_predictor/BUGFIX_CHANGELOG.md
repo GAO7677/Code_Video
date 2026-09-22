@@ -52,3 +52,13 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - 原 support_edge_g03_v0620 C 现在缺失支撑即拒绝，错误自由落体不再作为新预测展示；估计几何本身仍未修复。18 组旧 C 接触对齐结果未变；其余 9 组旧拒绝仍未解决。
 - 新结果：`all36_recheck_20260922_v1`；新页面：`overlay_viewer_v3`。旧 v2 数据及页面保留用于对照。所有结果位于原输出根目录下。
 
+## 2026-09-22 — 显式自动提示与球体状态恢复独立分支（精度 FAIL，未替换旧实现）
+
+- 用户确认沿用RGB自动目标选择，无需人工提示。代码审计确认RGB7 Hough框+SAM2双向跟踪，不是GT框；未调用另一路proxy-box fallback。
+- 旧球心默认水平约束、平台默认厚度/接触高度为已确认隐式先验；本次新P1完全不调用这些步骤，不把它们直接定性为PyBullet bug。
+- 新增 `code/sphere_state_recovery.py`：完整mask射线球拟合、三种多帧p/v；`code/run_sphere_state_gate.py`：估计/冻结/独立评测、逐例flags、family/group门限；`code/diagnose_sphere_state_gate.py`：评测专用GT投影、旧结果对照、36例RGB0–7轮廓overlay。
+- 新增 `tests/test_sphere_state_recovery.py`，精确切线射线（含离轴）和终点速度测试2/2通过。真实轮廓精度没有通过，不能以单测通过代替实验合格。
+- 实测36例/12组，CPU两线程。主方法预先固定robust_linear，p7 median 0.4234 m/p90 0.7892 m，v7 vector median 0.2897 m/s，direction median 7.119°；三family FAIL。GT仅在估计hash冻结后读取。
+- 失败定位：aperture_g01_v0460 SAM2下沿超出球投影，RGB7切线残差median +13.41 mm；p7旧0.02245→新0.43166 m。support_edge_g03_v0620旧0.26156→新0.30286 m。精确投影模型不足以消除轮廓偏差，未宣称深度误差已修复。
+- 输出 `sphere_state_gate_20260922_v1`（原大输出根目录内）；报告含命令。执行入口：`run_sphere_state_gate.py estimate/evaluate --output <新目录>`，evaluate另传phase1_v5的`--gt-root`；统一使用physrvg-full-sa Python、CUDA_VISIBLE_DEVICES为空及OMP/MKL/OPENBLAS=2。
+- 新页面由原8899服务提供，浏览器36例加载/零异常通过。旧结果、权重和求解器未变。P0全面旧几何逐例审计仍PARTIAL；P2–P6按用户P1失败停止条件NOT_RUN。新分支仅实验诊断，非默认精度修复上线。
