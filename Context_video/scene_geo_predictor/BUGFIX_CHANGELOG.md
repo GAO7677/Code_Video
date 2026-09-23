@@ -181,3 +181,27 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - `/data/gaoya/agent-data/outputs/context_grounded_abcd_zero_20260923_v1`完成36×5=180模式尝试。A36执行、B12执行（16状态FAIL+8穿插拒绝）、C_strict32执行（4穿插拒绝）、C_aligned36拒绝（32缺初始支撑+4侧向接触）、D20执行/16状态FAIL。各自有效均值ADE：A0.1281m、B0.3026m、C_strict3.0909m、D2.8034m；分母不同，不当独立因果效应。共同有效ABCD严格队列8例，另单列。
 - 180份结果已审计：执行项41帧/328step/328条API调用接触快照；拒绝项0step；20条D轨迹与冻结部署D最大差<1e-8m。接触按法向划分support/obstacle角色，非family GT语义事件precision/recall。GT所有36个半径值核对来自blueprint显式字段。
 - 原v3页面新增实际六层：A/B/C/D、Estimated geometry、GT geometry；C模式可切换严格/aligned，拒绝不绘轨迹。估计mesh紫色、推断面黄色、真实GT盒边绿色；未将mesh伪装为旧family盒。浏览器验证36例×6步骤、六层开关、C切换及新旧页入口，截图与check JSON在产物目录。
+
+## 2026-09-23 — test70 全批中间结果与单球部署链路（新增适配，非动力学修复）
+
+- 旧运行/发布入口硬编码pilot36数量、GT actor和源路径，不能用于test70。新增独立`code/run_test70_context_pipeline.py`、`code/publish_test70_context_pipeline.py`、`web/test70_context_viewer.js`，不修改旧估计或PyBullet动力学。复用test70已冻结DINO/SAM2 v2，核对560帧RGB hash；物理GPU6新跑70例VGGT，保留原始depth/points/camera。固定scale从协议真实读取；CPU各阶段两线程，未用GPU4、未训练。
+- 沿用此前context筛查范围并在运行前冻结序号声明：30单球非关节候选；20非球体、5多动态对象、15关节/动态支撑共40例标UNSUPPORTED。全部70例仍展示mask/depth/mesh；不支持场景的target-only static mesh仅诊断，不能宣称排除了其他运动物体。序号不提供任何几何数值，GT/family参数不进入估计。
+- 全部预测冻结后独立读取test70 GT，相机投影与保存的8帧轨迹像素核验≤2px才评测。默认预测投影使用VGGT相机；另设GT评测相机开关，避免把评测相机冒充纯视觉输入。显示GT未来轨迹、同输入CV、D、估计mesh及黄色补全面。A/B/C和GT geometry本轮NOT_RUN，contact accuracy/GT几何穿透NOT_EVALUATED。
+- 产物`/data/gaoya/agent-data/outputs/test70_context_pipeline_20260923_v1`：70模型/几何诊断；23例state通过、7失败、40UNSUPPORTED；23例实际检查初始穿插，2例拒绝（碗面clip_030/032），21条41帧D。21例有效均值ADE=0.625932m/FDE=1.091727m，同输入CV ADE=1.028271m；15例D改善、6例退化。固定scale跨视频正确性未确证，不能把运行成功标准确性PASS。
+- 验证：原`tests/test_generic_context_geometry.py`3项和`tests/test_local_plane_completion.py`2项PASS；21执行项41输出/328step/328API接触快照，49未执行项0step，70例fallback.used均false。`node tests/check_test70_context_viewer.cjs OUTPUT http://127.0.0.1:8899/test70_context_pipeline_v1/`通过70例×6阶段及两种投影模式，截图已检查。Python/JS语法、git diff --check通过。完整运行命令见产物report.md。
+- 新页面`/test70_context_pipeline_v1/`沿用v3样式与六阶段交互，在原v3顶部添加入口；旧页面与产物未覆盖，服务未重启。实验式独立入口，不改变默认旧pipeline。
+
+## 2026-09-23 — test70 播放卡顿：解码缓存与绘制调度修复
+
+- 确认原因：`web/test70_context_viewer.js`每次draw创建Image并decode；requestAnimationFrame不等异步draw完成即提交下一帧。图片解码慢于帧间隔时ticket连续失效，已解码帧被丢弃，加载遮罩反复显示。浏览器注入150ms解码延迟，旧版2.5秒57次decode、仅1次drawImage，复现FAIL。
+- 当前case按阶段预加载并缓存已解码帧，播放前等待就绪；切case清缓存，仅保留当前case最多17张图。播放调度等上次绘制完成后继续，按经过时间计算帧位置；切case/阶段或手动逐帧取消待启动播放。静态mesh/completion使用Path2D缓存，侧栏/图例内容不变时不替换DOM。
+- 更新`code/publish_test70_context_pipeline.py`及已发布index的JS版本参数，部署当前脚本；未重跑模型或仿真、未改轨迹/评测/overlay坐标，仍可切换图层。选择修复交互播放器，未新增预渲染视频。
+- 验证命令：`PLAYBACK_AUDIT=before/after node tests/check_test70_context_viewer.cjs /data/gaoya/agent-data/outputs/test70_context_pipeline_20260923_v1 http://127.0.0.1:8899/test70_context_pipeline_v1/`。相同压力测试新版2.5秒76次绘制、播放中0次decode、最大绘制间隔35.7ms，PASS；这是本机Chromium实测，不保证所有客户端/网络帧率。结果存playback_before.json、playback_after.json。追加全70例×6阶段回归检查。
+- 默认启用在test70当前页面；其他旧版本未改，服务无需重启。
+
+## 2026-09-23 — test70 改为原生视频展示（用户指定）
+
+- 新增`code/render_test70_overlay_videos.py`：仅从冻结结果制作70例×6阶段=420个H.264/yuv420p/faststart MP4，CPU两线程，不重跑模型/Bullet。context/mask/state/depth各8帧；geometry为RGB7静止覆盖49帧；rollout为完整RGB0–48运动视频背景，GT绿/CV蓝/D红，未来RGB与GT相机明确为评测展示专用。失败与UNSUPPORTED不绘制虚构D。
+- 首次检查发现context与完整RGB视频单独编码，像素不完全相同；先核对缓存与context原视频逐像素完全一致，再以PSNR≥30dB检查完整视频前8帧。全70例最低37.17dB，记录原视频hash、MAE与PSNR。首次未通过严格像素门的空`overlay_videos_v1`保留，新产物为`overlay_videos_v2`，非静默覆盖/替换原输入。
+- 新增`web/test70_video_mode.js`，当前页面默认原生video controls，可拖动、循环、0.25/0.5/1/2倍速和下载MP4；保留按钮切回逐帧可切图层版本。视频图层预渲染不可单独关闭，切回交互模式可调整。发布脚本检测视频manifest后自动保留该入口。420视频共10.3MiB；未占GPU、未修改预测或指标。
+- 验证命令：`VIDEO_AUDIT=1 node tests/check_test70_context_viewer.cjs /data/gaoya/agent-data/outputs/test70_context_pipeline_20260923_v1 http://127.0.0.1:8899/test70_context_pipeline_v1/`；检查全部视频加载/时长/seek、实际半速播放及模式切换，证据在`video_browser_check.json`和`video_browser_screenshot.png`。JS语法和git diff --check通过；服务未重启。

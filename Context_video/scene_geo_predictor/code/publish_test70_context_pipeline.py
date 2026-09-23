@@ -194,7 +194,7 @@ def publish(root):
         'initial_overlap_positive': sum((r['initial_penetration_m'] or 0) > .001 for r in records)}
     dump_json(root / 'viewer_data.json', {'summary': summary, 'records': records})
     html = Path('/data/gaoya/agent-data/outputs/context_grounded_generic_pilot36_20260923_v1/legacy_v3_index.html').read_text()
-    html = html.replace('styles.css?v=contact-gate-1', '../overlay_viewer_v3/styles.css?v=contact-gate-1').replace('app.js?v=contact-gate-1', 'test70_viewer.js')
+    html = html.replace('styles.css?v=contact-gate-1', '../overlay_viewer_v3/styles.css?v=contact-gate-1').replace('app.js?v=contact-gate-1', 'test70_viewer.js?v=playback-cache-20260923')
     html = html.replace('36 CASE PILOT', 'TEST70 · CONTEXT PIPELINE').replace('SAM2 + sphere', 'DINO + SAM2')
     html = re.sub(r'<body><div.*?</div>', '<body><div style="padding:12px;background:#fff2c4">test70 全70例；未知半径单球链路。非球体/关节/多动态物体仅诊断，不套用球体rollout。<a href="../overlay_viewer_v3/">36例旧页面</a></div>', html, count=1)
     html = re.sub(r'<nav class="artifact-links".*?</nav>', '<nav class="artifact-links"><a href="report.md">报告</a><a href="viewer_data.json">逐例指标</a><a href="protocol.json">协议</a></nav>', html, flags=re.S)
@@ -206,11 +206,22 @@ def publish(root):
     html = re.sub(r'<section class="layer-reference".*?</section>', reference, html, flags=re.S)
     (root / 'index.html').write_text(html)
     shutil.copyfile(REPO / 'web/test70_context_viewer.js', root / 'test70_viewer.js')
+    if (root / 'overlay_videos_v2/manifest.json').exists():
+        html = html.replace('</body>', '<script src="test70_video_mode.js?v=20260923-1"></script></body>')
+        (root / 'index.html').write_text(html)
+        shutil.copyfile(REPO / 'web/test70_video_mode.js', root / 'test70_video_mode.js')
     report = '# test70 Context → PyBullet · 2026-09-23\n\n全70例保留；复用冻结Grounding DINO＋SAM2，GPU6新跑VGGT；其余CPU两线程。\n\n'
     report += '支持范围按此前context视觉筛查预先固定：30个单球非关节候选；20个非球体、5个多动态物体、15个关节/动态支撑场景仅诊断。序号仅用于范围声明，未用于提供几何参数。这不是自动场景理解。\n\n'
     report += '未知半径球面联合拟合 → 固定scale=5.819486884015457 → 多帧静态融合/局部平面补全 → 下方平面重力prior → zero-omega Bullet。没有GT补齐或位置对齐。固定scale来自旧pilot，不保证跨视频米制准确。\n\n'
     report += '估计/重力/rollout全部hash冻结后才读取GT。GT相机投影先核对保存的轨迹像素，误差>2px标BLOCKED。D默认用估计相机投影；GT相机叠加是单独评测开关。\n\n'
     report += 'A/B/C、GT几何对照、contact accuracy及GT几何穿透NOT_RUN/NOT_EVALUATED。未用GT未来筛选场景；40例unsupported不冒充失败拟合；各分母独立。\n\n```json\n' + json.dumps(summary, ensure_ascii=False, indent=2) + '\n```\n\n'
+    report += '## 复现命令\n\n首次执行输出目录如下；重跑需换新版本目录。模型仅用物理GPU6，CPU各阶段两线程；不使用GPU4。\n\n```bash\n'
+    prefix = 'OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 '
+    python = '/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B '
+    for phase in ['prepare', 'depth', 'estimate']:
+        device = 'GPU-7f6fbc40-3594-2c34-8557-422621355ff9' if phase == 'depth' else "''"
+        report += prefix + f'CUDA_VISIBLE_DEVICES={device} ' + python + f'{REPO}/code/run_test70_context_pipeline.py {phase} --root {root}\n'
+    report += prefix + "CUDA_VISIBLE_DEVICES='' " + python + f'{REPO}/code/publish_test70_context_pipeline.py --root {root}\n```\n\n'
     report += '| case | state | gravity | rollout | failure |\n|---|---|---|---|---|\n'
     for r in records:
         report += f"| {r['case_id']} | {r['state']['status']} | {r['gravity']['gravity']['status']} | {r['rollout_status']} | {r['failure']} |\n"
