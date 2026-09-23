@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-23",
+  "status": "DEFINED_NOT_RUN",
+  "scope": "test70 group-conditioned text-assisted mask diagnostic",
+  "prompt_source": "Human-defined shared category vocabulary per benchmark group, explicitly authorized by user. Group routing is a declared category prior, not RGB-only target discovery.",
+  "rules": {
+    "same_prompt_for_all_variants": true,
+    "no_numeric_scene_parameters": true,
+    "no_position_or_motion_outcome_hints": true,
+    "no_color_hints": true,
+    "no_gt_boxes_masks_or_future_for_detection": true,
+    "no_sphere_mask_gate": true,
+    "no_per_case_prompt_tuning": true,
+    "no_silent_prompt_fallback": true,
+    "selection": "Text generates candidates, observed motion must select target; multiple unresolved moving objects remain UNKNOWN.",
+    "duplicate_labels": "Synonyms may detect the same object; do not treat labels as distinct object identities.",
+    "static_objects": "Not included as target prompts unless potentially moving (domino, seesaw board)."
+  },
+  "groups": [
+    {
+      "id": "table_rolloff",
+      "label": "桌面滚落",
+      "anonymous_clip_ids": [
+        "clip_000",
+        "clip_001",
+        "clip_002",
+        "clip_003",
+        "clip_004"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "incline_release",
+      "label": "斜坡角度",
+      "anonymous_clip_ids": [
+        "clip_005",
+        "clip_006",
+        "clip_007",
+        "clip_008",
+        "clip_009"
+      ],
+      "terms": [
+        "wooden block",
+        "box"
+      ],
+      "grounding_text": "wooden block. box.",
+      "count": 5
+    },
+    {
+      "id": "incline_length_release",
+      "label": "斜坡长度",
+      "anonymous_clip_ids": [
+        "clip_010",
+        "clip_011",
+        "clip_012",
+        "clip_013",
+        "clip_014"
+      ],
+      "terms": [
+        "wooden block",
+        "box"
+      ],
+      "grounding_text": "wooden block. box.",
+      "count": 5
+    },
+    {
+      "id": "door_frame_clearance_ball",
+      "label": "球穿门框",
+      "anonymous_clip_ids": [
+        "clip_015",
+        "clip_016",
+        "clip_017",
+        "clip_018",
+        "clip_019"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "door_frame_clearance",
+      "label": "木箱穿门框",
+      "anonymous_clip_ids": [
+        "clip_020",
+        "clip_021",
+        "clip_022",
+        "clip_023",
+        "clip_024"
+      ],
+      "terms": [
+        "wooden block",
+        "box"
+      ],
+      "grounding_text": "wooden block. box.",
+      "count": 5
+    },
+    {
+      "id": "puck_barrier_collision",
+      "label": "冰球与挡板",
+      "anonymous_clip_ids": [
+        "clip_025",
+        "clip_026",
+        "clip_027",
+        "clip_028",
+        "clip_029"
+      ],
+      "terms": [
+        "puck",
+        "disc"
+      ],
+      "grounding_text": "puck. disc.",
+      "count": 5
+    },
+    {
+      "id": "bowl_descent",
+      "label": "碗面滑落",
+      "anonymous_clip_ids": [
+        "clip_030",
+        "clip_031",
+        "clip_032",
+        "clip_033",
+        "clip_034"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "domino_chain",
+      "label": "多米诺",
+      "anonymous_clip_ids": [
+        "clip_035",
+        "clip_036",
+        "clip_037",
+        "clip_038",
+        "clip_039"
+      ],
+      "terms": [
+        "ball",
+        "domino",
+        "wooden block"
+      ],
+      "grounding_text": "ball. domino. wooden block.",
+      "count": 5
+    },
+    {
+      "id": "gap_rolloff",
+      "label": "平台缺口",
+      "anonymous_clip_ids": [
+        "clip_040",
+        "clip_041",
+        "clip_042",
+        "clip_043",
+        "clip_044"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "obstacle_ball_size",
+      "label": "障碍碰撞／球尺寸变化",
+      "anonymous_clip_ids": [
+        "clip_045",
+        "clip_046",
+        "clip_047",
+        "clip_048",
+        "clip_049"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "obstacle_speed",
+      "label": "障碍碰撞／速度变化",
+      "anonymous_clip_ids": [
+        "clip_050",
+        "clip_051",
+        "clip_052",
+        "clip_053",
+        "clip_054"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "pendulum_cabinet_collision",
+      "label": "摆球与柜体",
+      "anonymous_clip_ids": [
+        "clip_055",
+        "clip_056",
+        "clip_057",
+        "clip_058",
+        "clip_059"
+      ],
+      "terms": [
+        "ball",
+        "pendulum bob"
+      ],
+      "grounding_text": "ball. pendulum bob.",
+      "count": 5
+    },
+    {
+      "id": "pendulum_swing",
+      "label": "单摆",
+      "anonymous_clip_ids": [
+        "clip_060",
+        "clip_061",
+        "clip_062",
+        "clip_063",
+        "clip_064"
+      ],
+      "terms": [
+        "ball",
+        "pendulum bob"
+      ],
+      "grounding_text": "ball. pendulum bob.",
+      "count": 5
+    },
+    {
+      "id": "seesaw_rotation",
+      "label": "跷跷板",
+      "anonymous_clip_ids": [
+        "clip_065",
+        "clip_066",
+        "clip_067",
+        "clip_068",
+        "clip_069"
+      ],
+      "terms": [
+        "wooden block",
+        "box",
+        "seesaw board"
+      ],
+      "grounding_text": "wooden block. box. seesaw board.",
+      "count": 5
+    }
+  ]
+}

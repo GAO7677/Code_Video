@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-23",
+  "status": "TUNING",
+  "scope": "test70 group-conditioned text-assisted mask diagnostic",
+  "prompt_source": "User-authorized group-specific human text tuning on context RGB only. No GT geometry/mask/state/future; not held-out validation.",
+  "rules": {
+    "single_phrase_per_group": true,
+    "same_phrase_for_five_cases": true,
+    "no_gt_for_selection": true,
+    "no_top1_truncation": true,
+    "no_nms": true,
+    "no_shape_gate": true,
+    "box_threshold": 0.35,
+    "text_threshold": 0.25,
+    "uniqueness": "Exactly one raw box above fixed threshold. Human context review checks target identity. Not proof of unique motion."
+  },
+  "groups": [
+    {
+      "id": "incline_release_try0",
+      "label": "斜坡角度",
+      "anonymous_clip_ids": [
+        "clip_005",
+        "clip_006",
+        "clip_007",
+        "clip_008",
+        "clip_009"
+      ],
+      "terms": [
+        "orange cuboid"
+      ],
+      "grounding_text": "orange cuboid.",
+      "count": 5,
+      "base_group": "incline_release"
+    },
+    {
+      "id": "incline_release_try1",
+      "label": "斜坡角度",
+      "anonymous_clip_ids": [
+        "clip_005",
+        "clip_006",
+        "clip_007",
+        "clip_008",
+        "clip_009"
+      ],
+      "terms": [
+        "orange rectangular block"
+      ],
+      "grounding_text": "orange rectangular block.",
+      "count": 5,
+      "base_group": "incline_release"
+    },
+    {
+      "id": "incline_release_try2",
+      "label": "斜坡角度",
+      "anonymous_clip_ids": [
+        "clip_005",
+        "clip_006",
+        "clip_007",
+        "clip_008",
+        "clip_009"
+      ],
+      "terms": [
+        "orange wooden box"
+      ],
+      "grounding_text": "orange wooden box.",
+      "count": 5,
+      "base_group": "incline_release"
+    },
+    {
+      "id": "incline_release_try3",
+      "label": "斜坡角度",
+      "anonymous_clip_ids": [
+        "clip_005",
+        "clip_006",
+        "clip_007",
+        "clip_008",
+        "clip_009"
+      ],
+      "terms": [
+        "reddish brown cube"
+      ],
+      "grounding_text": "reddish brown cube.",
+      "count": 5,
+      "base_group": "incline_release"
+    },
+    {
+      "id": "incline_release_try4",
+      "label": "斜坡角度",
+      "anonymous_clip_ids": [
+        "clip_005",
+        "clip_006",
+        "clip_007",
+        "clip_008",
+        "clip_009"
+      ],
+      "terms": [
+        "red wooden box"
+      ],
+      "grounding_text": "red wooden box.",
+      "count": 5,
+      "base_group": "incline_release"
+    },
+    {
+      "id": "seesaw_rotation_try0",
+      "label": "跷跷板",
+      "anonymous_clip_ids": [
+        "clip_065",
+        "clip_066",
+        "clip_067",
+        "clip_068",
+        "clip_069"
+      ],
+      "terms": [
+        "olive cube"
+      ],
+      "grounding_text": "olive cube.",
+      "count": 5,
+      "base_group": "seesaw_rotation"
+    },
+    {
+      "id": "seesaw_rotation_try1",
+      "label": "跷跷板",
+      "anonymous_clip_ids": [
+        "clip_065",
+        "clip_066",
+        "clip_067",
+        "clip_068",
+        "clip_069"
+      ],
+      "terms": [
+        "yellow cube"
+      ],
+      "grounding_text": "yellow cube.",
+      "count": 5,
+      "base_group": "seesaw_rotation"
+    },
+    {
+      "id": "seesaw_rotation_try2",
+      "label": "跷跷板",
+      "anonymous_clip_ids": [
+        "clip_065",
+        "clip_066",
+        "clip_067",
+        "clip_068",
+        "clip_069"
+      ],
+      "terms": [
+        "green cube"
+      ],
+      "grounding_text": "green cube.",
+      "count": 5,
+      "base_group": "seesaw_rotation"
+    },
+    {
+      "id": "seesaw_rotation_try3",
+      "label": "跷跷板",
+      "anonymous_clip_ids": [
+        "clip_065",
+        "clip_066",
+        "clip_067",
+        "clip_068",
+        "clip_069"
+      ],
+      "terms": [
+        "olive green cube"
+      ],
+      "grounding_text": "olive green cube.",
+      "count": 5,
+      "base_group": "seesaw_rotation"
+    },
+    {
+      "id": "seesaw_rotation_try4",
+      "label": "跷跷板",
+      "anonymous_clip_ids": [
+        "clip_065",
+        "clip_066",
+        "clip_067",
+        "clip_068",
+        "clip_069"
+      ],
+      "terms": [
+        "brown cubical block"
+      ],
+      "grounding_text": "brown cubical block.",
+      "count": 5,
+      "base_group": "seesaw_rotation"
+    },
+    {
+      "id": "seesaw_rotation_try5",
+      "label": "跷跷板",
+      "anonymous_clip_ids": [
+        "clip_065",
+        "clip_066",
+        "clip_067",
+        "clip_068",
+        "clip_069"
+      ],
+      "terms": [
+        "wooden cubical weight"
+      ],
+      "grounding_text": "wooden cubical weight.",
+      "count": 5,
+      "base_group": "seesaw_rotation"
+    }
+  ],
+  "revision_reason": "r4 still lacks group-wide unique phrase for incline angle and seesaw; continue visible appearance wording only."
+}

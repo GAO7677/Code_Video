@@ -109,3 +109,12 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - 最终53例可评分mask：mean IoU0.515805，median0.574810；>=0.8共21例，[0.5,0.8)共9例，<0.5共23例。GT仅冻结后读取，未回流提示选择。不能将全部失败归因于画质；没有画质/提示配对消融。
 - 产物`/data/gaoya/agent-data/outputs/test70_motion_sam2_20260923_v1`，完整命令、GT覆盖限制和旧tracker的JPEG暂存路径见report.md。冻结hash6188c6edd0021267ca1b73373cdfd34f567b6a7e3c9ce621f1b73597163b545b。默认pipeline未替换；诊断页面复用8899/test70_masks_v1/。
 - 验证：原六例运动检测决策/框一致性检查PASS；70例推理和第二版评测完成；`git diff --check`通过。浏览器逐例结果另见产物browser_check.json。
+
+## 2026-09-23 — test70单短语Grounding DINO定位诊断（实验入口）
+
+- 新增`code/diagnose_grounding_text.py`、`code/assemble_grounding_diagnostic.py`、`web/test70_grounding_text.html`和最终配置`configs/test70_grounding_vocab_single_final_20260923.json`。每组只使用一个共享目标短语；不使用多类别prompt、top1截断、NMS、GT框或future。
+- 通过r1–r7记录所有调词尝试。最终组合在70例×8帧共560帧均返回恰好一个原始框；r6全量560帧实测59.911s，斜坡长度组单独r7复跑40帧解决clip_012两帧多框。全部候选叠框和原始JSON保留。
+- 目标身份为context视觉人工检查PASS；不是独立人工标注或GT IoU验证。SAM2未重跑，不能称为mask改善。跷跷板短语指定载荷木块，多米诺短语指定触发球，均不声称场景只有一个运动刚体。
+- `code/diagnose_grounding_text.py`修正输出目录按group/clip分层，避免不同组相同clip名覆盖；模型权重missing_keys为空，unused keys记录在load_audit。GPU6/CPU两线程，GPU4未使用。
+- 产物`/data/gaoya/agent-data/outputs/test70_grounding_text_20260923`，页面8899路径`test70_grounding_text/`。实验性诊断入口，不替换默认运动候选或v3 pipeline；词表是在本70例上调优，不能当作盲测泛化。
+- 验证：最终页面逐70例、逐8帧加载、Grounding框图和旧SAM2对照图PASS；共560帧，未进行GT指标或新SAM2推理。

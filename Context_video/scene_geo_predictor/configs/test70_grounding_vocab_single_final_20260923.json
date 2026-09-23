@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-23",
+  "status": "EXECUTED_CONTEXT_TUNED_560_UNIQUE_VISUALLY_REVIEWED",
+  "scope": "test70 group-conditioned text-assisted mask diagnostic",
+  "prompt_source": "User-authorized, assistant-authored group-specific text, tuned by visual context inspection. This is declared appearance/category prior and in-sample tuning, not autonomous motion discovery or held-out validation.",
+  "rules": {
+    "single_phrase_per_group": true,
+    "same_phrase_for_five_cases": true,
+    "no_gt_for_selection": true,
+    "no_top1_truncation": true,
+    "no_nms": true,
+    "no_shape_gate": true,
+    "box_threshold": 0.35,
+    "text_threshold": 0.25,
+    "uniqueness": "Exactly one raw box above fixed threshold. Human context review checks target identity. Not proof of unique motion."
+  },
+  "groups": [
+    {
+      "id": "table_rolloff",
+      "label": "桌面滚落",
+      "anonymous_clip_ids": [
+        "clip_000",
+        "clip_001",
+        "clip_002",
+        "clip_003",
+        "clip_004"
+      ],
+      "terms": [
+        "maroon ball"
+      ],
+      "grounding_text": "maroon ball.",
+      "count": 5
+    },
+    {
+      "id": "incline_release",
+      "label": "斜坡角度",
+      "anonymous_clip_ids": [
+        "clip_005",
+        "clip_006",
+        "clip_007",
+        "clip_008",
+        "clip_009"
+      ],
+      "terms": [
+        "reddish brown cube"
+      ],
+      "grounding_text": "reddish brown cube.",
+      "count": 5
+    },
+    {
+      "id": "incline_length_release",
+      "label": "斜坡长度",
+      "anonymous_clip_ids": [
+        "clip_010",
+        "clip_011",
+        "clip_012",
+        "clip_013",
+        "clip_014"
+      ],
+      "terms": [
+        "reddish brown cube"
+      ],
+      "grounding_text": "reddish brown cube.",
+      "count": 5
+    },
+    {
+      "id": "door_frame_clearance_ball",
+      "label": "球穿门框",
+      "anonymous_clip_ids": [
+        "clip_015",
+        "clip_016",
+        "clip_017",
+        "clip_018",
+        "clip_019"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "door_frame_clearance",
+      "label": "木箱穿门框",
+      "anonymous_clip_ids": [
+        "clip_020",
+        "clip_021",
+        "clip_022",
+        "clip_023",
+        "clip_024"
+      ],
+      "terms": [
+        "orange cube"
+      ],
+      "grounding_text": "orange cube.",
+      "count": 5
+    },
+    {
+      "id": "puck_barrier_collision",
+      "label": "冰球与挡板",
+      "anonymous_clip_ids": [
+        "clip_025",
+        "clip_026",
+        "clip_027",
+        "clip_028",
+        "clip_029"
+      ],
+      "terms": [
+        "puck"
+      ],
+      "grounding_text": "puck.",
+      "count": 5
+    },
+    {
+      "id": "bowl_descent",
+      "label": "碗面滑落",
+      "anonymous_clip_ids": [
+        "clip_030",
+        "clip_031",
+        "clip_032",
+        "clip_033",
+        "clip_034"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "domino_chain",
+      "label": "多米诺",
+      "anonymous_clip_ids": [
+        "clip_035",
+        "clip_036",
+        "clip_037",
+        "clip_038",
+        "clip_039"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "gap_rolloff",
+      "label": "平台缺口",
+      "anonymous_clip_ids": [
+        "clip_040",
+        "clip_041",
+        "clip_042",
+        "clip_043",
+        "clip_044"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "obstacle_ball_size",
+      "label": "障碍碰撞／球尺寸变化",
+      "anonymous_clip_ids": [
+        "clip_045",
+        "clip_046",
+        "clip_047",
+        "clip_048",
+        "clip_049"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "obstacle_speed",
+      "label": "障碍碰撞／速度变化",
+      "anonymous_clip_ids": [
+        "clip_050",
+        "clip_051",
+        "clip_052",
+        "clip_053",
+        "clip_054"
+      ],
+      "terms": [
+        "red ball"
+      ],
+      "grounding_text": "red ball.",
+      "count": 5
+    },
+    {
+      "id": "pendulum_cabinet_collision",
+      "label": "摆球与柜体",
+      "anonymous_clip_ids": [
+        "clip_055",
+        "clip_056",
+        "clip_057",
+        "clip_058",
+        "clip_059"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "pendulum_swing",
+      "label": "单摆",
+      "anonymous_clip_ids": [
+        "clip_060",
+        "clip_061",
+        "clip_062",
+        "clip_063",
+        "clip_064"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 5
+    },
+    {
+      "id": "seesaw_rotation",
+      "label": "跷跷板",
+      "anonymous_clip_ids": [
+        "clip_065",
+        "clip_066",
+        "clip_067",
+        "clip_068",
+        "clip_069"
+      ],
+      "terms": [
+        "olive green cube"
+      ],
+      "grounding_text": "olive green cube.",
+      "count": 5
+    }
+  ],
+  "revision_reason": "Full RGB0-7 audit r6 has two extra detections in clip_012 RGB3/6; test same appearance phrase used by incline-angle group across all 40 frames of ramp-length group.",
+  "validation": {
+    "cases": 70,
+    "frames": 560,
+    "unique_raw_boxes": 560,
+    "visual_identity_review": "Assistant inspected full RGB7 group sheets and all 560 target crops; no independent human review, no GT box IoU.",
+    "runs": {
+      "default": "r6_all8",
+      "incline_length_release": "r7_length_all8"
+    },
+    "sam2_rerun": false
+  }
+}
