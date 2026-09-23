@@ -172,3 +172,12 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - aperture_g00_v0280：ADE3.1004→0.7165m，接触帧0→38/41；同组v0460/v0720也改善。不宣称状态/尺度误差已修复或多数新场景已验证可用。`report_local_plane_completion.py`在冻结后逐例验证状态和原观测顶点完全未改，输出completion_comparison.json及completion_report.md。
 - 验证：CPU两线程运行`tests/test_local_plane_completion.py`（2项，覆盖平面、两斜面、真实可见缺口、台阶、开放边缘、已观测像素不变）、`tests/test_observed_surface_fusion.py`（2项）、`tests/test_generic_context_geometry.py`（3项），全部PASS；无GPU占用或训练。完整运行命令见产物report.md。
 - 原v3模板显示黄色推断面与紫色观测mesh边界，保留纯观测mesh对照入口，报告不将推断面标为真值。浏览器验收结果见产物v3_layout_browser_check.json。
+
+## 2026-09-23 — 最新补全输入的A/B/C/D zero-omega六层对照
+
+- 按用户确认，B包含估计radius+p7/v7；A/C使用GT radius+p7/v7；所有组zero omega、共享冻结估计重力与固定物性。GT只在验证视觉/几何freeze后读入独立评测分支。A非旧GT omega完整oracle重放，报告与UI明确标注。D继续使用估计半径，不为对照改成0.11m。
+- 新增`run_grounded_abcd.py`、`mesh_contact_alignment.py`、`publish_grounded_abcd.py`、`web/grounded_abcd_viewer.js`。扩展`generic_bullet_input.run`可选GT世界构造、C诊断对齐及API步接触日志；原默认动力学路径不变。GT几何由原builder加载后做刚体坐标注册，不拟合尺度，不按mesh AABB上表面伪造支撑。GT半径字段必需，无默认fallback。
+- 严格C和C_aligned独立：后者用A初始接触确认支撑，只允许近水平支撑穿插向上≤55mm，不吸附悬空球、不修改速度/几何。新增`test_mesh_contact_alignment.py`验证严格拒绝、小穿插恢复、超限拒绝、无支撑拒绝和无吸附；原3项几何/动力学测试PASS。
+- `/data/gaoya/agent-data/outputs/context_grounded_abcd_zero_20260923_v1`完成36×5=180模式尝试。A36执行、B12执行（16状态FAIL+8穿插拒绝）、C_strict32执行（4穿插拒绝）、C_aligned36拒绝（32缺初始支撑+4侧向接触）、D20执行/16状态FAIL。各自有效均值ADE：A0.1281m、B0.3026m、C_strict3.0909m、D2.8034m；分母不同，不当独立因果效应。共同有效ABCD严格队列8例，另单列。
+- 180份结果已审计：执行项41帧/328step/328条API调用接触快照；拒绝项0step；20条D轨迹与冻结部署D最大差<1e-8m。接触按法向划分support/obstacle角色，非family GT语义事件precision/recall。GT所有36个半径值核对来自blueprint显式字段。
+- 原v3页面新增实际六层：A/B/C/D、Estimated geometry、GT geometry；C模式可切换严格/aligned，拒绝不绘轨迹。估计mesh紫色、推断面黄色、真实GT盒边绿色；未将mesh伪装为旧family盒。浏览器验证36例×6步骤、六层开关、C切换及新旧页入口，截图与check JSON在产物目录。
