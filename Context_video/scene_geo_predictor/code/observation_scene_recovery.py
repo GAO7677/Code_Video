@@ -4,6 +4,51 @@ import numpy as np
 from scipy.optimize import least_squares
 
 
+def fixed_camera(rgb, masks, k, e):
+    """Admit a fixed-camera prior from static feature tracks; no guessed calibration."""
+    gray=[cv2.cvtColor(im,cv2.COLOR_BGR2GRAY) for im in rgb]
+    exclusion=cv2.dilate(np.any(masks,axis=0).astype(np.uint8),np.ones((15,15),np.uint8))
+    points=cv2.goodFeaturesToTrack(gray[0],200,.02,8,mask=(1-exclusion)*255)
+    if points is None or len(points)<30:raise ValueError('insufficient_static_camera_features')
+    shifts=[]
+    for im in gray[1:]:
+        q,ok,err=cv2.calcOpticalFlowPyrLK(gray[0],im,points,None)
+        valid=(ok[:,0]>0)&(err[:,0]<15)
+        if valid.sum()<30:raise ValueError('insufficient_static_camera_tracks')
+        shifts.append(float(np.percentile(np.linalg.norm(q[valid,0]-points[valid,0],axis=1),90)))
+    if max(shifts)>1.5:raise ValueError('fixed_camera_prior_not_supported')
+    shared=np.median(k,axis=0);shared[2]=[0,0,1]
+    return np.repeat(shared[None],8,axis=0),np.repeat(e[:1],8,axis=0),{'static_track_p90_px':shifts,'intrinsic_source':'clip median VGGT','extrinsic_source':'reference VGGT pose','absolute_calibration':'UNVALIDATED'}
+
+
+def regularize_planes(mesh):
+    """Fit bounded observed planar patches; keep faces/holes and cap movement at 1cm."""
+    vertices=np.array(mesh['vertices']);faces=np.array(mesh['faces']);used=np.unique(faces)
+    remaining=used.copy();rng=np.random.default_rng(42);patches=[]
+    # No normals or coordinates specific to floor, family, or target state.
+    for _ in range(8):
+        if len(remaining)<200:break
+        sample=remaining[rng.choice(len(remaining),min(4000,len(remaining)),replace=False)]
+        pts=vertices[sample];best=None;count=0
+        for _ in range(100):
+            a,b,c=pts[rng.choice(len(pts),3,replace=False)];n=np.cross(b-a,c-a);length=np.linalg.norm(n)
+            if length<1e-8:continue
+            n/=length;inside=abs((pts-a)@n)<.01
+            if inside.sum()>count:best=(n,float(-n@a));count=int(inside.sum())
+        if count<100:break
+        n,offset=best;selected=remaining[abs(vertices[remaining]@n+offset)<.01]
+        center=vertices[selected].mean(axis=0);_,_,v=np.linalg.svd(vertices[selected]-center,full_matrices=False);n=v[-1];offset=-float(n@center)
+        signed=vertices[selected]@n+offset;selected=selected[abs(signed)<=.01];signed=vertices[selected]@n+offset
+        if len(selected)<200:break
+        before=vertices[selected].copy();vertices[selected]-=signed[:,None]*n
+        patches.append({'normal':n.tolist(),'offset':offset,'observed_vertex_indices':selected.tolist(),'rms_before_m':float(np.sqrt(np.mean(signed**2))), 'max_displacement_m':float(np.linalg.norm(vertices[selected]-before,axis=1).max())})
+        remaining=remaining[~np.isin(remaining,selected)]
+    result=dict(mesh);result['vertices']=vertices.tolist()
+    result['plane_regularization']={'patches':patches,'max_allowed_displacement_m':.01,'added_faces':0,'removed_faces':0,'holes_preserved':True,'source':'observed vertices only, no state or GT'}
+    result['source']+='; bounded observed plane regularization'
+    return result
+
+
 def silhouette_depth_sphere(depth, confidence, k, e, masks, scale, times):
     """Shared unknown radius; silhouette tangency plus confidence-selected front surface."""
     contours=[];surfaces=[];initial=[];radii=[];audit=[]
@@ -39,8 +84,13 @@ def silhouette_depth_sphere(depth, confidence, k, e, masks, scale, times):
             surface=np.linalg.norm(xyz-c,axis=1)-radius
             out.extend([tangent/r0/np.sqrt(len(tangent)),surface/r0/np.sqrt(len(surface))])
         return np.concatenate(out)
-    lower=np.full(25,-np.inf);lower[2:24:3]=1e-6;lower[-1]=1e-6
-    fit=least_squares(residual,np.r_[np.array(initial).ravel(),r0],bounds=(lower,np.full(25,np.inf)),loss='soft_l1',f_scale=.01,max_nfev=200)
+    lower=np.full(25,-np.inf);lower[-1]=1e-6
+    # A visible front cap must precede its center. Prevent the mirror/back-cap
+    # optimum during fitting rather than accepting a small algebraic residual.
+    lower[2:24:3]=[np.percentile(xyz[:,2],90) for xyz in surfaces]
+    x0=np.r_[np.array(initial).ravel(),r0]
+    x0[2:24:3]=np.maximum(x0[2:24:3],lower[2:24:3]+.01*r0)
+    fit=least_squares(residual,x0,bounds=(lower,np.full(25,np.inf)),loss='soft_l1',f_scale=.01,max_nfev=200)
     camera_centers=fit.x[:-1].reshape(8,3);radius=float(fit.x[-1])
     centers=np.stack([(c-e[t,:,3]*scale)@e[t,:,:3] for t,c in enumerate(camera_centers)])
     tangent_rms=float(np.sqrt(np.mean(np.concatenate([(np.linalg.norm(np.cross(ray,c),axis=1)-radius)/radius for ray,c in zip(contours,camera_centers)])**2)))

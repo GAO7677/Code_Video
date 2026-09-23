@@ -4,7 +4,7 @@ let records=[],data,stage='context',frame=0,filter='all',playing=false,last=0,ti
 // Bound decoded images to the selected case, not the full 70-case collection.
 const images=new Map(),decoded=new Map();let meshPaths={},playRequest=0;
 function frameUrl(r,s,t){return s==='depth'?`diagnostics/${r.id}/depth_${t}.png`:s==='geometry'?`diagnostics/${r.id}/mesh.png`:`inputs/${r.id}/rgb_${String(s==='rollout'?7:t).padStart(2,'0')}.png`}
-function warm(r,s){return Promise.all(Array.from({length:s==='rollout'||s==='geometry'?1:8},(_,t)=>image(frameUrl(r,s,t))))}
+function warm(r,s){if(window.test70VideoActive)return Promise.resolve();return Promise.all(Array.from({length:s==='rollout'||s==='geometry'?1:8},(_,t)=>image(frameUrl(r,s,t))))}
 function segmentsPath(segments){const p=new Path2D();for(const seg of segments||[]){if(seg.length===2&&seg.flat().every(Number.isFinite)){p.moveTo(...seg[0]);p.lineTo(...seg[1])}}return p}
 function setHtml(id,value){const el=$(id);if(el.innerHTML!==value)el.innerHTML=value}
 const titles={context:'Context RGB',mask:'Grounding DINO + SAM2',state:'Center / radius / p7 / v7',depth:'VGGT depth',geometry:'Observed mesh + local completion',rollout:'Zero-omega PyBullet'};
@@ -15,11 +15,20 @@ const active=k=>document.querySelector(`[data-layer="${k}"]`).checked;
 function list(){const rows=records.filter(r=>(filter==='all'||r.rollout_status===filter||(filter==='FAIL'&&r.rollout_status==='UNKNOWN'))&&r.case_id.includes($('caseSearch').value));$('visibleCaseCount').textContent=rows.length;$('caseList').innerHTML=rows.map(r=>`<button class="case-row ${r===data?'is-active':''}" data-case="${r.id}"><strong>${esc(r.case_id)}</strong><span class="case-ade">${esc(r.rollout_status)}</span><small>${r.id}</small><small>${r.evaluation?.trajectory_metrics?fmt(r.evaluation.trajectory_metrics.ADE_m)+' m':'未取得有效轨迹指标'}</small></button>`).join('')}
 function image(url){if(!images.has(url)){const promise=(async()=>{const im=new Image();im.src=url;await im.decode();if(images.get(url)===promise)decoded.set(url,im);return im})();images.set(url,promise);promise.catch(()=>{if(images.get(url)===promise)images.delete(url)})}return images.get(url)}
 function line(points,color,width=2){if(!points?.length)return;ctx.beginPath();let first=true;for(const p of points){if(!p||!p.every(Number.isFinite)){first=true;continue}if(first){ctx.moveTo(...p);first=false}else ctx.lineTo(...p)}ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke()}
-async function load(id){++playRequest;data=records.find(r=>r.id===id);playing=false;images.clear();decoded.clear();meshPaths={mesh:segmentsPath(data.mesh_segments),completion:segmentsPath(data.completion_segments)};$('caseTitle').textContent=data.case_id;$('familyBadge').textContent=data.id;$('variantText').textContent=data.rollout_status;list();frame=stage==='rollout'?41:0;await draw();warm(data,stage).catch(()=>{})}
+let caseRequest=0;
+async function load(id){const request=++caseRequest;++playRequest;++ticket;playing=false;
+ $('loadingOverlay').hidden=false;$('loadingOverlay').textContent='读取所选 case…';
+ try{const row=records.find(r=>r.id===id);let selected=row;
+ if(row.detail_url){const response=await fetch(row.detail_url);if(!response.ok)throw Error('HTTP '+response.status);selected=await response.json()}
+ if(request!==caseRequest)return;records[records.indexOf(row)]=selected;data=selected;images.clear();decoded.clear();meshPaths={};
+ $('caseTitle').textContent=data.case_id;$('familyBadge').textContent=data.id;$('variantText').textContent=data.rollout_status;list();frame=stage==='rollout'?41:0;await draw();warm(data,stage).catch(()=>{})
+ }catch(e){if(request===caseRequest){$('loadingOverlay').hidden=false;$('loadingOverlay').textContent='读取失败：'+e.message}}}
 async function selectStage(s){++playRequest;stage=s;frame=s==='rollout'?41:0;playing=false;await draw();warm(data,stage).catch(()=>{})}
 async function draw(){if(!data)return;const token=++ticket,r=data,t=Math.min(frame,7),evalCam=$('evalCamera').checked;
  const url=frameUrl(r,stage,t);
- try{if(!decoded.has(url)){$('loadingOverlay').textContent='读取当前阶段帧…';$('loadingOverlay').hidden=false}const im=decoded.get(url)||await image(url);if(token!==ticket)return;ctx.clearRect(0,0,640,360);ctx.drawImage(im,0,0,640,360);
+ try{if(!window.test70VideoActive){
+ if(!meshPaths.mesh)meshPaths={mesh:segmentsPath(r.mesh_segments),completion:segmentsPath(r.completion_segments)};
+ if(!decoded.has(url)){$('loadingOverlay').textContent='读取当前阶段帧…';$('loadingOverlay').hidden=false}const im=decoded.get(url)||await image(url);if(token!==ticket)return;ctx.clearRect(0,0,640,360);ctx.drawImage(im,0,0,640,360);
  if(stage==='mask'){r.mask_contours[t].forEach(c=>line(c.concat([c[0]]),'#37aef5'));if(t===7){const b=r.prompt_box;ctx.strokeStyle='#ffdc32';ctx.strokeRect(b[0],b[1],b[2]-b[0],b[3]-b[1])}}
  if(stage==='state'&&r.center_uv){line(r.center_uv.slice(0,t+1),'#ffdc32');for(const p of r.center_uv.slice(0,t+1)){if(p.every(Number.isFinite)){ctx.beginPath();ctx.arc(...p,3,0,Math.PI*2);ctx.strokeStyle='#ffdc32';ctx.stroke()}}}
  const keys=[];
@@ -30,7 +39,7 @@ async function draw(){if(!data)return;const token=++ticket,r=data,t=Math.min(fra
   if(active('completion')){ctx.strokeStyle='#ffdd44';ctx.lineWidth=1;ctx.stroke(meshPaths.completion);keys.push(['Inferred plane · 推断','#ffdd44'])}
  }
  setHtml('canvasKey',keys.map(([n,c])=>`<span class="key-item"><i class="key-dot" style="color:${c}"></i>${esc(n)}</span>`).join(''));$('loadingOverlay').hidden=true;
- }catch(e){$('loadingOverlay').textContent='加载失败 '+e.message;throw e}
+ }}catch(e){$('loadingOverlay').textContent='加载失败 '+e.message;throw e}
  $('timeline').max=limit();$('timeline').value=frame;$('timeline').disabled=stage==='geometry';$('frameBadge').textContent=`RGB${stage==='rollout'?frame+7:stage==='geometry'?7:frame}${stage==='rollout'?' · RGB7 HOLD':''}`;$('timeOutput').textContent=fmt(frame/30)+' s';$('playPause').textContent=playing?'Ⅱ':'▶';
  document.querySelectorAll('[data-stage]').forEach(b=>b.classList.toggle('is-active',b.dataset.stage===stage));$('layerControls').hidden=stage!=='rollout';$('inspectorStep').textContent=titles[stage];$('stageStatus').textContent=stage==='rollout'?r.rollout_status:stage==='state'?r.state.status:stage==='geometry'?r.geometry.status:'OBSERVED';
  $('scopeBadge').textContent=stage==='rollout'&&evalCam?'EVALUATION':'ESTIMATOR';let rows='',note='';const s=r.state,m=r.evaluation.state_metrics;
@@ -50,4 +59,4 @@ $('timeline').oninput=e=>{++playRequest;frame=+e.target.value;playing=false;draw
 $('playPause').onclick=async()=>{const request=++playRequest;if(playing){playing=false;await draw();return}if(!limit())return;$('playPause').textContent='…';try{await warm(data,stage);if(request!==playRequest)return;playing=true;last=performance.now();if(frame===limit())frame=0;await draw()}catch(e){$('playPause').textContent='▶';$('loadingOverlay').hidden=false;$('loadingOverlay').textContent='预加载失败：'+e.message}};
 $('playbackFps').onchange=()=>{last=performance.now()};
 async function tick(now){try{const interval=1000/+$('playbackFps').value;if(playing&&now-last>=interval){const steps=Math.floor((now-last)/interval);last+=steps*interval;frame=(frame+steps)%(limit()+1);await draw()}}finally{requestAnimationFrame(tick)}}
-(async()=>{const d=await(await fetch('viewer_data.json')).json();records=d.records;$('summaryAde').textContent=fmt(d.summary.ADE_m)+'m';$('summaryFde').textContent=fmt(d.summary.FDE_m)+'m';$('summaryContact').textContent=(d.summary.rollout.EXECUTED||0)+'/70';$('summaryContact').nextElementSibling.textContent='EXECUTED';await load(records[0].id);requestAnimationFrame(tick)})();
+(async()=>{const response=await fetch('viewer_index.json');if(!response.ok)throw Error('列表加载失败：'+response.status);const d=await response.json();records=d.records;$('summaryAde').textContent=fmt(d.summary.ADE_m)+'m';$('summaryFde').textContent=fmt(d.summary.FDE_m)+'m';$('summaryContact').textContent=(d.summary.rollout.EXECUTED||0)+'/70';$('summaryContact').nextElementSibling.textContent='EXECUTED';await load(records[0].id);requestAnimationFrame(tick)})();

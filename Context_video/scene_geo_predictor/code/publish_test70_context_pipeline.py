@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+from prepare_test70_lazy_viewer import write_index
 
 import cv2
 import numpy as np
@@ -169,7 +170,13 @@ def publish(root):
             for f in inferred:
                 if valid[f].all():
                     cv2.fillPoly(overlay, [np.rint(uv[f]).astype(np.int32)], (40, 220, 255))
-            cv2.imwrite(str(dest / 'mesh.png'), cv2.addWeighted(rgb, .5, overlay, .5, 0))
+            composed=cv2.addWeighted(rgb, .5, overlay, .5, 0)
+            # The visible target mask is foreground evidence for display only.
+            # Do not paint surfaces behind it onto the ball; never alter mesh.
+            foreground=cv2.resize(masks[7].astype(np.uint8),(640,360),interpolation=cv2.INTER_NEAREST)>0
+            composed[foreground]=rgb[foreground]
+            row['geometry_display']={'foreground_target_mask_occlusion':True,'collision_geometry_modified':False}
+            cv2.imwrite(str(dest / 'mesh.png'),composed)
         else:
             cv2.imwrite(str(dest / 'mesh.png'), cv2.imread(str(root / 'inputs' / cid / 'rgb_07.png')))
         if est['support_reason']:
@@ -193,6 +200,7 @@ def publish(root):
         'initial_overlap_tested': sum(r['initial_penetration_m'] is not None for r in records),
         'initial_overlap_positive': sum((r['initial_penetration_m'] or 0) > .001 for r in records)}
     dump_json(root / 'viewer_data.json', {'summary': summary, 'records': records})
+    write_index(root, {'summary': summary, 'records': records})
     html = Path('/data/gaoya/agent-data/outputs/context_grounded_generic_pilot36_20260923_v1/legacy_v3_index.html').read_text()
     html = html.replace('styles.css?v=contact-gate-1', '../overlay_viewer_v3/styles.css?v=contact-gate-1').replace('app.js?v=contact-gate-1', 'test70_viewer.js?v=playback-cache-20260923')
     html = html.replace('36 CASE PILOT', 'TEST70 · CONTEXT PIPELINE').replace('SAM2 + sphere', 'DINO + SAM2')
@@ -204,13 +212,17 @@ def publish(root):
     html = re.sub(r'<section id="layerControls".*?</section>', controls, html, flags=re.S)
     reference = '<section class="layer-reference"><h2>图层说明 · 常驻参考</h2><p>绿：GT轨迹（仅评测）；蓝：与D相同p7/v7的恒速外推；红：估计半径/状态/几何＋zero omega的D。紫色：观测mesh边界；黄色：显式局部平面推断。补全面不是真值。</p><p>未来轨迹叠加在RGB7静止背景。默认估计相机投影；勾选GT评测相机投影后才叠加GT并比较像素误差。失败无轨迹。A/B/C和GT几何本轮NOT_RUN。UNSUPPORTED场景的mesh仅作视觉诊断，可能包含其他运动物体。</p><label><input id="evalCamera" type="checkbox"> GT评测相机投影（冻结后，仅评测）</label></section>'
     html = re.sub(r'<section class="layer-reference".*?</section>', reference, html, flags=re.S)
+    html = html.replace('test70_viewer.js?v=playback-cache-20260923', 'test70_viewer.js?v=lazy-video-20260923')
     (root / 'index.html').write_text(html)
     shutil.copyfile(REPO / 'web/test70_context_viewer.js', root / 'test70_viewer.js')
     if (root / 'overlay_videos_v2/manifest.json').exists():
-        html = html.replace('</body>', '<script src="test70_video_mode.js?v=20260923-1"></script></body>')
+        html = html.replace('</body>', '<script src="test70_video_mode.js?v=lazy-video-20260923"></script></body>')
         (root / 'index.html').write_text(html)
         shutil.copyfile(REPO / 'web/test70_video_mode.js', root / 'test70_video_mode.js')
-    report = '# test70 Context → PyBullet · 2026-09-23\n\n全70例保留；复用冻结Grounding DINO＋SAM2，GPU6新跑VGGT；其余CPU两线程。\n\n'
+    execution = '复用冻结Grounding DINO＋SAM2/VGGT，CPU两线程执行恢复修复与评测；未运行GPU模型。' if protocol.get('recovery_method') else '复用冻结Grounding DINO＋SAM2，GPU6新跑VGGT；其余CPU两线程。'
+    report = '# test70 Context → PyBullet · 2026-09-23\n\n全70例保留；'+execution+'\n\n'
+    if protocol.get('recovery_method'):
+        report += '本轮恢复变更：\n```json\n'+json.dumps(protocol['frozen_changes'],ensure_ascii=False,indent=2)+'\n```\n\n'
     report += '支持范围按此前context视觉筛查预先固定：30个单球非关节候选；20个非球体、5个多动态物体、15个关节/动态支撑场景仅诊断。序号仅用于范围声明，未用于提供几何参数。这不是自动场景理解。\n\n'
     report += '未知半径球面联合拟合 → 固定scale=5.819486884015457 → 多帧静态融合/局部平面补全 → 下方平面重力prior → zero-omega Bullet。没有GT补齐或位置对齐。固定scale来自旧pilot，不保证跨视频米制准确。\n\n'
     report += '估计/重力/rollout全部hash冻结后才读取GT。GT相机投影先核对保存的轨迹像素，误差>2px标BLOCKED。D默认用估计相机投影；GT相机叠加是单独评测开关。\n\n'
@@ -218,9 +230,12 @@ def publish(root):
     report += '## 复现命令\n\n首次执行输出目录如下；重跑需换新版本目录。模型仅用物理GPU6，CPU各阶段两线程；不使用GPU4。\n\n```bash\n'
     prefix = 'OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 '
     python = '/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B '
-    for phase in ['prepare', 'depth', 'estimate']:
+    for phase in ([] if protocol.get('recovery_method') else ['prepare', 'depth', 'estimate']):
         device = 'GPU-7f6fbc40-3594-2c34-8557-422621355ff9' if phase == 'depth' else "''"
         report += prefix + f'CUDA_VISIBLE_DEVICES={device} ' + python + f'{REPO}/code/run_test70_context_pipeline.py {phase} --root {root}\n'
+    if protocol.get('recovery_method'):
+        flags=(' --fixed-camera' if protocol.get('fixed_camera_enabled') else '')+(' --planes' if protocol.get('plane_regularization_enabled') else '')
+        report += prefix + "CUDA_VISIBLE_DEVICES='' " + python + f"{REPO}/code/run_scene_recovery_ablation.py --source {protocol['parent_baseline']} --output {root}{flags}\n"
     report += prefix + "CUDA_VISIBLE_DEVICES='' " + python + f'{REPO}/code/publish_test70_context_pipeline.py --root {root}\n```\n\n'
     report += '| case | state | gravity | rollout | failure |\n|---|---|---|---|---|\n'
     for r in records:

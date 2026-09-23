@@ -205,3 +205,20 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - 首次检查发现context与完整RGB视频单独编码，像素不完全相同；先核对缓存与context原视频逐像素完全一致，再以PSNR≥30dB检查完整视频前8帧。全70例最低37.17dB，记录原视频hash、MAE与PSNR。首次未通过严格像素门的空`overlay_videos_v1`保留，新产物为`overlay_videos_v2`，非静默覆盖/替换原输入。
 - 新增`web/test70_video_mode.js`，当前页面默认原生video controls，可拖动、循环、0.25/0.5/1/2倍速和下载MP4；保留按钮切回逐帧可切图层版本。视频图层预渲染不可单独关闭，切回交互模式可调整。发布脚本检测视频manifest后自动保留该入口。420视频共10.3MiB；未占GPU、未修改预测或指标。
 - 验证命令：`VIDEO_AUDIT=1 node tests/check_test70_context_viewer.cjs /data/gaoya/agent-data/outputs/test70_context_pipeline_20260923_v1 http://127.0.0.1:8899/test70_context_pipeline_v1/`；检查全部视频加载/时长/seek、实际半速播放及模式切换，证据在`video_browser_check.json`和`video_browser_screenshot.png`。JS语法和git diff --check通过；服务未重启。
+
+## 2026-09-23 — 通用球体恢复与场景去噪配对实验（低误差目标尚未达到）
+
+- 确认问题：旧纯可见表面球拟合在深度曲率被压平时仍可通过，合成真半径0.3m被估为0.542m；新增`observation_scene_recovery.silhouette_depth_sphere`用完整轮廓射线切线约束与置信度上半区可见深度联合估计未知共享半径/球心，增加前表面方向约束、motion optimizer/residual准入，合成半径约0.299m。没有恢复0.11m默认值或调用GT纠正。
+- 独立运行器`run_scene_recovery_ablation.py`复用冻结RGB/mask/VGGT，所有分支保留70例，其中预声明30单球候选。输出`test70_scene_recovery_20260923_v1/v2/v3`；v1是轮廓+深度初版诊断，v2加入前表面约束，v3另测固定相机和有限平面去噪。不逐case混用版本，不删除失败样本，不改scale/solver/物性或使用GT反馈优化。
+- v2：state通过23→28/30、rollout21→23/30，旧21例全部保留；共同21例ADE0.625932→0.618335m，6例改善>1cm、0例退化>1cm。全部30例（含失败拟合诊断）p7中位误差0.231679→0.230810m，半径0.016612→0.013564m，速度向量0.334856→0.282861m/s。新有效23例ADE0.635554m，分母不同，不与旧21例直接称改善；碗面5例初始穿插仍未解决。
+- v3：静态特征p90位移≤1.5px后使用clip中位K与参考E重建；已有观测顶点平面正则化位移≤1cm、无新增面。此组合22例推进，但丢失原可运行v520；共同20例ADE0.584967→0.595854m，2改善/6退化>1cm。因此仅保存实验对照，不作为默认升级或宣称几何已修复。绝对相机/深度偏差和物体级布局仍未解决。
+- `publish_test70_context_pipeline.py`修正前景mask遮挡合成：mesh颜色不再画到可见球mask内，碰撞几何不变。报告注明恢复实验不重跑GPU模型，生成对应复现命令。新增`report_scene_recovery.py`输出全部版本、共同分母、丢失样本与逐例指标。
+- 验证：`tests/test_observation_scene_recovery.py`覆盖压平球面、未知尺度1×/2×、速度、平面真实缺口/位移界、固定相机与运动相机拒绝；原geometry3项和local-plane2项均PASS。全部CPU两线程，未使用GPU或新模型。实验代码只作独立入口；完整比较位于v3/recovery_report.md与recovery_comparison.json，旧baseline保留。
+- v2修复候选视频接入`/test70_recovery_v2/`，420视频加载/seek/半速播放/交互切换全部PASS；所有70模式状态已核对，23执行项41帧/328step，其他0step。页面明确标记“尚未达到低误差目标”，未替换原baseline或将v3失败组合设为默认。
+
+## 2026-09-23 — test70 视频按需加载
+
+- 原因：启动先读取约33 MB的全量viewer_data.json；视频模式仍等待隐藏Canvas图片解码并预加载8张PNG。
+- 修改：`web/test70_context_viewer.js`改读12,331字节索引，按所选case加载并缓存详情，异步切换只提交最新请求；视频模式跳过图片与mesh Path2D构建。`web/test70_video_mode.js`当前MP4使用auto预加载。保留逐帧交互功能。
+- `code/prepare_test70_lazy_viewer.py`发布轻量索引与前端资源，`publish_test70_context_pipeline.py`后续发布自动生成索引；原数据、MP4和仿真结果未改。当前已启用页面`/test70_recovery_v2/`，服务无需重启。
+- 验证：`VIDEO_AUDIT=1 node tests/check_test70_context_viewer.cjs OUTPUT URL`通过420视频加载/seek/半速播放/模式切换。新增`LAZY_AUDIT=1`实测首屏无viewer_data.json及PNG请求，仅索引、首case详情约355KB、当前MP4约19KB及脚本样式。局域网用户实际等待时间仍受网络影响，未将本机检查声称为远端测速。

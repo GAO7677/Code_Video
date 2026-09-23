@@ -2,7 +2,7 @@
 // Display-only encoded overlays; estimation files are never changed here.
 const overlayVideo=document.createElement('video');
 overlayVideo.id='overlayVideo';overlayVideo.controls=true;overlayVideo.loop=true;
-overlayVideo.playsInline=true;overlayVideo.preload='metadata';
+overlayVideo.playsInline=true;overlayVideo.preload='auto';
 overlayVideo.style.cssText='display:block;width:100%;height:auto;background:#172020';
 $('overlayCanvas').before(overlayVideo);
 const videoToolbar=document.createElement('div');
@@ -10,6 +10,7 @@ videoToolbar.style.cssText='padding:10px;background:#eef2ef;display:flex;gap:12p
 videoToolbar.innerHTML='<button id="toggleVideoMode" type="button">切换逐帧交互</button><label>视频速度 <select id="videoRate"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select></label><a id="videoDownload" download>下载 MP4</a><span id="videoNote"></span>';
 document.querySelector('.canvas-stage').before(videoToolbar);
 let videoMode=true,videoKey='';
+window.test70VideoActive=true;
 function syncVideo(){
  if(!data)return;
  $('overlayCanvas').hidden=videoMode;$('overlayCanvas').style.display=videoMode?'none':'';
@@ -36,7 +37,7 @@ function videoFrame(){if(!videoMode)return;const t=Math.min(stage==='rollout'||s
 overlayVideo.ontimeupdate=videoFrame;
 overlayVideo.onerror=()=>{$('videoNote').textContent='视频加载失败，可切换逐帧交互查看。'};
 $('videoRate').onchange=()=>{overlayVideo.playbackRate=+$('videoRate').value};
-$('toggleVideoMode').onclick=()=>{++playRequest;playing=false;videoMode=!videoMode;syncVideo();if(!videoMode)draw()};
+$('toggleVideoMode').onclick=()=>{++playRequest;playing=false;videoMode=!videoMode;window.test70VideoActive=videoMode;syncVideo();if(!videoMode)draw()};
 const drawWithoutVideo=draw;
 draw=async function(){await drawWithoutVideo();syncVideo()};
 syncVideo();

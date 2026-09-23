@@ -16,6 +16,12 @@ function cdp(method,params={},sessionId){return new Promise((resolve,reject)=>{c
  await call('Page.navigate',{url});
  await ev(`new Promise((resolve,reject)=>{let n=0,t=setInterval(()=>{if(document.querySelector('#caseList')?.children.length===70&&document.querySelector('#loadingOverlay').hidden){clearInterval(t);resolve(true)}else if(++n>300){clearInterval(t);reject('timeout')}},100)})`);
  if(process.env.VIDEO_AUDIT){
+  if(process.env.LAZY_AUDIT){
+   const network=await ev(`performance.getEntriesByType('resource').map(r=>({url:r.name,bytes:r.transferSize}))`);
+   if(network.some(r=>/viewer_data\.json|\.png(?:\?|$)/.test(r.url)))throw Error('Video startup fetched full dataset or canvas images');
+   if(!network.some(r=>r.url.includes('viewer_index.json')))throw Error('Missing lazy index');
+   console.log('PASS lazy startup: no full dataset or PNG requests',network);
+  }
   for(let i=0;i<70;i++)await ev(`(async()=>{await load('clip_${String(i).padStart(3,'0')}');for(const s of ['context','mask','state','depth','geometry','rollout']){await selectStage(s);const v=$('overlayVideo');await new Promise((resolve,reject)=>{let n=0,t=setInterval(()=>{if(v.error){clearInterval(t);reject(v.error.message)}else if(v.readyState>=2){clearInterval(t);resolve()}else if(++n>100){clearInterval(t);reject('video load timeout')}},50)});const expected=['geometry','rollout'].includes(s)?49/30:8/30;if(Math.abs(v.duration-expected)>.04)throw Error('duration mismatch');v.currentTime=Math.max(0,v.duration-.08);await new Promise((resolve,reject)=>{let n=0,t=setInterval(()=>{if(!v.seeking&&v.readyState>=2){clearInterval(t);resolve()}else if(++n>100){clearInterval(t);reject('seek timeout')}},30)})}})()`);
   const playback=await ev(`(async()=>{await load('clip_000');await selectStage('rollout');const v=$('overlayVideo');v.muted=true;v.playbackRate=.5;await v.play();await new Promise(r=>setTimeout(r,1000));const t=v.currentTime;v.pause();if(t<.2||t>.9)throw Error('playback did not advance at half speed');$('toggleVideoMode').click();if(!$('overlayVideo').hidden)throw Error('interactive toggle');$('toggleVideoMode').click();return {advanced_seconds:t,rate:.5}})()`);
   const shot=await call('Page.captureScreenshot',{format:'png'});fs.writeFileSync(root+'/video_browser_screenshot.png',Buffer.from(shot.data,'base64'));
