@@ -68,7 +68,7 @@ def sphere_fit(depth,k,e,masks,scale,times):
             'shape':'sphere','radius':r,'orientation':{'status':'UNKNOWN','collision_quaternion':[0,0,0,1],'reason':'sphere collision rotational symmetry'},
             'omega':[0,0,0],'omega_source':'explicit_zero_baseline','relative_rms':relative_rms,'radius_cv':radius_cv,'jacobian_condition':condition,'frames':support}
 
-def finite_mesh_observed(depth,k,e,masks,scale):
+def finite_mesh_observed(depth,k,e,masks,scale,*,complete_local_planes=False):
     """Fuse observed static samples, excluding the target only in its own frame.
 
     Reproject each source into reference camera 0; per-view z-buffer followed by
@@ -104,6 +104,13 @@ def finite_mesh_observed(depth,k,e,masks,scale):
         warnings.simplefilter('ignore',RuntimeWarning)
         fused=np.nanmedian(np.where(agrees,samples,np.nan),axis=0)
     fused=np.where(count>=2,fused,0.)
+    completion=None;inferred=np.zeros((h,w),bool)
+    if complete_local_planes:
+        from local_plane_completion import complete_occluded_depth
+        # The reference-frame target silhouette provides the occlusion footprint.
+        # No completion of unrelated missing depth or visible scene gaps.
+        target=cv2.dilate(masks[0].astype(np.uint8),np.ones((9,9),np.uint8))>0
+        fused,inferred,completion=complete_occluded_depth(fused,target,k[0])
     # Existing adjacency/jump filtering retains finite observed boundaries.
     mesh,gravity=finite_mesh(np.repeat(fused[None],8,axis=0),
                             np.repeat(k[:1],8,axis=0),np.repeat(e[:1],8,axis=0),
@@ -113,6 +120,12 @@ def finite_mesh_observed(depth,k,e,masks,scale):
                           'depth_relative_consensus':.03,'observed_pixels':int((count>=2).sum()),
                           'unknown_pixels':int((count<2).sum()),'mask_dilation_pixels':9,
                           'source_frames':list(range(len(depth))),'gt_used':False}
+    if completion is not None:
+        flags=inferred[::3,::3].reshape(-1)
+        mesh['face_inferred']=[bool(flags[face].any()) for face in mesh['faces']]
+        mesh['completion_audit']=completion
+        mesh['source']+='; explicit local plane completion within reference target occlusion only'
+        mesh['confidence']={'status':'PARTLY_INFERRED_UNVALIDATED','reason':'observed mesh plus labelled local planar prior'}
     return mesh,gravity
 
 

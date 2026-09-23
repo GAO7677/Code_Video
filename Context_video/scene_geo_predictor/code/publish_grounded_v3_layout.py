@@ -14,7 +14,7 @@ def main(root):
     html = html.replace('href="styles.css?v=contact-gate-1"', 'href="../overlay_viewer_v3/styles.css?v=contact-gate-1"')
     html = html.replace('src="app.js?v=contact-gate-1"', 'src="v3_layout.js?v=20260923-1"')
     summary = json.loads((ROOT/'viewer_data.json').read_text())['summary']
-    banner = f"新结果：{summary['executed']}例41帧已完成；{summary['cases']-summary['executed']}例未推进。原v3模板 · 本轮独立重跑。"
+    banner = f"新结果：{summary['executed']}例41帧已完成；{summary['cases']-summary['executed']}例未推进。几何模式：{summary.get('geometry_mode','legacy')}。"
     html = re.sub(r'<body><div.*?</div>', '<body><div style="padding:12px;background:#fff2c4">'+banner+'</div>', html, count=1)
     html = re.sub(r'<nav class="artifact-links".*?</nav>', '<nav class="artifact-links"><a href="report.md">本轮报告</a><a href="index.html">四面板诊断</a><a href="viewer_data.json">逐例指标</a></nav>', html, flags=re.S)
     html = html.replace('SAM2 + sphere','DINO + SAM2')
@@ -27,6 +27,9 @@ def main(root):
 <tr><td>红色 新D</td><td>新估计状态＋观测mesh＋zero omega</td><td>本次41帧结果；FAIL无轨迹</td></tr></tbody></table>
 <p>沿用原页面布局，图层名称按本次实际实验更新；未运行的A/B/C消融不伪造。未来轨迹叠加在RGB7背景；中心标记非球体实际像素半径。无初始穿插不代表恢复了有效支撑。</p></section>'''
     html = re.sub(r'<section class="layer-reference".*?</section>', table, html, flags=re.S)
+    if summary.get('geometry_mode')=='local_plane_completion':
+        html=html.replace('<h2>Overlay layers</h2>','<p>黄色三角形：局部平面先验推断的表面，不是观测真值。</p><h2>Overlay layers</h2>')
+        html=html.replace('href="report.md">本轮报告','href="completion_report.md">补全对照报告')
     html = re.sub(r'<label><input type="checkbox" data-layer="(?:estimatedGeometry|gtGeometry)".*?</label>', '', html)
     html = html.replace('<h2>Overlay layers</h2>', '<h2>Overlay layers</h2><label><input type="checkbox" data-layer="mesh" checked><i class="swatch swatch-est"></i>Estimated mesh boundary</label>')
     (ROOT/'v3_layout.html').write_text(html)

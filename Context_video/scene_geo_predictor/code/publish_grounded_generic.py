@@ -37,6 +37,8 @@ def publish(root):
             cv2.drawContours(color, contours, -1, (180, 60, 255), 1)
             cv2.imwrite(str(dest / f'depth_{t}.png'), color)
         mesh = json.loads((folder / 'collision_primitive.json').read_text())
+        row['geometry_mode']=geometry_mode
+        row['completion_audit']=mesh.get('completion_audit')
         faces = np.array(mesh['faces'])
         edges = np.sort(np.concatenate([faces[:,[0,1]],faces[:,[1,2]],faces[:,[2,0]]]),axis=1)
         unique, counts = np.unique(edges,axis=0,return_counts=True)
@@ -45,6 +47,9 @@ def publish(root):
         pixel7 = cam7 @ k[7].T
         pixel7 = np.c_[pixel7[:,:2]/pixel7[:,2,None],np.ones(len(pixel7))] @ np.linalg.inv(affine).T
         row['mesh_boundary_segments_uv'] = pixel7[boundary,:2].tolist()
+        inferred_faces=faces[np.array(mesh.get('face_inferred',[False]*len(faces)),dtype=bool)]
+        inferred_edges=np.unique(np.sort(np.concatenate([inferred_faces[:,[0,1]],inferred_faces[:,[1,2]],inferred_faces[:,[2,0]]]),axis=1),axis=0)
+        row['inferred_mesh_segments_uv']=pixel7[inferred_edges,:2].tolist()
         cam = np.array(mesh['vertices']) @ e[0, :, :3].T + e[0, :, 3]*est['scale']
         pix = cam @ k[0].T; pix = pix[:, :2]/pix[:, 2, None]
         original = np.c_[pix, np.ones(len(pix))] @ np.linalg.inv(affine).T
@@ -111,7 +116,7 @@ def publish(root):
 1. RGB0–7、时间戳。使用先前context调优的单短语（ball / brown ball）；Grounding DINO各帧唯一框，RGB7框提示SAM2双向传播。它是文本指定目标，不是无先验自动运动物体发现。短语与本批组绑定，不能称盲测泛化。
 2. VGGT预测深度、相机内外参，保留原始单位；真正读取固定scale=5.819486884015457。该值来自旧pilot尺度中位数，是待验证prior，非新视频米制尺度保证。
 3. SAM2 mask映射到VGGT分辨率；mask内可见3D表面联合拟合8个球心和未知共享半径，soft-L1；随后8帧鲁棒直线拟合p7/v7。不固定0.11m、不约束同高度、不用GT对齐。
-4. 几何模式`{geometry_mode}`。observed_multiframe逐帧排除各自动态mask，重投影到参考相机，对至少两帧3%深度一致的静态观测取中位数，生成有限mesh；legacy_union仅用于旧版参照。都不补不可见支撑和厚度。各family使用相同机制。几何已生成不等于碰撞几何准确。
+4. 几何模式`{geometry_mode}`。observed_multiframe逐帧排除各自动态mask，重投影到参考相机，对至少两帧3%深度一致的静态观测取中位数，生成有限mesh；legacy_union仅用于旧版参照。local_plane_completion为用户授权的独立模式：仅在参考帧目标遮挡区未知像素周围90%以上有观测、8方向有证据、局部平面RMS/depth≤0.005且P95≤0.01时，按平面与射线交点补全；未修改已观测深度、不添加厚度、不调整球状态。新增面有face_inferred与逐连通域completion_audit。各family使用同一机制，平面先验不保证遮挡区真实无缺口。
 5. 下方35%平面prior估计重力方向，跨RGB0/7一致性门；9.81m/s²固定。该prior假定大致正立相机及下方水平面，36例通过观察准入不等于GT方向全合格。
 6. 统一sphere state + finite mesh + fixed physics输入PyBullet，zero omega；先刷新碰撞检查，>1mm初始重叠直接FAIL，不对齐、不settle。固定质量1kg、摩擦0.35、恢复0.25、零阻尼；保持原1/240 fixedTimeStep、numSubSteps=8、每帧8调用，41输出/328调用。
 7. 估计/重力/rollout先hash冻结，再读GT状态和相机评测；旧D仅作为GT-omega历史展示，不能作为公平因果对照。

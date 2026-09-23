@@ -154,3 +154,21 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - `run_grounded_generic_pilot36.py`在新v2目录重新执行全部36例，模型前段复用核验缓存、后段CPU两线程独立计算，39.362s；20例完整41帧/328step、16例状态FAIL。36份rollout内容与v1逐文件一致，estimate/rollout freeze通过。未改变阈值、solver或输入恢复机制，结果准确性仍FAIL。
 - `publish_grounded_generic.py`新增实际mesh边界的RGB7投影，用紫色overlay展示；从真实三角形边计数得到边界，不复用旧family门框盒。图层为GT/CV/旧D/新zero-omega D，未伪造A/B/C实验。
 - 验证：`node /tmp/check_grounded_v3_layout.cjs /data/gaoya/agent-data/outputs/context_grounded_generic_pilot36_20260923_v2`，36例×6阶段/切换PASS；`git diff --check`通过。新报告、截图、浏览器检查及冻结文件均位于上述v2目录，旧产物保留。
+
+## 2026-09-23 — 通用静态表面按帧可见性融合，修复跨帧mask误删（部分修复）
+
+- CONFIRMED_BUG：RGB0深度建mesh却删除RGB0–7全部动态mask并集，导致其他帧可见静态区域被错误删除。新增`generic_context_geometry.finite_mesh_observed`：逐帧独立mask及同样9像素扩张、相机重投影/z-buffer、至少两视图3%深度一致性中位数、原有限三角形规则。不读取case/family/GT，不假定平台、不补所有帧均未观察的表面。
+- `run_grounded_generic_pilot36.py`默认使用observed_multiframe；显式`--geometry-mode legacy_union`保留旧协议。状态/尺度/omega/solver全部保持不变并逐例比对。此处修复为通用观测逻辑，未保证多数case轨迹正确。
+- `tests/test_observed_surface_fusion.py`：旧代码在“后续mask错误删除原可见平面”断言FAIL；新实现2个测试PASS，覆盖移动遮挡恢复、真实缺口保留、动态表面排除、相机平移及scale。原`tests/test_generic_context_geometry.py`3项PASS。命令均CPU两线程、CUDA_VISIBLE_DEVICES空，未使用GPU。
+- 独立36例输出`/data/gaoya/agent-data/outputs/context_grounded_geometry_fix_20260923_v1`；`audit_geometry_fix.py`检查冻结输出并记录逐例配对。20例执行/16例状态失败不变；20例平均ADE3.3631→3.1717m，6例改善>1cm、3例退化>1cm、11例变化≤1cm；记录到接触的案例0→10。不能将改善平均值称全链路PASS。
+- aperture_g00_v0280未解决：下方候选平面投影点8帧均在目标mask内；按当前“不补不可见区域”边界无法由真实观测融合恢复。局部共面补全需要用户确认，当前未实施；不能使用GT/默认平台规避。球p7/radius偏差未修复。
+- 可视化继续原v3模板，新增修复前对照及逐例回归报告链接。发布脚本修正初始重叠检查分母为实际检查数，并按协议生成报告，防止新版本显示旧常量结论。页面/物理正确性分开验收，浏览器结果另存产物。
+
+## 2026-09-23 — 用户授权的独立局部平面补全模式（实验，非默认fallback）
+
+- 新增`code/local_plane_completion.py`及`tests/test_local_plane_completion.py`，接入`finite_mesh_observed(..., complete_local_planes=True)`和显式CLI`--geometry-mode local_plane_completion`；默认仍observed_multiframe。只处理参考帧目标遮挡范围内未知深度，检查周围环带90%有效观测、至少40点和8方向支持、平面相对RMS≤0.005/P95≤0.01、有限深度外推范围。拒绝证据不足、台阶/非平面、图像边界，不按family或case提供几何值。
+- 新增面保存`face_inferred`、逐连通域`completion_audit`（法向、offset、残差、源点数、拒绝原因）。不改球p/v/radius、已观测mesh顶点、重力/solver，不补厚度。真正完全遮挡的缺口不可辨识，局部共面先验不能保证遮挡区实际无缺口；报告明确此限制。
+- 全36例输出`/data/gaoya/agent-data/outputs/context_local_plane_completion_20260923_v1`。13例有推断像素，但只有3例产生有效碰撞三角形；其余细小推断像素不虚报为有效补全。20例实际rollout/16例原状态失败保持；相对纯观测多帧mesh，3例改善>1cm、0例退化>1cm、17例变化≤1cm；平均ADE3.1717→2.8034m。
+- aperture_g00_v0280：ADE3.1004→0.7165m，接触帧0→38/41；同组v0460/v0720也改善。不宣称状态/尺度误差已修复或多数新场景已验证可用。`report_local_plane_completion.py`在冻结后逐例验证状态和原观测顶点完全未改，输出completion_comparison.json及completion_report.md。
+- 验证：CPU两线程运行`tests/test_local_plane_completion.py`（2项，覆盖平面、两斜面、真实可见缺口、台阶、开放边缘、已观测像素不变）、`tests/test_observed_surface_fusion.py`（2项）、`tests/test_generic_context_geometry.py`（3项），全部PASS；无GPU占用或训练。完整运行命令见产物report.md。
+- 原v3模板显示黄色推断面与紫色观测mesh边界，保留纯观测mesh对照入口，报告不将推断面标为真值。浏览器验收结果见产物v3_layout_browser_check.json。

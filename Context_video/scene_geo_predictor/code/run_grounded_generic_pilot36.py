@@ -86,8 +86,11 @@ def run(source, masks_root, output, geometry_mode='observed_multiframe'):
         except ValueError as exc:
             row['state'] = {'status': 'FAIL', 'reason': str(exc)}
         try:
-            fitter=finite_mesh_observed if geometry_mode=='observed_multiframe' else finite_mesh
-            mesh, _ = fitter(depth, k, e, processed, scale)
+            if geometry_mode=='legacy_union':
+                mesh,_=finite_mesh(depth,k,e,processed,scale)
+            else:
+                mesh,_=finite_mesh_observed(depth,k,e,processed,scale,
+                    complete_local_planes=geometry_mode=='local_plane_completion')
             dump_json(dst / 'collision_primitive.json', mesh)
             row['geometry'] = {'status': 'ESTIMATED', 'triangles': len(mesh['faces']), 'confidence': 'UNVALIDATED'}
         except ValueError as exc:
@@ -114,6 +117,6 @@ if __name__ == '__main__':
     p.add_argument('--source', type=Path, required=True)
     p.add_argument('--masks', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
-    p.add_argument('--geometry-mode', choices=['legacy_union','observed_multiframe'],default='observed_multiframe')
+    p.add_argument('--geometry-mode', choices=['legacy_union','observed_multiframe','local_plane_completion'],default='observed_multiframe')
     a = p.parse_args()
     run(a.source, a.masks, a.output,a.geometry_mode)
