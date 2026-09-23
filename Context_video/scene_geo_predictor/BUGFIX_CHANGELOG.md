@@ -99,3 +99,13 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - 重力36/36观测侧接受，GT误差median0.473°/max5.403°，四个deflector v28000超过5°验证门限；未用GT择优或修正。
 - 可视化新mask与旧D/GT轨迹，旧D明确标GT omega；无新轨迹时不伪造。浏览器36例加载与详情检查PASS，完整命令/失败表见产物report.md。
 - 产物`/data/gaoya/agent-data/outputs/context_generic_pilot36_20260922_v1`；8899路径`generic_pilot36_v1/`。独立实验，不替换旧v3；模型权重/solver未修改。
+
+## 2026-09-23 — test70无形状先验mask诊断与评测覆盖修正
+
+- 新增`code/test70_mask_diagnostic.py`、`code/evaluate_test70_masks.py`、`web/test70_mask_diagnostic.html`。完整70例匿名RGB0–7，沿用运动候选+SAM2，移除本诊断入口的球形/碎片准入；不修改原pipeline、不修整mask、不运行3D/物理。
+- 实测GPU6/CPU两线程：59例SAM2执行、10例多候选UNKNOWN、1例无候选FAIL。循环115.396秒，不含模型构建/评测；EXECUTED不等于正确。
+- 确认评测问题：原Cycles GT mask纵轴反转，评测副本按GT投影中心审计后翻转；GT漏标domino触发球和seesaw板，不能将这些目标匹配到无关actor后按IoU=0汇总。补充动态actor覆盖审计，缺标且身份不确定的6例BLOCKED_TARGET_COVERAGE；原重叠保留为诊断字段。第一版evaluation保留，最终采用evaluation_v2。
+- 确认展示问题：仅填外轮廓会隐藏原mask的孔洞。纯mask面板改为直接读取原始二值PNG；未改变模型输出。
+- 最终53例可评分mask：mean IoU0.515805，median0.574810；>=0.8共21例，[0.5,0.8)共9例，<0.5共23例。GT仅冻结后读取，未回流提示选择。不能将全部失败归因于画质；没有画质/提示配对消融。
+- 产物`/data/gaoya/agent-data/outputs/test70_motion_sam2_20260923_v1`，完整命令、GT覆盖限制和旧tracker的JPEG暂存路径见report.md。冻结hash6188c6edd0021267ca1b73373cdfd34f567b6a7e3c9ce621f1b73597163b545b。默认pipeline未替换；诊断页面复用8899/test70_masks_v1/。
+- 验证：原六例运动检测决策/框一致性检查PASS；70例推理和第二版评测完成；`git diff --check`通过。浏览器逐例结果另见产物browser_check.json。
