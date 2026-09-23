@@ -11,7 +11,7 @@ from generic_context_geometry import finite_mesh_observed
 from generic_bullet_input import run
 
 
-def main(source, out, surface_first=False):
+def main(source, out, surface_first=False, trusted=False):
     cv2.setNumThreads(2)
     for name in ['input_freeze.json', 'depth_freeze.json', 'estimate_freeze.json', 'rollout_freeze.json']:
         verify(source, name)
@@ -29,6 +29,10 @@ def main(source, out, surface_first=False):
     if surface_first:
         protocol['recovery_method']='geometry_only_finite_surface_first_v1'
         protocol['frozen_changes']['geometry']='connected normal-consistent visible surfaces; bounded per-surface occlusion continuation; ambiguous ownership UNKNOWN'
+    if trusted:
+        protocol['recovery_method']='geometry_only_trusted_local_planes_v1'
+        protocol['frozen_changes']['geometry']='local target-neighborhood trusted smooth points; multi-plane RANSAC; finite connected support hulls'
+        protocol['code_hashes']['trusted_plane_completion.py'] = sha256_file(Path(__file__).parent/'trusted_plane_completion.py')
     dump_json(out/'protocol.json', protocol)
     for folder in sorted((source/'estimates').iterdir()):
         dst = out/'estimates'/folder.name
@@ -44,7 +48,7 @@ def main(source, out, surface_first=False):
             transform = crop_transform(masks.shape[1:])
             masks = np.stack([resize_crop_mask(m, transform) for m in masks])
             mesh, _ = finite_mesh_observed(depth, k, e, masks, row['scale'],
-                complete_local_planes=True, segmented_completion=not surface_first,surface_completion=surface_first)
+                complete_local_planes=True, segmented_completion=not surface_first,surface_completion=surface_first,trusted_completion=trusted)
             dump_json(dst/'collision_primitive.json', mesh)
             row['geometry'].update(triangles=len(mesh['faces']), confidence='PARTLY_INFERRED_UNVALIDATED')
             print(folder.name, 'inferred_pixels', mesh['completion_audit']['inferred_pixels'], flush=True)
@@ -77,5 +81,6 @@ if __name__ == '__main__':
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--surface-first',action='store_true')
+    parser.add_argument('--trusted',action='store_true')
     args = parser.parse_args()
-    main(args.source, args.output,args.surface_first)
+    main(args.source, args.output,args.surface_first,args.trusted)

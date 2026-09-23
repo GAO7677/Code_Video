@@ -243,3 +243,9 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - `tests/test_finite_surface_completion.py`通过单洞多平面分别恢复、可见缺口/开放边缘、观测不变性；旧segmented/local-plane/generic geometry测试全部通过。CPU两线程。逐例指标与接触日志保存在`mesh_comparison.json/md`；GT边界误差/contact accuracy仍NOT_EVALUATED。
 - 展示新路径`/test70_surface_first_v1/`，保留原recovery v2和之前失败实验；首页明确小幅改善及桌面首例未解决，不把运行通过作为准确性PASS。
 - 420视频加载、seek、半速播放、交互切换和轻量索引请求检查PASS（`LAZY_AUDIT=1 VIDEO_AUDIT=1 node tests/check_test70_context_viewer.cjs OUTPUT URL`）；逐像素证据新增导致首case 8.5MB，`publish_test70_context_pipeline.py`和`compact_surface_viewer_audit.py`改为页面仅含摘要，完整证据仍保留冻结mesh，首case降到388,617字节。估计/轨迹未变，服务未重启。
+
+## 2026-09-23 — trusted local plane fitting experiment (not adopted)
+
+- `trusted_plane_completion.py` added a local trusted-point path: depth-gradient and normal-consistent support, multi-plane RANSAC in the target neighborhood, connected finite support hulls, ambiguous ownership UNKNOWN. Existing state/VGGT/scale/camera/gravity/solver stayed frozen; no GT/family/default fallback.
+- All 30 predeclared single-sphere candidates were attempted (40 other test70 entries remain UNSUPPORTED). 28 states passed, 23 rollouts executed, 5 initial-overlap failures unchanged. Paired 23-case ADE regressed from 0.635554 to 0.729411 m and FDE from 1.158630 to 1.716281 m; 0 cases improved >1 cm and 5 worsened >1 cm. Five door-frame cases lost or moved the inferred support boundary; this branch is not enabled by default and must not replace surface_first or recovery v2.
+- The result confirms that local trusted plane fitting alone is insufficient: depth-gradient thresholds reject/fragment the visible support, while finite local hulls do not recover the complete obstacle boundary. Full metrics are in `test70_trusted_planes_20260923_v1/mesh_comparison.json` and `mesh_comparison.md` after post-freeze evaluation.
