@@ -1,0 +1,76 @@
+{
+  "date": "2026-09-23",
+  "status": "CONTEXT_PHRASE_REFINEMENT",
+  "reason": "ball falsely detects blue deflector in 4 cases; all12 deflector clips now share brown ball; no threshold changes",
+  "groups": [
+    {
+      "id": "aperture",
+      "label": "aperture",
+      "anonymous_clip_ids": [
+        "clip_00",
+        "clip_01",
+        "clip_02",
+        "clip_03",
+        "clip_04",
+        "clip_05",
+        "clip_06",
+        "clip_07",
+        "clip_08",
+        "clip_09",
+        "clip_10",
+        "clip_11"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 12
+    },
+    {
+      "id": "deflector",
+      "label": "deflector",
+      "anonymous_clip_ids": [
+        "clip_12",
+        "clip_13",
+        "clip_14",
+        "clip_15",
+        "clip_16",
+        "clip_17",
+        "clip_18",
+        "clip_19",
+        "clip_20",
+        "clip_21",
+        "clip_22",
+        "clip_23"
+      ],
+      "terms": [
+        "brown ball"
+      ],
+      "grounding_text": "brown ball.",
+      "count": 12
+    },
+    {
+      "id": "support_edge",
+      "label": "support_edge",
+      "anonymous_clip_ids": [
+        "clip_24",
+        "clip_25",
+        "clip_26",
+        "clip_27",
+        "clip_28",
+        "clip_29",
+        "clip_30",
+        "clip_31",
+        "clip_32",
+        "clip_33",
+        "clip_34",
+        "clip_35"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 12
+    }
+  ]
+}

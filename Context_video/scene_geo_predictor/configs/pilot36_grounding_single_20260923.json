@@ -1,0 +1,54 @@
+{
+  "date": "2026-09-23",
+  "status": "PREDECLARED",
+  "source": "Context inspection: all pilot36 target objects are visually balls; one phrase shared across all36; no size/color/position prior",
+  "groups": [
+    {
+      "id": "pilot36",
+      "label": "pilot36",
+      "anonymous_clip_ids": [
+        "clip_00",
+        "clip_01",
+        "clip_02",
+        "clip_03",
+        "clip_04",
+        "clip_05",
+        "clip_06",
+        "clip_07",
+        "clip_08",
+        "clip_09",
+        "clip_10",
+        "clip_11",
+        "clip_12",
+        "clip_13",
+        "clip_14",
+        "clip_15",
+        "clip_16",
+        "clip_17",
+        "clip_18",
+        "clip_19",
+        "clip_20",
+        "clip_21",
+        "clip_22",
+        "clip_23",
+        "clip_24",
+        "clip_25",
+        "clip_26",
+        "clip_27",
+        "clip_28",
+        "clip_29",
+        "clip_30",
+        "clip_31",
+        "clip_32",
+        "clip_33",
+        "clip_34",
+        "clip_35"
+      ],
+      "terms": [
+        "ball"
+      ],
+      "grounding_text": "ball.",
+      "count": 36
+    }
+  ]
+}
