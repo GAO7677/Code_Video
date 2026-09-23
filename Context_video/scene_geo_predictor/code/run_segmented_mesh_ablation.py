@@ -11,7 +11,7 @@ from generic_context_geometry import finite_mesh_observed
 from generic_bullet_input import run
 
 
-def main(source, out):
+def main(source, out, surface_first=False):
     cv2.setNumThreads(2)
     for name in ['input_freeze.json', 'depth_freeze.json', 'estimate_freeze.json', 'rollout_freeze.json']:
         verify(source, name)
@@ -25,7 +25,10 @@ def main(source, out):
                         'selection': 'all 30 predeclared sphere candidates, including state failures; other 40 retained unsupported',
                         'evaluation': 'freeze first; paired common rollout means plus all failures; no GT tuning'})
     protocol['code_hashes'] = {n: sha256_file(Path(__file__).parent/n) for n in
-        ['run_segmented_mesh_ablation.py', 'segmented_plane_completion.py', 'generic_context_geometry.py']}
+        ['run_segmented_mesh_ablation.py', 'segmented_plane_completion.py', 'generic_context_geometry.py','finite_surface_completion.py']}
+    if surface_first:
+        protocol['recovery_method']='geometry_only_finite_surface_first_v1'
+        protocol['frozen_changes']['geometry']='connected normal-consistent visible surfaces; bounded per-surface occlusion continuation; ambiguous ownership UNKNOWN'
     dump_json(out/'protocol.json', protocol)
     for folder in sorted((source/'estimates').iterdir()):
         dst = out/'estimates'/folder.name
@@ -41,7 +44,7 @@ def main(source, out):
             transform = crop_transform(masks.shape[1:])
             masks = np.stack([resize_crop_mask(m, transform) for m in masks])
             mesh, _ = finite_mesh_observed(depth, k, e, masks, row['scale'],
-                complete_local_planes=True, segmented_completion=True)
+                complete_local_planes=True, segmented_completion=not surface_first,surface_completion=surface_first)
             dump_json(dst/'collision_primitive.json', mesh)
             row['geometry'].update(triangles=len(mesh['faces']), confidence='PARTLY_INFERRED_UNVALIDATED')
             print(folder.name, 'inferred_pixels', mesh['completion_audit']['inferred_pixels'], flush=True)
@@ -73,5 +76,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--surface-first',action='store_true')
     args = parser.parse_args()
-    main(args.source, args.output)
+    main(args.source, args.output,args.surface_first)

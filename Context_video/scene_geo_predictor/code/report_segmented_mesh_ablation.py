@@ -8,6 +8,7 @@ from context_rgb_pybullet_common import dump_json, sha256_file
 
 
 def report(source, out):
+    surface_first = json.loads((out/'protocol.json').read_text()).get('recovery_method') == 'geometry_only_finite_surface_first_v1'
     old = json.loads((source/'viewer_data.json').read_text())
     new = json.loads((out/'viewer_data.json').read_text())
     originals = {r['id']: r for r in old['records']}
@@ -50,16 +51,22 @@ def report(source, out):
                'contact_accuracy': 'NOT_EVALUATED; contact logs are not GT event accuracy'}
     dump_json(out/'mesh_comparison.json', {'summary': summary, 'cases': rows})
     text = '# 有限平面分离与遮挡补全测试 · 2026-09-23\n\n'
+    text += f"配对{len(pairs)}例ADE：{summary['paired_ADE_old_new_m'][0]:.6f} → {summary['paired_ADE_old_new_m'][1]:.6f} m；改善超过1cm的样本{summary['improved_over_1cm']}，退化超过1cm的样本{summary['worsened_over_1cm']}。这是几何诊断实验，不代表已解决关键表面恢复。\n\n"
     text += '独立几何实验，baseline为recovery v2。固定球状态、相机、尺度、重力和solver。30个预声明单球候选全部尝试（包括2个状态失败）；40个不支持样本保留，不强行rollout。GT只在输出冻结后评测，不按GT逐例挑参数。\n\n'
-    text += '本轮实现局部RANSAC共面点分离、连通性/8方向包围/边界证据检查，再补全目标遮挡未知像素。没有实施全场景物体级分割、修正VGGT尺度或移动已有观测点；不能称为完整场景恢复已解决。\n\n'
+    if surface_first:
+        text += '本轮从全部可见点云提取法向一致的连通平面，以每个表面的有限凸包为遮挡延拓范围；同一洞允许分属多个表面，多表面竞争像素保留UNKNOWN。不再要求整个目标洞由同一平面包围。仅修改目标遮挡区域的缺失深度，真实可见缺口和已有观测不改；凸延拓是显式prior，不保证恢复不可见凹边界。相机、尺度、球状态均未修改。\n\n'
+    else:
+        text += '本轮实现局部RANSAC共面点分离、连通性/8方向包围/边界证据检查，再补全目标遮挡未知像素。没有实施全场景物体级分割、修正VGGT尺度或移动已有观测点；不能称为完整场景恢复已解决。\n\n'
     text += '```json\n'+json.dumps(summary, ensure_ascii=False, indent=2)+'\n```\n\n'
     text += '第一版误将参考目标区域中、后续帧已揭露的静态点再次排除，30例补全均拒绝。该实现问题已修复并加入测试；第一版产物保留。未放宽残差、包围和边界门限。\n\n'
+    text += '第二版把边界未知像素当成非共面证据，5个门框场景丢失原有推断支撑、接触变零。第三版在有效观测边界上计算共面比例，同时单独记录未知比例；不补候选区域以外缺口。第二版作为失败实验保留。\n\n'
     text += '穿插通过不等于支撑正确；contact accuracy以及关键桌沿GT几何误差尚未评测，不能凭ADE断言物理场景已准确恢复。合成可见缺口不被填补，不证明隐藏的真实缺口总能识别。\n\n'
     text += '| case | old → new | 补全像素 old → new | ADE old → new m | FDE old → new m | failure |\n|---|---|---|---|---|---|\n'
     for r in rows:
         text += f"| {r['case']} | {r['old_status']} → {r['new_status']} | {r['old_inferred_pixels']} → {r['new_inferred_pixels']} | {r['old_ADE_m']} → {r['new_ADE_m']} | {r['old_FDE_m']} → {r['new_FDE_m']} | {r['failure']} |\n"
     text += '\n复现命令（使用新的output目录）：\n```bash\n'
-    text += f"CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 /data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B code/run_segmented_mesh_ablation.py --source {source} --output {out}\n```\n"
+    option = ' --surface-first' if surface_first else ''
+    text += f"CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 /data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B code/run_segmented_mesh_ablation.py{option} --source {source} --output {out}\n```\n"
     (out/'mesh_comparison.md').write_text(text)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

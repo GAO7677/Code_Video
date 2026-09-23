@@ -222,3 +222,24 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - 修改：`web/test70_context_viewer.js`改读12,331字节索引，按所选case加载并缓存详情，异步切换只提交最新请求；视频模式跳过图片与mesh Path2D构建。`web/test70_video_mode.js`当前MP4使用auto预加载。保留逐帧交互功能。
 - `code/prepare_test70_lazy_viewer.py`发布轻量索引与前端资源，`publish_test70_context_pipeline.py`后续发布自动生成索引；原数据、MP4和仿真结果未改。当前已启用页面`/test70_recovery_v2/`，服务无需重启。
 - 验证：`VIDEO_AUDIT=1 node tests/check_test70_context_viewer.cjs OUTPUT URL`通过420视频加载/seek/半速播放/模式切换。新增`LAZY_AUDIT=1`实测首屏无viewer_data.json及PNG请求，仅索引、首case详情约355KB、当前MP4约19KB及脚本样式。局域网用户实际等待时间仍受网络影响，未将本机检查声称为远端测速。
+
+## 2026-09-23 — 局部共面分离补全机制测试（实验，未替换 baseline）
+
+- 新增 `segmented_plane_completion.py`：对目标遮挡未知区域周围观测点进行固定seed RANSAC、连通面分离、8方向包围和有效观测边界检查。仅补有限候选区域；不修改已有观测、不改状态/尺度/相机/物性，不读GT、case名或family参数。
+- `generic_context_geometry.finite_mesh_observed`新增默认关闭的`segmented_completion`参数。`run_segmented_mesh_ablation.py`复用recovery v2冻结状态，仅重建预声明30单球候选几何并重跑；40 UNSUPPORTED保留。所有估计/rollout冻结后再独立评测。
+- 确认并修复新实现两处bug：v1重复排除RGB0遮挡区域中后来已观测到的静态点；v2将边界未知深度计作非共面冲突，错误拒绝5个门框推断面，导致接触归零、配对ADE从0.635554增至1.086206m。v3分开未知与冲突观测；没有放宽残差/共面比例或调用旧版fallback。v1/v2失败产物及代码快照保留。
+- 最终v3：70项均记录，30候选含2状态FAIL，28初始化检查含5穿插FAIL，23执行。共同23例ADE 0.635554→0.635391m、FDE 1.158630→1.158116m；改善/退化超过1cm均0例，旧成功样本丢失0。差异无实质改善，不能声称几何恢复已修好。首例difficulty_l2_f11_h030_sr048的mesh顶点/面和轨迹完全不变，909像素主缺面候选最强平面内点比例0.497，继续UNKNOWN。
+- `tests/test_segmented_plane_completion.py`5项PASS：平面/斜面、稀疏离群点、真实缺口/台阶/开放边缘、后续帧揭露观测、未知边界；原local-plane 2项及generic geometry 3项PASS。命令均使用CPU最多两线程，未运行GPU模型。
+- `report_segmented_mesh_ablation.py`保存全70例配对指标、失败、接触日志、补全拒绝原因，核对全部state/VGGT未变。输出`/data/gaoya/agent-data/outputs/test70_segmented_mesh_20260923_v1/v2/v3`，新展示路径`/test70_segmented_mesh_v3/`；原`/test70_recovery_v2/`不改。关键边界GT误差和contact accuracy仍NOT_EVALUATED，局部方案不等于完整物体级场景重建。
+- 展示验证：`LAZY_AUDIT=1 VIDEO_AUDIT=1 node tests/check_test70_context_viewer.cjs /data/gaoya/agent-data/outputs/test70_segmented_mesh_20260923_v3 http://127.0.0.1:8899/test70_segmented_mesh_v3/`通过420视频加载、seek、半速播放、模式切换及无全量JSON/PNG首屏请求；结果保存`video_browser_check.json`和截图。服务未重启。
+
+## 2026-09-23 — 从“整洞单平面”改为“可见有限表面分别补全”
+
+- 已确认逻辑缺陷：球mask只定义遮挡范围，不代表背后单一支撑面。旧方法对整个连通洞要求同一平面8方向包围，无法表达球后方同时存在桌面/地面/墙面。
+- 新增`code/finite_surface_completion.py`：先从可见点云提取法向一致的连通平面，每个平面保存源像素、法向、残差和有限凸包边界；仅在其有限范围内对目标遮挡未知像素提出补全，多表面竞争保留UNKNOWN。已有观测和候选外缺口不改。不使用GT、family、固定球尺寸、默认支撑或失败fallback。凸延拓仍是显式prior，不能保证隐藏凹边界正确。
+- `generic_context_geometry.finite_mesh_observed`新增可选`surface_completion`；`run_segmented_mesh_ablation.py --surface-first`启用新的几何分支。默认旧调用保持不变；报告器按协议写出真实机制/复现命令。球状态、VGGT、固定scale、重力和Bullet配置与recovery v2完全相同。
+- 新目录`/data/gaoya/agent-data/outputs/test70_surface_first_20260923_v1`保存全部70条记录，重建30预声明单球候选，其他40保留UNSUPPORTED。28项状态通过，23rollout，2状态FAIL+5穿插FAIL；未增加新模型或GPU任务。
+- 配对23例：ADE 0.635553531→0.631483370m，FDE 1.158629656→1.137073864m；3例改善>1cm、0例退化>1cm、旧成功丢失0，初始穿插5/28不变。改善三例为door_frame_ball_w046/w054/w062（仅评测后标识，不用于估计）。主桌面首例补全2→730像素，181像素多面竞争保留UNKNOWN，但轨迹ADE0.206054m完全不变，不能声称修好了桌面物理布局。
+- `tests/test_finite_surface_completion.py`通过单洞多平面分别恢复、可见缺口/开放边缘、观测不变性；旧segmented/local-plane/generic geometry测试全部通过。CPU两线程。逐例指标与接触日志保存在`mesh_comparison.json/md`；GT边界误差/contact accuracy仍NOT_EVALUATED。
+- 展示新路径`/test70_surface_first_v1/`，保留原recovery v2和之前失败实验；首页明确小幅改善及桌面首例未解决，不把运行通过作为准确性PASS。
+- 420视频加载、seek、半速播放、交互切换和轻量索引请求检查PASS（`LAZY_AUDIT=1 VIDEO_AUDIT=1 node tests/check_test70_context_viewer.cjs OUTPUT URL`）；逐像素证据新增导致首case 8.5MB，`publish_test70_context_pipeline.py`和`compact_surface_viewer_audit.py`改为页面仅含摘要，完整证据仍保留冻结mesh，首case降到388,617字节。估计/轨迹未变，服务未重启。

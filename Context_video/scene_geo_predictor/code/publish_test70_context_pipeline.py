@@ -162,6 +162,12 @@ def publish(root):
             ie = np.unique(np.sort(np.concatenate([inferred[:, [0, 1]], inferred[:, [1, 2]], inferred[:, [2, 0]]]), axis=1), axis=0)
             row['completion_segments'] = uv[ie].tolist()
             row['completion_audit'] = mesh.get('completion_audit')
+            if row['completion_audit']:
+                row['completion_audit'] = dict(row['completion_audit'])
+                row['completion_audit']['components'] = [
+                    {key:value for key,value in component.items() if key != 'source_pixels_xy'}
+                    for component in row['completion_audit'].get('components', [])]
+                row['completion_audit']['full_audit_url'] = f'estimates/{cid}/collision_primitive.json'
             rgb = cv2.resize(cv2.imread(str(root / 'inputs' / cid / 'rgb_07.png')), (640, 360))
             overlay = rgb.copy()
             valid = np.isfinite(uv).all(axis=1) & (np.abs(uv).max(axis=1) < 1e5)

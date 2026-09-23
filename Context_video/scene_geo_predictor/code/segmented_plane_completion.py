@@ -88,8 +88,12 @@ def complete_segmented_depth(depth, target_region, intrinsic):
             row['reason'] = 'plane_not_surrounding_hole'
             continue
         border = (cv2.dilate(region.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0) & ~region
-        row['boundary_plane_fraction'] = float(selected[border].mean())
-        if selected[border].mean() < .8:
+        # Missing neighboring depths are unknown, not observed conflicting
+        # surfaces. Coverage is checked separately on the surrounding ring.
+        observed_border = border & valid
+        row['boundary_observed_fraction'] = float(valid[border].mean())
+        row['boundary_plane_fraction'] = float(selected[observed_border].mean()) if observed_border.any() else 0.
+        if not observed_border.any() or row['boundary_plane_fraction'] < .8:
             row['reason'] = 'visible_boundary_or_competing_surface'
             continue
         pts = rays[selected] * z[selected, None]

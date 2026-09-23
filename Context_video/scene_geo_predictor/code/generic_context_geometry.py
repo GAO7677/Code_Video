@@ -68,7 +68,7 @@ def sphere_fit(depth,k,e,masks,scale,times):
             'shape':'sphere','radius':r,'orientation':{'status':'UNKNOWN','collision_quaternion':[0,0,0,1],'reason':'sphere collision rotational symmetry'},
             'omega':[0,0,0],'omega_source':'explicit_zero_baseline','relative_rms':relative_rms,'radius_cv':radius_cv,'jacobian_condition':condition,'frames':support}
 
-def finite_mesh_observed(depth,k,e,masks,scale,*,complete_local_planes=False,segmented_completion=False):
+def finite_mesh_observed(depth,k,e,masks,scale,*,complete_local_planes=False,segmented_completion=False,surface_completion=False):
     """Fuse observed static samples, excluding the target only in its own frame.
 
     Reproject each source into reference camera 0; per-view z-buffer followed by
@@ -109,6 +109,8 @@ def finite_mesh_observed(depth,k,e,masks,scale,*,complete_local_planes=False,seg
         from local_plane_completion import complete_occluded_depth
         if segmented_completion:
             from segmented_plane_completion import complete_segmented_depth as complete_occluded_depth
+        if surface_completion:
+            from finite_surface_completion import complete_surface_depth as complete_occluded_depth
         # The reference-frame target silhouette provides the occlusion footprint.
         # No completion of unrelated missing depth or visible scene gaps.
         target=cv2.dilate(masks[0].astype(np.uint8),np.ones((9,9),np.uint8))>0

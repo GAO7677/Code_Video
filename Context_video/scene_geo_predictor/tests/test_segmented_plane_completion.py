@@ -55,9 +55,19 @@ def test_later_frame_reveals_reference_occlusion():
     assert np.array_equal(out[~mask], z[~mask])
 
 
+def test_unknown_border_is_not_a_conflicting_surface():
+    z, mask, k, truth = setup()
+    z[34, 50:70] = 0  # narrow unknown strip, outside authorized completion area
+    out, filled, audit = complete_segmented_depth(z, mask, k)
+    assert filled.sum() == 400, audit
+    assert np.allclose(out[mask], truth[mask])
+    assert np.array_equal(out[~mask], z[~mask])
+
+
 if __name__ == '__main__':
     test_planes_and_observation_invariance()
     test_edges_and_gaps()
     test_sparse_depth_outliers()
     test_later_frame_reveals_reference_occlusion()
+    test_unknown_border_is_not_a_conflicting_surface()
     print('PASS planes, sparse outliers, visible gap, step, open edge, observed invariance')
