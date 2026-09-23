@@ -1,0 +1,32 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grounded generic · 36-case rerun</title>
+<style>body{font:15px system-ui;margin:24px;background:#101723;color:#e5edf7}a{color:#8fc5ff}button,select,input{font:inherit;padding:7px}header,p{max-width:1200px}h1{font-size:25px}.panels{display:grid;grid-template-columns:repeat(2,minmax(300px,640px));gap:16px}.panel{background:#1b2637;padding:10px}canvas,img{width:100%;display:block}pre{white-space:pre-wrap;font-size:13px}table{border-collapse:collapse;width:100%}td,th{padding:8px;border-bottom:1px solid #43536a;text-align:left}.bad{color:#ffb09f}.good{color:#90e3b4}nav{position:sticky;top:0;background:#101723;padding:10px;z-index:1}details{margin:15px 0}@media(max-width:750px){.panels{grid-template-columns:1fr}}</style>
+<header><h1>Grounding DINO＋SAM2 → 通用3D → PyBullet · 36例</h1>
+<p>这是通用链路的前处理替换实验，不是恢复旧v3的已知半径、family几何或支撑对齐规则。旧v3可从顶部切回。</p>
+<p>预定义短语 → RGB7唯一框 → SAM2双向跟踪 → VGGT深度/相机 → 固定尺度5.819486884015457 → 未知半径球面联合拟合与8帧速度拟合；静态深度生成有限mesh；下方平面prior估计重力方向 → 初始重叠检查 → zero-omega、41帧Bullet。GT仅冻结后评测。</p>
+<p class="bad">完成执行 ≠ 准确性通过。不存在初始穿插，也不等于存在正确支撑。失败case不借用旧轨迹冒充新结果。</p>
+<pre id="summary"></pre><p><a href="report.md">完整报告与逐例表</a> · <a href="viewer_data.json">指标JSON</a> · <a href="protocol.json">协议</a></p></header>
+<nav><select id="case"></select>　context <input id="frame" type="range" min="0" max="7" value="7"><span id="frameLabel">7</span> <button id="play">播放/暂停</button></nav>
+<p id="status"></p><div class="panels">
+<section class="panel"><b>① 目标定位/跟踪与球拟合投影</b><canvas id="mask" width="640" height="360"></canvas><p>粉色：SAM2原mask边界；黄色：Grounding RGB7提示框；白色叉：估计球心（未通过准入时也保留诊断）。未做圆轮廓修整。</p></section>
+<section class="panel"><b>② VGGT深度（原模型输出）</b><img id="depth"><p>同clip八帧共用2–98%色域，亮度不代表跨case共同米制刻度；mask为粉色。颜色仅用于检查深度结构。</p></section>
+<section class="panel"><b>③ 实际静态mesh的RGB0覆盖</b><img id="mesh"><p>青色为实际保留三角形，空洞保持未知。8帧动态mask并集及边界扩张被排除；不补地面、平台、不可见厚度。</p></section>
+<section class="panel"><b>④ RGB7背景上的未来轨迹</b><canvas id="trajectory" width="640" height="360"></canvas><p>绿：GT评测；橙：旧D（GT omega）；蓝：新zero-omega；紫：同输入CV。均为静态背景投影，非未来视频。GT相机仅用于这张评测图。</p></section>
+</div>
+<details open><summary>逐步状态、残差与误差</summary><pre id="detail"></pre></details>
+<table><thead><tr><th>case</th><th>状态拟合</th><th>仿真</th><th>新ADE / CV ADE (m)</th><th>失败原因</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+let data,playing=false,serial=0;const select=document.querySelector('#case'),slider=document.querySelector('#frame');
+function line(ctx,points,color){if(!points)return;ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke()}
+async function load(url){const im=new Image();im.src=url;await im.decode();return im}
+async function draw(){const token=++serial,r=data.records[+select.value],t=+slider.value;const images=await Promise.all([load(`inputs/${r.id}/rgb_${String(t).padStart(2,'0')}.png`),load(`inputs/${r.id}/rgb_07.png`),load(`diagnostics/${r.id}/depth_${t}.png`),load(`diagnostics/${r.id}/mesh.png`)]);if(token!==serial)return;
+ const ctx=document.querySelector('#mask').getContext('2d');ctx.drawImage(images[0],0,0);r.mask_contours[t].forEach(c=>line(ctx,c.concat([c[0]]),'#ff6699'));
+ if(t===7){const b=r.target_detection.candidates[0].box;ctx.strokeStyle='#ffdd55';ctx.strokeRect(b[0],b[1],b[2]-b[0],b[3]-b[1])}
+ if(r.center_uv){const p=r.center_uv[t];line(ctx,[[p[0]-5,p[1]],[p[0]+5,p[1]]],'white');line(ctx,[[p[0],p[1]-5],[p[0],p[1]+5]],'white')}
+ const tr=document.querySelector('#trajectory').getContext('2d');tr.drawImage(images[1],0,0);line(tr,r.old_future_uv,'#ffa955');line(tr,r.gt_future_uv,'#55e699');line(tr,r.cv_future_uv,'#ca89ff');line(tr,r.new_future_uv,'#55aaff');
+ document.querySelector('#depth').src=images[2].src;document.querySelector('#mesh').src=images[3].src;document.querySelector('#frameLabel').textContent=t;
+ document.querySelector('#status').textContent=`${r.case_id} | state: ${r.state_status} | mesh: ${r.geometry_status} (准确性未验证) | gravity: ${r.gravity_status} | rollout: ${r.rollout_status} | ${JSON.stringify(r.failure||'EXECUTED，不等于PASS')}`;
+ document.querySelector('#detail').textContent=JSON.stringify(r,(k,v)=>k.endsWith('_uv')||k==='mask_contours'?undefined:v,2);
+}
+fetch('viewer_data.json').then(r=>r.json()).then(d=>{data=d;const s=d.summary;document.querySelector('#summary').textContent=`36例 / ${s.unique_history_groups}个history groups：${s.executed}例执行，${36-s.executed}例状态失败。\n全36例p7误差中位数 ${s.p7_median_m_all_attempts.toFixed(3)} m，v7 ${s.v7_median_mps_all_attempts.toFixed(3)} m/s。\n执行20例：新ADE ${s.ADE_mean_m_executed_only.toFixed(3)} m / FDE ${s.FDE_mean_m_executed_only.toFixed(3)} m；同输入CV ADE ${s.CV_ADE_mean_m_same_executed.toFixed(3)} m。\n初始重叠 ${s.initial_overlap.positive}/${s.initial_overlap.tested}，初始接触 ${s.initial_contact_cases}/${s.executed}；16例未检查，不算零。`;select.innerHTML=d.records.map((r,i)=>`<option value="${i}">${r.case_id} · ${r.rollout_status}</option>`).join('');document.querySelector('#rows').innerHTML=d.records.map(r=>`<tr><td>${r.case_id}</td><td>${r.state_status}</td><td>${r.rollout_status}</td><td>${r.trajectory_metrics?r.trajectory_metrics.ADE_m.toFixed(3)+' / '+r.trajectory_metrics.CV_ADE_m.toFixed(3):'NOT_RUN'}</td><td>${JSON.stringify(r.failure)}</td></tr>`).join('');return draw()});select.onchange=draw;slider.oninput=draw;document.querySelector('#play').onclick=()=>playing=!playing;setInterval(()=>{if(playing&&data){slider.value=(+slider.value+1)%8;draw()}},350);
+</script></html>

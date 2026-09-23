@@ -118,3 +118,32 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 - `code/diagnose_grounding_text.py`修正输出目录按group/clip分层，避免不同组相同clip名覆盖；模型权重missing_keys为空，unused keys记录在load_audit。GPU6/CPU两线程，GPU4未使用。
 - 产物`/data/gaoya/agent-data/outputs/test70_grounding_text_20260923`，页面8899路径`test70_grounding_text/`。实验性诊断入口，不替换默认运动候选或v3 pipeline；词表是在本70例上调优，不能当作盲测泛化。
 - 验证：最终页面逐70例、逐8帧加载、Grounding框图和旧SAM2对照图PASS；共560帧，未进行GT指标或新SAM2推理。
+
+## 2026-09-23 — pilot36/test70文本唯一框＋SAM2重跑（独立诊断）
+
+- 新增`code/run_grounded_mask_diagnostic.py`、`code/compare_grounded_masks.py`、`web/grounded_mask_comparison.html`。以Grounding DINO RGB7唯一原始框替换运动差分框，SAM2权重/预处理/传播保持一致，无mask修整、GT或旧框fallback。
+- pilot36先统一ball时4例挡板产生额外框；保留失败输出，整个deflector组统一brown ball，最终288/288帧唯一；aperture/support_edge使用ball。36例实际SAM完成，旧二维检查14碎裂/17圆形度失败/5通过→新36/36通过；GT mask IoU不可得，3D未跑，不能称全链路PASS。
+- test70最终词表560/560唯一，70/70 SAM执行。共同可评分53例IoU均值0.515805→0.953046；49例提升>0.01、4例变化≤0.01，无下降；旧21例IoU≥0.8仍全部≥0.8。新65例可评分均值0.955307，全部≥0.8；5多米诺触发球缺标不计分。
+- test70首轮SAM被用户中断，旧v1不完整结果保留；最终在v2新目录全部重跑，不将部分输出标完成。pilot36完整SAM循环83.164s，test70为133.088s，GPU6/CPU两线程，无VGGT、3D、Bullet或训练。
+- 产物`pilot36_grounding_sam2_20260923_v1`、`test70_grounding_sam2_20260923_v2`（均在/data/gaoya/agent-data/outputs）；报告包含输入边界、执行命令、条件均值分母、GT覆盖与调词泛化限制。新页面8899/pilot36_grounded_masks/、8899/test70_grounded_masks/，原页面和原结果保留。
+- 验证：浏览器106例×8帧新旧overlay/二值mask全部加载PASS，prediction_freeze验证通过，`git diff --check`通过。当前仍为实验诊断入口，不替换默认pipeline。
+
+## 2026-09-23 — Grounding DINO＋SAM2接入通用36例完整链路（实验集成，准确性FAIL）
+
+- 新增`code/run_grounded_generic_pilot36.py`、`code/publish_grounded_generic.py`、`web/grounded_generic_pipeline.html`。入口验证既有VGGT input freeze、SAM2 prediction freeze及288帧RGB身份；复用冻结模型输出，CPU两线程重跑未知半径球拟合、有限mesh、平面重力prior、zero-omega Bullet。未占GPU、未改solver/阈值、未启用旧family几何/支撑对齐。
+- 这次解决的是新mask尚未接入3D/物理的实验链路缺口，不宣称修复了深度或平台。二维36/36通过；状态20/36通过数值准入（aperture12、deflector8），16例残差/半径稳定性失败（deflector4、support_edge12）。生成36份mesh与重力结果；20例实际328step调用，16例0step。
+- 冻结后评测：全部36例p7误差中位数0.5011m、v7向量误差0.4099m/s；实际执行20例ADE3.3631m、FDE9.2462m，同输入CV ADE0.7514m。初始穿插0/20但初始接触0/20、30Hz未来接触帧总数0；不能以无穿插宣称支撑正确。mask并集排除会留下mesh未知区，尚未独立分离该因素与状态/深度偏差的因果贡献。
+- 原`overlay_viewer_v3/index.html`加入新旧版本切换，新版默认展示；旧HTML完整备份在新产物`legacy_v3_index.html`，旧app/轨迹/模型文件未修改。新增每帧mask/深度、RGB0实际mesh覆盖、RGB7上的GT/旧D/新D/CV轨迹；失败分支不画新轨迹。所有GT度量发生在rollout freeze后。
+- 产物：`/data/gaoya/agent-data/outputs/context_grounded_generic_pilot36_20260923_v1`。完整命令见report.md；模型前段为CACHED，本次后段实测39.977s（含评测，不是完整视觉耗时）。固定scale与调优短语仍是显式prior，不能宣称arbitrary-video泛化。
+- 验证：`OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 CUDA_VISIBLE_DEVICES='' /data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B tests/test_generic_context_geometry.py`，3/3通过（该环境未安装pytest，使用测试自带入口）。`node /tmp/check_grounded_generic_v3.cjs`验证36例×8帧四面板、旧版36例及版本切换PASS。页面展示PASS不等于预测正确；contact precision/recall与GT primitive边界误差仍NOT_EVALUATED。
+
+## 2026-09-23 — 新结果恢复原v3播放布局（展示修正）
+
+- 用户要求沿用原v3而非默认四面板诊断页。新增`web/grounded_v3_layout.js`和`code/publish_grounded_v3_layout.py`，复用旧v3 HTML/CSS布局：case列表、overlay播放、6步骤、右侧指标、常驻图层解释；原URL默认展示该布局，四面板仍在报告链接中。
+- 新结果图层准确标为GT评测/CV/旧D/new zero-omega D，不把未运行的A/B/C消融伪装成已执行。16例FAIL不借用旧预测。原v3可切回，物理输出与模型未修改。
+- 重新核验36条rollout：20条均有41 positions/velocities/contact frames、328step calls，16条失败均0step；能运行的案例已全部完成，不重复启动同样仿真。
+- `node /tmp/check_grounded_v3_layout.cjs`验证36例×6阶段及新旧切换PASS；截图与检查结果保存于`context_grounded_generic_pilot36_20260923_v1/v3_layout_*`。仅展示修正，未改善轨迹准确性。
+
+## 2026-09-23 — 按用户要求回退默认展示
+
+- 将`overlay_viewer_v3/index.html`的新版iframe入口从`v3_layout.html`恢复到先前四面板诊断首页。HTTP页面读取成功；仅恢复展示入口，原v3切换和全部计算结果保留，未重跑或回退物理代码。

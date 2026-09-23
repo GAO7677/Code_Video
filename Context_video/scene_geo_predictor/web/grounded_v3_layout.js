@@ -1,0 +1,40 @@
+'use strict';
+const $=id=>document.getElementById(id),ctx=$('overlayCanvas').getContext('2d');
+const base='./';
+let data,records=[],stage='rollout',frame=41,family='all',playing=false,last=0,ticket=0;
+const cache=new Map(),colors={A:'#42df91',B:'#37aef5',C:'#ffae47',D:'#ff514c'};
+const names={A:'GT · eval only',B:'CV · 同输入恒速',C:'旧 D · GT omega',D:'新 D · zero omega'};
+const titles={context:'Context RGB',mask:'Grounding DINO + SAM2',state:'State p7 / v7',depth:'VGGT depth',geometry:'Observed finite mesh',rollout:'Bullet rollout'};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=v=>v==null?'NOT_RUN':Number(v).toFixed(3),metric=(k,v)=>`<div class="metric-row"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`;
+const limit=()=>stage==='rollout'?41:stage==='geometry'?0:7;
+function list(){const rows=records.filter(r=>(family==='all'||r.family===family)&&r.case_id.includes($('caseSearch').value));$('visibleCaseCount').textContent=rows.length;$('caseList').innerHTML=rows.map(r=>`<button class="case-row ${r===data?'is-active':''}" data-case="${r.id}" role="option"><strong>${esc(r.case_id.replace('phase1_',''))}</strong><span class="case-ade">${r.trajectory_metrics?fmt(r.trajectory_metrics.ADE_m)+'m':'FAIL'}</span><small>${r.family}</small><small>${r.rollout_status==='EXECUTED'?'41帧已完成':'状态失败 · 未推进'}</small></button>`).join('')}
+async function image(url){if(!cache.has(url))cache.set(url,new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>reject(Error(url));im.src=url}));return cache.get(url)}
+function line(points,color,width=2){if(!points)return;ctx.beginPath();let first=true;for(const p of points){if(!p||!p.every(Number.isFinite)){first=true;continue}if(first){ctx.moveTo(...p);first=false}else ctx.lineTo(...p)}ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke()}
+async function load(id){data=records.find(r=>r.id===id);playing=false;$('caseTitle').textContent=data.case_id.replace('phase1_','');$('familyBadge').textContent=data.family;$('variantText').textContent=data.rollout_status;list();frame=stage==='rollout'?41:0;await draw()}
+async function selectStage(s){stage=s;frame=s==='rollout'?41:0;playing=false;await draw()}
+async function draw(){if(!data)return;const token=++ticket,r=data,t=Math.min(frame,7);$('loadingOverlay').hidden=false;
+ const url=stage==='depth'?`${base}diagnostics/${r.id}/depth_${t}.png`:stage==='geometry'?`${base}diagnostics/${r.id}/mesh.png`:`${base}inputs/${r.id}/rgb_${String(stage==='rollout'?7:t).padStart(2,'0')}.png`;
+ try{const im=await image(url);if(token!==ticket)return;ctx.clearRect(0,0,640,360);ctx.drawImage(im,0,0,640,360);
+ if(stage==='mask'){r.mask_contours[t].forEach(c=>line(c.concat([c[0]]),'#37aef5'));if(t===7){const b=r.target_detection.candidates[0].box;ctx.strokeStyle='#ffdc32';ctx.strokeRect(b[0],b[1],b[2]-b[0],b[3]-b[1])}}
+ if(stage==='state'&&r.center_uv){line(r.center_uv.slice(0,t+1),'#ffdc32');for(const p of r.center_uv.slice(0,t+1)){ctx.beginPath();ctx.arc(...p,3,0,Math.PI*2);ctx.strokeStyle='#ffdc32';ctx.stroke()}}
+ let keys=[];if(stage==='rollout'){for(const [k,points]of Object.entries({A:r.gt_future_uv,B:r.cv_future_uv,C:r.old_future_uv,D:r.new_future_uv})){if(document.querySelector(`[data-layer="${k}"]`).checked){if(points){const path=points.slice(0,frame);line(path,'#111',4);line(path,colors[k]);if(path.length){const p=path[path.length-1];ctx.beginPath();ctx.arc(...p,4,0,Math.PI*2);ctx.fillStyle=colors[k];ctx.fill()}keys.push([names[k],colors[k]])}else keys.push([names[k]+' · NOT_RUN',colors[k]])}}}
+ if(stage==='rollout'&&document.querySelector('[data-layer="mesh"]')?.checked){for(const segment of r.mesh_boundary_segments_uv||[])line(segment,'#f453dc',1);keys.push(['Estimated mesh boundary','#f453dc'])}
+ $('canvasKey').innerHTML=keys.map(([n,c])=>`<span class="key-item"><i class="key-dot" style="color:${c}"></i>${esc(n)}</span>`).join('');$('loadingOverlay').hidden=true;
+ }catch(e){$('loadingOverlay').textContent='加载失败 '+e.message;throw e}
+ $('timeline').max=limit();$('timeline').value=frame;$('timeline').disabled=stage==='geometry';$('frameBadge').textContent=`RGB${stage==='rollout'?frame+7:stage==='geometry'?0:frame}${stage==='rollout'?' · RGB7 HOLD':''}`;$('timeOutput').textContent=(stage==='rollout'?'+':'')+fmt(frame/30)+' s';$('playPause').textContent=playing?'Ⅱ':'▶';
+ document.querySelectorAll('[data-stage]').forEach(b=>b.classList.toggle('is-active',b.dataset.stage===stage));$('layerControls').hidden=stage!=='rollout';$('inspectorStep').textContent=titles[stage];$('stageStatus').textContent=stage==='rollout'?r.rollout_status:stage==='state'?r.state_status:'OBSERVED';
+ $('scopeBadge').textContent=stage==='rollout'?'EVALUATION':'ESTIMATOR';let rows='',note='';
+ if(stage==='context'){rows=metric('输入','RGB0–7 + 时间戳')+metric('目标短语',r.target_detection.prompt);note='固定相机单球实验；不使用未来输入。'}
+ if(stage==='mask'){rows=metric('定位','Grounding DINO RGB7唯一框')+metric('跟踪','SAM2双向传播')+metric('面积',r.mask_contours[t].length+' 个外轮廓');note='蓝色原始mask边界；黄色RGB7提示框。不做圆形轮廓修整。'}
+ if(stage==='state'){rows=metric('状态',r.state_status)+metric('半径 (m)',fmt(r.fit_diagnostics.radius))+metric('p7误差 (m)',fmt(r.state_metrics?.p7_error_m))+metric('v7误差 (m/s)',fmt(r.state_metrics?.v7_error_mps))+metric('radius CV',fmt(r.fit_diagnostics.radius_cv))+metric('球面相对RMS',fmt(r.fit_diagnostics.relative_rms));note='未知半径联合拟合；失败拟合仅诊断。'+JSON.stringify(r.fit_diagnostics.reasons)}
+ if(stage==='depth'){rows=metric('模型','VGGT')+metric('固定scale','5.819486884015457');note='原始VGGT深度；八帧共享2–98%色域。不是GT校正深度。'}
+ if(stage==='geometry'){rows=metric('表示','有限triangle mesh')+metric('厚度','UNKNOWN')+metric('自动补支撑','禁止')+metric('重力方向误差',fmt(r.gravity_error_deg)+'°');note='青色：RGB0实际mesh覆盖。动态mask并集留下空洞，不以默认平台补齐。'}
+ if(stage==='rollout'){const m=r.trajectory_metrics;rows=metric('新 D',r.rollout_status)+metric('ADE / FDE (m)',fmt(m?.ADE_m)+' / '+fmt(m?.FDE_m))+metric('同输入CV ADE',fmt(m?.CV_ADE_m))+metric('初始接触',r.initial_contacts??'NOT_RUN')+metric('接触帧数',r.rollout_contact_frames??'NOT_RUN')+metric('初始穿透 (m)',fmt(r.initial_penetration_m));note=r.failure?JSON.stringify(r.failure):'41帧 / 328次step已完成。EXECUTED不等于准确。GT和旧D仅评测对照，新D使用zero omega。'}
+ $('stageSummary').innerHTML=`<h1>${titles[stage]}</h1><p>${esc(note)}</p><div class="metric-stack">${rows}</div>`;$('boundaryText').textContent='新估计只读context与冻结模型输出；scale和目标短语为显式prior。GT仅冻结后评测。旧D不是新预测。';$('frameReadout').innerHTML=metric('时间',fmt(frame/30)+' s')+(stage==='rollout'?metric('新D该帧误差',frame?fmt(r.trajectory_metrics?.frame_errors_m[frame-1])+' m':'初始化'):'');
+}
+$('caseList').onclick=e=>{const b=e.target.closest('[data-case]');if(b)load(b.dataset.case)};$('caseSearch').oninput=list;
+document.querySelectorAll('[data-family]').forEach(b=>b.onclick=()=>{family=b.dataset.family;document.querySelectorAll('[data-family]').forEach(x=>x.classList.toggle('is-active',x===b));list()});document.querySelectorAll('[data-stage]').forEach(b=>b.onclick=()=>selectStage(b.dataset.stage));document.querySelectorAll('[data-layer]').forEach(b=>b.onchange=draw);
+$('timeline').oninput=e=>{frame=+e.target.value;playing=false;draw()};$('previousFrame').onclick=()=>{frame=Math.max(0,frame-1);draw()};$('nextFrame').onclick=()=>{frame=Math.min(limit(),frame+1);draw()};$('playPause').onclick=()=>{playing=!playing;if(playing&&frame===limit())frame=0;draw()};
+function tick(now){if(playing&&now-last>1000/+$('playbackFps').value){last=now;frame=(frame+1)%(limit()+1);draw()}requestAnimationFrame(tick)}
+(async()=>{const d=await(await fetch(base+'viewer_data.json')).json();records=d.records;$('summaryAde').textContent=fmt(d.summary.ADE_mean_m_executed_only)+'m';$('summaryFde').textContent=fmt(d.summary.FDE_mean_m_executed_only)+'m';$('summaryContact').textContent='20/36';$('summaryContact').nextElementSibling.textContent='EXECUTED';await load(records[0].id);requestAnimationFrame(tick)})();
