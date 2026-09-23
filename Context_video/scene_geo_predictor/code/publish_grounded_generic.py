@@ -15,6 +15,8 @@ def publish(root):
     for name in ['estimate_freeze.json', 'rollout_freeze.json']:
         verify(root, name)
     data = json.loads((root / 'viewer_data.json').read_text())
+    protocol = json.loads((root/'protocol.json').read_text())
+    geometry_mode = protocol.get('geometry_mode','legacy_union')
     base = Path('/data/gaoya/agent-data/outputs/physvideo_context_rgb_to_pybullet_20260921_v1')
     gtroot = Path('/data/gaoya/agent-data/outputs/physvideo_next_experiment_20260921_phase1_v5/samples')
     for row in data['records']:
@@ -90,7 +92,9 @@ def publish(root):
                 'FDE_mean_m_executed_only': float(np.mean([r['trajectory_metrics']['FDE_m'] for r in run])) if run else None,
                 'CV_ADE_mean_m_same_executed': float(np.mean([r['trajectory_metrics']['CV_ADE_m'] for r in run])) if run else None}
     data['summary'].update(aggregate(records))
-    data['summary']['initial_overlap'] = {'positive': sum(r['initial_overlap_status']=='OVERLAP' for r in records), 'tested': len(executed), 'not_run': 36-len(executed)}
+    tested = sum(r['initial_overlap_status']!='NOT_RUN' for r in records)
+    data['summary']['initial_overlap'] = {'positive': sum(r['initial_overlap_status']=='OVERLAP' for r in records), 'tested': tested, 'not_run': len(records)-tested}
+    data['summary']['geometry_mode'] = geometry_mode
     data['summary']['initial_contact_cases'] = sum(bool(r['initial_contacts']) for r in executed)
     data['summary']['family_results'] = {f: aggregate([r for r in records if r['family']==f]) for f in sorted({r['family'] for r in records})}
     data['summary']['unique_history_groups'] = len({(r['family'],r['group_id']) for r in records})
@@ -100,14 +104,14 @@ def publish(root):
     summary = data['summary']
     report = f'''# Grounding DINO＋SAM2 接入通用 pipeline · 2026-09-23
 
-36例全部尝试；20例执行仿真，16例因球面残差/半径稳定性失败。完整链路准确性 FAIL，不能称深度、平台和穿插已修复。
+{len(records)}例全部尝试；{len(executed)}例执行仿真，其余失败原因见逐例表。执行不等于准确性PASS。
 
 ## 最新流程和输入来源
 
 1. RGB0–7、时间戳。使用先前context调优的单短语（ball / brown ball）；Grounding DINO各帧唯一框，RGB7框提示SAM2双向传播。它是文本指定目标，不是无先验自动运动物体发现。短语与本批组绑定，不能称盲测泛化。
 2. VGGT预测深度、相机内外参，保留原始单位；真正读取固定scale=5.819486884015457。该值来自旧pilot尺度中位数，是待验证prior，非新视频米制尺度保证。
 3. SAM2 mask映射到VGGT分辨率；mask内可见3D表面联合拟合8个球心和未知共享半径，soft-L1；随后8帧鲁棒直线拟合p7/v7。不固定0.11m、不约束同高度、不用GT对齐。
-4. RGB0静态深度按像素邻接生成有限triangle mesh；去掉八帧mask并集及扩张边缘、深度跳变；不补不可见支撑和厚度。各family使用相同机制。几何已生成不等于碰撞几何准确。
+4. 几何模式`{geometry_mode}`。observed_multiframe逐帧排除各自动态mask，重投影到参考相机，对至少两帧3%深度一致的静态观测取中位数，生成有限mesh；legacy_union仅用于旧版参照。都不补不可见支撑和厚度。各family使用相同机制。几何已生成不等于碰撞几何准确。
 5. 下方35%平面prior估计重力方向，跨RGB0/7一致性门；9.81m/s²固定。该prior假定大致正立相机及下方水平面，36例通过观察准入不等于GT方向全合格。
 6. 统一sphere state + finite mesh + fixed physics输入PyBullet，zero omega；先刷新碰撞检查，>1mm初始重叠直接FAIL，不对齐、不settle。固定质量1kg、摩擦0.35、恢复0.25、零阻尼；保持原1/240 fixedTimeStep、numSubSteps=8、每帧8调用，41输出/328调用。
 7. 估计/重力/rollout先hash冻结，再读GT状态和相机评测；旧D仅作为GT-omega历史展示，不能作为公平因果对照。
@@ -117,7 +121,7 @@ def publish(root):
 本轮复用已冻结、RGB hash匹配的Grounding DINO/SAM2和VGGT原始输出，CPU两线程重新执行状态/几何/重力/Bullet及评测。未重新运行模型、未占GPU、未修改solver，未训练。完整288帧源身份验证。3个原有数值测试PASS（环境没有pytest，执行测试文件自带入口）。
 
 ```bash
-OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 CUDA_VISIBLE_DEVICES='' /data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B code/run_grounded_generic_pilot36.py --source /data/gaoya/agent-data/outputs/context_generic_pilot36_20260922_v1 --masks /data/gaoya/agent-data/outputs/pilot36_grounding_sam2_20260923_v1 --output {root}
+OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 CUDA_VISIBLE_DEVICES='' /data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B code/run_grounded_generic_pilot36.py --source /data/gaoya/agent-data/outputs/context_generic_pilot36_20260922_v1 --masks /data/gaoya/agent-data/outputs/pilot36_grounding_sam2_20260923_v1 --geometry-mode {geometry_mode} --output {root}
 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 CUDA_VISIBLE_DEVICES='' /data/gaoya/agent-data/envs/physrvg-full-sa/bin/python -B code/publish_grounded_generic.py --root {root}
 ```
 
@@ -129,9 +133,9 @@ OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 CUDA_VISIBLE_DEVICES=
 {json.dumps({k:v for k,v in summary.items() if k!='per_group'}, ensure_ascii=False, indent=2)}
 ```
 
-36例都通过二维mask形状检查；20例通过局部球面数值准入，仍不满足真实p/v精度。初始重叠0/20不代表平台存在：20例初始接触均为0。动态mask并集会在mesh上留下未知区；其与深度/状态误差分别造成多少缺失支撑，尚未做独立消融，不把全部轨迹错误归于一个因素。
+{summary['state_admitted']}例通过局部球面数值准入；真实p/v精度需单独评测。初始穿插与接触分母见summary，无穿插不代表平台存在。遮挡未知区域与深度/状态误差仍可能导致缺失支撑。
 
-新D与同输入CV按相同20例比较，不把16例未运行算零。所有36例球拟合诊断值都保留，失败拟合值不是可部署估计。GT只在冻结后用于度量。contact accuracy/precision/recall、GT几何穿透、primitive GT边界误差本轮NOT_EVALUATED；30Hz实际接触记录在rollouts中，不能替代GT事件匹配。没有证据说明fixed scale跨视频成立。
+新D与同输入CV按相同{len(executed)}例比较，不把未运行算零。所有36例球拟合诊断值都保留，失败拟合值不是可部署估计。GT只在冻结后用于度量。contact accuracy/precision/recall、GT几何穿透、primitive GT边界误差本轮NOT_EVALUATED；30Hz实际接触记录在rollouts中，不能替代GT事件匹配。没有证据说明fixed scale跨视频成立。
 
 ## 逐例
 

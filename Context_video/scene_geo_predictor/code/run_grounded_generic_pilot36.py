@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from context_rgb_pybullet_common import dump_json, sha256_file, crop_transform, resize_crop_mask
-from generic_context_geometry import sphere_fit, finite_mesh
+from generic_context_geometry import sphere_fit, finite_mesh, finite_mesh_observed
 from lower_plane_gravity import estimate as estimate_gravity
 from finish_generic_pilot36 import rollout, evaluate
 
@@ -26,7 +26,7 @@ def verify(root, filename):
     return hashes
 
 
-def run(source, masks_root, output):
+def run(source, masks_root, output, geometry_mode='observed_multiframe'):
     cv2.setNumThreads(2)
     source_hashes = verify(source, 'input_freeze.json')
     verify(masks_root, 'prediction_freeze.json')
@@ -50,7 +50,8 @@ def run(source, masks_root, output):
                     model_execution='Reuse verified frozen observation outputs; no model inference in this run',
                     target_prior='Previously context-tuned ball/brown ball phrases; not blind target discovery',
                     gt_boundary='No evaluation mapping/state/blueprint/future reads until rollout_freeze',
-                    gravity='Explicit lower-image horizontal-plane prior, observation admission; magnitude 9.81')
+                    gravity='Explicit lower-image horizontal-plane prior, observation admission; magnitude 9.81',
+                    geometry_mode=geometry_mode)
     dump_json(output / 'protocol.json', protocol)
     dump_json(output / 'source_audit.json', {
         'input_freeze_sha256': sha256_file(source / 'input_freeze.json'),
@@ -85,7 +86,8 @@ def run(source, masks_root, output):
         except ValueError as exc:
             row['state'] = {'status': 'FAIL', 'reason': str(exc)}
         try:
-            mesh, _ = finite_mesh(depth, k, e, processed, scale)
+            fitter=finite_mesh_observed if geometry_mode=='observed_multiframe' else finite_mesh
+            mesh, _ = fitter(depth, k, e, processed, scale)
             dump_json(dst / 'collision_primitive.json', mesh)
             row['geometry'] = {'status': 'ESTIMATED', 'triangles': len(mesh['faces']), 'confidence': 'UNVALIDATED'}
         except ValueError as exc:
@@ -112,5 +114,6 @@ if __name__ == '__main__':
     p.add_argument('--source', type=Path, required=True)
     p.add_argument('--masks', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--geometry-mode', choices=['legacy_union','observed_multiframe'],default='observed_multiframe')
     a = p.parse_args()
-    run(a.source, a.masks, a.output)
+    run(a.source, a.masks, a.output,a.geometry_mode)

@@ -68,6 +68,54 @@ def sphere_fit(depth,k,e,masks,scale,times):
             'shape':'sphere','radius':r,'orientation':{'status':'UNKNOWN','collision_quaternion':[0,0,0,1],'reason':'sphere collision rotational symmetry'},
             'omega':[0,0,0],'omega_source':'explicit_zero_baseline','relative_rms':relative_rms,'radius_cv':radius_cv,'jacobian_condition':condition,'frames':support}
 
+def finite_mesh_observed(depth,k,e,masks,scale):
+    """Fuse observed static samples, excluding the target only in its own frame.
+
+    Reproject each source into reference camera 0; per-view z-buffer followed by
+    median depth. At least two agreeing views are required. No hole completion,
+    ground label, contact alignment, radius prior or dataset metadata is used.
+    """
+    import warnings
+    h,w=depth.shape[1:]
+    yy,xx=np.mgrid[:h,:w];pixels=np.stack([xx,yy,np.ones_like(xx)],-1)
+    projected=[];source_counts=[]
+    for t in range(len(depth)):
+        excluded=cv2.dilate(masks[t].astype(np.uint8),np.ones((9,9),np.uint8))>0
+        valid=np.isfinite(depth[t])&(depth[t]>0)&~excluded
+        camera=(pixels[valid]@np.linalg.inv(k[t]).T)*depth[t][valid,None]
+        world=(camera-e[t,:,3])@e[t,:,:3]
+        reference=world@e[0,:,:3].T+e[0,:,3]
+        positive=reference[:,2]>1e-8;reference=reference[positive]
+        uv=reference@k[0].T
+        uv=np.rint(uv[:,:2]/uv[:,2,None]).astype(np.int64)
+        inside=(uv[:,0]>=0)&(uv[:,0]<w)&(uv[:,1]>=0)&(uv[:,1]<h)
+        uv=uv[inside];reference=reference[inside]
+        raster=np.full(h*w,np.inf)
+        np.minimum.at(raster,uv[:,1]*w+uv[:,0],reference[:,2])
+        raster[~np.isfinite(raster)]=np.nan
+        projected.append(raster.reshape(h,w));source_counts.append(int(valid.sum()))
+    samples=np.stack(projected)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore',RuntimeWarning)
+        median=np.nanmedian(samples,axis=0)
+    agrees=np.isfinite(samples)&(np.abs(samples-median)<=.03*median)
+    count=agrees.sum(axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore',RuntimeWarning)
+        fused=np.nanmedian(np.where(agrees,samples,np.nan),axis=0)
+    fused=np.where(count>=2,fused,0.)
+    # Existing adjacency/jump filtering retains finite observed boundaries.
+    mesh,gravity=finite_mesh(np.repeat(fused[None],8,axis=0),
+                            np.repeat(k[:1],8,axis=0),np.repeat(e[:1],8,axis=0),
+                            np.zeros((8,h,w),dtype=bool),scale)
+    mesh['source']='RGB0..7 per-frame static visibility; camera0 reprojection; >=2 views within 3pct depth; no completion'
+    mesh['fusion_audit']={'source_static_pixels':source_counts,'min_views':2,
+                          'depth_relative_consensus':.03,'observed_pixels':int((count>=2).sum()),
+                          'unknown_pixels':int((count<2).sum()),'mask_dilation_pixels':9,
+                          'source_frames':list(range(len(depth))),'gt_used':False}
+    return mesh,gravity
+
+
 def finite_mesh(depth,k,e,masks,scale):
     # Reference-view observed surface only; image-adjacency triangulation cannot bridge masked holes.
     h,w=depth.shape[1:];union=cv2.dilate(np.any(masks,axis=0).astype(np.uint8),np.ones((9,9),np.uint8))>0

@@ -147,3 +147,10 @@ CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS
 ## 2026-09-23 — 按用户要求回退默认展示
 
 - 将`overlay_viewer_v3/index.html`的新版iframe入口从`v3_layout.html`恢复到先前四面板诊断首页。HTTP页面读取成功；仅恢复展示入口，原v3切换和全部计算结果保留，未重跑或回退物理代码。
+
+## 2026-09-23 — 按截图模板独立重跑36例并发布v2
+
+- 用户以截图明确原v3模板。默认入口改为`grounded_generic_pilot36_20260923_v2/v3_layout.html`，保留列表、单overlay播放器、六步骤、右侧指标、常驻图层表及原v3切换。`publish_grounded_v3_layout.py`支持显式输出root；JS改为读取当前目录，防止新版本页面意外展示v1数据。
+- `run_grounded_generic_pilot36.py`在新v2目录重新执行全部36例，模型前段复用核验缓存、后段CPU两线程独立计算，39.362s；20例完整41帧/328step、16例状态FAIL。36份rollout内容与v1逐文件一致，estimate/rollout freeze通过。未改变阈值、solver或输入恢复机制，结果准确性仍FAIL。
+- `publish_grounded_generic.py`新增实际mesh边界的RGB7投影，用紫色overlay展示；从真实三角形边计数得到边界，不复用旧family门框盒。图层为GT/CV/旧D/新zero-omega D，未伪造A/B/C实验。
+- 验证：`node /tmp/check_grounded_v3_layout.cjs /data/gaoya/agent-data/outputs/context_grounded_generic_pilot36_20260923_v2`，36例×6阶段/切换PASS；`git diff --check`通过。新报告、截图、浏览器检查及冻结文件均位于上述v2目录，旧产物保留。
