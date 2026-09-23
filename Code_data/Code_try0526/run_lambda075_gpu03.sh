@@ -17,7 +17,7 @@ while true; do
             *infer_full_sa_lora_mixed_clean_context_json_list.py*)
                 env=$(tr '\0' '\n' < "$proc/environ" 2>/dev/null || true)
                 case "$env" in
-                    *CUDA_VISIBLE_DEVICES=0*|*CUDA_VISIBLE_DEVICES=3*) busy=1;;
+            *CUDA_VISIBLE_DEVICES=5*|*CUDA_VISIBLE_DEVICES=6*) busy=1;;
                 esac
                 ;;
         esac
@@ -25,12 +25,12 @@ while true; do
     if [[ "$busy" == 0 ]]; then
         break
     fi
-    echo "[wait] GPU0/GPU3 inference is still active"
+    echo "[wait] GPU5/GPU6 inference is still active"
     sleep 60
 done
 
-echo "[launch] lambda=0.75 run=lambda075-initial0907-seed42 CUDA_VISIBLE_DEVICES=0,3"
-CUDA_VISIBLE_DEVICES=0,3 \
+echo "[launch] lambda=0.75 run=lambda075-initial0907-seed42 CUDA_VISIBLE_DEVICES=5,6"
+CUDA_VISIBLE_DEVICES=5,6 \
 WANDB_MODE=online WANDB_PROJECT=physrvg-full-sa WANDB_NAME=lambda075-initial0907-seed42 \
 PYTHONPATH="$REPO" \
 "$PYTHON" -m torch.distributed.run --standalone --master_port 29627 --nproc_per_node=2 \
