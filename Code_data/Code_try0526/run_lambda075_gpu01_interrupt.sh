@@ -56,3 +56,9 @@ PYTHONPATH="$REPO" \
   --context_noise_scale 0.75 \
   >> "$LOG" 2>&1
 
+"$PYTHON" /home/gaoya/Code_Video/Code_data/Code_try0526/configure_generic2175_context_noise_test70.py \
+  --lambda-value 0.75 --apply >> "$LOG" 2>&1
+tmux new-session -d -s lambda075-test70-gpu0 \
+  "exec bash /home/gaoya/Code_Video/Code_data/Code_try0526/run_context_noise_test70_gpu_queue.sh 0 075"
+tmux new-session -d -s lambda075-test70-gpu1 \
+  "exec bash /home/gaoya/Code_Video/Code_data/Code_try0526/run_context_noise_test70_gpu_queue.sh 1 075"
