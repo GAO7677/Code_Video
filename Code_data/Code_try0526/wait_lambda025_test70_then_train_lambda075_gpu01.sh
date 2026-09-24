@@ -4,6 +4,8 @@ set -euo pipefail
 STATE=/data/gaoya/agent-data/physv_v2v_0819/logs/test70_lineage_watcher/state.json
 LOG=/data/gaoya/agent-data/outputs/context_noise_interpolation_20260923/lambda075-gpu01-handoff.log
 LAUNCHER=/home/gaoya/Code_Video/Code_data/Code_try0526/run_lambda075_gpu01_interrupt.sh
+PYTHON=/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python
+WATCHER=/home/gaoya/code_V2V_baselines/PhysRVG-main/scripts_mytrain/evaluation/test70/watchers/watch_lineage_test70.py
 MODEL_KEY=full_sa_physrvg_raw_rl_lora_context_noise_lambda025_initial0907_generic_full_2175_clean_context_20260923
 RUN=lambda075-initial0907-seed42-gpu01-interrupt
 RUN_DIR=/data/gaoya/agent-data/checkpoints/generic2175_initial0907_context_noise_20260923/$RUN
@@ -17,6 +19,8 @@ log() {
 }
 
 test70_complete() {
+  # Direct backfill workers update metric artifacts; refresh the aggregate state before reading it.
+  "$PYTHON" "$WATCHER" --once >/dev/null 2>>"$LOG" || true
   [[ -s "$STATE" ]] || return 1
   ruby -rjson -e '
     state, key, expected = ARGV
