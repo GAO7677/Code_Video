@@ -81,7 +81,19 @@ def load_vda_model(device: str):
 def load_dinov2_model(device: str):
     import torch
 
-    return torch.hub.load("facebookresearch/dinov2", "dinov2_vitl14").to(device).eval()
+    repo = Path("/home/gaoya/.cache/torch/hub/facebookresearch_dinov2_main")
+    checkpoint = Path("/home/gaoya/.cache/torch/hub/checkpoints/dinov2_vitl14_pretrain.pth")
+    if not (repo / "hubconf.py").is_file() or not checkpoint.is_file():
+        raise FileNotFoundError(
+            "Local DINOv2 code or weights are missing; RigidBench must not download at runtime"
+        )
+    model = torch.hub.load(
+        str(repo), "dinov2_vitl14", source="local", pretrained=False
+    )
+    model.load_state_dict(
+        torch.load(checkpoint, map_location="cpu", weights_only=True), strict=True
+    )
+    return model.to(device).eval().requires_grad_(False)
 
 
 def _frame_files(path: Path) -> list[Path]:
