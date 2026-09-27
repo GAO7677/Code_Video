@@ -655,6 +655,33 @@
             </section>`;
         }
 
+        const bBaselines = ['physrvg_72f', 'physrvg_full_sa', 'xssc_step2000', 'xssc_dinov3'];
+
+        function bWinningCases() {
+          return data.cases.map((item, index) => {
+            const keys = ['initial0907_b', ...bBaselines];
+            if (item.views.length !== 3 || !keys.every(key => item.views.every(view => Number.isFinite(view.metrics?.[key]?.view_verified)))) return null;
+            const means = Object.fromEntries(keys.map(key => [key, item.views.reduce((sum, view) => sum + view.metrics[key].view_verified, 0) / 3]));
+            return {item, index, means, margin: means.initial0907_b - Math.max(...bBaselines.map(key => means[key]))};
+          }).filter(row => row && row.margin > 0.0001).sort((a, b) => b.margin - a.margin);
+        }
+
+        function renderBExamples() {
+          const rows = bWinningCases();
+          return `<section id="b-cases" aria-label="B representative cases">
+            <div class="section-heading"><div><h2>B 胜出代表 case · step1000</h2></div><p>${rows.length}/66 场景的三视角平均分同时领先四个历史 baseline；按相对最强 baseline 的差值排序。历史协议并非严格相同，此处为事后分数筛选，不代表每个视角领先或物理事件正确。</p></div>
+            <div class="field"><label for="b-case-select">B 胜出场景</label><select id="b-case-select"><option value="">选择场景</option>${rows.map(row => `<option value="${row.index}" ${row.index === selectedCase ? 'selected' : ''}>${escapeHtml(row.item.title)} · B ${fmt(row.means.initial0907_b)} · +${fmt(row.margin)}</option>`).join('')}</select></div>
+            <div style="overflow-x:auto"><table class="aux-table"><thead><tr><th>Case</th><th>B</th><th>PhysRVG-72f</th><th>VJEPA</th><th>xSSC no-object</th><th>xSSC DINOv3</th><th>领先最强 baseline</th><th>视频</th></tr></thead><tbody>${rows.slice(0, 8).map(row => `<tr><td>${escapeHtml(row.item.title)}</td>${['initial0907_b', ...bBaselines].map(key => `<td>${key === 'initial0907_b' ? '<strong>' : ''}${fmt(row.means[key])}${key === 'initial0907_b' ? '</strong>' : ''}</td>`).join('')}<td>+${fmt(row.margin)}</td><td><button type="button" class="icon-button b-case-open" data-index="${row.index}" aria-label="查看 ${escapeHtml(row.item.title)} 视频" title="查看视频">▶</button></td></tr>`).join('')}</tbody></table></div>
+          </section>`;
+        }
+
+        function openBCase(index) {
+          selectedCase = Number(index);
+          selectedMethods = new Set(['context', 'ground_truth', 'initial0907_b', ...bBaselines]);
+          render();
+          document.getElementById('viewer').scrollIntoView({block: 'start'});
+        }
+
         function renderViewer() {
           const active = data.cases[selectedCase];
           const views = selectedView === "all" ? active.views : active.views.filter((view) => view.view === selectedView);
@@ -706,10 +733,15 @@
             ${renderProtocol()}
             <section aria-label="P0 official score overview"><div class="section-heading"><div><h2>P0 score board</h2></div><p>Verified 主分数；未完成为 pending。新六组未计算 VBench / VideoPhy2 / Cosmos。</p></div><div class="scoreboard">${renderScoreboard()}</div></section>
             <div id="auxiliary-metrics-root">${renderAuxMetrics()}</div>
+            ${renderBExamples()}
             <fieldset id="method-selection"><legend>视频对比方案</legend>${data.methods.map(m => `<label style="display:inline-block;margin:8px"><input type="checkbox" value="${escapeHtml(m.key)}" ${selectedMethods.has(m.key) ? 'checked' : ''}> ${escapeHtml(m.label)}</label>`).join('')}</fieldset>
             ${renderViewer()}
             ${renderLegend()}`;
           bindControls();
+          document.getElementById('b-case-select').addEventListener('change', event => {
+            if (event.target.value !== '') openBCase(event.target.value);
+          });
+          document.querySelectorAll('.b-case-open').forEach(button => button.addEventListener('click', () => openBCase(button.dataset.index)));
           document.querySelectorAll('#method-selection input').forEach(input => input.addEventListener('change', () => {
             if (input.checked) selectedMethods.add(input.value); else selectedMethods.delete(input.value);
             render();
@@ -867,6 +899,10 @@
           })
           .then((payload) => {
             data = payload;
+            if (location.hash === '#b-cases' && bWinningCases().length) {
+              selectedCase = bWinningCases()[0].index;
+              selectedMethods = new Set(['context', 'ground_truth', 'initial0907_b', ...bBaselines]);
+            }
             render();
             footer.innerHTML = `Generated ${escapeHtml(new Date(data.generated_at).toUTCString())} · ${escapeHtml(data.availability.note)} · Source registry: <code>Physics-IQ-Verified-RESULTS.md</code>`;
           })
