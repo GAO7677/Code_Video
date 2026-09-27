@@ -22,12 +22,15 @@ for arg in "$@"; do
   }
 done
 
-command -v uv >/dev/null 2>&1 || {
-  printf 'Error: uv is not installed or not on PATH.\n' >&2
-  exit 1
-}
+if [[ -n "${PHYSIQ_SCORER_PYTHON:-}" ]]; then
+  [[ -x "$PHYSIQ_SCORER_PYTHON" ]] || { echo 'Invalid PHYSIQ_SCORER_PYTHON' >&2; exit 1; }
+  PYTHON_CMD=("$PHYSIQ_SCORER_PYTHON")
+else
+  command -v uv >/dev/null 2>&1 || { echo 'Set PHYSIQ_SCORER_PYTHON or install uv' >&2; exit 1; }
+  PYTHON_CMD=(uv run)
+fi
 
-CMD=(uv run physiq/aggregate_runs_from_csvs.py "$@" --score-type verified)
+CMD=("${PYTHON_CMD[@]}" physiq/aggregate_runs_from_csvs.py "$@" --score-type verified)
 printf 'Official command:'
 printf ' %q' "${CMD[@]}"
 printf '\n'

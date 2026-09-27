@@ -678,6 +678,33 @@ def generate_command(args: argparse.Namespace) -> None:
 
 
 def score_command(args: argparse.Namespace) -> None:
+    # Serialize callers targeting the same output, including aggregation.
+    # Explicit output folders opt in; legacy default-output behavior is unchanged.
+    if args.dry_run or args.output_folder is None:
+        return _score_command(args)
+    import fcntl
+    output = args.output_folder.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    signature = json.dumps({k: v for k, v in vars(args).items() if not callable(v)}, sort_keys=True, default=str)
+    marker = output / "score_command_complete.json"
+    with (output / ".score_command.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if marker.exists():
+            saved = json.loads(marker.read_text())
+            if saved["signature"] != signature:
+                raise ProtocolError("Completed output belongs to a different scoring command")
+            if all(Path(p).is_file() and Path(p).stat().st_size > 0 for p in saved["outputs"]):
+                print("Official scoring already complete:", output)
+                return
+        _score_command(args)
+        summaries = list(output.glob("*verified_summary.csv"))
+        if not summaries:
+            raise ProtocolError("Missing official aggregate after scoring")
+        paths = summaries + list((output / "physics-IQ-benchmark-verified" / "results").glob("*.csv"))
+        marker.write_text(json.dumps({"signature": signature, "outputs": [str(p) for p in paths]}, indent=2))
+
+
+def _score_command(args: argparse.Namespace) -> None:
     if len(args.run_folders) > 4:
         raise ProtocolError("official aggregation accepts at most four runs")
     names, prompt, _cases, _summary = load_protocol_inputs(args)

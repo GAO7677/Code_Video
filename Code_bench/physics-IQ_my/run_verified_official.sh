@@ -88,7 +88,13 @@ done
 [[ -d "$REPO" ]] || die "official repository not found: $REPO"
 [[ -d "$DATASET" ]] || die "verified dataset not found: $DATASET"
 [[ -f "$DESCRIPTIONS_FILE" ]] || die "descriptions file not found: $DESCRIPTIONS_FILE"
-command -v uv >/dev/null 2>&1 || die "uv is not installed or not on PATH"
+if [[ -n "${PHYSIQ_SCORER_PYTHON:-}" ]]; then
+  [[ -x "$PHYSIQ_SCORER_PYTHON" ]] || die "scorer Python is not executable: $PHYSIQ_SCORER_PYTHON"
+  PYTHON_CMD=("$PHYSIQ_SCORER_PYTHON")
+else
+  command -v uv >/dev/null 2>&1 || die "set PHYSIQ_SCORER_PYTHON or install uv"
+  PYTHON_CMD=(uv run)
+fi
 command -v ffprobe >/dev/null 2>&1 || die "ffprobe is not installed or not on PATH (install ffmpeg)"
 
 # The official metric code is CPU-only.  Limit native thread pools when using
@@ -183,7 +189,7 @@ for input_folder in "${INPUT_FOLDERS[@]}"; do
 done
 
 CMD=(
-  uv run physiq/run_physics_iq.py
+  "${PYTHON_CMD[@]}" physiq/run_physics_iq.py
   --input_folders "${STAGED_INPUTS[@]}"
   --output_folder "$OUTPUT_FOLDER"
   --descriptions_file "$DESCRIPTIONS_FILE"
