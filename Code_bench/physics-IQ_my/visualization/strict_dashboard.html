@@ -378,7 +378,8 @@
         };
         let data;
         let selectedCase = 0;
-        let selectedView = "all";
+        let selectedView = "center";
+        let selectedMethods = new Set(['context', 'ground_truth', 'initial0907_c', 'initial0907_a', 'initial0907_b', 'initial0907_n25', 'initial0907_n50', 'initial0907_n75']);
         let transportTimer;
 
         function escapeHtml(value) {
@@ -391,6 +392,7 @@
         }
 
         function fmt(value, digits = 2) {
+          if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'pending';
           return Number(value).toFixed(digits);
         }
 
@@ -553,7 +555,7 @@
                 ${metricOrder.map((metric) => `
                   <div class="metric-cell"><span>${metricLabel(metric)}</span><b>${fmt(score.scores[metric], 1)}</b></div>`).join("")}
               </div>
-              <p class="metric-footnote">本机无对应官方 CSV；此处为登记的全局子指标。</p>
+              <p class="metric-footnote">${score.scores.verified == null ? '官方评分尚未完成；视频已生成。' : '全局汇总；逐视角指标尚未提供。'}</p>
             </div>`;
         }
 
@@ -594,7 +596,7 @@
 
         function referencePanel(method) {
           const text = method.key === "context"
-            ? "模型看到的 72 帧条件片段；它不是待评分的 5 秒预测。"
+            ? "输入文件为72帧；当前编码保留18个条件latent，对应69帧有效前缀，不代表完整使用72帧。"
             : "官方 testing 视频；用作待预测未来段的真实参考。";
           return `<div class="reference-panel"><strong>Reference lane</strong><p>${text}</p></div>`;
         }
@@ -648,7 +650,7 @@
                 <div><span class="view-eyebrow">Perspective ${escapeHtml(view.view)}</span><h4>${escapeHtml(view.view)} camera</h4></div>
                 <span class="benchmark-name">${escapeHtml(view.benchmark_scenario)}</span>
               </div>
-              <div class="media-grid">${data.methods.map((method) => renderMediaCard(method, view)).join("")}</div>
+              <div class="media-grid">${data.methods.filter(method => selectedMethods.has(method.key)).map((method) => renderMediaCard(method, view)).join("")}</div>
               ${renderRawTrace(view)}
             </section>`;
         }
@@ -670,7 +672,7 @@
                   <div class="field"><label for="view-select">Perspective</label><select id="view-select"><option value="all" ${selectedView === "all" ? "selected" : ""}>all three cameras</option><option value="left" ${selectedView === "left" ? "selected" : ""}>left</option><option value="center" ${selectedView === "center" ? "selected" : ""}>center</option><option value="right" ${selectedView === "right" ? "selected" : ""}>right</option></select></div>
                   <div class="toolbar-actions"><button class="control-button primary" id="play-all" type="button">Play visible</button><button class="control-button" id="pause-all" type="button">Pause</button><button class="control-button" id="restart-all" type="button">Restart</button></div>
                 </div>
-                <div class="search-row"><div class="field"><label for="case-search">Filter events</label><input id="case-search" type="search" placeholder="例如：ball, domino, mug…" autocomplete="off" /></div><div class="field"><label>Evidence coverage</label><div class="reference-panel"><strong>${data.availability.cases} cases · ${data.availability.views} views</strong><p>Media and official Physics-IQ CSV: xSSC step-2000 / xSSC DINOv3 step-500 / PhysRVG-72f / Full-SA VJEPA · auxiliary snapshot: 3 methods</p></div></div></div>
+                <div class="search-row"><div class="field"><label for="case-search">Filter events</label><input id="case-search" type="search" placeholder="例如：ball, domino, mug…" autocomplete="off" /></div><div class="field"><label>Evidence coverage</label><div class="reference-panel"><strong>${data.availability.cases} cases · ${data.availability.views} views</strong><p>六组 initial0907 step1000 均198/198视频；历史方法保留。评分完成状态见上表。</p></div></div></div>
                 <div class="transport"><span class="transport-status">SYNC TRANSPORT</span><input id="transport-range" type="range" min="0" max="1000" value="0" aria-label="同步播放进度" /><span class="transport-status" id="transport-readout">0.0s / —</span></div>
                 <div class="case-intro"><div class="case-line"><span class="case-id">IDs ${escapeHtml(ids)}</span><h3>${escapeHtml(active.title)}</h3></div><p>${escapeHtml(active.views[0].prompt)}</p><details><summary>Prompt / protocol note</summary><p>所有登记主分数均属于 P0：BPP prompt、72f/24 FPS V2V 条件、512×896、40 steps、guidance 5、seed 42、189f 原始输出，以及去掉 69 帧 clean prefix 后的 120f/5s official submission。VBench / VideoPhy2 / Cosmos Reason1 仅对本机三组最终 submission 执行。</p></details></div>
                 ${views.map(renderView).join("")}
@@ -698,15 +700,20 @@
           const leader = data.scoreboard[0];
           app.innerHTML = `
             <section class="hero">
-              <div class="hero-copy"><span class="eyebrow">${escapeHtml(data.protocol.comparison_scope)}</span><h1>Strictly comparable physics video evidence.</h1><p>同一套 Physics-IQ Verified P0 输入、采样与官方评分，使用可复查的总览、视频和逐视角指标，区分真正可逐 case 对照的结果与仅有远端产物记录的结果。</p></div>
+              <div class="hero-copy"><span class="eyebrow">${escapeHtml(data.protocol.comparison_scope)}</span><h1>Physics-IQ Verified</h1><p>Generic2175 initial0907 六组 step1000 与历史方法。六组共用 clean-context P0-long；历史方法存在 prompt、编码及运行环境差异，并非仅权重不同的对照。</p></div>
               <aside class="hero-score"><div><span class="metric-source">Current P0 leader · official aggregate</span><div class="score-value">${fmt(leader.scores.verified, 2)}</div><div class="score-label">Physics-IQ Verified ×100</div></div><div class="hero-winner"><span class="winner-dot"></span><span><strong>${escapeHtml(leader.label)}</strong><br />Original ${fmt(leader.scores.original, 2)} · ${escapeHtml(leader.video_status)}</span></div></aside>
             </section>
             ${renderProtocol()}
-            <section aria-label="P0 official score overview"><div class="section-heading"><div><h2>P0 score board</h2></div><p>按 Verified 主分数排序。四组登记结果均使用同一 BPP V2V P0 协议；下方辅助指标表只覆盖本机已有的三组 submission。</p></div><div class="scoreboard">${renderScoreboard()}</div></section>
+            <section aria-label="P0 official score overview"><div class="section-heading"><div><h2>P0 score board</h2></div><p>Verified 主分数；未完成为 pending。新六组未计算 VBench / VideoPhy2 / Cosmos。</p></div><div class="scoreboard">${renderScoreboard()}</div></section>
             <div id="auxiliary-metrics-root">${renderAuxMetrics()}</div>
+            <fieldset id="method-selection"><legend>视频对比方案</legend>${data.methods.map(m => `<label style="display:inline-block;margin:8px"><input type="checkbox" value="${escapeHtml(m.key)}" ${selectedMethods.has(m.key) ? 'checked' : ''}> ${escapeHtml(m.label)}</label>`).join('')}</fieldset>
             ${renderViewer()}
             ${renderLegend()}`;
           bindControls();
+          document.querySelectorAll('#method-selection input').forEach(input => input.addEventListener('change', () => {
+            if (input.checked) selectedMethods.add(input.value); else selectedMethods.delete(input.value);
+            render();
+          }));
         }
 
         function auxiliarySnapshotKey(auxiliary) {
@@ -737,8 +744,10 @@
             const response = await fetch("manifest.json", { cache: "no-store" });
             if (!response.ok) throw new Error(`manifest.json: HTTP ${response.status}`);
             const payload = await response.json();
+            changed = JSON.stringify(payload.scoreboard) !== JSON.stringify(data.scoreboard) || auxiliarySnapshotKey(payload.auxiliary_metrics) !== auxiliarySnapshotKey(data.auxiliary_metrics);
+            data = payload;
+            render();
             const nextAuxiliary = payload.auxiliary_metrics || {};
-            changed = auxiliarySnapshotKey(nextAuxiliary) !== auxiliarySnapshotKey(data.auxiliary_metrics);
             if (changed) {
               data.auxiliary_metrics = nextAuxiliary;
               data.generated_at = payload.generated_at || data.generated_at;

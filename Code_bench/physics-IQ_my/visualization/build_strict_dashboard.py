@@ -681,17 +681,66 @@ def build_payload(output: Path) -> dict[str, Any]:
     return payload
 
 
+def add_six_methods(payload: dict[str, Any], output: Path) -> None:
+    root = Path('/data/gaoya/agent-data/outputs/physicsiq_six_step1000_20260926')
+    config = json.loads((root / 'six_methods.json').read_text())
+    for item in config['methods']:
+        method = item['method']
+        key = 'initial0907_' + method.lower()
+        batch = root / 'execution' / 'batch' / method
+        result = root / 'execution' / 'metrics_cpu4' / method
+        complete = (result / 'submission_verified_summary.csv').is_file()
+        csv_path = result / 'physics-IQ-benchmark-verified/results/submission.csv'
+        metrics_path = csv_path.with_name('submission_metrics.json')
+        per_case = load_official_case_metrics(csv_path) if complete else {}
+        scores = score_summary_from_metrics(metrics_path) if complete else dict.fromkeys(
+            ['verified', 'original', 'spatial', 'spatiotemporal', 'weighted_spatial', 'mse'])
+        for suffix, folder in [('', 'submission'), ('_raw', 'raw')]:
+            ensure_directory_link(output / 'assets' / (key + suffix), batch / folder)
+        count = 0
+        for case in payload['cases']:
+            for view in case['views']:
+                filename = view['benchmark_scenario'].replace('_take-1_', '_')
+                for suffix in ['', '_raw']:
+                    view['videos'][key + suffix] = relative_asset(output / 'assets', key + suffix, filename)
+                count += bool(view['videos'][key])
+                if complete:
+                    view['metrics'][key] = per_case[case['event']][view['view']]
+        label = f'Generic2175 initial0907 · {method} · step1000'
+        payload['methods'].append(dict(key=key, label=label, kind='model', color='green',
+            detail='P0-long · clean context · 120 frames'))
+        payload['raw_methods'].append(dict(key=key+'_raw', label=label+' · raw',
+            detail='189 frames', color='green'))
+        payload['scoreboard'].append(dict(key=key, label=label, short_label=method,
+            family='Generic2175 initial0907', run=item['source_task_id'], scores=scores,
+            video_status=f'{count}/198 mounted locally', color='green',
+            case_metric_status='Official Verified complete' if complete else 'Official metrics pending',
+            source=str(csv_path), auxiliary_metric_status=False))
+        payload['availability']['assets'][key] = count
+        if complete:
+            payload['availability']['per_view_metric_methods'].append(key)
+        payload['data_sources'][key] = dict(checkpoint=item['checkpoint'], csv=str(csv_path))
+    payload['scoreboard'].sort(key=lambda x: x['scores']['verified'] if x['scores']['verified'] is not None else -1, reverse=True)
+    for rank, row in enumerate(payload['scoreboard'], 1):
+        row['rank'] = rank if row['scores']['verified'] is not None else '-'
+    payload['protocol']['comparison_scope'] = 'P0 references + Generic2175 initial0907 A/B/C/N25/N50/N75 step1000'
+    payload['availability']['note'] = 'Six new methods: clean-context P0-long. Historical references differ in prompt/encoding/runtime; not weight-only controls. Missing scores remain pending.'
+
+
 def main() -> None:
     args = parse_args()
     require_directory(INPUT_JSONS, "P0 input JSON")
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     payload = build_payload(output)
+    add_six_methods(payload, output)
     copy_page_template(output)
     manifest_path = output / "manifest.json"
-    manifest_path.write_text(
+    temporary = output / 'manifest.tmp.json'
+    temporary.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    temporary.replace(manifest_path)
     print(
         json.dumps(
             {
