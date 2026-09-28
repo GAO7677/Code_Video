@@ -56,6 +56,12 @@ large videos or attention arrays are later removed.  It records, depending on th
 experiment, the input JSON, context video, model name, checkpoint, seed, sampling
 steps, resolution, selected heads, mask mode, source manifests and output files.
 
+For the five large output groups specifically reviewed on 2026-09-28, see the
+focused companion document
+[`SELECTED_EXPERIMENTS_REPRODUCTION.md`](SELECTED_EXPERIMENTS_REPRODUCTION.md).
+It contains experiment-specific commands, conclusions and the conservative
+generated-file cleanup boundary.
+
 ## Seven historical output groups
 
 | Output group | Generation/capture entry points | Provenance and result files | Status and dependency warning |

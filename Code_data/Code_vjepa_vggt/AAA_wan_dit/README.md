@@ -9,6 +9,11 @@ It maps launchers and configs to input data, checkpoints, manifests, generated
 outputs, metric reports and downstream dependencies, and marks which runs are
 replayable versus audit-only.
 
+The focused map for the five large output groups reviewed on 2026-09-28 is
+[`SELECTED_EXPERIMENTS_REPRODUCTION.md`](SELECTED_EXPERIMENTS_REPRODUCTION.md).
+It records the exact experiment questions, replay commands, evidence limits and
+the generated-file cleanup policy.
+
 ## Analysis
 
 The canonical cross-model S-head analysis is
