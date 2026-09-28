@@ -297,3 +297,12 @@ Do not delete model weights, input videos, source JSONs or the upstream
 `wan22_ti2v_legacy_firstlatent_physiciq67_pck50` tree. After cleanup, the
 retained manifests and this document are the replay index; a future run must
 write to a new directory under `/data/gaoya/agent-data/outputs/repro_runs`.
+
+### Cleanup execution log
+
+On 2026-09-28 the generated binary pattern above was removed from the four
+attention/trajectory roots. Their remaining contents are structured JSON/JSONL,
+CSV, logs, HTML and Markdown, approximately 662M, 202M, 419M and 59M
+respectively. `vbench_single_case` was left untouched because it contains only
+JSON metric records and no MP4/image/tensor files; it is approximately 2.6G.
+All Markdown files found in the reviewed roots were preserved.
