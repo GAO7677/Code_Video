@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "repositories": [
+    {
+      "repo": "Wan-AI/Wan2.2-T2V-A14B",
+      "revision": "c8c270b13ee05bfa474194ac9fb07a5868a97cea",
+      "folder": "Wan2.2-T2V-A14B",
+      "files": [
+        {
+          "path": "README.md",
+          "size": 17169,
+          "sha256": null
+        },
+        {
+          "path": "Wan2.1_VAE.pth",
+          "size": 507609880,
+          "sha256": "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"
+        },
+        {
+          "path": "configuration.json",
+          "size": 47,
+          "sha256": null
+        },
+        {
+          "path": "google/umt5-xxl/special_tokens_map.json",
+          "size": 6623,
+          "sha256": null
+        },
+        {
+          "path": "google/umt5-xxl/spiece.model",
+          "size": 4548313,
+          "sha256": "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+        },
+        {
+          "path": "google/umt5-xxl/tokenizer.json",
+          "size": 16837417,
+          "sha256": "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+        },
+        {
+          "path": "google/umt5-xxl/tokenizer_config.json",
+          "size": 61728,
+          "sha256": null
+        },
+        {
+          "path": "high_noise_model/config.json",
+          "size": 250,
+          "sha256": null
+        },
+        {
+          "path": "high_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors",
+          "size": 9992481544,
+          "sha256": "cb58f36df7e604c6e7b0df80a3f6f9b72c77695e581e19985fc3a0e6732ba1e2"
+        },
+        {
+          "path": "high_noise_model/diffusion_pytorch_model-00002-of-00006.safetensors",
+          "size": 9943937936,
+          "sha256": "6719620a0feb4553d0306296ba4fad7d6d3b70b666fcbd02ad41fd21df3ab6af"
+        },
+        {
+          "path": "high_noise_model/diffusion_pytorch_model-00003-of-00006.safetensors",
+          "size": 9943979184,
+          "sha256": "0eb7864481499e65698ab94ddfad00e1289960b9f1a45aed6530ba6701859513"
+        },
+        {
+          "path": "high_noise_model/diffusion_pytorch_model-00004-of-00006.safetensors",
+          "size": 9839059744,
+          "sha256": "8646c9af94dbb2917380dbb6c2ba7fa34332566f2f9f0f508750e377fdad8e0a"
+        },
+        {
+          "path": "high_noise_model/diffusion_pytorch_model-00005-of-00006.safetensors",
+          "size": 9839059744,
+          "sha256": "743ca2839d8339eeac1419de9bcfb6f02d4eab4264b01db6d4970047ae9385d0"
+        },
+        {
+          "path": "high_noise_model/diffusion_pytorch_model-00006-of-00006.safetensors",
+          "size": 7595559224,
+          "sha256": "78e445e6ca232fb2b8669673b8f7e2f607f84b12e0489429577e8aea624ad7c1"
+        },
+        {
+          "path": "high_noise_model/diffusion_pytorch_model.safetensors.index.json",
+          "size": 96805,
+          "sha256": null
+        },
+        {
+          "path": "low_noise_model/config.json",
+          "size": 250,
+          "sha256": null
+        },
+        {
+          "path": "low_noise_model/diffusion_pytorch_model-00001-of-00006.safetensors",
+          "size": 9992481544,
+          "sha256": "f2a6df8981742260b3f2cd8b51a276eb0ffa0332c9bbbadc3d625f269096f01c"
+        },
+        {
+          "path": "low_noise_model/diffusion_pytorch_model-00002-of-00006.safetensors",
+          "size": 9943937936,
+          "sha256": "ea3998b0b394ede1df6c8cb9ea44f1bed0d3d7018bd8113baca9ff74e100b5d9"
+        },
+        {
+          "path": "low_noise_model/diffusion_pytorch_model-00003-of-00006.safetensors",
+          "size": 9943979184,
+          "sha256": "e1222162ecdc5a8bb4815f78ae42951cdc3e50a3fe41d8f592462d28f8638681"
+        },
+        {
+          "path": "low_noise_model/diffusion_pytorch_model-00004-of-00006.safetensors",
+          "size": 9839059744,
+          "sha256": "9fdd1165fe0c5efd87036b3722e69f1d2004bd27396905a997afb7ddf7f22edf"
+        },
+        {
+          "path": "low_noise_model/diffusion_pytorch_model-00005-of-00006.safetensors",
+          "size": 9839059744,
+          "sha256": "04909e9fa1f15de79851230c7f223a0c96fcfd629bdd914b21c9344cec63c78a"
+        },
+        {
+          "path": "low_noise_model/diffusion_pytorch_model-00006-of-00006.safetensors",
+          "size": 7595559224,
+          "sha256": "7a481d5adcc53ed3ae8b3222b4c4ee63bac6703dae9ff6c62a7d52e546c88809"
+        },
+        {
+          "path": "low_noise_model/diffusion_pytorch_model.safetensors.index.json",
+          "size": 96805,
+          "sha256": null
+        },
+        {
+          "path": "models_t5_umt5-xxl-enc-bf16.pth",
+          "size": 11361920418,
+          "sha256": "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+        },
+        {
+          "path": "nohup.out",
+          "size": 939260,
+          "sha256": null
+        }
+      ]
+    },
+    {
+      "repo": "RaphaelLiu/Pusa-Wan2.2-V1",
+      "revision": "d66132768e8783a60a53fb05e64938c75e21b2a4",
+      "folder": "Pusa-Wan2.2-V1",
+      "files": [
+        {
+          "path": "README.md",
+          "size": 11026,
+          "sha256": null
+        },
+        {
+          "path": "high_noise_pusa.safetensors",
+          "size": 4907431368,
+          "sha256": "f0219116fb8880de27f6b6a21d8ad9a16916bee7e7570d5f106b3158b4bfb98a"
+        },
+        {
+          "path": "low_noise_pusa.safetensors",
+          "size": 4907431368,
+          "sha256": "bdb983ea8cd002821685b8371429e551d68a6c84a5d357a30cec7212e126831b"
+        }
+      ]
+    }
+  ]
+}

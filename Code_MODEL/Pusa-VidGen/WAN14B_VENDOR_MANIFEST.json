@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/Yaofang-Liu/Pusa-VidGen",
+  "commit": "8a8c4f523a0cadb94ab7c9f1e0620a4847b92991",
+  "files": {
+    "PusaV1/diffsynth/models/wan_video_pusa.py": {
+      "sha256": "fe4b8c48abb8db1de4c9eb7106ad7583f78398805054702f47b5fa2c2f1f6039",
+      "source": "https://raw.githubusercontent.com/Yaofang-Liu/Pusa-VidGen/8a8c4f523a0cadb94ab7c9f1e0620a4847b92991/PusaV1/diffsynth/models/wan_video_pusa.py"
+    },
+    "PusaV1/diffsynth/models/utils.py": {
+      "sha256": "7d469ef67e05f3faadeb7f0ee7e7e6fd87ae0823e7af53f1747c497cc6005837",
+      "source": "https://raw.githubusercontent.com/Yaofang-Liu/Pusa-VidGen/8a8c4f523a0cadb94ab7c9f1e0620a4847b92991/PusaV1/diffsynth/models/utils.py"
+    },
+    "LICENSE": {
+      "sha256": "7e46e94919e091ccb0bfd99fd1ffeae9b48fe3d58f50dea93c06d1df014629bf",
+      "source": "https://raw.githubusercontent.com/Yaofang-Liu/Pusa-VidGen/8a8c4f523a0cadb94ab7c9f1e0620a4847b92991/LICENSE"
+    }
+  }
+}
