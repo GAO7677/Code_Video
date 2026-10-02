@@ -63,6 +63,9 @@ def validate_config(config: dict) -> None:
         raise ValueError("Training cache requires explicit stretch resize")
     if c["latent_dtype"] != "bfloat16" or c["text_dtype"] != "float32":
         raise ValueError("Expected BF16 latents and FP32 text; changes require a new audited contract")
+    for component in ("vae", "text"):
+        if c[component].get("compute_dtype") != "float32":
+            raise ValueError(f"Explicit cache.{component}.compute_dtype=float32 is required for online parity")
     root = Path(c["root"]).expanduser().resolve()
     if root.is_relative_to(Path("/home")):
         raise ValueError("Large caches cannot be stored under /home; use the configured data volume")
@@ -242,6 +245,11 @@ class Wan14BCachedDataset:
             raise ValueError("Unverified caches cannot be used by the training dataset")
         self.config = config
         self.records = load_records(config)
+        limit = config["data"].get("sample_limit")
+        if limit is not None:
+            if not isinstance(limit, int) or limit < 1:
+                raise ValueError("data.sample_limit must be positive when explicitly used for a smoke run")
+            self.records = self.records[:limit]
         self.contracts = {part: load_verified_contract(config, part) for part in ("vae", "text")}
         self.entries = []
         for record in self.records:

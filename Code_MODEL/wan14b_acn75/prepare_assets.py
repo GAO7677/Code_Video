@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import shutil
 import time
+import urllib.parse
+import urllib.request
 
 
 ROOT = Path(__file__).resolve().parent
@@ -19,6 +21,45 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(16 * 1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+
+def download_pinned_file(repo: dict, item: dict, destination: Path) -> None:
+    """GET a pinned object when proxy HEAD responses omit HF commit metadata."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(destination.name + ".partial")
+    offset = partial.stat().st_size if partial.exists() else 0
+    expected = item["size"]
+    if offset > expected:
+        raise RuntimeError(f"Oversized partial download: {partial}")
+    if offset < expected:
+        suffix = urllib.parse.quote(item["path"], safe="/")
+        url = f"https://huggingface.co/{repo['repo']}/resolve/{repo['revision']}/{suffix}?download=true"
+        request = urllib.request.Request(url, headers={"Range": f"bytes={offset}-{expected-1}"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            if response.status == 206:
+                expected_range = f"bytes {offset}-{expected-1}/{expected}"
+                if response.headers.get("Content-Range") != expected_range:
+                    raise RuntimeError("Download server returned an unexpected byte range")
+                mode = "ab" if offset else "wb"
+            elif response.status == 200:
+                mode = "wb"
+                offset = 0
+            else:
+                raise RuntimeError(f"Unexpected download status: {response.status}")
+            with partial.open(mode) as handle:
+                for chunk in iter(lambda: response.read(8 * 1024 * 1024), b""):
+                    handle.write(chunk)
+                    offset += len(chunk)
+                    if offset > expected:
+                        raise RuntimeError("Download exceeds manifest file size")
+                handle.flush()
+                os.fsync(handle.fileno())
+    if partial.stat().st_size != expected:
+        raise RuntimeError(f"Incomplete download: {partial}")
+    if item["sha256"] and sha256(partial) != item["sha256"]:
+        raise RuntimeError(f"Downloaded SHA256 mismatch: {partial}")
+    partial.replace(destination)
 
 
 def main() -> None:
@@ -61,7 +102,6 @@ def main() -> None:
         return
     if not report["space_ok"]:
         raise SystemExit("Insufficient disk space; download was not started")
-    from huggingface_hub import hf_hub_download
     root.mkdir(parents=True, exist_ok=True)
     audit = {"manifest_sha256": sha256(args.manifest), "files": [], "complete": False}
     for repo, item, dest in items:
@@ -69,15 +109,15 @@ def main() -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.symlink_to(reuse[str(dest)])
         if not dest.is_file() or dest.stat().st_size != item["size"]:
-            hf_hub_download(repo_id=repo["repo"], revision=repo["revision"],
-                            filename=item["path"], local_dir=root / repo["folder"])
+            download_pinned_file(repo, item, dest)
         if dest.stat().st_size != item["size"]:
             raise RuntimeError(f"Wrong file size: {dest}")
         actual_hash = sha256(dest)
         if item["sha256"] and actual_hash != item["sha256"]:
             raise RuntimeError(f"SHA256 mismatch: {dest}")
         audit["files"].append({"path": str(dest), "size": dest.stat().st_size,
-                               "sha256": actual_hash, "revision": repo["revision"]})
+                               "sha256": actual_hash, "revision": repo["revision"],
+                               "mtime_ns": dest.stat().st_mtime_ns})
         print(f"verified {repo['folder']}/{item['path']}", flush=True)
     audit.update(complete=True, completed_at=time.time())
     temporary = root / "assets_verified.json.tmp"

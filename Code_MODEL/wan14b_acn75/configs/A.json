@@ -39,7 +39,8 @@
     "context_latent_frames": 2,
     "fps60_sample_step": 2,
     "fps_other_sample_step": 1,
-    "resize_mode": "stretch"
+    "resize_mode": "stretch",
+    "smoke_samples": 8
   },
   "cache": {
     "root": "/data/gaoya/agent-data/cache/wan14b_acn75",
@@ -47,12 +48,14 @@
     "text_dtype": "float32",
     "vae": {
       "checkpoint": "/data/gaoya/agent-data/weights/wan14b_acn75/Wan2.2-T2V-A14B/Wan2.1_VAE.pth",
-      "source_file": "/home/gaoya/Code_Video/Code_MODEL/wan14b_acn75/vendor/wan_video_vae.py"
+      "source_file": "/home/gaoya/Code_Video/Code_MODEL/wan14b_acn75/vendor/wan_video_vae.py",
+      "compute_dtype": "float32"
     },
     "text": {
-      "checkpoint": "/data/gaoya/agent-data/weights/wan14b_acn75/Wan2.2-T2V-A14B/models_t5_umt5-xxl-enc-bf16.pth",
-      "tokenizer": "/data/gaoya/agent-data/weights/wan14b_acn75/Wan2.2-T2V-A14B/google/umt5-xxl",
-      "source_file": "/home/gaoya/Code_Video/Code_MODEL/wan14b_acn75/vendor/wan_video_text_encoder.py"
+      "checkpoint": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth",
+      "tokenizer": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B/google/umt5-xxl",
+      "source_file": "/home/gaoya/Code_Video/Code_MODEL/wan14b_acn75/vendor/wan_video_text_encoder.py",
+      "compute_dtype": "float32"
     },
     "validation": {
       "atol": 1e-05,
@@ -88,7 +91,11 @@
     "forbidden_physical_gpus": [
       4
     ],
-    "python": "/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python"
+    "python": "/data/gaoya/agent-data/envs/physrvg-full-sa/bin/python",
+    "environment": {
+      "NCCL_P2P_DISABLE": "1",
+      "NCCL_IB_DISABLE": "1"
+    }
   },
   "paths": {
     "output_dir": "/data/gaoya/agent-data/outputs_v1/wan14b_acn75/20261002_pusa_lora32/A"

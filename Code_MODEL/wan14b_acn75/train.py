@@ -167,6 +167,56 @@ def run_signature(config):
     return hashlib.sha256(json.dumps(relevant, sort_keys=True).encode()).hexdigest()
 
 
+def validation_fingerprint(config):
+    """Pure CPU contract imported by the launcher to gate production runs."""
+    relevant = copy.deepcopy({key: config[key] for key in ("model", "data", "cache", "training", "runtime") if key in config})
+    relevant["training"].pop("mode", None)
+    relevant["data"].pop("sample_limit", None)
+    relevant["data"].pop("smoke_samples", None)
+    for key in ("gpus", "gpu_ids", "visible_devices"):
+        relevant.get("runtime", {}).pop(key, None)
+    root = Path(__file__).resolve().parent
+    sources = {}
+    for name in ("train.py", "model.py", "noise.py", "data.py", "audit_cache.py"):
+        sources[name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
+    for path in sorted((root / "vendor").glob("*.py")):
+        sources[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    upstream_root = Path(config["model"].get("vendor_root", root.parent / "Pusa-VidGen"))
+    upstream_manifest = upstream_root / "WAN14B_VENDOR_MANIFEST.json"
+    if not upstream_manifest.is_file():
+        raise FileNotFoundError(f"missing upstream source manifest: {upstream_manifest}")
+    sources["Pusa-VidGen/WAN14B_VENDOR_MANIFEST.json"] = hashlib.sha256(upstream_manifest.read_bytes()).hexdigest()
+    upstream_files = json.loads(upstream_manifest.read_text())["files"]
+    for name in sorted(upstream_files):
+        sources["Pusa-VidGen/" + name] = hashlib.sha256((upstream_root / name).read_bytes()).hexdigest()
+    return {
+        "core_config_sha256": hashlib.sha256(json.dumps(relevant, sort_keys=True).encode()).hexdigest(),
+        "source_sha256": sources,
+    }
+
+
+def optimizer_hash(optimizer):
+    digest = hashlib.sha256()
+
+    def visit(value):
+        if isinstance(value, torch.Tensor):
+            tensor = value.detach().contiguous().cpu()
+            digest.update(str((tensor.dtype, tuple(tensor.shape))).encode())
+            digest.update(tensor.reshape(-1).view(torch.uint8).numpy().tobytes())
+        elif isinstance(value, dict):
+            for key in sorted(value, key=str):
+                digest.update(str(key).encode())
+                visit(value[key])
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                visit(item)
+        else:
+            digest.update(repr(value).encode())
+
+    visit(optimizer.optimizer.state_dict())
+    return digest.hexdigest()
+
+
 def save_checkpoint(model, optimizer, output, state, config, wandb_id):
     from model import save_adapter
 
@@ -200,6 +250,7 @@ def save_checkpoint(model, optimizer, output, state, config, wandb_id):
         **state, "world_size": world_size(), "run_signature": run_signature(config),
         "adapter_path": str(adapter_path.resolve()), "wandb_run_id": wandb_id,
         "scheduler": {"type": "constant", "warmup_steps": 0},
+        "validation_fingerprint": validation_fingerprint(config),
     }
     if rank() == 0:
         atomic_json(checkpoint / "manifest.json", complete)
@@ -225,6 +276,8 @@ def load_checkpoint(model, optimizer, checkpoint, config, device):
         raise RuntimeError("optimizer resume requires the original world size")
     if state["run_signature"] != run_signature(config):
         raise RuntimeError("resume model/data/cache/training configuration differs")
+    if state.get("validation_fingerprint") != validation_fingerprint(config):
+        raise RuntimeError("resume source/validation contract differs from the checkpoint")
     load_adapter(model, Path(state["adapter_path"]), strict=True)
     optimizer.optimizer.state.clear()
     gc.collect()
@@ -306,6 +359,15 @@ def main():
         raise ValueError("training.mode must be A, C, or N75")
     if training.get("scheduler", "constant") != "constant" or int(training.get("warmup_steps", 0)) != 0:
         raise ValueError("the aligned recipe requires a constant LR with zero warmup")
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if visible not in {"0,1", "2,3"}:
+        raise ValueError("Set CUDA_VISIBLE_DEVICES explicitly to authorized physical pair 0,1 or 2,3")
+    for name, value in config.get("runtime", {}).get("environment", {}).items():
+        if not name.startswith("NCCL_"):
+            raise ValueError("runtime.environment accepts only NCCL communication settings")
+        if name in os.environ and os.environ[name] != str(value):
+            raise ValueError(f"Environment differs from validated configuration: {name}")
+        os.environ[name] = str(value)
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required; no CPU model loading or fallback is implemented")
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -313,6 +375,8 @@ def main():
     device = torch.device("cuda", local_rank)
     if int(os.environ.get("WORLD_SIZE", 1)) > 1:
         dist.init_process_group("nccl", device_id=device)
+    if world_size() != int(config.get("runtime", {}).get("world_size", 2)):
+        raise ValueError("torchrun world size differs from the validated runtime configuration")
     random.seed(int(training.get("seed", 42)) + rank())
     torch.manual_seed(int(training.get("seed", 42)) + rank())
     torch.cuda.manual_seed(int(training.get("seed", 42)) + rank())
@@ -327,14 +391,21 @@ def main():
         "world_size": world_size(), "gradient_accumulation_steps": accumulation,
         "timestep_sampling": "uniform paired training index, one shared index per microbatch across ranks",
         "gradient_sync": "every microbatch, including both expert routes",
-        "effective_training_shift": float(training.get("flow_shift", 1.0)),
+        "effective_training_shift": float(training.get("noise_shift", 1.0)),
         "smoke": args.smoke,
     }
     if rank() == 0:
         output.mkdir(parents=True, exist_ok=True)
+        if args.smoke:
+            (output / "smoke_passed.json").unlink(missing_ok=True)
     barrier()
-    if args.resume == "auto":
-        resume = output / "latest" if (output / "latest" / "state.json").exists() else None
+    if args.smoke:
+        if args.resume not in {"auto", "none"}:
+            raise ValueError("smoke always starts from the frozen initialization; explicit resume is not supported")
+        resume = None
+    elif args.resume == "auto":
+        resume = next((output / name for name in ("latest", "latest.previous")
+                       if (output / name / "state.json").exists()), None)
     else:
         resume = None if args.resume == "none" else Path(args.resume).resolve()
     resume_header = json.loads((resume / "state.json").read_text()) if resume else None
@@ -343,7 +414,13 @@ def main():
 
     # Fail on a missing/invalid online-equivalence cache audit before allocating
     # the large model or creating an experiment run.
-    dataset = Wan14BCachedDataset(config, require_verified=True)
+    dataset_config = copy.deepcopy(config)
+    if args.smoke:
+        dataset_config["data"]["sample_limit"] = int(config["data"].get("smoke_samples", 8))
+    elif config["data"].get("sample_limit"):
+        raise ValueError("sample_limit is permitted only for smoke tests")
+    initial_fingerprint = validation_fingerprint(config)
+    dataset = Wan14BCachedDataset(dataset_config, require_verified=True)
     run, wandb_id = setup_wandb(config, output, resume_header, args.smoke)
     from torch.distributed.device_mesh import init_device_mesh
 
@@ -374,7 +451,7 @@ def main():
                         pin_memory=True, drop_last=True, generator=loader_generator)
     iterator = iter(loader)
     scheduler = training_scheduler(device, int(training.get("num_train_timesteps", 1000)),
-                                   float(training.get("flow_shift", 1.0)))
+                                   float(training.get("noise_shift", 1.0)))
     context_frames = int(training.get("context_latent_frames", 2))
     max_steps = 3 if args.smoke else int(training.get("max_steps", 3000))
     save_every = int(training.get("save_every", 500))
@@ -403,6 +480,7 @@ def main():
             state["data_batch"] += 1
             clean = batch["latents"].to(device, non_blocking=True)
             text = batch["text"].to(device, non_blocking=True)
+            last_latents_shape = list(clean.shape)
             if args.smoke:
                 sampled_index = 56 if micro_index % 2 == 0 else 500
                 index = torch.tensor([sampled_index], device=device, dtype=torch.long)
@@ -465,6 +543,7 @@ def main():
         if any(after[expert] == smoke_before[expert] for expert in ("high", "low")):
             raise RuntimeError("smoke did not update both experts")
         expected_rng = rng_state()
+        expected_optimizer = optimizer_hash(optimizer)
         with torch.no_grad():
             for _, parameter, _ in optimizer.bindings:
                 shard = local_tensor(parameter)
@@ -473,14 +552,19 @@ def main():
         load_checkpoint(model, optimizer, last_checkpoint, config, device)
         if adapter_hashes(model) != after:
             raise RuntimeError("adapter checkpoint reload changed local shard values")
+        if optimizer_hash(optimizer) != expected_optimizer:
+            raise RuntimeError("optimizer checkpoint reload changed local state values")
         actual_rng = rng_state()
         if (actual_rng["python"] != expected_rng["python"] or
                 not torch.equal(actual_rng["torch"], expected_rng["torch"]) or
                 not torch.equal(actual_rng["cuda"], expected_rng["cuda"])):
             raise RuntimeError("checkpoint RNG round-trip failed")
         report = {
-            "status": "passed", "modes": ["A", "C", "N75"], "experts": ["high", "low"],
-            "adapter_reload_exact": True, "rng_reload_exact": True,
+            "status": "passed", "passed": True,
+            "covered_modes": ["A", "C", "N75"], "covered_experts": ["high", "low"],
+            "adapter_reload_pass": True, "optimizer_reload_pass": True, "rng_reload_exact": True,
+            "latents_shape": last_latents_shape,
+            "cache_contract": dataset.contracts, "verified_cache_samples": len(dataset),
             "world_size": world_size(), "effective_batch_size": effective,
             "optimizer_updates": state["expert_optimizer_steps"],
             "config_signature": run_signature(config),
@@ -493,10 +577,23 @@ def main():
             dist.gather_object(report, reports, dst=0)
         else:
             reports = [report]
+        if validation_fingerprint(config) != initial_fingerprint:
+            raise RuntimeError("training/cache sources changed while the smoke test was running")
         if rank() == 0:
-            atomic_json(output / "smoke_passed.json", {"status": "passed", "ranks": reports})
+            atomic_json(output / "smoke_passed.json", {
+                "status": "passed", "passed": True,
+                "covered_modes": ["A", "C", "N75"], "covered_experts": ["high", "low"],
+                "adapter_reload_pass": True, "optimizer_reload_pass": True,
+                "latents_shape": last_latents_shape,
+                **initial_fingerprint, "ranks": reports,
+            })
     if rank() == 0:
-        atomic_json(output / "completed.json", {"step": state["step"], "expert_updates": state["expert_optimizer_steps"], "smoke": args.smoke})
+        atomic_json(output / "completed.json", {
+            "step": state["step"], "expert_updates": state["expert_optimizer_steps"],
+            "smoke": args.smoke, "training_mode": training["mode"],
+            "run_signature": run_signature(config),
+            "validation_fingerprint": initial_fingerprint,
+        })
         run.finish()
     barrier()
     if dist.is_initialized():

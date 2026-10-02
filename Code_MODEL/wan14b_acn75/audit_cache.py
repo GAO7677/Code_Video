@@ -209,7 +209,7 @@ def run(config, args):
     records = load_records(config)
     component = args.component
     if component == "text":
-        records = list({r["caption_sha256"]: r for r in reversed(records)}.values())[::-1]
+        records = list({r["caption_sha256"]: r for r in records}.values())
     records = [r for i, r in enumerate(records) if i % args.num_shards == args.shard_index]
     if args.limit is not None:
         records = records[:args.limit]
@@ -260,6 +260,10 @@ def run(config, args):
                 audit.update({"supplied_rgb": 8, "complete_causal_rgb": 5,
                               "ignored_incomplete_rgb": 3, "no_future_rgb": True})
                 if not audit["passed"]:
+                    if path.with_suffix(".json").exists():
+                        rejected = json.loads(path.with_suffix(".json").read_text())
+                        rejected.update({"status": "failed", "context_causality": audit})
+                        atomic_json(path.with_suffix(".json"), rejected)
                     raise RuntimeError(f"Causal prefix differs from full-video context: {record['logical_key']}: {audit}")
                 source_fingerprint = fingerprint(record["video"])
                 old_provenance = record.get("legacy_video_provenance")
@@ -295,6 +299,10 @@ def run(config, args):
             comparison = compare_tensors(reference, candidate, atol=validation["atol"], rtol=validation["rtol"])
             comparison["reference_stage"] = "online_native_encoder_then_declared_storage_dtype"
             if not comparison["passed"]:
+                if path.with_suffix(".json").exists():
+                    rejected = json.loads(path.with_suffix(".json").read_text())
+                    rejected.update({"status": "failed", "online_comparison": comparison})
+                    atomic_json(path.with_suffix(".json"), rejected)
                 raise RuntimeError(f"Cache differs from online encoder: {record['logical_key']}: {comparison}")
             meta["online_comparison"] = comparison
             if args.mode == "build":

@@ -204,6 +204,37 @@ def _inject_block(block, targets, rank, alpha, dropout, generator):
         setattr(parent, leaf, ExperimentLoRALinear(base, rank, alpha, dropout, generator))
 
 
+def shard_block(block, mesh, policy=None):
+    """Shard trainable FP32 LoRAs separately from the frozen BF16 block.
+
+    Torch 2.7 FSDP2 requires a single original dtype per communication group.
+    Its list-module API groups all A/B linears into one collective, while the
+    subsequent block wrapper excludes those already-owned parameters.
+    """
+    policy = policy or MixedPrecisionPolicy(
+        param_dtype=torch.bfloat16, reduce_dtype=torch.float32,
+        cast_forward_inputs=False,
+    )
+    lora_modules = []
+    lora_parameter_ids = set()
+    for module in block.modules():
+        if isinstance(module, ExperimentLoRALinear):
+            lora_modules.extend((module.lora_A, module.lora_B))
+            lora_parameter_ids.update(id(p) for child in (module.lora_A, module.lora_B)
+                                      for p in child.parameters())
+    if not lora_modules:
+        raise ValueError("Cannot shard a training block with no experiment LoRAs")
+    for param in block.parameters():
+        trainable = id(param) in lora_parameter_ids
+        expected_dtype = torch.float32 if trainable else torch.bfloat16
+        if param.dtype != expected_dtype or param.requires_grad != trainable:
+            raise ValueError("FSDP block must have trainable FP32 LoRAs and frozen BF16 base")
+    kwargs = dict(mesh=mesh, mp_policy=policy, reshard_after_forward=True)
+    fully_shard(lora_modules, **kwargs)
+    fully_shard(block, **kwargs)
+    return block
+
+
 def _build_expert(model_cfg, expert, device, mesh, use_fsdp, upstream):
     with torch.device("meta"):
         model = upstream.WanModelPusa(**ARCHITECTURE).to(dtype=torch.bfloat16)
@@ -241,7 +272,7 @@ def _build_expert(model_cfg, expert, device, mesh, use_fsdp, upstream):
             merged += _load_parameters(block, f"blocks.{index}.", base, pusa, scale, consumed)
             _inject_block(block, targets, rank, alpha, dropout, generator)
             if use_fsdp:
-                fully_shard(block, **shard_kwargs)
+                shard_block(block, mesh, policy)
         # The non-block modules are small enough to load before root sharding.
         for name, child in model.named_children():
             if name != "blocks":

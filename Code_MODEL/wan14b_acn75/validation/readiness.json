@@ -1,0 +1,52 @@
+{
+  "syntax": "passed",
+  "common_A_C_N75_fingerprint": "passed",
+  "sample_cache_dataset": {
+    "passed": true,
+    "cases": 8
+  },
+  "full_14b_smoke": "not_run_missing_weights_disk_space",
+  "formal_training": "not_started",
+  "pending_user_input": "storage location/free space",
+  "fingerprint": {
+    "core_config_sha256": "abff85d0fd0816ba78b884f25fcdf2ed6713fe77b72670c69f0fa1bf3289e568",
+    "source_sha256": {
+      "train.py": "d2f4eb3a1538c526ee23ecccace58bfafa5e1312edac282606ed2df7a710f9c1",
+      "model.py": "6d820e06c4c4c08666ea117d988cef153fe0e553bfc690b2cd74f0b0784feb7e",
+      "noise.py": "eff86805034a196826ce068231a744d361c52aaed4bbda7de2461e9865433105",
+      "data.py": "9ecb94fc98ec44c1986d672a3acb3b09c479f1b7fa48e88474a200009a0fe2a3",
+      "audit_cache.py": "0f3c1501ee823f980a6b976f5168010ee21dcb6429e0c3cbbc0a323d1b4fb04f",
+      "vendor/wan_video_text_encoder.py": "2c4c5bfd26eab7ab29b10dee1142f2337a351a097d43cdce59e437eb34936626",
+      "vendor/wan_video_vae.py": "21159b3c8a0ee2932ae04957d24b50174156c11d8b708ddbefceeeb2f028edbb",
+      "Pusa-VidGen/WAN14B_VENDOR_MANIFEST.json": "f8bb70714bc79d5ce74e63c45cfc00d2c0fe4106de6cb142e49e4691cc2f3361",
+      "Pusa-VidGen/LICENSE": "7e46e94919e091ccb0bfd99fd1ffeae9b48fe3d58f50dea93c06d1df014629bf",
+      "Pusa-VidGen/PusaV1/diffsynth/models/utils.py": "7d469ef67e05f3faadeb7f0ee7e7e6fd87ae0823e7af53f1747c497cc6005837",
+      "Pusa-VidGen/PusaV1/diffsynth/models/wan_video_pusa.py": "fe4b8c48abb8db1de4c9eb7106ad7583f78398805054702f47b5fa2c2f1f6039"
+    }
+  },
+  "runtime_probe": "/data/gaoya/agent-data/outputs_v1/wan14b_acn75/20261002_pusa_lora32/runtime_probe/result.json",
+  "online_cache_audit": "/data/gaoya/agent-data/cache/wan14b_acn75/audit/gpu1_8case_verification_report.json",
+  "gpu01_tiny_runtime": {
+    "passed": true,
+    "checks": [
+      "meta_to_cuda_initialization",
+      "uniform_original_dtype_per_fsdp_group",
+      "per_frame_timesteps",
+      "checkpoint_backward",
+      "high_only_update",
+      "low_only_update",
+      "cross_micro_expert_routing",
+      "fsdp2_global_gradient_clip",
+      "bnb_uint8_optimizer_states",
+      "frozen_parameters_unchanged",
+      "full_tensor_rank_equality",
+      "adapter_exact_roundtrip",
+      "strict_identity_rejection",
+      "optimizer_exact_roundtrip",
+      "optimizer_local_shard_reload_and_update"
+    ],
+    "full_14b_validation": false
+  },
+  "checkpoint_completion_identity": "mode + run signature + validation fingerprint",
+  "queue_config_mutation": "rejected; launch uses a validated snapshot"
+}
