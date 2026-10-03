@@ -7,7 +7,7 @@ previous={x['case']:x for x in json.loads((R/'visual_review.json').read_text())[
 for case in cases:
  p=R/'cases'/case;m=json.loads((p/'metadata.json').read_text());family=m['family_key'];scene=cfg['scene_by_family'][family];report=json.loads((p/'calibration_report.json').read_text());marker=json.loads((p/'preview_complete.json').read_text())
  assert report['config']['scene_by_family'][family]==scene,('Config mismatch',case)
- assert set(scene.get('hide_background_objects',[])).issubset(report['removed_background_furniture'])
+ assert set(scene.get('hide_background_objects',[])).issubset(report.get('removed_background_furniture',[]))
  if case in reviewed:reviews.append(dict(case=case,status='PASS',image_sha256=marker['sha256'],scene=scene['name'],checks=['Final rendered image visually reviewed','Requested furniture and decor removal checked','Task visible with support; textures present']))
  else:
   old=previous[case];assert old['image_sha256']==marker['sha256'] and old['status']=='PASS',('Unreviewed changed image',case);reviews.append(old)
