@@ -1,0 +1,15 @@
+from pathlib import Path
+import json,html
+R=Path('/data/gaoya/agent-data/outputs_v1/geometry_transfer/20261005_door_pendulum_motion_preview');data=json.loads((R/'manifest.json').read_text());titles={'door_ball':'第4组 · 球／改变门洞宽度','door_block':'第5组 · 木块／改变门洞宽度','ball_radius':'第10组 · 固定门宽0.30 m／改变球半径','obstacle_position':'第12组 · 固定摆锤／改变柜体水平位置'}
+page='''<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Test70 物理方案预览</title><style>body{background:#f5f4ef;color:#213a40;font:15px system-ui;margin:24px}h1{margin-bottom:8px}.note{background:#fff1cb;padding:14px;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(5,minmax(220px,1fr));gap:12px;overflow-x:auto}article{background:white;padding:10px;border:1px solid #d7ded9;border-radius:6px}video{width:100%;aspect-ratio:16/9;background:#ddd}button{padding:8px 14px;margin:8px;font:inherit}p{line-height:1.6}small{overflow-wrap:anywhere}section{margin:28px 0}a{color:#126477}</style><h1>Test70 · PyBullet 运动预览</h1><p class="note">待用户确认：这里是碰撞几何与运动预览，不是写实渲染。20例均重新进行PyBullet仿真；不覆盖正式数据集，确认运动后才制作写实版。90帧／30fps，显示时间戳及当前非地面接触数。</p><p>两组门洞及第10组：门高2.1 m、门扇固定打开100°，门宽球组侧偏0.10 m、初速1.8 m/s；木块组居中、初速2.6 m/s；变半径球组居中、初速1.8 m/s。三组初始x=-0.20 m。运动参数见每例 scene.json。第12组：悬点(0.2,0,2.5)m、摆长1.1m、摆球半径0.18m、释放角18°；柜体尺寸0.48×0.72×2.55m固定。所有动画可改成0.5倍速查看。</p><button onclick="document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})})">全部重新播放</button><button onclick="document.querySelectorAll('video').forEach(v=>v.pause())">全部暂停</button><select onchange="document.querySelectorAll('video').forEach(v=>v.playbackRate=Number(this.value))"><option value="1">1倍速</option><option value="0.5">0.5倍速</option><option value="0.25">0.25倍速</option></select>'''
+for g,title in titles.items():
+ page+=f'<section><h2>{title}</h2><button onclick="this.parentElement.querySelectorAll(\'video\').forEach(v=>{{v.currentTime=0;v.play().catch(()=>{{}})}})">本组重新播放</button><div class="grid">'
+ for c in data['cases']:
+  if c['group']!=g:continue
+  id=c['case_id'];value=c['control']['value'];contact=c['first_contact_frame'];outcome=('已完全通过门洞' if c['passed_door'] else '未完全通过门洞') if c['passed_door'] is not None else ('与柜体碰撞' if contact is not None else '未接触柜体')
+  page+=f'<article><strong>{value:g} m</strong><video controls muted loop playsinline preload="none" poster="cases/{id}/frame_000.png" src="cases/{id}/motion.mp4"></video><p>{outcome}<br>首次非地面接触：'+(f'{c["first_contact_time_s"]:.4f}s'  if contact is not None else '无')+f'</p><small>{html.escape(id)}</small><p><a href="cases/{id}/scene.json">配置</a> · <a href="cases/{id}/report.json">检查</a> · <a href="cases/{id}/trajectory.npz">轨迹</a></p></article>'
+ page+='</div></section>'
+page+='<p>首次接触根据5688 Hz逐物理步记录；视频叠字为30fps画面采样时的接触数，可能不显示极短的瞬时碰撞；通过判定要求物体末帧整体越过门墙后表面。初始穿透和摆长约束误差见报告。</p></html>'
+(R/'index.html').write_text(page);hub=Path('/data/gaoya/agent-data/physv_v2v_0819/visualization/hub/test70-motion-preview')
+if not hub.exists():hub.symlink_to(R,target_is_directory=True)
+print('Published',R)
