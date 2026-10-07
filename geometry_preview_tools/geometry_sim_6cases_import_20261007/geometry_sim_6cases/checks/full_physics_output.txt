@@ -1,0 +1,19 @@
+01_cylinder_offset | 0.65: 未接触，继续前进 | penetration 0.000000 m
+01_cylinder_offset | 0: 正碰后反弹 | penetration 0.001944 m
+01_cylinder_offset | 0.3: 偏心碰撞，改变方向 | penetration 0.001233 m
+02_barrier_length | 0.65: 从端点外侧通过 | penetration 0.000000 m
+02_barrier_length | 0.88: 端点附近接触 | penetration 0.000083 m
+02_barrier_length | 1.75: 撞击挡板后转向 | penetration 0.000083 m
+03_rail_gap | 0.14: 双轨持续承托 | penetration 0.000366 m
+03_rail_gap | 0.3: 双轨持续承托 | penetration 0.000474 m
+03_rail_gap | 0.56: 从双轨之间落下 | penetration 0.000586 m
+04_hump_height | 0.1: 越过坡峰 | penetration 0.000209 m
+04_hump_height | 0.23: 越过坡峰 | penetration 0.000209 m
+04_hump_height | 0.52: 爬升后回落 | penetration 0.000209 m
+05_hole_offset | 0: 失去支撑，落入孔洞 | penetration 0.003947 m
+05_hole_offset | 0.4: 避开孔洞，继续前进 | penetration 0.000169 m
+05_hole_offset | 0.85: 避开孔洞，继续前进 | penetration 0.000169 m
+06_table_edge | 0.65: 被撞方块翻落台面 | penetration 0.003192 m
+06_table_edge | 1.05: 方块仍留在台面 | penetration 0.001710 m
+06_table_edge | 1.9: 方块仍留在台面 | penetration 0.001710 m
+Completed 18 cases in 17.0s: /mnt/data/_six_scene_work/check_runs/physics_90

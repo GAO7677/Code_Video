@@ -1,0 +1,18 @@
+{
+  ".gitignore": "cd7ea6c860aa4b5f218fce53b96cebdeb3d50482a4230fd93ba7640ef286c817",
+  "README.md": "f16d961327a33118b0b8340be211c30887cc2441a44bd1afb79251c3027d03a3",
+  "checks/environment.json": "6af22d869fff755fe727dc82b099f564da8a54bb4307901168599769f0f0b44f",
+  "checks/full_physics_output.txt": "656667044eb62c79dcfe903decf197e4604866b0e396b630ad6f75224380a633",
+  "checks/full_physics_summary.json": "abdd23434d19b2c24dfd767303ca0557a4dbfbc6423f38ad82868e3868016257",
+  "checks/package_validation.json": "0ad0fe33215df415fb96eb88310061d81c717da660c9dc26db47ef73b82e1d1a",
+  "checks/render_smoke_output.txt": "ced1af38b40a59b52fb4da5ba53bd77358cf09643c93000377e5fe31fadd66bc",
+  "checks/source_preservation.json": "7356a421e4c5d0dee4c411db042ecc08c32b407ad30f7061327bc90d549b6edb",
+  "checks/unit_test_output.txt": "190892ebd4eaef664fb9765f75f532a861bfa7ba17f0624c119160bb570d3e7f",
+  "requirements-lock.txt": "144176a2aab7ca6e67b93cf925d35566dd545a3c10e8d97265057b53043096bc",
+  "requirements.txt": "48dbf62bdbd0f72b236ec408f8b94aae5cf103561ef03ca8e6975bae333ec37d",
+  "simulate.py": "a3c98e3322588903bac6669dcadd67e738263d676b070b5aa4063b4539e872be",
+  "src/physics.py": "9e0f2e3afbaeb6be035a5bc3ba75a842c52c7e9b9f6330e4f0119a6ce8e3e841",
+  "src/render.py": "95f761fde2780b539147be1bcd79a887e74f8c6687ee9016ecb58b85eca585dd",
+  "src/scenes.py": "984b35aec64f0127b16fb111f9e213142d03a534ad369d661b8c87bb44ff15b3",
+  "tests/test_scenes.py": "faafae3d477008397358c1c939aaad3aa0109af0f78d064d7bce797e662e7aa4"
+}

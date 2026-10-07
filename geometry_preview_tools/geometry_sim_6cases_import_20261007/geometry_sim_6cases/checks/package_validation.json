@@ -1,0 +1,198 @@
+{
+  "source_package": "geometry_sim_6cases",
+  "retained_families": 6,
+  "variants_per_family": 3,
+  "retained_cases": 18,
+  "full_physics_replay": {
+    "frames_per_case": 90,
+    "fps": 30,
+    "simulation_hz": 720,
+    "completed_cases": 18,
+    "all_state_arrays_finite": true,
+    "context_8_positions_equal_within_each_family": true
+  },
+  "render_smoke": {
+    "frames_per_case": 12,
+    "fps": 30,
+    "width": 640,
+    "height": 360,
+    "antialiasing": 1,
+    "completed_cases": 18,
+    "decoded_case_videos": [
+      {
+        "relative_path": "01_cylinder_offset/v00/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "01_cylinder_offset/v01/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "01_cylinder_offset/v02/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "02_barrier_length/v00/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "02_barrier_length/v01/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "02_barrier_length/v02/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "03_rail_gap/v00/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "03_rail_gap/v01/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "03_rail_gap/v02/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "04_hump_height/v00/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "04_hump_height/v01/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "04_hump_height/v02/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "05_hole_offset/v00/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "05_hole_offset/v01/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "05_hole_offset/v02/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "06_table_edge/v00/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "06_table_edge/v01/rgb.mp4",
+        "frames": 12
+      },
+      {
+        "relative_path": "06_table_edge/v02/rgb.mp4",
+        "frames": 12
+      }
+    ],
+    "per_case_png_counts_correct": true,
+    "group_video_counts_correct": true,
+    "overview_frames": 72,
+    "html_has_six_sections": true
+  },
+  "cli_rejects_removed_family_ids_and_non_numeric_input": true,
+  "comparison_to_previous_published_arrays": {
+    "01_cylinder_offset/v00/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "01_cylinder_offset/v01/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "01_cylinder_offset/v02/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "02_barrier_length/v00/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "02_barrier_length/v01/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "02_barrier_length/v02/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "03_rail_gap/v00/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "03_rail_gap/v01/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "03_rail_gap/v02/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "04_hump_height/v00/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "04_hump_height/v01/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "04_hump_height/v02/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "05_hole_offset/v00/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "05_hole_offset/v01/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "05_hole_offset/v02/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "06_table_edge/v00/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "06_table_edge/v01/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    },
+    "06_table_edge/v02/trajectories.npz": {
+      "available": true,
+      "all_arrays_exactly_equal": true,
+      "max_absolute_array_difference": 0.0
+    }
+  },
+  "limitations": [
+    "No new physical-accuracy certification or cross-engine check.",
+    "Short render checks test output paths only; their coarse outcome labels are not event validation.",
+    "Full 90-frame physics was rerun, but 90-frame videos were not rerendered for this source package."
+  ]
+}

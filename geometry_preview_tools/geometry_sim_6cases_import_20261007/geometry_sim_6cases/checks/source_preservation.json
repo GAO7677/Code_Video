@@ -1,0 +1,16 @@
+{
+  "basis": "geometry_sim_v2_source.zip",
+  "removed_scene": "07_bridge_support",
+  "hinge_scene": "Already excluded from v2; remains excluded.",
+  "retained_builder_source_matches_v2": {
+    "build_cylinder": true,
+    "build_barrier": true,
+    "build_rails": true,
+    "build_hump": true,
+    "build_hole": true,
+    "build_edge": true
+  },
+  "physics_py_sha256": "9e0f2e3afbaeb6be035a5bc3ba75a842c52c7e9b9f6330e4f0119a6ce8e3e841",
+  "physics_py_identical_to_v2": true,
+  "scope": "Scene deletion and CLI/output fixes only. No solver or retained scene parameter changes."
+}

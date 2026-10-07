@@ -1,0 +1,1203 @@
+{
+  "simulation_hz": 720,
+  "fps": 30,
+  "frames": 90,
+  "elapsed_wall_seconds": 17.001964330673218,
+  "families": [
+    {
+      "family": "01_cylinder_offset",
+      "title": "圆柱障碍横向偏移",
+      "prefix_position_max_difference_m": {
+        "8": {
+          "ball": 0.0
+        },
+        "16": {
+          "ball": 0.0
+        }
+      },
+      "cases": [
+        {
+          "control": {
+            "name": "cylinder_y",
+            "value": 0.65,
+            "units": "m"
+          },
+          "target_final_position": [
+            3.6933333333332485,
+            0.0
+          ],
+          "max_penetration_m": 0.0,
+          "contacts": {},
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "hit_obstacle": false,
+          "outcome": "未接触，继续前进",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "cylinder_y",
+            "value": 0.0,
+            "units": "m"
+          },
+          "target_final_position": [
+            -3.1497408888888367,
+            0.0
+          ],
+          "max_penetration_m": 0.0019444444444392528,
+          "contacts": {
+            "ball|cylinder": {
+              "first_time_s": 0.7305555555555533,
+              "max_normal_impulse": 3.06,
+              "contact_steps": 1
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "hit_obstacle": true,
+          "outcome": "正碰后反弹",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "cylinder_y",
+            "value": 0.3,
+            "units": "m"
+          },
+          "target_final_position": [
+            -0.3062842946925038,
+            -3.0584874515948837
+          ],
+          "max_penetration_m": 0.001233348773277354,
+          "contacts": {
+            "ball|cylinder": {
+              "first_time_s": 0.7958333333333308,
+              "max_normal_impulse": 2.315065833926839,
+              "contact_steps": 1
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "hit_obstacle": true,
+          "outcome": "偏心碰撞，改变方向",
+          "target_center_out_of_frame_indices": []
+        }
+      ]
+    },
+    {
+      "family": "02_barrier_length",
+      "title": "有限挡板长度",
+      "prefix_position_max_difference_m": {
+        "8": {
+          "ball": 0.0
+        },
+        "16": {
+          "ball": 0.0
+        }
+      },
+      "cases": [
+        {
+          "control": {
+            "name": "barrier_length",
+            "value": 0.65,
+            "units": "m"
+          },
+          "target_final_position": [
+            3.6933333333332485,
+            0.0
+          ],
+          "max_penetration_m": 0.0,
+          "contacts": {},
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "hit_obstacle": false,
+          "outcome": "从端点外侧通过",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "barrier_length",
+            "value": 0.88,
+            "units": "m"
+          },
+          "target_final_position": [
+            0.37765333333331336,
+            2.9403199999999847
+          ],
+          "max_penetration_m": 8.341380579887647e-05,
+          "contacts": {
+            "ball|barrier": {
+              "first_time_s": 0.9222222222222193,
+              "max_normal_impulse": 2.1637467504308345,
+              "contact_steps": 1
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "hit_obstacle": true,
+          "outcome": "端点附近接触",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "barrier_length",
+            "value": 1.75,
+            "units": "m"
+          },
+          "target_final_position": [
+            0.37765333333331336,
+            2.9403199999999847
+          ],
+          "max_penetration_m": 8.341380579890423e-05,
+          "contacts": {
+            "ball|barrier": {
+              "first_time_s": 0.9222222222222193,
+              "max_normal_impulse": 2.1637467504308345,
+              "contact_steps": 1
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "hit_obstacle": true,
+          "outcome": "撞击挡板后转向",
+          "target_center_out_of_frame_indices": []
+        }
+      ]
+    },
+    {
+      "family": "03_rail_gap",
+      "title": "双轨净间距",
+      "prefix_position_max_difference_m": {
+        "8": {
+          "ball": 0.0
+        },
+        "16": {
+          "ball": 0.0
+        }
+      },
+      "cases": [
+        {
+          "control": {
+            "name": "rail_gap",
+            "value": 0.14,
+            "units": "m"
+          },
+          "target_final_position": [
+            3.2836298433763966,
+            0.00023386982445457267,
+            1.1372765679313477
+          ],
+          "max_penetration_m": 0.0003657531637672462,
+          "contacts": {
+            "ball|entry": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.013625000000000002,
+              "contact_steps": 582
+            },
+            "ball|rail_front": {
+              "first_time_s": 0.8569444444444417,
+              "max_normal_impulse": 0.5113978324705352,
+              "contact_steps": 1037
+            },
+            "ball|rail_back": {
+              "first_time_s": 0.8569444444444417,
+              "max_normal_impulse": 0.04653669790422107,
+              "contact_steps": 2660
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "fell_below_rails": false,
+          "outcome": "双轨持续承托",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "rail_gap",
+            "value": 0.3,
+            "units": "m"
+          },
+          "target_final_position": [
+            2.8355943730059496,
+            -1.5952718637073823e-07,
+            1.0820597845615687
+          ],
+          "max_penetration_m": 0.0004743120168147208,
+          "contacts": {
+            "ball|entry": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.013625000000000002,
+              "contact_steps": 582
+            },
+            "ball|rail_front": {
+              "first_time_s": 0.9236111111111082,
+              "max_normal_impulse": 0.8346095027116239,
+              "contact_steps": 1474
+            },
+            "ball|rail_back": {
+              "first_time_s": 0.9236111111111082,
+              "max_normal_impulse": 0.7986228989389553,
+              "contact_steps": 1480
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "fell_below_rails": false,
+          "outcome": "双轨持续承托",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "rail_gap",
+            "value": 0.56,
+            "units": "m"
+          },
+          "target_final_position": [
+            3.348377577725614,
+            0.0,
+            0.1998494748843782
+          ],
+          "max_penetration_m": 0.0005858204951408597,
+          "contacts": {
+            "ball|entry": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.013625000000000002,
+              "contact_steps": 582
+            },
+            "ball|floor": {
+              "first_time_s": 1.2458333333333294,
+              "max_normal_impulse": 4.74256774963533,
+              "contact_steps": 1175
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "fell_below_rails": true,
+          "outcome": "从双轨之间落下",
+          "target_center_out_of_frame_indices": []
+        }
+      ]
+    },
+    {
+      "family": "04_hump_height",
+      "title": "坡峰高度",
+      "prefix_position_max_difference_m": {
+        "8": {
+          "ball": 0.0
+        },
+        "16": {
+          "ball": 0.0
+        }
+      },
+      "cases": [
+        {
+          "control": {
+            "name": "hump_height",
+            "value": 0.1,
+            "units": "m"
+          },
+          "target_final_position": [
+            4.900368591511691,
+            0.859809787326389
+          ],
+          "max_penetration_m": 0.00020913628472205015,
+          "contacts": {
+            "ball|entry": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.013625000000006115,
+              "contact_steps": 406
+            },
+            "ball|track_00": {
+              "first_time_s": 0.5652777777777761,
+              "max_normal_impulse": 0.10775699853505484,
+              "contact_steps": 5
+            },
+            "ball|track_01": {
+              "first_time_s": 0.5819444444444427,
+              "max_normal_impulse": 0.09492575563366322,
+              "contact_steps": 9
+            },
+            "ball|track_02": {
+              "first_time_s": 0.5972222222222204,
+              "max_normal_impulse": 0.10042311285434678,
+              "contact_steps": 9
+            },
+            "ball|track_03": {
+              "first_time_s": 0.6124999999999982,
+              "max_normal_impulse": 0.10905737850336278,
+              "contact_steps": 7
+            },
+            "ball|track_04": {
+              "first_time_s": 0.6291666666666648,
+              "max_normal_impulse": 0.08154931104876986,
+              "contact_steps": 10
+            },
+            "ball|track_05": {
+              "first_time_s": 0.6444444444444425,
+              "max_normal_impulse": 0.10112575003371366,
+              "contact_steps": 9
+            },
+            "ball|track_06": {
+              "first_time_s": 0.6611111111111091,
+              "max_normal_impulse": 0.0878094522989592,
+              "contact_steps": 10
+            },
+            "ball|track_07": {
+              "first_time_s": 0.6777777777777757,
+              "max_normal_impulse": 0.08344191381220158,
+              "contact_steps": 9
+            },
+            "ball|track_08": {
+              "first_time_s": 0.6944444444444423,
+              "max_normal_impulse": 0.08866498212878181,
+              "contact_steps": 9
+            },
+            "ball|track_09": {
+              "first_time_s": 0.7111111111111089,
+              "max_normal_impulse": 0.1039024066311716,
+              "contact_steps": 5
+            },
+            "ball|track_10": {
+              "first_time_s": 0.7291666666666644,
+              "max_normal_impulse": 0.09267225957287067,
+              "contact_steps": 7
+            },
+            "ball|track_11": {
+              "first_time_s": 0.7486111111111088,
+              "max_normal_impulse": 0.05685863584767551,
+              "contact_steps": 10
+            },
+            "ball|track_12": {
+              "first_time_s": 0.7652777777777754,
+              "max_normal_impulse": 0.10425892130709037,
+              "contact_steps": 5
+            },
+            "ball|track_13": {
+              "first_time_s": 0.7861111111111087,
+              "max_normal_impulse": 0.05807691851583465,
+              "contact_steps": 10
+            },
+            "ball|track_14": {
+              "first_time_s": 0.8041666666666641,
+              "max_normal_impulse": 0.0918555562768125,
+              "contact_steps": 5
+            },
+            "ball|track_15": {
+              "first_time_s": 0.8249999999999974,
+              "max_normal_impulse": 0.07000593734235987,
+              "contact_steps": 8
+            },
+            "ball|track_16": {
+              "first_time_s": 0.8444444444444418,
+              "max_normal_impulse": 0.09120871325817934,
+              "contact_steps": 5
+            },
+            "ball|track_17": {
+              "first_time_s": 0.8666666666666639,
+              "max_normal_impulse": 0.059631383268710085,
+              "contact_steps": 8
+            },
+            "ball|track_18": {
+              "first_time_s": 0.8874999999999972,
+              "max_normal_impulse": 0.06867769604954842,
+              "contact_steps": 7
+            },
+            "ball|track_19": {
+              "first_time_s": 0.9083333333333304,
+              "max_normal_impulse": 0.08575117012716325,
+              "contact_steps": 6
+            },
+            "ball|track_20": {
+              "first_time_s": 0.9319444444444415,
+              "max_normal_impulse": 0.05150693798590253,
+              "contact_steps": 9
+            },
+            "ball|track_21": {
+              "first_time_s": 0.9527777777777747,
+              "max_normal_impulse": 0.08182293306048383,
+              "contact_steps": 6
+            },
+            "ball|track_22": {
+              "first_time_s": 0.9763888888888858,
+              "max_normal_impulse": 0.06003083256065414,
+              "contact_steps": 8
+            },
+            "ball|track_23": {
+              "first_time_s": 0.9986111111111079,
+              "max_normal_impulse": 0.07047672596676297,
+              "contact_steps": 6
+            },
+            "ball|track_24": {
+              "first_time_s": 1.0208333333333302,
+              "max_normal_impulse": 0.08335839902539548,
+              "contact_steps": 5
+            },
+            "ball|track_25": {
+              "first_time_s": 1.0444444444444412,
+              "max_normal_impulse": 0.06952924926100514,
+              "contact_steps": 6
+            },
+            "ball|track_26": {
+              "first_time_s": 1.0666666666666633,
+              "max_normal_impulse": 0.08331912006363475,
+              "contact_steps": 5
+            },
+            "ball|track_27": {
+              "first_time_s": 1.0902777777777743,
+              "max_normal_impulse": 0.06738237231670076,
+              "contact_steps": 7
+            },
+            "ball|track_28": {
+              "first_time_s": 1.1124999999999965,
+              "max_normal_impulse": 0.07642367504931769,
+              "contact_steps": 6
+            },
+            "ball|track_29": {
+              "first_time_s": 1.1347222222222186,
+              "max_normal_impulse": 0.08106730572254361,
+              "contact_steps": 5
+            },
+            "ball|track_30": {
+              "first_time_s": 1.1569444444444408,
+              "max_normal_impulse": 0.0800109844746609,
+              "contact_steps": 6
+            },
+            "ball|track_31": {
+              "first_time_s": 1.179166666666663,
+              "max_normal_impulse": 0.0719887110249569,
+              "contact_steps": 8
+            },
+            "ball|track_32": {
+              "first_time_s": 1.201388888888885,
+              "max_normal_impulse": 0.05558434655363723,
+              "contact_steps": 10
+            },
+            "ball|track_33": {
+              "first_time_s": 1.2208333333333294,
+              "max_normal_impulse": 0.09185479395126259,
+              "contact_steps": 6
+            },
+            "ball|track_34": {
+              "first_time_s": 1.2430555555555516,
+              "max_normal_impulse": 0.05592470142567497,
+              "contact_steps": 10
+            },
+            "ball|track_35": {
+              "first_time_s": 1.261111111111107,
+              "max_normal_impulse": 0.10608960472527998,
+              "contact_steps": 5
+            },
+            "ball|track_36": {
+              "first_time_s": 1.2833333333333292,
+              "max_normal_impulse": 0.047443501810980386,
+              "contact_steps": 11
+            },
+            "ball|track_37": {
+              "first_time_s": 1.3013888888888847,
+              "max_normal_impulse": 0.07784589900994836,
+              "contact_steps": 9
+            },
+            "ball|track_38": {
+              "first_time_s": 1.3194444444444402,
+              "max_normal_impulse": 0.09820564939518373,
+              "contact_steps": 6
+            },
+            "ball|track_39": {
+              "first_time_s": 1.3388888888888846,
+              "max_normal_impulse": 0.07278725728699693,
+              "contact_steps": 9
+            },
+            "ball|track_40": {
+              "first_time_s": 1.3555555555555512,
+              "max_normal_impulse": 0.10807797005498361,
+              "contact_steps": 6
+            },
+            "ball|track_41": {
+              "first_time_s": 1.3749999999999956,
+              "max_normal_impulse": 0.06097198625805951,
+              "contact_steps": 10
+            },
+            "ball|track_42": {
+              "first_time_s": 1.3902777777777733,
+              "max_normal_impulse": 0.11455661579776216,
+              "contact_steps": 6
+            },
+            "ball|track_43": {
+              "first_time_s": 1.4083333333333288,
+              "max_normal_impulse": 0.08567803023616344,
+              "contact_steps": 9
+            },
+            "ball|track_44": {
+              "first_time_s": 1.4249999999999954,
+              "max_normal_impulse": 0.08667219890971203,
+              "contact_steps": 10
+            },
+            "ball|track_45": {
+              "first_time_s": 1.441666666666662,
+              "max_normal_impulse": 0.08137717693880527,
+              "contact_steps": 10
+            },
+            "ball|track_46": {
+              "first_time_s": 1.4569444444444397,
+              "max_normal_impulse": 0.1093693809171839,
+              "contact_steps": 8
+            },
+            "ball|track_47": {
+              "first_time_s": 1.4736111111111063,
+              "max_normal_impulse": 0.09574459372768451,
+              "contact_steps": 10
+            },
+            "ball|exit": {
+              "first_time_s": 1.490277777777773,
+              "max_normal_impulse": 0.08036296017198696,
+              "contact_steps": 1061
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "passed_hump": true,
+          "reversed_on_hump": false,
+          "outcome": "越过坡峰",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "hump_height",
+            "value": 0.23,
+            "units": "m"
+          },
+          "target_final_position": [
+            4.393866160080734,
+            0.859809787326389
+          ],
+          "max_penetration_m": 0.00020913628472205015,
+          "contacts": {
+            "ball|entry": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.013625000000006115,
+              "contact_steps": 406
+            },
+            "ball|track_00": {
+              "first_time_s": 0.5652777777777761,
+              "max_normal_impulse": 0.10775699853505484,
+              "contact_steps": 9
+            },
+            "ball|track_01": {
+              "first_time_s": 0.5805555555555538,
+              "max_normal_impulse": 0.12737285658803066,
+              "contact_steps": 10
+            },
+            "ball|track_02": {
+              "first_time_s": 0.5944444444444427,
+              "max_normal_impulse": 0.12300910426393656,
+              "contact_steps": 10
+            },
+            "ball|track_03": {
+              "first_time_s": 0.6083333333333315,
+              "max_normal_impulse": 0.11616611707413911,
+              "contact_steps": 10
+            },
+            "ball|track_04": {
+              "first_time_s": 0.6222222222222203,
+              "max_normal_impulse": 0.10726900703283215,
+              "contact_steps": 10
+            },
+            "ball|track_05": {
+              "first_time_s": 0.6361111111111092,
+              "max_normal_impulse": 0.11260036757003863,
+              "contact_steps": 11
+            },
+            "ball|track_06": {
+              "first_time_s": 0.6527777777777758,
+              "max_normal_impulse": 0.0850796021928008,
+              "contact_steps": 11
+            },
+            "ball|track_07": {
+              "first_time_s": 0.6680555555555535,
+              "max_normal_impulse": 0.10076156748437316,
+              "contact_steps": 10
+            },
+            "ball|track_08": {
+              "first_time_s": 0.6847222222222201,
+              "max_normal_impulse": 0.11025798999894766,
+              "contact_steps": 8
+            },
+            "ball|track_09": {
+              "first_time_s": 0.7041666666666645,
+              "max_normal_impulse": 0.07497503907946633,
+              "contact_steps": 11
+            },
+            "ball|track_10": {
+              "first_time_s": 0.72222222222222,
+              "max_normal_impulse": 0.09879531621546682,
+              "contact_steps": 8
+            },
+            "ball|track_11": {
+              "first_time_s": 0.7430555555555532,
+              "max_normal_impulse": 0.08381217267142696,
+              "contact_steps": 9
+            },
+            "ball|track_12": {
+              "first_time_s": 0.7638888888888865,
+              "max_normal_impulse": 0.09439809667203217,
+              "contact_steps": 7
+            },
+            "ball|track_13": {
+              "first_time_s": 0.7874999999999975,
+              "max_normal_impulse": 0.07472178656291886,
+              "contact_steps": 10
+            },
+            "ball|track_14": {
+              "first_time_s": 0.8111111111111086,
+              "max_normal_impulse": 0.08045312100449163,
+              "contact_steps": 10
+            },
+            "ball|track_15": {
+              "first_time_s": 0.8374999999999974,
+              "max_normal_impulse": 0.06272085146878004,
+              "contact_steps": 13
+            },
+            "ball|track_16": {
+              "first_time_s": 0.8638888888888862,
+              "max_normal_impulse": 0.069472318100495,
+              "contact_steps": 12
+            },
+            "ball|track_17": {
+              "first_time_s": 0.8916666666666638,
+              "max_normal_impulse": 0.07756720719870232,
+              "contact_steps": 11
+            },
+            "ball|track_18": {
+              "first_time_s": 0.9222222222222193,
+              "max_normal_impulse": 0.07012772950770106,
+              "contact_steps": 14
+            },
+            "ball|track_19": {
+              "first_time_s": 0.9541666666666636,
+              "max_normal_impulse": 0.06695824749010162,
+              "contact_steps": 16
+            },
+            "ball|track_20": {
+              "first_time_s": 0.9874999999999968,
+              "max_normal_impulse": 0.06736712440573768,
+              "contact_steps": 17
+            },
+            "ball|track_21": {
+              "first_time_s": 1.022222222222219,
+              "max_normal_impulse": 0.07004524673037167,
+              "contact_steps": 23
+            },
+            "ball|track_22": {
+              "first_time_s": 1.05833333333333,
+              "max_normal_impulse": 0.07316705106086742,
+              "contact_steps": 27
+            },
+            "ball|track_23": {
+              "first_time_s": 1.0958333333333299,
+              "max_normal_impulse": 0.07428217567253109,
+              "contact_steps": 27
+            },
+            "ball|track_24": {
+              "first_time_s": 1.1347222222222186,
+              "max_normal_impulse": 0.0703915478380135,
+              "contact_steps": 28
+            },
+            "ball|track_25": {
+              "first_time_s": 1.1736111111111074,
+              "max_normal_impulse": 0.0695311155352369,
+              "contact_steps": 28
+            },
+            "ball|track_26": {
+              "first_time_s": 1.2124999999999961,
+              "max_normal_impulse": 0.06682753301792399,
+              "contact_steps": 26
+            },
+            "ball|track_27": {
+              "first_time_s": 1.249999999999996,
+              "max_normal_impulse": 0.07016105868842812,
+              "contact_steps": 22
+            },
+            "ball|track_28": {
+              "first_time_s": 1.286111111111107,
+              "max_normal_impulse": 0.07624109647176715,
+              "contact_steps": 18
+            },
+            "ball|track_29": {
+              "first_time_s": 1.322222222222218,
+              "max_normal_impulse": 0.06767438888914802,
+              "contact_steps": 16
+            },
+            "ball|track_30": {
+              "first_time_s": 1.3555555555555512,
+              "max_normal_impulse": 0.07111505753897818,
+              "contact_steps": 15
+            },
+            "ball|track_31": {
+              "first_time_s": 1.3874999999999955,
+              "max_normal_impulse": 0.07117267890067663,
+              "contact_steps": 13
+            },
+            "ball|track_32": {
+              "first_time_s": 1.416666666666662,
+              "max_normal_impulse": 0.08619362998134386,
+              "contact_steps": 9
+            },
+            "ball|track_33": {
+              "first_time_s": 1.4458333333333286,
+              "max_normal_impulse": 0.0784437461187305,
+              "contact_steps": 11
+            },
+            "ball|track_34": {
+              "first_time_s": 1.4736111111111063,
+              "max_normal_impulse": 0.06661649789435095,
+              "contact_steps": 13
+            },
+            "ball|track_35": {
+              "first_time_s": 1.4986111111111062,
+              "max_normal_impulse": 0.07573311058768567,
+              "contact_steps": 10
+            },
+            "ball|track_36": {
+              "first_time_s": 1.5222222222222173,
+              "max_normal_impulse": 0.08542357802427357,
+              "contact_steps": 9
+            },
+            "ball|track_37": {
+              "first_time_s": 1.5458333333333283,
+              "max_normal_impulse": 0.06909241133605265,
+              "contact_steps": 12
+            },
+            "ball|track_38": {
+              "first_time_s": 1.5666666666666615,
+              "max_normal_impulse": 0.08377631334608145,
+              "contact_steps": 11
+            },
+            "ball|track_39": {
+              "first_time_s": 1.586111111111106,
+              "max_normal_impulse": 0.10447018565784887,
+              "contact_steps": 7
+            },
+            "ball|track_40": {
+              "first_time_s": 1.6055555555555503,
+              "max_normal_impulse": 0.10043907919872219,
+              "contact_steps": 10
+            },
+            "ball|track_41": {
+              "first_time_s": 1.6249999999999947,
+              "max_normal_impulse": 0.07080593663221264,
+              "contact_steps": 12
+            },
+            "ball|track_42": {
+              "first_time_s": 1.6416666666666613,
+              "max_normal_impulse": 0.08548101010522224,
+              "contact_steps": 11
+            },
+            "ball|track_43": {
+              "first_time_s": 1.656944444444439,
+              "max_normal_impulse": 0.114514540947352,
+              "contact_steps": 10
+            },
+            "ball|track_44": {
+              "first_time_s": 1.6736111111111056,
+              "max_normal_impulse": 0.10375274715343438,
+              "contact_steps": 10
+            },
+            "ball|track_45": {
+              "first_time_s": 1.6874999999999944,
+              "max_normal_impulse": 0.1169121483637144,
+              "contact_steps": 11
+            },
+            "ball|track_46": {
+              "first_time_s": 1.7027777777777722,
+              "max_normal_impulse": 0.11862132412328252,
+              "contact_steps": 10
+            },
+            "ball|track_47": {
+              "first_time_s": 1.716666666666661,
+              "max_normal_impulse": 0.12257887429597582,
+              "contact_steps": 10
+            },
+            "ball|exit": {
+              "first_time_s": 1.7305555555555499,
+              "max_normal_impulse": 0.10146700410900318,
+              "contact_steps": 889
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "passed_hump": true,
+          "reversed_on_hump": false,
+          "outcome": "越过坡峰",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "hump_height",
+            "value": 0.52,
+            "units": "m"
+          },
+          "target_final_position": [
+            -2.879778208206188,
+            0.859809787326389
+          ],
+          "max_penetration_m": 0.00020913628472205015,
+          "contacts": {
+            "ball|entry": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.1363729315603888,
+              "contact_steps": 1408
+            },
+            "ball|track_00": {
+              "first_time_s": 0.5652777777777761,
+              "max_normal_impulse": 0.2539591736772342,
+              "contact_steps": 15
+            },
+            "ball|track_01": {
+              "first_time_s": 0.5763888888888872,
+              "max_normal_impulse": 0.26683216437048385,
+              "contact_steps": 14
+            },
+            "ball|track_02": {
+              "first_time_s": 0.5861111111111094,
+              "max_normal_impulse": 0.24812039037176392,
+              "contact_steps": 15
+            },
+            "ball|track_03": {
+              "first_time_s": 0.5958333333333315,
+              "max_normal_impulse": 0.22176312716554214,
+              "contact_steps": 18
+            },
+            "ball|track_04": {
+              "first_time_s": 0.6083333333333315,
+              "max_normal_impulse": 0.19113477646086555,
+              "contact_steps": 21
+            },
+            "ball|track_05": {
+              "first_time_s": 0.6222222222222203,
+              "max_normal_impulse": 0.15973879519110068,
+              "contact_steps": 24
+            },
+            "ball|track_06": {
+              "first_time_s": 0.638888888888887,
+              "max_normal_impulse": 0.12954095957815762,
+              "contact_steps": 27
+            },
+            "ball|track_07": {
+              "first_time_s": 0.6569444444444424,
+              "max_normal_impulse": 0.10209851311244784,
+              "contact_steps": 32
+            },
+            "ball|track_08": {
+              "first_time_s": 0.6791666666666646,
+              "max_normal_impulse": 0.0774194979203102,
+              "contact_steps": 34
+            },
+            "ball|track_09": {
+              "first_time_s": 0.7027777777777756,
+              "max_normal_impulse": 0.0794394625930806,
+              "contact_steps": 36
+            },
+            "ball|track_10": {
+              "first_time_s": 0.7305555555555533,
+              "max_normal_impulse": 0.07608215083111931,
+              "contact_steps": 37
+            },
+            "ball|track_11": {
+              "first_time_s": 0.7611111111111087,
+              "max_normal_impulse": 0.07918017070518052,
+              "contact_steps": 42
+            },
+            "ball|track_12": {
+              "first_time_s": 0.7986111111111086,
+              "max_normal_impulse": 0.06352206690230651,
+              "contact_steps": 63
+            },
+            "ball|track_13": {
+              "first_time_s": 0.8430555555555529,
+              "max_normal_impulse": 0.05310416262106202,
+              "contact_steps": 89
+            },
+            "ball|track_14": {
+              "first_time_s": 0.8986111111111083,
+              "max_normal_impulse": 0.04784875653534875,
+              "contact_steps": 208
+            },
+            "ball|track_15": {
+              "first_time_s": 0.9902777777777746,
+              "max_normal_impulse": 0.0280205853137315,
+              "contact_steps": 42
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "passed_hump": false,
+          "reversed_on_hump": true,
+          "outcome": "爬升后回落",
+          "target_center_out_of_frame_indices": []
+        }
+      ]
+    },
+    {
+      "family": "05_hole_offset",
+      "title": "台面孔洞横向位置",
+      "prefix_position_max_difference_m": {
+        "8": {
+          "ball": 0.0
+        },
+        "16": {
+          "ball": 0.0
+        }
+      },
+      "cases": [
+        {
+          "control": {
+            "name": "hole_y",
+            "value": 0.0,
+            "units": "m"
+          },
+          "target_final_position": [
+            0.8700639070494636,
+            0.0,
+            0.1798494748843782
+          ],
+          "max_penetration_m": 0.003946731169883033,
+          "contacts": {
+            "ball|left": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.013625000000000002,
+              "contact_steps": 627
+            },
+            "ball|floor": {
+              "first_time_s": 1.311111111111107,
+              "max_normal_impulse": 4.751037500000041,
+              "contact_steps": 1100
+            },
+            "ball|right": {
+              "first_time_s": 1.3680555555555511,
+              "max_normal_impulse": 1.7050000000000003,
+              "contact_steps": 19
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "fell_into_hole": true,
+          "outcome": "失去支撑，落入孔洞",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "hole_y",
+            "value": 0.4,
+            "units": "m"
+          },
+          "target_final_position": [
+            3.342777977951096,
+            0.0,
+            1.1298494748843781
+          ],
+          "max_penetration_m": 0.00016944872673302358,
+          "contacts": {
+            "ball|left": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.013625000000000002,
+              "contact_steps": 624
+            },
+            "ball|front": {
+              "first_time_s": 0.8666666666666639,
+              "max_normal_impulse": 0.057417714930917504,
+              "contact_steps": 438
+            },
+            "ball|right": {
+              "first_time_s": 1.4805555555555507,
+              "max_normal_impulse": 0.0658871047276397,
+              "contact_steps": 1068
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "fell_into_hole": false,
+          "outcome": "避开孔洞，继续前进",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "hole_y",
+            "value": 0.85,
+            "units": "m"
+          },
+          "target_final_position": [
+            3.342777977951096,
+            0.0,
+            1.1298494748843781
+          ],
+          "max_penetration_m": 0.00016944872673302358,
+          "contacts": {
+            "ball|left": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.013625000000000002,
+              "contact_steps": 624
+            },
+            "ball|front": {
+              "first_time_s": 0.8666666666666639,
+              "max_normal_impulse": 0.057417714930917504,
+              "contact_steps": 438
+            },
+            "ball|right": {
+              "first_time_s": 1.4805555555555507,
+              "max_normal_impulse": 0.0658871047276397,
+              "contact_steps": 1068
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "fell_into_hole": false,
+          "outcome": "避开孔洞，继续前进",
+          "target_center_out_of_frame_indices": []
+        }
+      ]
+    },
+    {
+      "family": "06_table_edge",
+      "title": "被撞方块与桌缘",
+      "prefix_position_max_difference_m": {
+        "8": {
+          "ball": 4.965068306494546e-16,
+          "block": 0.0
+        },
+        "16": {
+          "ball": 3.219646771412954e-15,
+          "block": 0.0
+        }
+      },
+      "cases": [
+        {
+          "control": {
+            "name": "edge_x",
+            "value": 0.65,
+            "units": "m"
+          },
+          "target_final_position": [
+            2.1899927352295516,
+            0.16980978732638893
+          ],
+          "max_penetration_m": 0.003191767804493928,
+          "contacts": {
+            "block|table": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.15436044703298857,
+              "contact_steps": 1394
+            },
+            "ball|table": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.17373936799589992,
+              "contact_steps": 1002
+            },
+            "ball|block": {
+              "first_time_s": 0.7361111111111088,
+              "max_normal_impulse": 3.381328357027183,
+              "contact_steps": 190
+            },
+            "block|floor": {
+              "first_time_s": 1.4194444444444398,
+              "max_normal_impulse": 1.7208656329084715,
+              "contact_steps": 2080
+            },
+            "ball|floor": {
+              "first_time_s": 2.2402777777778087,
+              "max_normal_impulse": 2.0797180567657607,
+              "contact_steps": 515
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "block_fell": true,
+          "block_final_position": [
+            1.0401198773995461,
+            0.1599381733637828
+          ],
+          "block_max_abs_angle_rad": 1.8744875110441108,
+          "outcome": "被撞方块翻落台面",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "edge_x",
+            "value": 1.05,
+            "units": "m"
+          },
+          "target_final_position": [
+            0.5952770889216811,
+            1.1198098103730405
+          ],
+          "max_penetration_m": 0.0017102894792092593,
+          "contacts": {
+            "block|table": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.15436044703298843,
+              "contact_steps": 4272
+            },
+            "ball|table": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.17373936799590067,
+              "contact_steps": 2100
+            },
+            "ball|block": {
+              "first_time_s": 0.7361111111111088,
+              "max_normal_impulse": 0.8036810890699747,
+              "contact_steps": 459
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "block_fell": false,
+          "block_final_position": [
+            0.9252534540605485,
+            1.1199354198370395
+          ],
+          "block_max_abs_angle_rad": 0.000775203279370166,
+          "outcome": "方块仍留在台面",
+          "target_center_out_of_frame_indices": []
+        },
+        {
+          "control": {
+            "name": "edge_x",
+            "value": 1.9,
+            "units": "m"
+          },
+          "target_final_position": [
+            0.5954374866560097,
+            1.119809791378043
+          ],
+          "max_penetration_m": 0.0017102894792142553,
+          "contacts": {
+            "block|table": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.15436044703298815,
+              "contact_steps": 4272
+            },
+            "ball|table": {
+              "first_time_s": 0.001388888888888889,
+              "max_normal_impulse": 0.1737393679958966,
+              "contact_steps": 2100
+            },
+            "ball|block": {
+              "first_time_s": 0.7361111111111088,
+              "max_normal_impulse": 0.803681089069976,
+              "contact_steps": 419
+            }
+          },
+          "physics_steps_duration_s": 2.966666666666811,
+          "description": "Outcome labels are post-hoc coarse diagnostics, not a validated evaluator.",
+          "block_fell": false,
+          "block_final_position": [
+            0.9254138000119909,
+            1.1198172250326208
+          ],
+          "block_max_abs_angle_rad": 0.00012240874083269154,
+          "outcome": "方块仍留在台面",
+          "target_center_out_of_frame_indices": []
+        }
+      ]
+    }
+  ]
+}

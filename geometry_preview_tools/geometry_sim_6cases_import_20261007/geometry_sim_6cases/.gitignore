@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+results*/
+selected_results/
+physics_results/
+fine_check/

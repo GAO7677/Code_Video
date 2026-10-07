@@ -1,0 +1,9 @@
+test_eight_frame_prefix_is_finite_and_shared (test_scenes.SceneSmokeTests.test_eight_frame_prefix_is_finite_and_shared) ... /mnt/data/geometry_sim_6cases/src/physics.py:65: DeprecationWarning: Arrays of 2-dimensional vectors are deprecated. Use arrays of 3-dimensional vectors instead. (deprecated in NumPy 2.0)
+  cr = np.cross(self.vertices, np.roll(self.vertices, -1, axis=0))
+ok
+test_only_six_requested_families (test_scenes.SceneSmokeTests.test_only_six_requested_families) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 1.339s
+
+OK

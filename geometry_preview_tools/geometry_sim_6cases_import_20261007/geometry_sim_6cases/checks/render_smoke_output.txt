@@ -1,0 +1,19 @@
+01_cylinder_offset | 0.65: 未接触，继续前进 | penetration 0.000000 m
+01_cylinder_offset | 0: 未接触，继续前进 | penetration 0.000000 m
+01_cylinder_offset | 0.3: 未接触，继续前进 | penetration 0.000000 m
+02_barrier_length | 0.65: 从端点外侧通过 | penetration 0.000000 m
+02_barrier_length | 0.88: 从端点外侧通过 | penetration 0.000000 m
+02_barrier_length | 1.75: 从端点外侧通过 | penetration 0.000000 m
+03_rail_gap | 0.14: 双轨持续承托 | penetration 0.000169 m
+03_rail_gap | 0.3: 双轨持续承托 | penetration 0.000169 m
+03_rail_gap | 0.56: 双轨持续承托 | penetration 0.000169 m
+04_hump_height | 0.1: 仍在爬升/接近转折 | penetration 0.000209 m
+04_hump_height | 0.23: 仍在爬升/接近转折 | penetration 0.000209 m
+04_hump_height | 0.52: 仍在爬升/接近转折 | penetration 0.000209 m
+05_hole_offset | 0: 避开孔洞，继续前进 | penetration 0.000169 m
+05_hole_offset | 0.4: 避开孔洞，继续前进 | penetration 0.000169 m
+05_hole_offset | 0.85: 避开孔洞，继续前进 | penetration 0.000169 m
+06_table_edge | 0.65: 方块仍留在台面 | penetration 0.000221 m
+06_table_edge | 1.05: 方块仍留在台面 | penetration 0.000221 m
+06_table_edge | 1.9: 方块仍留在台面 | penetration 0.000221 m
+Completed 18 cases in 12.3s: /mnt/data/_six_scene_work/check_runs/render_12
