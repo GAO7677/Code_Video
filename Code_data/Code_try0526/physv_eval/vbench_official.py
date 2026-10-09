@@ -247,6 +247,37 @@ class OfficialVBenchRunner:
         )
         return normalized
 
+    def score_cases_individually(
+        self, cases: Sequence[EvalCase | Path | str | dict[str, Any]], *,
+        dimension: str, output_path: Path | None = None,
+    ) -> list[dict[str, Any]]:
+        """One official model load for all videos; retain the single-case scale."""
+        normalized_cases = [coerce_eval_case(case) for case in cases]
+        if not normalized_cases:
+            return []
+        if self.read_frame:
+            raise ValueError("Batch individual scoring currently requires video input, not read_frame")
+        batch = self.score_batch(normalized_cases, dimension=dimension, output_path=output_path)
+        raw_by_path = {str(Path(row["video_path"]).resolve()): row for row in batch["raw_results"]}
+        expected = {str(case.video_path.resolve()) for case in normalized_cases}
+        if set(raw_by_path) != expected or len(raw_by_path) != len(batch["raw_results"]):
+            raise RuntimeError("Official VBench returned missing, extra, or duplicate video results")
+        results = []
+        for case in normalized_cases:
+            raw = raw_by_path[str(case.video_path.resolve())]
+            score = float(raw["video_results"])
+            # Official technical_quality returns raw MUSIQ per video but /100
+            # for its aggregate. All other supported dimensions use the same scale.
+            if dimension == "imaging_quality":
+                score /= 100.0
+            result = _normalize_official_result(dimension, {dimension: [score, [raw]]})
+            result.update(video=str(case.video_path), caption_used=case.caption,
+                          result_json=batch["result_json"], full_info_json=batch["full_info_json"],
+                          output_path=batch["output_path"], cache_dir=str(self.cache_dir),
+                          device=self.device, mode="custom_full_info", execution="one_load_per_shard")
+            results.append(result)
+        return results
+
     def score_case(
         self,
         case: EvalCase | Path | str | dict[str, Any],

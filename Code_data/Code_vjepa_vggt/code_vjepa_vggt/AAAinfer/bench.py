@@ -856,17 +856,36 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
                 imaging_quality_preprocessing_mode=str(args.vbench_imaging_quality_preprocessing_mode),
             )
 
+            batch_results: dict[Path, dict[str, Any]] = {}
+
+            def prepare(records: list[CaseRecord]) -> None:
+                if args.vbench_read_frame or args.dry_run:
+                    return
+                pending = [record for record in records if args.overwrite or not
+                           metric_already_completed(load_json(record.result_json_path), metric_name)]
+                if not pending:
+                    return
+                payloads = [build_case_payload(record) for record in pending]
+                for payload in payloads:
+                    payload["caption"] = payload.get("input_caption") or payload.get("caption")
+                values = runner.score_cases_individually(
+                    payloads, dimension=dimension,
+                    output_path=args.vbench_output_root.expanduser().resolve() / metric_name /
+                                f"shard_{args.shard_index}",
+                )
+                for record, value in zip(pending, values):
+                    batch_results[record.result_json_path] = value
+
             def run(record: CaseRecord) -> dict[str, Any] | None:
+                if record.result_json_path in batch_results:
+                    return batch_results[record.result_json_path]
                 case = build_case_payload(record)
                 caption = case.get("input_caption") or case.get("caption")
                 output_path = build_method_case_dir(args.vbench_output_root.expanduser().resolve(), record, metric_name)
-                return score_vbench_case(
-                    case,
-                    dimension=dimension,
-                    caption=caption,
-                    output_path=output_path,
-                    runner=runner,
-                )
+                return score_vbench_case(case, dimension=dimension, caption=caption,
+                                         output_path=output_path, runner=runner)
+
+            run.prepare = prepare
 
             return run
 
@@ -1008,6 +1027,8 @@ def main() -> None:
         f"shard={int(args.shard_index) + 1}/{int(args.num_shards)}"
     )
     runner = metric_spec.builder(args)
+    if hasattr(runner, "prepare"):
+        runner.prepare(cases)
     num_success = 0
     num_failed = 0
     for index, record in enumerate(cases, start=1):
