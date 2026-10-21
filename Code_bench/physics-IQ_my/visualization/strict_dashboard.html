@@ -379,7 +379,7 @@
         let data;
         let selectedCase = 0;
         let selectedView = "center";
-        let selectedMethods = new Set(['context', 'ground_truth', 'initial0907_c', 'initial0907_a', 'initial0907_b', 'initial0907_n25', 'initial0907_n50', 'initial0907_n75']);
+        let selectedMethods = new Set(['context', 'ground_truth', 'nano_baseline', 'nano_clean_s1000', 'nano_n75_s1000']);
         let transportTimer;
 
         function escapeHtml(value) {
@@ -428,12 +428,12 @@
             <article class="scorecard" data-tone="${escapeHtml(entry.color)}">
               <div class="scorecard-top">
                 <span class="rank">#${entry.rank} / P0</span>
-                <span class="status-tag">${entry.video_status.startsWith("198") ? "media ready" : "global only"}</span>
+                <span class="status-tag">${escapeHtml(entry.video_status)}</span>
               </div>
               <h3>${escapeHtml(entry.label)}</h3>
               <div class="scoreline"><strong>${fmt(entry.scores.verified, 2)}</strong><span>Verified</span></div>
               <div class="component-bars">${scoreBars(entry)}</div>
-              <footer>${escapeHtml(entry.case_metric_status)}</footer>
+              <footer>${escapeHtml(entry.case_metric_status)}${entry.sampling ? `<br>${escapeHtml(entry.sampling)}` : ""}</footer>
             </article>`).join("");
         }
 
@@ -535,6 +535,43 @@
             </section>`;
         }
 
+        function renderNanoProgress() {
+          if (!data.nano_runs) return '';
+          const states = {WAITING_FOR_IDLE_GPU:'等待空闲 GPU', SMOKE_RUNNING:'单条完整验收', GENERATING:'生成中', SCORING:'官方评分中', COMPLETE:'全部完成', FAILED:'失败：查看记录'};
+          return `<section class="aux-section" id="nano-progress"><div class="section-heading"><div><h2>Nano 三组进度</h2></div><p>每30秒读取最新结果；正在播放的视频不会被自动重载。</p></div>
+            <div class="aux-panel"><div class="aux-meta">${escapeHtml(data.protocol.comparison_note)}<button class="control-button" type="button" onclick="location.reload()">更新视频</button></div>
+            <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;text-align:left"><thead><tr><th>方法</th><th>生成</th><th>队列 / 验收</th><th>GPU</th><th>指标</th><th>每条耗时</th><th>状态时间 UTC</th></tr></thead>
+            <tbody>${data.nano_runs.map(r => `<tr><td style="padding:12px">${escapeHtml(r.label)}</td><td>${r.generation} / ${r.total}</td><td>${escapeHtml(states[r.state] || r.state)}<br><small>${escapeHtml(r.error || r.smoke)}</small></td><td>${r.workers.map(w=>w.gpu).join(', ') || '—'}</td><td>${escapeHtml(r.metrics)}</td><td>${r.median_video_seconds ? (r.median_video_seconds/60).toFixed(1)+' 分' : '待测'}</td><td>${escapeHtml(r.updated_utc || '待启动')}</td></tr>`).join('')}</tbody></table></div>
+            <div class="aux-meta"><span>${(data.nano_pair_checks || []).map(p => p.status==='MISMATCH' ? `配对噪声核验异常：${p.mismatches.length} 条` : p.paired_count ? `${p.left} vs N75：${p.paired_count} 条输入 / latent / 初始 future 噪声哈希一致` : `${p.left} vs N75：等待同 case 的产物核验噪声`).map(escapeHtml).join('<br>')}</span><span id="nano-refresh-state">快照 ${escapeHtml(new Date(data.generated_at).toUTCString())}</span></div></div></section>`;
+        }
+
+        let liveRefreshBusy = false;
+        async function refreshLiveProgress() {
+          if (!data || liveRefreshBusy) return;
+          liveRefreshBusy = true;
+          try {
+            const response = await fetch('manifest.json?t='+Date.now(), {cache:'no-store'});
+            if (!response.ok) throw new Error('HTTP '+response.status);
+            const payload = await response.json();
+            const visibleKey = d => JSON.stringify(d.cases[selectedCase].views.filter(v=>selectedView==='all'||v.view===selectedView).map(v=>[...selectedMethods].map(k=>[v.videos[k],v.metrics[k]])));
+            const oldVisible = visibleKey(data);
+            data = payload;
+            document.getElementById('nano-live-root').innerHTML = renderNanoProgress();
+            document.getElementById('scoreboard-root').innerHTML = renderScoreboard();
+            // Refresh available case media only if idle; keep filters and playback intact.
+            if (oldVisible !== visibleKey(data) && !currentVideos().some(v=>!v.paused)) render();
+            const status = document.getElementById('nano-refresh-state');
+            if (status) {
+              const age = (Date.now()-Date.parse(data.generated_at))/1000;
+              status.textContent = age>120 ? '快照超过2分钟未更新，请查看队列状态' : '已刷新 '+new Date().toLocaleTimeString();
+            }
+          } catch (error) {
+            const status=document.getElementById('nano-refresh-state');
+            if (status) status.textContent='刷新失败，保留当前画面：'+error.message;
+          } finally { liveRefreshBusy=false; }
+        }
+        window.setInterval(refreshLiveProgress, 30000);
+
         function renderProtocol() {
           const protocol = data.protocol;
           return `
@@ -555,7 +592,7 @@
                 ${metricOrder.map((metric) => `
                   <div class="metric-cell"><span>${metricLabel(metric)}</span><b>${fmt(score.scores[metric], 1)}</b></div>`).join("")}
               </div>
-              <p class="metric-footnote">${score.scores.verified == null ? '官方评分尚未完成；视频已生成。' : '全局汇总；逐视角指标尚未提供。'}</p>
+              <p class="metric-footnote">${score.scores.verified == null ? '官方评分尚未完成；视频是否可用以本卡片为准。' : '全局汇总；逐视角指标尚未提供。'}</p>
             </div>`;
         }
 
@@ -608,9 +645,11 @@
           const isReference = method.kind === "reference";
           const sourceStatus = isReference ? "reference" : "P0 submission";
           if (!video) {
-            const unavailableText = method.key === "xssc_dinov3"
-              ? "视频和逐 case CSV 尚未挂载到本机"
-              : "该视频文件在本机不可用";
+            const unavailableText = method.key.startsWith("nano_")
+              ? "该条视频尚未生成或尚未通过产物检查，完成后自动开放。"
+              : method.key === "xssc_dinov3"
+                ? "视频和逐 case CSV 尚未挂载到本机"
+                : "该视频文件在本机不可用";
             return `
               <article class="media-card unavailable-card" data-tone="${escapeHtml(method.color)}">
                 <header class="card-header"><span class="card-kicker">${sourceStatus}</span><h5>${escapeHtml(method.label)}</h5></header>
@@ -699,9 +738,9 @@
                   <div class="field"><label for="view-select">Perspective</label><select id="view-select"><option value="all" ${selectedView === "all" ? "selected" : ""}>all three cameras</option><option value="left" ${selectedView === "left" ? "selected" : ""}>left</option><option value="center" ${selectedView === "center" ? "selected" : ""}>center</option><option value="right" ${selectedView === "right" ? "selected" : ""}>right</option></select></div>
                   <div class="toolbar-actions"><button class="control-button primary" id="play-all" type="button">Play visible</button><button class="control-button" id="pause-all" type="button">Pause</button><button class="control-button" id="restart-all" type="button">Restart</button></div>
                 </div>
-                <div class="search-row"><div class="field"><label for="case-search">Filter events</label><input id="case-search" type="search" placeholder="例如：ball, domino, mug…" autocomplete="off" /></div><div class="field"><label>Evidence coverage</label><div class="reference-panel"><strong>${data.availability.cases} cases · ${data.availability.views} views</strong><p>六组 initial0907 step1000 均198/198视频；历史方法保留。评分完成状态见上表。</p></div></div></div>
+                <div class="search-row"><div class="field"><label for="case-search">Filter events</label><input id="case-search" type="search" placeholder="例如：ball, domino, mug…" autocomplete="off" /></div><div class="field"><label>Evidence coverage</label><div class="reference-panel"><strong>${data.availability.cases} cases · ${data.availability.views} views</strong><p>所有已登记方法均可选择；Nano 视频随生成逐条开放，缺失项显示 pending。</p></div></div></div>
                 <div class="transport"><span class="transport-status">SYNC TRANSPORT</span><input id="transport-range" type="range" min="0" max="1000" value="0" aria-label="同步播放进度" /><span class="transport-status" id="transport-readout">0.0s / —</span></div>
-                <div class="case-intro"><div class="case-line"><span class="case-id">IDs ${escapeHtml(ids)}</span><h3>${escapeHtml(active.title)}</h3></div><p>${escapeHtml(active.views[0].prompt)}</p><details><summary>Prompt / protocol note</summary><p>所有登记主分数均属于 P0：BPP prompt、72f/24 FPS V2V 条件、512×896、40 steps、guidance 5、seed 42、189f 原始输出，以及去掉 69 帧 clean prefix 后的 120f/5s official submission。VBench / VideoPhy2 / Cosmos Reason1 仅对本机三组最终 submission 执行。</p></details></div>
+                <div class="case-intro"><div class="case-line"><span class="case-id">IDs ${escapeHtml(ids)}</span><h3>${escapeHtml(active.title)}</h3></div><p>${escapeHtml(active.views[0].prompt)}</p><details><summary>Prompt / protocol note</summary><p>${escapeHtml(data.protocol.comparison_note || data.protocol.inference)}</p></details></div>
                 ${views.map(renderView).join("")}
               </div>
             </section>`;
@@ -710,7 +749,7 @@
         function renderLegend() {
           return `
             <aside class="legend" aria-label="Metrics explanation">
-                <div><h3>如何读这张页</h3><p>P0 总览的 <strong>Verified</strong> 是官方 aggregate 的主分数（×100）。分数栏中的 SP、ST、WS 和归一化 MSE component 都是 score 口径（↑）；视频卡片中的 MSE 展示原始逐帧误差（↓）。辅助指标表按各自声明的方向计算 BEST，不把原始误差方向和归一化 score 方向混用。卡片标题右侧的 case × view 分数严格复刻官方 stable evaluator 的逐视角组件归一化、截断及算术均值流程，但不是官方对单一 case 单独发布的排行榜分数。四个模型方法均有 66 case / 198 view 的官方视频与逐视角 Physics-IQ 组件；附加指标缺失时保留为 —。</p></div>
+                <div><h3>如何读这张页</h3><p>P0 总览的 <strong>Verified</strong> 是官方 aggregate 的主分数（×100）。分数栏中的 SP、ST、WS 和归一化 MSE component 都是 score 口径（↑）；视频卡片中的 MSE 展示原始逐帧误差（↓）。辅助指标表按各自声明的方向计算 BEST，不把原始误差方向和归一化 score 方向混用。卡片标题右侧的 case × view 分数严格复刻官方 stable evaluator 的逐视角组件归一化、截断及算术均值流程，但不是官方对单一 case 单独发布的排行榜分数。各方法的完成量见上表，未完成或未计算的指标保留为 pending / —。</p></div>
               <dl>
                 <dt>SP</dt><dd>spatial IoU score · higher is better</dd>
                 <dt>ST</dt><dd>mean per-frame spatiotemporal IoU score · higher is better</dd>
@@ -727,11 +766,12 @@
           const leader = data.scoreboard[0];
           app.innerHTML = `
             <section class="hero">
-              <div class="hero-copy"><span class="eyebrow">${escapeHtml(data.protocol.comparison_scope)}</span><h1>Physics-IQ Verified</h1><p>Generic2175 initial0907 六组 step1000 与历史方法。六组共用 clean-context P0-long；历史方法存在 prompt、编码及运行环境差异，并非仅权重不同的对照。</p></div>
+              <div class="hero-copy"><span class="eyebrow">${escapeHtml(data.protocol.comparison_scope)}</span><h1>Physics-IQ Verified</h1><p>Nano baseline、官方 clean step1000、N75 step1000 共用同一推理设置，与现有方法同页展示。跨 backbone 的采样配置不同；历史 clean 训练也不能当作单因素训练消融。</p></div>
               <aside class="hero-score"><div><span class="metric-source">Current P0 leader · official aggregate</span><div class="score-value">${fmt(leader.scores.verified, 2)}</div><div class="score-label">Physics-IQ Verified ×100</div></div><div class="hero-winner"><span class="winner-dot"></span><span><strong>${escapeHtml(leader.label)}</strong><br />Original ${fmt(leader.scores.original, 2)} · ${escapeHtml(leader.video_status)}</span></div></aside>
             </section>
             ${renderProtocol()}
-            <section aria-label="P0 official score overview"><div class="section-heading"><div><h2>P0 score board</h2></div><p>Verified 主分数；未完成为 pending。新六组未计算 VBench / VideoPhy2 / Cosmos。</p></div><div class="scoreboard">${renderScoreboard()}</div></section>
+            <div id="nano-live-root">${renderNanoProgress()}</div>
+            <section aria-label="P0 official score overview"><div class="section-heading"><div><h2>P0 score board</h2></div><p>Verified 主分数；未完成为 pending。Nano 完成198条并评分后自动加入；不同采样组的排序仅供参照。</p></div><div class="scoreboard" id="scoreboard-root">${renderScoreboard()}</div></section>
             <div id="auxiliary-metrics-root">${renderAuxMetrics()}</div>
             ${renderBExamples()}
             <fieldset id="method-selection"><legend>视频对比方案</legend>${data.methods.map(m => `<label style="display:inline-block;margin:8px"><input type="checkbox" value="${escapeHtml(m.key)}" ${selectedMethods.has(m.key) ? 'checked' : ''}> ${escapeHtml(m.label)}</label>`).join('')}</fieldset>
@@ -766,13 +806,6 @@
           }
           let changed = false;
           try {
-            const refreshResponse = await fetch("refresh-metrics", {
-              method: "POST",
-              cache: "no-store",
-            });
-            if (!refreshResponse.ok) throw new Error(`refresh-metrics: HTTP ${refreshResponse.status}`);
-            const refreshPayload = await refreshResponse.json();
-            if (!refreshPayload.ok) throw new Error(refreshPayload.error || "metric refresh failed");
             const response = await fetch("manifest.json", { cache: "no-store" });
             if (!response.ok) throw new Error(`manifest.json: HTTP ${response.status}`);
             const payload = await response.json();

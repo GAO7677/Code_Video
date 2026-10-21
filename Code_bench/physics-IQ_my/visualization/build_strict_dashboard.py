@@ -12,6 +12,8 @@ import argparse
 import ast
 import csv
 import json
+import os
+import fcntl
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -22,7 +24,7 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = Path(
-    "/data/gaoya/agent-data/outputs/physicsiq-verified-strict-dashboard"
+    "/data/gaoya/agent-data/outputs_v1/physicsiq_verified/20261021_p0_dashboard"
 )
 INPUT_JSONS = Path(
     "/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/inputs/bpp/jsons"
@@ -732,11 +734,15 @@ def main() -> None:
     require_directory(INPUT_JSONS, "P0 input JSON")
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    lock=(output / "build.lock").open("a+")
+    fcntl.flock(lock.fileno(),fcntl.LOCK_EX)
     payload = build_payload(output)
     add_six_methods(payload, output)
+    from nano_p0_dashboard import add_nano_methods
+    add_nano_methods(payload, output, ensure_directory_link, load_official_case_metrics, score_summary_from_metrics)
     copy_page_template(output)
     manifest_path = output / "manifest.json"
-    temporary = output / 'manifest.tmp.json'
+    temporary = output / f'manifest.tmp.{os.getpid()}.json'
     temporary.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
