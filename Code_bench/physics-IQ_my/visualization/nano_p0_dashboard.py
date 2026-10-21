@@ -46,7 +46,7 @@ def add_nano_methods(payload, output, ensure_link, case_loader, score_loader):
         payload['raw_methods'].append(dict(key=key+'_raw',label=label+' · raw',color=item['color'],detail='189 frames · same Nano protocol'))
         payload['scoreboard'].append(dict(key=key,label=label,short_label=label,family='Cosmos3-Nano',
             run=root.name,scores=scores,video_status=f'{count}/198 generated',color=item['color'],
-            case_metric_status='Official Verified complete' if complete else 'Official Verified 待完整生成后计算',
+            case_metric_status=('Official Verified complete' if complete else 'Official Verified 正在计算' if status.get('metrics')=='RUNNING' and status.get('state')=='SCORING' else 'Official Verified 评分失败，待恢复' if status.get('state')=='FAILED' and count==198 else 'Official Verified 待评分' if count==198 else 'Official Verified 待完整生成后计算'),
             sampling=detail,source=str(csv),auxiliary_metric_status=False))
         payload['availability']['assets'][key]=count
         if complete:payload['availability']['per_view_metric_methods'].append(key)
