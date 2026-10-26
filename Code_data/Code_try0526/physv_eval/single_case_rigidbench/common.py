@@ -116,6 +116,16 @@ def as_depth(value: np.ndarray, name: str) -> np.ndarray:
     return arr.astype(np.float32, copy=False)
 
 
+def as_disparity(value: np.ndarray, name: str) -> np.ndarray:
+    """Validate VDA relative disparity before affine alignment; zero is valid."""
+    arr = np.asarray(value)
+    if arr.ndim != 3:
+        raise ValueError(f"{name} must have shape (T,H,W), got {arr.shape}")
+    if not np.issubdtype(arr.dtype, np.number) or not np.isfinite(arr).all() or np.any(arr < 0):
+        raise ValueError(f"{name} must be finite nonnegative numeric data")
+    return arr.astype(np.float32, copy=False)
+
+
 def check_same_length(*arrays: np.ndarray) -> int:
     lengths = {int(len(array)) for array in arrays}
     if len(lengths) != 1:

@@ -7,7 +7,7 @@ from rigidbench.eval.score.depth import affine_align_disparity
 from rigidbench.eval.score.trajectory import compute_ate3d
 from rigidbench.eval.score.trajectory import quat_wxyz_to_rotmat, reconstruct_centroids
 
-from .common import as_depth, as_tracks, as_visibility, cli_print, load_video_rgb
+from .common import as_depth, as_disparity, as_tracks, as_visibility, cli_print, load_video_rgb
 from .prediction import extract_disparity, extract_tracks
 
 
@@ -74,7 +74,7 @@ def score_from_predictions(
     pred_vis = as_visibility(pred_visibility, pred_tr.shape[:2])
     if pred_vis is None:
         raise ValueError("pred_visibility is required for ATE-3D")
-    pred_disp = as_depth(pred_disparity, "pred_disparity")
+    pred_disp = as_disparity(pred_disparity, "pred_disparity")
     T = min(gt_tr.shape[1], gt_d.shape[0], pred_tr.shape[1], pred_disp.shape[0])
     gt_tr = gt_tr[:, :T]
     gt_d = gt_d[:T]

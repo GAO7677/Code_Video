@@ -4,14 +4,14 @@ import argparse
 
 from rigidbench.eval.score.depth import compute_si_mse
 
-from .common import as_depth, cli_print, load_npz_array
+from .common import as_depth, as_disparity, cli_print, load_npz_array
 from .prediction import extract_disparity, load_vda_model
 
 
 def score_case(gt_depth, pred_video, vda_model, device: str = "cuda") -> dict:
     """Return SI-MSE from GT depth and a generated video.
 
-    VDA predicts the positive inverse-depth/disparity internally; it is
+    VDA predicts nonnegative relative disparity internally; it is
     affine-aligned to GT depth by the official implementation.
     """
     gt = as_depth(gt_depth, "gt_depth")
@@ -22,7 +22,7 @@ def score_case(gt_depth, pred_video, vda_model, device: str = "cuda") -> dict:
 def score_from_disparity(gt_depth, pred_disparity) -> dict:
     """Compute SI-MSE from an already extracted disparity sequence."""
     gt = as_depth(gt_depth, "gt_depth")
-    pred = as_depth(pred_disparity, "pred_disparity")
+    pred = as_disparity(pred_disparity, "pred_disparity")
     T = min(gt.shape[0], pred.shape[0])
     gt, pred = gt[:T], pred[:T]
     return {"si_mse": compute_si_mse(gt, pred)}
