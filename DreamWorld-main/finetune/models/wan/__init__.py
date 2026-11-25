@@ -1,2 +1,0 @@
-from .base_specification import WanModelSpecification
-from .custome import CustomWanPipeline

@@ -1,1 +1,0 @@
-huggingface-cli download Qwen/Qwen2.5-7B-Instruct --local-dir ~/.cache/vbench2/Qwen/Qwen2.5-7B-Instruct

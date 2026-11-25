@@ -1,1 +1,0 @@
-huggingface-cli download lmms-lab/LLaVA-Video-7B-Qwen2 --local-dir ~/.cache/vbench2/lmms-lab/LLaVA-Video-7B-Qwen2

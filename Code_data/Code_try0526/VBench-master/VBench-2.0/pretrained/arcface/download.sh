@@ -1,1 +1,0 @@
-gdown --id 1m387vGTQ4GW4I4PQfBsCC-Y9aEp6zjvy -O ~/.cache/vbench2/arcface
